@@ -145,6 +145,51 @@ input[type="search"]::-webkit-search-results-decoration {
     linear-gradient(90deg, rgba(255, 255, 255, 0.0015), transparent 32%, transparent 68%, rgba(255, 255, 255, 0.0015));
 }
 
+.graph-canvas-root {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  --graph-cursor-opacity: 0;
+  --graph-cursor-x: 50%;
+  --graph-cursor-y: 42%;
+}
+
+.graph-canvas-root:active {
+  cursor: grabbing;
+}
+
+.graph-canvas-ambient {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      260px circle at var(--graph-cursor-x) var(--graph-cursor-y),
+      rgba(255, 255, 255, 0.03) 0%,
+      rgba(255, 255, 255, 0.012) 24%,
+      rgba(255, 255, 255, 0.003) 52%,
+      transparent 78%
+    );
+  opacity: var(--graph-cursor-opacity);
+  transition:
+    opacity 180ms ease-out,
+    background-position 120ms ease-out;
+}
+
+.graph-canvas-root [data-graph-node="true"] {
+  cursor: pointer;
+}
+
+.graph-canvas-svg {
+  display: block;
+  height: 100%;
+  width: 100%;
+  overflow: visible;
+}
+
 .origin-marker {
   position: relative;
   height: 88px;
@@ -292,6 +337,88 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .context-stub-line-short {
   max-width: 92px;
+}
+
+.context-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--color-border-faint);
+  padding-top: 12px;
+}
+
+.context-detail-label {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.context-detail-value {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-transform: capitalize;
+}
+
+.context-linked-node {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--color-border-faint);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.012), rgba(255, 255, 255, 0.008));
+  padding: 12px 13px;
+  text-align: left;
+  transition:
+    border-color var(--motion-fast),
+    background-color var(--motion-fast),
+    box-shadow var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.context-linked-node:hover {
+  border-color: rgba(213, 58, 71, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(213, 58, 71, 0.08);
+}
+
+.context-linked-node:focus-visible {
+  outline: none;
+  border-color: rgba(213, 58, 71, 0.2);
+  box-shadow: var(--shadow-focus);
+}
+
+.context-linked-node-title {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.context-linked-node-meta {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: capitalize;
+}
+
+.graph-status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-faint);
+  border-radius: 999px;
+  background: rgba(10, 10, 12, 0.78);
+  padding: 10px 14px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 
 .rail-tab-strip {

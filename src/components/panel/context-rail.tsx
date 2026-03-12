@@ -6,6 +6,7 @@ import {
 } from "@/lib/graph/chat";
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import type { ChatMessage, ChatNodeContext, ChatScope, RailTab } from "@/types/chat";
+import type { GraphData } from "@/types/graph";
 
 type ContextRailProps = {
   activeTab: RailTab;
@@ -13,9 +14,11 @@ type ContextRailProps = {
   chatLoading: boolean;
   chatMessages: ChatMessage[];
   chatScope: ChatScope;
+  graphData: GraphData;
   onClearChatScope: () => void;
   onRetryChat: () => void;
   onSelectPrompt: (prompt: string) => void;
+  onSelectLinkedNode: (nodeId: string) => void;
   onSetActiveTab: (tab: RailTab) => void;
   onToggle: () => void;
   open: boolean;
@@ -28,15 +31,62 @@ export function ContextRail({
   chatLoading,
   chatMessages,
   chatScope,
+  graphData,
   onClearChatScope,
   onRetryChat,
   onSelectPrompt,
+  onSelectLinkedNode,
   onSetActiveTab,
   onToggle,
   open,
   selectedNode,
 }: ContextRailProps) {
   const promptSuggestions = getSuggestedPrompts(chatScope);
+  const linkedNodes = selectedNode
+    ? Array.from(
+        graphData.edges
+          .filter(
+            (edge) =>
+              edge.source_node_id === selectedNode.id || edge.target_node_id === selectedNode.id,
+          )
+          .reduce((accumulator, edge) => {
+            const linkedNodeId =
+              edge.source_node_id === selectedNode.id
+                ? edge.target_node_id
+                : edge.source_node_id;
+            const linkedNode =
+              graphData.nodes.find((node) => node.id === linkedNodeId) ?? null;
+
+            if (!linkedNode) {
+              return accumulator;
+            }
+
+            const existing = accumulator.get(linkedNodeId);
+
+            if (existing) {
+              existing.edgeTypes.add(edge.edge_type);
+              return accumulator;
+            }
+
+            accumulator.set(linkedNodeId, {
+              edgeTypes: new Set([edge.edge_type]),
+              node: linkedNode,
+            });
+
+            return accumulator;
+          }, new Map<
+            string,
+            {
+              edgeTypes: Set<GraphData["edges"][number]["edge_type"]>;
+              node: GraphData["nodes"][number];
+            }
+          >())
+          .values(),
+      ).map(({ edgeTypes, node }) => ({
+        edgeTypes: Array.from(edgeTypes),
+        node,
+      }))
+    : [];
 
   return (
     <div
@@ -212,39 +262,95 @@ export function ContextRail({
             </div>
           ) : (
             <div className="shell-scrollbar flex-1 overflow-y-auto px-6 py-6">
-              <div className="space-y-6">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                    Node
-                  </p>
-                  <div className="mt-4 space-y-0">
-                    <div className="context-stub-row">
-                      <span className="context-stub-label">Type</span>
-                      <span className="context-stub-line" />
-                    </div>
-                    <div className="context-stub-row">
-                      <span className="context-stub-label">Links</span>
-                      <span className="context-stub-line" />
+              {selectedNode ? (
+                <div className="space-y-6">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+                      Node
+                    </p>
+                    <div className="mt-4 grid gap-4">
+                      <div className="context-detail-row">
+                        <span className="context-detail-label">Type</span>
+                        <span className="context-detail-value">{selectedNode.node_type}</span>
+                      </div>
+                      <div className="context-detail-row">
+                        <span className="context-detail-label">Importance</span>
+                        <span className="context-detail-value">{selectedNode.importance}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                    Actions
-                  </p>
-                  <div className="mt-4 space-y-0">
-                    <div className="context-stub-row">
-                      <span className="context-stub-label">Open</span>
-                      <span className="context-stub-line context-stub-line-short" />
-                    </div>
-                    <div className="context-stub-row">
-                      <span className="context-stub-label">Notes</span>
-                      <span className="context-stub-line context-stub-line-short" />
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+                      Summary
+                    </p>
+                    <p className="mt-4 text-[13px] leading-6 text-[var(--color-text-secondary)]">
+                      {selectedNode.summary ?? "No summary yet."}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+                      Linked nodes
+                    </p>
+                    <div className="mt-4 space-y-3">
+                      {linkedNodes.length > 0 ? (
+                        linkedNodes.map(({ edgeTypes, node }) => (
+                          <button
+                            className="context-linked-node"
+                            key={`${selectedNode.id}-${node.id}`}
+                            onClick={() => onSelectLinkedNode(node.id)}
+                            type="button"
+                          >
+                            <span className="context-linked-node-title">{node.title}</span>
+                            <span className="context-linked-node-meta">
+                              {edgeTypes.map((edgeType) => edgeType.replaceAll("_", " ")).join(" • ")}
+                            </span>
+                          </button>
+                        ))
+                      ) : (
+                        <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
+                          No linked nodes yet.
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-6">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+                      Node
+                    </p>
+                    <div className="mt-4 space-y-0">
+                      <div className="context-stub-row">
+                        <span className="context-stub-label">Type</span>
+                        <span className="context-stub-line" />
+                      </div>
+                      <div className="context-stub-row">
+                        <span className="context-stub-label">Links</span>
+                        <span className="context-stub-line" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+                      Actions
+                    </p>
+                    <div className="mt-4 space-y-0">
+                      <div className="context-stub-row">
+                        <span className="context-stub-label">Open</span>
+                        <span className="context-stub-line context-stub-line-short" />
+                      </div>
+                      <div className="context-stub-row">
+                        <span className="context-stub-label">Notes</span>
+                        <span className="context-stub-line context-stub-line-short" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

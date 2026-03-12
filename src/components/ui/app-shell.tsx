@@ -10,10 +10,17 @@ import {
   createWorkspaceScope,
   getChatComposerPlaceholder,
 } from "@/lib/graph/chat";
+import {
+  buildChatNodeContext,
+  findFirstMatchingNode,
+  loadGraphData,
+} from "@/lib/graph/data";
+import { demoGraphData } from "@/lib/graph/demo-data";
 import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
-import type { RailTab, ChatMessage, ChatNodeContext, ChatScope } from "@/types/chat";
+import type { RailTab, ChatMessage, ChatScope } from "@/types/chat";
+import type { GraphData } from "@/types/graph";
 
 const workspaceName = "Personal";
 
@@ -27,8 +34,16 @@ export function AppShell() {
   const [chatScope, setChatScope] = useState<ChatScope>(createWorkspaceScope(workspaceName));
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [graphData, setGraphData] = useState<GraphData>(demoGraphData);
+  const [graphLoading, setGraphLoading] = useState(true);
+  const [graphSearchValue, setGraphSearchValue] = useState("");
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  const selectedNode: ChatNodeContext | null = null;
+  const selectedNode = useMemo(
+    () => buildChatNodeContext(graphData, selectedNodeId),
+    [graphData, selectedNodeId],
+  );
+
   const defaultChatScope = useMemo(
     () =>
       selectedNode
@@ -36,6 +51,23 @@ export function AppShell() {
         : createWorkspaceScope(workspaceName),
     [selectedNode],
   );
+
+  useEffect(() => {
+    let active = true;
+
+    void loadGraphData().then((nextGraphData) => {
+      if (!active) {
+        return;
+      }
+
+      setGraphData(nextGraphData);
+      setGraphLoading(false);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (chatMessages.length === 0) {
@@ -93,6 +125,22 @@ export function AppShell() {
     void submitMessage(lastUserMessage.body, false);
   };
 
+  const handleSelectNode = (nodeId: string | null) => {
+    setSelectedNodeId(nodeId);
+    setRightPanelOpen(true);
+  };
+
+  const handleGraphSearchSubmit = () => {
+    const matchingNode = findFirstMatchingNode(graphData, graphSearchValue);
+
+    if (!matchingNode) {
+      return;
+    }
+
+    setSelectedNodeId(matchingNode.id);
+    setRightPanelOpen(true);
+  };
+
   return (
     <div className="flex min-h-screen flex-col bg-[var(--color-bg-base)] text-[var(--color-text-primary)]">
       <TopCommandBar
@@ -135,10 +183,17 @@ export function AppShell() {
               : "Add a thought or ask the graph..."
           }
           composerValue={composerValue}
+          graphData={graphData}
+          graphLoading={graphLoading}
+          graphSearchValue={graphSearchValue}
           onComposerChange={setComposerValue}
           onComposerSubmit={() => {
             void submitMessage(composerValue);
           }}
+          onGraphSearchChange={setGraphSearchValue}
+          onGraphSearchSubmit={handleGraphSearchSubmit}
+          onSelectNode={handleSelectNode}
+          selectedNodeId={selectedNodeId}
           submitting={chatLoading}
         />
         <ContextRail
@@ -147,12 +202,17 @@ export function AppShell() {
           chatLoading={chatLoading}
           chatMessages={chatMessages}
           chatScope={chatScope}
+          graphData={graphData}
           onClearChatScope={() => setChatScope(createWorkspaceScope(workspaceName))}
           onRetryChat={retryLastMessage}
           onSelectPrompt={(prompt) => {
             void submitMessage(prompt);
           }}
           onSetActiveTab={setActiveRailTab}
+          onSelectLinkedNode={(nodeId) => {
+            setSelectedNodeId(nodeId);
+            setRightPanelOpen(true);
+          }}
           onToggle={() => setRightPanelOpen((open) => !open)}
           open={rightPanelOpen}
           selectedNode={selectedNode}

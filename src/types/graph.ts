@@ -14,6 +14,7 @@ export type EdgeType =
   | "supports"
   | "related_to"
   | "prerequisite_for"
+  | "required_for"
   | "belongs_to"
   | "useful_for"
   | "blocks"
