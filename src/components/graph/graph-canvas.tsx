@@ -61,7 +61,6 @@ type GraphNode = Node &
   SimulationNodeDatum &
   LabelLayout & {
     categoryColor: string;
-    cueRadius: number;
     depth: number;
     driftAmplitudeX: number;
     driftAmplitudeY: number;
@@ -108,15 +107,14 @@ type EdgeVisualStyle = {
   strokeWidth: number;
 };
 
-const nodeTypeCueMap: Record<NodeType, string> = {
+type VisualNodeType = "goal" | "project" | "task" | "concept" | "class";
+
+const nodeTypeCueMap: Record<VisualNodeType, string> = {
   goal: "#d8d0c4",
-  project: "#8a5965",
-  task: "#9f5d49",
-  class: "#a78347",
-  concept: "#537670",
-  idea: "#6d5364",
-  journal: "#7e858d",
-  question: "#8d78af",
+  project: "#8c4a57",
+  task: "#a35258",
+  class: "#96784d",
+  concept: "#677480",
 };
 
 const nodeTypeBranchOrder: Record<NodeType, number> = {
@@ -142,14 +140,14 @@ const edgeStrengthMap: Record<EdgeType, number> = {
 };
 
 const importanceVisualBounds = {
-  maxFontSize: 21,
-  maxHeight: 132,
+  maxFontSize: 21.4,
+  maxHeight: 136,
   maxScore: 97,
-  maxWidth: 236,
-  minFontSize: 10.4,
-  minHeight: 38,
+  maxWidth: 232,
+  minFontSize: 10.1,
+  minHeight: 34,
   minScore: 22,
-  minWidth: 72,
+  minWidth: 64,
 };
 
 const defaultView: ViewState = {
@@ -182,6 +180,51 @@ function hashString(input: string) {
   }
 
   return hash;
+}
+
+function hexToRgb(hex: string) {
+  const sanitized = hex.replace("#", "");
+  const normalized =
+    sanitized.length === 3
+      ? sanitized
+          .split("")
+          .map((character) => `${character}${character}`)
+          .join("")
+      : sanitized;
+
+  const numeric = Number.parseInt(normalized, 16);
+
+  if (Number.isNaN(numeric)) {
+    return { blue: 255, green: 255, red: 255 };
+  }
+
+  return {
+    blue: numeric & 255,
+    green: (numeric >> 8) & 255,
+    red: (numeric >> 16) & 255,
+  };
+}
+
+function rgba(hex: string, alpha: number) {
+  const color = hexToRgb(hex);
+
+  return `rgba(${color.red}, ${color.green}, ${color.blue}, ${alpha})`;
+}
+
+function getVisualNodeType(nodeType: NodeType): VisualNodeType {
+  switch (nodeType) {
+    case "goal":
+    case "project":
+    case "task":
+    case "class":
+    case "concept":
+      return nodeType;
+    case "idea":
+    case "journal":
+    case "question":
+    default:
+      return "concept";
+  }
 }
 
 function trimLine(line: string, maxLength: number) {
@@ -345,38 +388,37 @@ function getAnchorScore(node: Node, childCount: number, depth: number, hasParent
 
 function createNodeLayout(node: Node, importanceScore: number) {
   const normalizedScore = normalizeImportanceScore(importanceScore);
-  const sizeScale = Math.pow(normalizedScore, 1.28);
+  const sizeScale = Math.pow(normalizedScore, 1.08);
   const visualTier = getVisualTierFromScore(importanceScore);
   const fontSize = lerp(
     importanceVisualBounds.minFontSize,
     importanceVisualBounds.maxFontSize,
     sizeScale,
   );
-  const maxCharsPerLine =
-    importanceScore >= 84 ? 13 : importanceScore >= 64 ? 12 : importanceScore >= 42 ? 10 : 9;
-  const lines = wrapTitle(node.title, maxCharsPerLine);
-  const longestLineLength = lines.reduce(
-    (longest, line) => Math.max(longest, line.length),
-    0,
+  const padX = lerp(11, 25, sizeScale);
+  const width = lerp(
+    importanceVisualBounds.minWidth,
+    importanceVisualBounds.maxWidth,
+    sizeScale,
   );
-  const padX = lerp(12, 26, sizeScale);
-  const minWidth = lerp(importanceVisualBounds.minWidth, 154, sizeScale);
-  const maxWidth = lerp(126, importanceVisualBounds.maxWidth, sizeScale);
-  const baseHeight = lerp(
+  const height = lerp(
     importanceVisualBounds.minHeight,
     importanceVisualBounds.maxHeight,
     sizeScale,
   );
-  const height = baseHeight + (lines.length - 1) * fontSize * 0.84;
-  const width = clamp(longestLineLength * fontSize * 0.55 + padX * 2, minWidth, maxWidth);
+  const maxCharsPerLine = clamp(
+    Math.floor((width - padX * 2) / (fontSize * 0.56)),
+    8,
+    sizeScale >= 0.84 ? 14 : sizeScale >= 0.7 ? 12 : sizeScale >= 0.48 ? 10 : 9,
+  );
+  const lines = wrapTitle(node.title, maxCharsPerLine);
   const hash = hashString(node.id);
 
   return {
-    categoryColor: nodeTypeCueMap[node.node_type],
-    cueRadius: lerp(3.4, 5.6, sizeScale),
+    categoryColor: nodeTypeCueMap[getVisualNodeType(node.node_type)],
     depth: 0,
-    driftAmplitudeX: lerp(2.05, 0.82, sizeScale),
-    driftAmplitudeY: lerp(1.42, 0.64, sizeScale),
+    driftAmplitudeX: lerp(4.6, 1.7, sizeScale),
+    driftAmplitudeY: lerp(3.15, 1.22, sizeScale),
     driftPhaseX: (hash % 360) * (Math.PI / 180),
     driftPhaseY: ((hash >> 5) % 360) * (Math.PI / 180),
     fontSize,
@@ -691,19 +733,20 @@ function buildGraphLayout(graphData: GraphData) {
     const bounds = getTreeBounds(componentNodes);
     const componentWidth = bounds.maxX - bounds.minX;
     const componentHeight = bounds.maxY - bounds.minY;
+    const islandRow = Math.floor((componentIndex - 1) / 2);
     const componentOffset =
       componentIndex === 0
         ? { x: 0, y: -520 }
         : {
             x:
               (componentIndex % 2 === 1 ? -1 : 1) *
-              (760 +
-                Math.floor((componentIndex - 1) / 2) * 110 +
-                componentWidth * 0.14),
+              (1360 +
+                islandRow * 260 +
+                componentWidth * 0.44),
             y:
-              120 +
-              Math.floor((componentIndex - 1) / 2) *
-                Math.max(220, componentHeight * 0.5 + 120),
+              260 +
+              islandRow *
+                Math.max(460, componentHeight * 0.9 + 300),
           };
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const shiftX = componentOffset.x - centerX;
@@ -910,7 +953,6 @@ function getWorldPoint(
 
 function getRenderedNodePosition(
   node: GraphNode,
-  idleTime: number,
   draggingNodeId: string | null,
 ) {
   const baseX = node.x ?? node.restX;
@@ -920,12 +962,9 @@ function getRenderedNodePosition(
     return { x: baseX, y: baseY };
   }
 
-  const driftX = Math.sin(idleTime * 0.00038 + node.driftPhaseX) * node.driftAmplitudeX;
-  const driftY = Math.cos(idleTime * 0.00031 + node.driftPhaseY) * node.driftAmplitudeY;
-
   return {
-    x: baseX + driftX,
-    y: baseY + driftY,
+    x: baseX,
+    y: baseY,
   };
 }
 
@@ -952,13 +991,12 @@ function getRoundedBoundaryAnchor(
 
 function getLinkEndpoints(
   link: GraphLink,
-  idleTime: number,
   draggingNodeId: string | null,
 ) {
   const source = link.source as GraphNode;
   const target = link.target as GraphNode;
-  const sourcePosition = getRenderedNodePosition(source, idleTime, draggingNodeId);
-  const targetPosition = getRenderedNodePosition(target, idleTime, draggingNodeId);
+  const sourcePosition = getRenderedNodePosition(source, draggingNodeId);
+  const targetPosition = getRenderedNodePosition(target, draggingNodeId);
 
   if (link.family === "structural") {
     const startSide = link.layoutDirection === "up" ? -1 : 1;
@@ -1021,11 +1059,13 @@ function getLinkEndpoints(
   };
 }
 
-function getLinkPath(link: GraphLink, idleTime: number, draggingNodeId: string | null) {
+function getLinkPath(
+  link: GraphLink,
+  draggingNodeId: string | null,
+) {
   const { controlX, controlX2, controlY, controlY2, endX, endY, startX, startY } =
     getLinkEndpoints(
       link,
-      idleTime,
       draggingNodeId,
     );
 
@@ -1165,11 +1205,11 @@ function getNodeVisualState(options: {
   if (selected) {
     return {
       border: "rgba(223,69,83,0.96)",
-      cueOpacity: 0.94,
-      glowOpacity: 0.5,
-      heatOpacity: 0.72,
+      surfaceTintOpacity: 0.34,
+      glowOpacity: 0.34,
+      heatOpacity: 0.54,
       opacity: 1,
-      shadowOpacity: 0.42,
+      shadowOpacity: 0.34,
       text: "#f6f2ed",
       topSheenOpacity: 0.66,
     };
@@ -1178,7 +1218,7 @@ function getNodeVisualState(options: {
   if (hovered) {
     return {
       border: "rgba(220,67,81,0.58)",
-      cueOpacity: 0.82,
+      surfaceTintOpacity: 0.28,
       glowOpacity: 0.26,
       heatOpacity: 0.34,
       opacity: 1,
@@ -1191,7 +1231,7 @@ function getNodeVisualState(options: {
   if (selectedNodeId && !inSelectedNeighborhood) {
     return {
       border: "rgba(255,255,255,0.034)",
-      cueOpacity: 0.36,
+      surfaceTintOpacity: 0.12,
       glowOpacity: 0,
       heatOpacity: 0,
       opacity: 0.24,
@@ -1204,7 +1244,7 @@ function getNodeVisualState(options: {
   if (inSelectedNeighborhood) {
     return {
       border: "rgba(255,255,255,0.11)",
-      cueOpacity: 0.68,
+      surfaceTintOpacity: 0.22,
       glowOpacity: 0.05,
       heatOpacity: 0.05,
       opacity: 0.96,
@@ -1217,7 +1257,7 @@ function getNodeVisualState(options: {
   if (inHoveredNeighborhood) {
     return {
       border: "rgba(255,255,255,0.095)",
-      cueOpacity: 0.6,
+      surfaceTintOpacity: 0.18,
       glowOpacity: 0.03,
       heatOpacity: 0.04,
       opacity: 0.88,
@@ -1230,7 +1270,7 @@ function getNodeVisualState(options: {
   if (searchHit) {
     return {
       border: "rgba(223,68,82,0.42)",
-      cueOpacity: 0.76,
+      surfaceTintOpacity: 0.24,
       glowOpacity: 0.12,
       heatOpacity: 0.12,
       opacity: 0.94,
@@ -1242,7 +1282,7 @@ function getNodeVisualState(options: {
 
   return {
     border: "rgba(255,255,255,0.072)",
-    cueOpacity: 0.58,
+    surfaceTintOpacity: 0.16,
     glowOpacity: 0,
     heatOpacity: 0,
     opacity: 0.84,
@@ -1290,7 +1330,6 @@ export function GraphCanvas({
   const [viewport, setViewport] = useState({ height: 0, width: 0 });
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
-  const [idleTime, setIdleTime] = useState(0);
   const [view, setView] = useState<ViewState>(defaultView);
   const [, setFrameVersion] = useState(0);
   const scene = useMemo(() => {
@@ -1337,26 +1376,6 @@ export function GraphCanvas({
   useEffect(() => {
     viewportRef.current = viewport;
   }, [viewport]);
-
-  useEffect(() => {
-    let animationHandle = 0;
-    let lastFrameTime = 0;
-
-    const animate = (now: number) => {
-      if (now - lastFrameTime >= 32) {
-        lastFrameTime = now;
-        setIdleTime(now);
-      }
-
-      animationHandle = window.requestAnimationFrame(animate);
-    };
-
-    animationHandle = window.requestAnimationFrame(animate);
-
-    return () => {
-      window.cancelAnimationFrame(animationHandle);
-    };
-  }, []);
 
   useEffect(() => {
     nodesRef.current = scene.nodes;
@@ -1412,22 +1431,32 @@ export function GraphCanvas({
           (node) => Math.max(node.width, node.height) * 0.52 + 22,
         ),
       )
-      .force("restX", forceX<GraphNode>((node) => node.restX).strength(0.2))
-      .force("restY", forceY<GraphNode>((node) => node.restY).strength(0.82))
-      .velocityDecay(0.52)
-      .alphaDecay(0.078)
-      .alphaMin(0.012);
+      .force("restX", forceX<GraphNode>((node) => node.restX).strength(0.12))
+      .force("restY", forceY<GraphNode>((node) => node.restY).strength(0.58))
+      .velocityDecay(0.58)
+      .alphaDecay(0.064)
+      .alphaMin(0.012)
+      .alphaTarget(focusNodeId ? 0.004 : 0.008);
 
     simulation.on("tick", () => {
+      const now = performance.now();
+      const idleForceScale = focusNodeId ? 0.00038 : 0.00082;
+
       scene.nodes.forEach((node) => {
         if (node.fx === null || node.fx === undefined) {
-          node.x = lerp(node.x ?? node.restX, node.restX, 0.035);
-          node.vx = (node.vx ?? 0) * 0.82;
+          node.vx =
+            (node.vx ?? 0) +
+            Math.sin(now * 0.00058 + node.driftPhaseX) * node.driftAmplitudeX * idleForceScale;
+          node.x = lerp(node.x ?? node.restX, node.restX, 0.018);
+          node.vx = (node.vx ?? 0) * 0.9;
         }
 
         if (node.fy === null || node.fy === undefined) {
-          node.y = lerp(node.y ?? node.restY, node.restY, 0.18);
-          node.vy = (node.vy ?? 0) * 0.52;
+          node.vy =
+            (node.vy ?? 0) +
+            Math.cos(now * 0.00046 + node.driftPhaseY) * node.driftAmplitudeY * idleForceScale;
+          node.y = lerp(node.y ?? node.restY, node.restY, 0.09);
+          node.vy = (node.vy ?? 0) * 0.72;
         }
       });
 
@@ -1452,7 +1481,7 @@ export function GraphCanvas({
         animationRef.current = null;
       }
     };
-  }, [scene]);
+  }, [focusNodeId, scene]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1572,7 +1601,7 @@ export function GraphCanvas({
         draggedNode.fx = worldPoint.x - dragState.offsetX;
         draggedNode.fy = worldPoint.y - dragState.offsetY;
         movedDuringPointerRef.current = true;
-        simulationRef.current?.alphaTarget(0.16).restart();
+        simulationRef.current?.alphaTarget(0.18).restart();
         setFrameVersion((value) => value + 1);
         return;
       }
@@ -1596,11 +1625,11 @@ export function GraphCanvas({
         if (draggedNode) {
           draggedNode.fx = null;
           draggedNode.fy = null;
-          draggedNode.vx = (draggedNode.vx ?? 0) * 0.18;
-          draggedNode.vy = (draggedNode.vy ?? 0) * 0.18;
+          draggedNode.vx = (draggedNode.vx ?? 0) * 0.42;
+          draggedNode.vy = (draggedNode.vy ?? 0) * 0.42;
           simulationRef.current
-            ?.alpha(focusNodeId ? 0.18 : 0.32)
-            .alphaTarget(focusNodeId ? 0.012 : 0.026)
+            ?.alpha(focusNodeId ? 0.12 : 0.2)
+            .alphaTarget(focusNodeId ? 0.01 : 0.02)
             .restart();
 
           if (releaseTimeoutRef.current !== null) {
@@ -1608,9 +1637,9 @@ export function GraphCanvas({
           }
 
           releaseTimeoutRef.current = window.setTimeout(() => {
-            simulationRef.current?.alphaTarget(0);
+            simulationRef.current?.alphaTarget(0.006);
             releaseTimeoutRef.current = null;
-          }, focusNodeId ? 320 : 560);
+          }, focusNodeId ? 1200 : 1800);
         }
       }
 
@@ -1728,7 +1757,6 @@ export function GraphCanvas({
   }
 
   const worldTransform = `translate(${viewport.width / 2 + view.panX} ${viewport.height / 2 + view.panY}) scale(${view.zoom})`;
-
   return (
     <div
       className="graph-canvas-root"
@@ -1799,18 +1827,14 @@ export function GraphCanvas({
               (!focusNodeId && hoveredInteraction.connectedEdges.has(link.id));
             const dimmed = Boolean(focusNodeId) && !selectedInteraction.connectedEdges.has(link.id);
             const style = getEdgeVisualStyle(link, emphasized, dimmed);
-            const idlePulse =
-              emphasized || dimmed
-                ? 1
-                : 0.988 + Math.sin(idleTime * 0.00026 + hashString(link.id)) * 0.012;
 
             return (
               <path
-                d={getLinkPath(link, idleTime, draggingNodeId)}
+                d={getLinkPath(link, draggingNodeId)}
                 fill="none"
                 key={link.id}
                 markerEnd={style.markerEnd}
-                opacity={style.opacity * idlePulse}
+                opacity={style.opacity}
                 stroke={style.stroke}
                 strokeDasharray={style.dashArray}
                 strokeLinecap={style.dashArray ? "round" : "butt"}
@@ -1822,7 +1846,7 @@ export function GraphCanvas({
           })}
 
           {scene.nodes.map((node) => {
-            const position = getRenderedNodePosition(node, idleTime, draggingNodeId);
+            const position = getRenderedNodePosition(node, draggingNodeId);
             const selected = focusNodeId === node.id;
             const hovered = hoveredNodeId === node.id;
             const inHoveredNeighborhood = hoveredInteraction.connectedNodes.has(node.id);
@@ -1839,8 +1863,31 @@ export function GraphCanvas({
             const nodeFilter = selected ? "url(#node-selected-shadow)" : "url(#node-shadow)";
             const lineHeight = node.lines.length === 1 ? 0 : node.fontSize * 1.04;
             const initialY = node.lines.length === 1 ? 2 : -lineHeight / 2 + 1;
-            const cueRadius = node.cueRadius;
             const nodeRadius = Math.min(node.width, node.height) * 0.44;
+            const topBandId = `node-top-band-${node.id}`;
+            const actionWashId = `node-action-wash-${node.id}`;
+            const actionable = node.node_type === "task";
+            const topBandOpacity = actionable
+              ? selected
+                ? 0.4
+                : hovered
+                  ? 0.34
+                  : searchHit
+                    ? 0.3
+                    : 0.24
+              : visual.surfaceTintOpacity * 1.26;
+            const actionWashOpacity = actionable
+              ? selected
+                ? 0.28
+                : hovered
+                  ? 0.24
+                  : searchHit
+                    ? 0.22
+                    : 0.2
+              : 0;
+            const topBandHeight = actionable
+              ? clamp(node.height * 0.08, 4, 6)
+              : clamp(node.height * 0.06, 3, 4.75);
 
             return (
               <g
@@ -1865,15 +1912,44 @@ export function GraphCanvas({
                 opacity={visual.opacity}
                 transform={`translate(${position.x}, ${position.y})`}
               >
+                <defs>
+                  <linearGradient id={topBandId} x1="0" x2="1" y1="0" y2="0">
+                    <stop
+                      offset="0%"
+                      stopColor={rgba(node.categoryColor, 0)}
+                    />
+                    <stop
+                      offset="18%"
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.42)}
+                    />
+                    <stop
+                      offset="50%"
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 1.08)}
+                    />
+                    <stop
+                      offset="82%"
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.42)}
+                    />
+                    <stop offset="100%" stopColor={rgba(node.categoryColor, 0)} />
+                  </linearGradient>
+                  {actionable ? (
+                    <linearGradient id={actionWashId} x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0%" stopColor={rgba("#c44150", actionWashOpacity * 1.12)} />
+                      <stop offset="38%" stopColor={rgba("#92293a", actionWashOpacity * 0.8)} />
+                      <stop offset="76%" stopColor={rgba("#60131f", actionWashOpacity * 0.34)} />
+                      <stop offset="100%" stopColor={rgba("#60131f", 0)} />
+                    </linearGradient>
+                  ) : null}
+                </defs>
                 <g filter={nodeFilter}>
                   <rect
                     fill="rgba(4,4,6,0.92)"
-                    height={node.height + (selected ? 9 : 6)}
+                    height={node.height + 6}
                     opacity={visual.shadowOpacity}
-                    rx={Math.min(node.width + (selected ? 9 : 6), node.height + (selected ? 9 : 6)) * 0.44}
-                    width={node.width + (selected ? 9 : 6)}
-                    x={-(node.width + (selected ? 9 : 6)) / 2}
-                    y={-(node.height + (selected ? 9 : 6)) / 2 + 7}
+                    rx={Math.min(node.width + 6, node.height + 6) * 0.44}
+                    width={node.width + 6}
+                    x={-(node.width + 6) / 2}
+                    y={-(node.height + 6) / 2 + 7}
                   />
                   <rect
                     fill="url(#node-base-surface)"
@@ -1885,6 +1961,26 @@ export function GraphCanvas({
                     x={-node.width / 2}
                     y={-node.height / 2}
                   />
+                  <rect
+                    fill={`url(#${topBandId})`}
+                    height={topBandHeight}
+                    opacity={1}
+                    rx={Math.max(nodeRadius - 4, 10)}
+                    width={node.width - 12}
+                    x={-(node.width - 12) / 2}
+                    y={-node.height / 2 + 3}
+                  />
+                  {actionable ? (
+                    <rect
+                      fill={`url(#${actionWashId})`}
+                      height={node.height - 2}
+                      opacity={1}
+                      rx={Math.max(nodeRadius - 1, 12)}
+                      width={node.width - 2}
+                      x={-(node.width - 2) / 2}
+                      y={-(node.height - 2) / 2}
+                    />
+                  ) : null}
                   <rect
                     fill="url(#node-top-sheen)"
                     height={node.height * 0.5}
@@ -1909,7 +2005,7 @@ export function GraphCanvas({
                     opacity={visual.glowOpacity}
                     rx={Math.max(nodeRadius - 1, 12)}
                     stroke="rgba(213,58,71,0.96)"
-                    strokeWidth={selected ? 1.95 : 1.25}
+                    strokeWidth={selected ? 1.55 : 1.25}
                     width={node.width - 2}
                     x={-(node.width - 2) / 2}
                     y={-(node.height - 2) / 2}
@@ -1924,20 +2020,6 @@ export function GraphCanvas({
                     width={node.width - 2}
                     x={-(node.width - 2) / 2}
                     y={-(node.height - 2) / 2}
-                  />
-                  <circle
-                    cx={-node.width / 2 + 16}
-                    cy={-node.height / 2 + 16}
-                    fill={node.categoryColor}
-                    opacity={visual.cueOpacity}
-                    r={cueRadius}
-                  />
-                  <circle
-                    cx={-node.width / 2 + 16}
-                    cy={-node.height / 2 + 16}
-                    fill="rgba(255,255,255,0.22)"
-                    opacity={0.26}
-                    r={cueRadius * 0.42}
                   />
                   <text
                     fill={visual.text}
