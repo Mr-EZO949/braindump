@@ -1,9 +1,10 @@
+import { getImportanceIndex, getImportanceLabel } from "@/lib/graph/importance";
 import type { GraphData } from "@/types/graph";
 
 const now = "2026-03-12T00:00:00.000Z";
 const demoUserId = "demo-user";
 
-export const demoGraphData: GraphData = {
+const rawDemoGraphData: GraphData = {
   nodes: [
     {
       id: "10000000-0000-0000-0000-000000000001",
@@ -815,4 +816,17 @@ export const demoGraphData: GraphData = {
       created_at: now,
     },
   ],
+};
+
+export const demoGraphData: GraphData = {
+  ...rawDemoGraphData,
+  nodes: rawDemoGraphData.nodes.map((node) => {
+    const importanceIndex = getImportanceIndex(node);
+
+    return {
+      ...node,
+      importance: getImportanceLabel(importanceIndex),
+      importance_index: importanceIndex,
+    };
+  }),
 };

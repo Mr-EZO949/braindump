@@ -1,6 +1,6 @@
 import type { EdgeType, Importance, NodeType } from "@/types/graph";
 
-export type RailTab = "details" | "chat";
+export type RailTab = "details" | "focus" | "chat";
 
 export type ChatScope =
   | {
@@ -22,6 +22,7 @@ export interface ChatNodeContext {
   summary: string | null;
   node_type: NodeType;
   importance: Importance;
+  importanceIndex: number;
   connectedNodeTitles: string[];
   edgeTypes: EdgeType[];
 }

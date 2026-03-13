@@ -1,11 +1,24 @@
 import { demoGraphData } from "@/lib/graph/demo-data";
+import { getImportanceIndex, getImportanceLabel } from "@/lib/graph/importance";
 import { supabase } from "@/lib/supabase/client";
 import type { ChatNodeContext } from "@/types/chat";
 import type { Edge, GraphData, Node } from "@/types/graph";
 
+function normalizeNodes(nodes: Node[]) {
+  return nodes.map((node) => {
+    const importanceIndex = getImportanceIndex(node);
+
+    return {
+      ...node,
+      importance: getImportanceLabel(importanceIndex),
+      importance_index: importanceIndex,
+    };
+  });
+}
+
 function cloneGraphData(graphData: GraphData): GraphData {
   return {
-    nodes: graphData.nodes.map((node) => ({ ...node })),
+    nodes: normalizeNodes(graphData.nodes),
     edges: graphData.edges.map((edge) => ({ ...edge })),
   };
 }
@@ -33,7 +46,7 @@ export async function loadGraphData(): Promise<GraphData> {
     }
 
     return {
-      nodes: nodes as Node[],
+      nodes: normalizeNodes(nodes as Node[]),
       edges: edges as Edge[],
     };
   } catch {
@@ -87,7 +100,8 @@ export function buildChatNodeContext(
     title: node.title,
     summary: node.summary,
     node_type: node.node_type,
-    importance: node.importance,
+    importance: getImportanceLabel(getImportanceIndex(node)),
+    importanceIndex: getImportanceIndex(node),
     connectedNodeTitles,
     edgeTypes: neighboringEdges.map((edge) => edge.edge_type),
   };

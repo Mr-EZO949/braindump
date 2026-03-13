@@ -20,6 +20,7 @@ import type {
   SimulationNodeDatum,
 } from "d3-force";
 
+import { getImportanceIndex } from "@/lib/graph/importance";
 import type { Edge, EdgeType, GraphData, Node, NodeType } from "@/types/graph";
 
 type GraphCanvasProps = {
@@ -60,23 +61,30 @@ type GraphNode = Node &
   SimulationNodeDatum &
   LabelLayout & {
     categoryColor: string;
+    cueRadius: number;
     depth: number;
     driftAmplitudeX: number;
     driftAmplitudeY: number;
     driftPhaseX: number;
     driftPhaseY: number;
+    importanceScore: number;
     restX: number;
     restY: number;
+    sizeScale: number;
     visualTier: VisualTier;
   };
 
 type GraphLink = Edge &
   SimulationLinkDatum<GraphNode> & {
-    curvature: number;
     directional: boolean;
     family: "structural" | "semantic";
+    layoutDirection: "up" | "down" | "free";
     primary: boolean;
+    semanticIndex: number;
+    semanticTotal: number;
+    sourceAnchorOffset: number;
     strength: number;
+    targetAnchorOffset: number;
   };
 
 type DragState = {
@@ -122,51 +130,6 @@ const nodeTypeBranchOrder: Record<NodeType, number> = {
   task: 7,
 };
 
-const tierMetrics: Record<
-  VisualTier,
-  {
-    baseHeight: number;
-    fontSize: number;
-    maxCharsPerLine: number;
-    maxWidth: number;
-    minWidth: number;
-    padX: number;
-  }
-> = {
-  root: {
-    baseHeight: 118,
-    fontSize: 18,
-    maxCharsPerLine: 12,
-    maxWidth: 188,
-    minWidth: 150,
-    padX: 24,
-  },
-  anchor: {
-    baseHeight: 96,
-    fontSize: 15.5,
-    maxCharsPerLine: 12,
-    maxWidth: 170,
-    minWidth: 126,
-    padX: 20,
-  },
-  body: {
-    baseHeight: 74,
-    fontSize: 13.5,
-    maxCharsPerLine: 12,
-    maxWidth: 146,
-    minWidth: 104,
-    padX: 18,
-  },
-  leaf: {
-    baseHeight: 54,
-    fontSize: 12,
-    maxCharsPerLine: 11,
-    maxWidth: 120,
-    minWidth: 86,
-    padX: 14,
-  },
-};
-
 const edgeStrengthMap: Record<EdgeType, number> = {
   belongs_to: 1,
   required_for: 0.88,
@@ -178,15 +141,15 @@ const edgeStrengthMap: Record<EdgeType, number> = {
   related_to: 0.24,
 };
 
-const nodeTypeScore: Record<NodeType, number> = {
-  goal: 8,
-  project: 6,
-  concept: 5,
-  class: 4,
-  idea: 3,
-  question: 3,
-  journal: 2,
-  task: 1,
+const importanceVisualBounds = {
+  maxFontSize: 18.5,
+  maxHeight: 110,
+  maxScore: 97,
+  maxWidth: 194,
+  minFontSize: 11.6,
+  minHeight: 46,
+  minScore: 22,
+  minWidth: 88,
 };
 
 const defaultView: ViewState = {
@@ -219,10 +182,6 @@ function hashString(input: string) {
   }
 
   return hash;
-}
-
-function importanceRank(importance: Node["importance"]) {
-  return importance === "high" ? 3 : importance === "medium" ? 2 : 1;
 }
 
 function trimLine(line: string, maxLength: number) {
@@ -351,54 +310,81 @@ function getConnectedComponents(graphData: GraphData) {
   return components;
 }
 
-function getAnchorScore(node: Node, childCount: number) {
-  return importanceRank(node.importance) * 10 + nodeTypeScore[node.node_type] + childCount * 2.4;
+function normalizeImportanceScore(score: number) {
+  return clamp(
+    (score - importanceVisualBounds.minScore) /
+      (importanceVisualBounds.maxScore - importanceVisualBounds.minScore),
+    0,
+    1,
+  );
 }
 
-function getVisualTier(node: Node, hasParent: boolean, childCount: number) {
-  if (!hasParent && node.importance === "high") {
-    return "root" satisfies VisualTier;
+function getVisualTierFromScore(score: number): VisualTier {
+  if (score >= 86) {
+    return "root";
   }
 
-  if (node.importance === "high" || childCount >= 2) {
-    return "anchor" satisfies VisualTier;
+  if (score >= 68) {
+    return "anchor";
   }
 
-  if (node.importance === "medium") {
-    return "body" satisfies VisualTier;
+  if (score >= 44) {
+    return "body";
   }
 
-  return "leaf" satisfies VisualTier;
+  return "leaf";
 }
 
-function createNodeLayout(node: Node, visualTier: VisualTier) {
-  const metrics = tierMetrics[visualTier];
-  const lines = wrapTitle(node.title, metrics.maxCharsPerLine);
+function getImportanceScore(node: Node) {
+  return clamp(getImportanceIndex(node), importanceVisualBounds.minScore, importanceVisualBounds.maxScore);
+}
+
+function getAnchorScore(node: Node, childCount: number, depth: number, hasParent: boolean) {
+  return getImportanceScore(node) + childCount * 2.8 - depth * 0.8 + (!hasParent ? 1.2 : 0);
+}
+
+function createNodeLayout(node: Node, importanceScore: number) {
+  const sizeScale = easeOutCubic(normalizeImportanceScore(importanceScore));
+  const visualTier = getVisualTierFromScore(importanceScore);
+  const fontSize = lerp(
+    importanceVisualBounds.minFontSize,
+    importanceVisualBounds.maxFontSize,
+    sizeScale,
+  );
+  const maxCharsPerLine =
+    importanceScore >= 84 ? 12 : importanceScore >= 60 ? 11 : importanceScore >= 40 ? 10 : 9;
+  const lines = wrapTitle(node.title, maxCharsPerLine);
   const longestLineLength = lines.reduce(
     (longest, line) => Math.max(longest, line.length),
     0,
   );
-  const width = clamp(
-    longestLineLength * metrics.fontSize * 0.56 + metrics.padX * 2,
-    metrics.minWidth,
-    metrics.maxWidth,
+  const padX = lerp(14, 24, sizeScale);
+  const minWidth = lerp(importanceVisualBounds.minWidth, 138, sizeScale);
+  const maxWidth = lerp(126, importanceVisualBounds.maxWidth, sizeScale);
+  const baseHeight = lerp(
+    importanceVisualBounds.minHeight,
+    importanceVisualBounds.maxHeight,
+    sizeScale,
   );
+  const height = baseHeight + (lines.length - 1) * fontSize * 0.84;
+  const width = clamp(longestLineLength * fontSize * 0.55 + padX * 2, minWidth, maxWidth);
   const hash = hashString(node.id);
 
   return {
     categoryColor: nodeTypeCueMap[node.node_type],
+    cueRadius: lerp(3.4, 5.6, sizeScale),
     depth: 0,
-    driftAmplitudeX:
-      visualTier === "root" ? 0.6 : visualTier === "anchor" ? 0.9 : visualTier === "body" ? 1.3 : 1.7,
-    driftAmplitudeY:
-      visualTier === "root" ? 0.5 : visualTier === "anchor" ? 0.8 : visualTier === "body" ? 1.1 : 1.5,
+    driftAmplitudeX: lerp(2.05, 0.82, sizeScale),
+    driftAmplitudeY: lerp(1.42, 0.64, sizeScale),
     driftPhaseX: (hash % 360) * (Math.PI / 180),
     driftPhaseY: ((hash >> 5) % 360) * (Math.PI / 180),
-    fontSize: metrics.fontSize,
-    height: metrics.baseHeight,
+    fontSize,
+    height,
+    importanceScore,
     lines,
     restX: 0,
     restY: 0,
+    sizeScale,
     visualTier,
     width,
     x: 0,
@@ -407,8 +393,8 @@ function createNodeLayout(node: Node, visualTier: VisualTier) {
 }
 
 function getVerticalOffset(depth: number, componentIndex: number) {
-  const firstGap = componentIndex === 0 ? 238 : 204;
-  const laterGap = componentIndex === 0 ? 184 : 158;
+  const firstGap = componentIndex === 0 ? 258 : 224;
+  const laterGap = componentIndex === 0 ? 196 : 172;
 
   if (depth === 0) {
     return 0;
@@ -439,7 +425,10 @@ function getTreeBounds(nodes: GraphNode[]) {
 
 function buildGraphLayout(graphData: GraphData) {
   const nodesById = new Map(graphData.nodes.map((node) => [node.id, node]));
-  const parentCandidates = new Map<string, { parentId: string; priority: number }>();
+  const parentCandidates = new Map<
+    string,
+    { edgeId: string; parentId: string; priority: number }
+  >();
 
   graphData.edges.forEach((edge) => {
     const candidate = getPrimaryParentCandidate(edge);
@@ -452,6 +441,7 @@ function buildGraphLayout(graphData: GraphData) {
 
     if (!current || candidate.priority > current.priority) {
       parentCandidates.set(candidate.childId, {
+        edgeId: edge.id,
         parentId: candidate.parentId,
         priority: candidate.priority,
       });
@@ -470,14 +460,47 @@ function buildGraphLayout(graphData: GraphData) {
     childrenByParent.set(parentId, children);
   });
 
-  const laidOutNodes: GraphNode[] = graphData.nodes.map((node) => {
-    const childCount = childrenByParent.get(node.id)?.length ?? 0;
-    const hasParent = parentCandidates.has(node.id);
-    const visualTier = getVisualTier(node, hasParent, childCount);
+  const depthById = new Map<string, number>();
 
+  const getDepth = (nodeId: string, visited = new Set<string>()): number => {
+    const cachedDepth = depthById.get(nodeId);
+
+    if (typeof cachedDepth === "number") {
+      return cachedDepth;
+    }
+
+    if (visited.has(nodeId)) {
+      return 0;
+    }
+
+    const parentId = parentCandidates.get(nodeId)?.parentId;
+
+    if (!parentId) {
+      depthById.set(nodeId, 0);
+      return 0;
+    }
+
+    const nextVisited = new Set(visited);
+    nextVisited.add(nodeId);
+    const depth = getDepth(parentId, nextVisited) + 1;
+    depthById.set(nodeId, depth);
+    return depth;
+  };
+
+  graphData.nodes.forEach((node) => {
+    getDepth(node.id);
+  });
+
+  const importanceScoreById = new Map<string, number>();
+
+  graphData.nodes.forEach((node) => {
+    importanceScoreById.set(node.id, getImportanceScore(node));
+  });
+
+  const laidOutNodes: GraphNode[] = graphData.nodes.map((node) => {
     return {
       ...node,
-      ...createNodeLayout(node, visualTier),
+      ...createNodeLayout(node, importanceScoreById.get(node.id) ?? 48),
     };
   });
 
@@ -488,7 +511,12 @@ function buildGraphLayout(graphData: GraphData) {
       ...componentA.map((nodeId) => {
         const node = nodesById.get(nodeId);
         return node
-          ? getAnchorScore(node, childrenByParent.get(nodeId)?.length ?? 0)
+          ? getAnchorScore(
+              node,
+              childrenByParent.get(nodeId)?.length ?? 0,
+              depthById.get(nodeId) ?? 0,
+              parentCandidates.has(nodeId),
+            )
           : 0;
       }),
     );
@@ -496,21 +524,18 @@ function buildGraphLayout(graphData: GraphData) {
       ...componentB.map((nodeId) => {
         const node = nodesById.get(nodeId);
         return node
-          ? getAnchorScore(node, childrenByParent.get(nodeId)?.length ?? 0)
+          ? getAnchorScore(
+              node,
+              childrenByParent.get(nodeId)?.length ?? 0,
+              depthById.get(nodeId) ?? 0,
+              parentCandidates.has(nodeId),
+            )
           : 0;
       }),
     );
 
     return scoreB - scoreA || componentB.length - componentA.length;
   });
-
-  const componentOffsets = [
-    { x: 0, y: -470 },
-    { x: -540, y: 118 },
-    { x: 560, y: 152 },
-    { x: -760, y: 330 },
-    { x: 780, y: 330 },
-  ];
 
   sortedComponents.forEach((component, componentIndex) => {
     const componentSet = new Set(component);
@@ -523,16 +548,26 @@ function buildGraphLayout(graphData: GraphData) {
         const nodeA = nodesById.get(nodeIdA);
         const nodeB = nodesById.get(nodeIdB);
         const scoreA = nodeA
-          ? getAnchorScore(nodeA, childrenByParent.get(nodeIdA)?.length ?? 0)
+          ? getAnchorScore(
+              nodeA,
+              childrenByParent.get(nodeIdA)?.length ?? 0,
+              depthById.get(nodeIdA) ?? 0,
+              parentCandidates.has(nodeIdA),
+            )
           : 0;
         const scoreB = nodeB
-          ? getAnchorScore(nodeB, childrenByParent.get(nodeIdB)?.length ?? 0)
+          ? getAnchorScore(
+              nodeB,
+              childrenByParent.get(nodeIdB)?.length ?? 0,
+              depthById.get(nodeIdB) ?? 0,
+              parentCandidates.has(nodeIdB),
+            )
           : 0;
         return scoreB - scoreA;
       });
 
     const normalizedRoots = roots.length > 0 ? roots : [component[0]];
-    const horizontalGap = componentIndex === 0 ? 22 : 18;
+    const horizontalGap = componentIndex === 0 ? 32 : 26;
     const subtreeWidthCache = new Map<string, number>();
 
     const getSortedChildren = (parentId: string) =>
@@ -542,10 +577,20 @@ function buildGraphLayout(graphData: GraphData) {
           const nodeA = nodesById.get(childIdA);
           const nodeB = nodesById.get(childIdB);
           const scoreA = nodeA
-            ? getAnchorScore(nodeA, childrenByParent.get(childIdA)?.length ?? 0)
+            ? getAnchorScore(
+                nodeA,
+                childrenByParent.get(childIdA)?.length ?? 0,
+                depthById.get(childIdA) ?? 0,
+                parentCandidates.has(childIdA),
+              )
             : 0;
           const scoreB = nodeB
-            ? getAnchorScore(nodeB, childrenByParent.get(childIdB)?.length ?? 0)
+            ? getAnchorScore(
+                nodeB,
+                childrenByParent.get(childIdB)?.length ?? 0,
+                depthById.get(childIdB) ?? 0,
+                parentCandidates.has(childIdB),
+              )
             : 0;
           const branchOrderA = nodeA ? nodeTypeBranchOrder[nodeA.node_type] : 99;
           const branchOrderB = nodeB ? nodeTypeBranchOrder[nodeB.node_type] : 99;
@@ -643,11 +688,22 @@ function buildGraphLayout(graphData: GraphData) {
       .map((nodeId) => laidOutNodeMap.get(nodeId))
       .filter(isDefined);
     const bounds = getTreeBounds(componentNodes);
+    const componentWidth = bounds.maxX - bounds.minX;
+    const componentHeight = bounds.maxY - bounds.minY;
     const componentOffset =
-      componentOffsets[componentIndex] ?? {
-        x: (componentIndex % 2 === 0 ? 1 : -1) * (560 + componentIndex * 44),
-        y: 210 + componentIndex * 110,
-      };
+      componentIndex === 0
+        ? { x: 0, y: -520 }
+        : {
+            x:
+              (componentIndex % 2 === 1 ? -1 : 1) *
+              (760 +
+                Math.floor((componentIndex - 1) / 2) * 110 +
+                componentWidth * 0.14),
+            y:
+              120 +
+              Math.floor((componentIndex - 1) / 2) *
+                Math.max(220, componentHeight * 0.5 + 120),
+          };
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const shiftX = componentOffset.x - centerX;
     const shiftY = componentOffset.y - bounds.minY;
@@ -660,46 +716,123 @@ function buildGraphLayout(graphData: GraphData) {
     });
   });
 
-  const structuralParentPairs = new Set(
-    graphData.edges
-      .filter((edge) => edge.edge_type === "belongs_to")
-      .map((edge) => `${edge.source_node_id}:${edge.target_node_id}`),
+  const primaryEdgeIds = new Set(
+    Array.from(parentCandidates.values()).map((candidate) => candidate.edgeId),
   );
+  const childOrderByParent = new Map<string, { count: number; index: number }>();
+
+  Array.from(childrenByParent.entries()).forEach(([parentId, childIds]) => {
+    const sortedChildren = [...childIds].sort((childIdA, childIdB) => {
+      const nodeA = nodesById.get(childIdA);
+      const nodeB = nodesById.get(childIdB);
+      const scoreA = nodeA
+        ? getAnchorScore(
+            nodeA,
+            childrenByParent.get(childIdA)?.length ?? 0,
+            depthById.get(childIdA) ?? 0,
+            parentCandidates.has(childIdA),
+          )
+        : 0;
+      const scoreB = nodeB
+        ? getAnchorScore(
+            nodeB,
+            childrenByParent.get(childIdB)?.length ?? 0,
+            depthById.get(childIdB) ?? 0,
+            parentCandidates.has(childIdB),
+          )
+        : 0;
+
+      return scoreB - scoreA || childIdA.localeCompare(childIdB);
+    });
+
+    sortedChildren.forEach((childId, index) => {
+      childOrderByParent.set(`${parentId}:${childId}`, {
+        count: sortedChildren.length,
+        index,
+      });
+    });
+  });
 
   const laidOutLinks: GraphLink[] = graphData.edges.map((edge) => {
-    const hash = hashString(edge.id);
-    const family =
-      edge.edge_type === "belongs_to" ||
-      edge.edge_type === "prerequisite_for" ||
-      edge.edge_type === "required_for"
-        ? "structural"
-        : "semantic";
-    const directional =
+    const structuralCandidate =
       edge.edge_type === "belongs_to" ||
       edge.edge_type === "prerequisite_for" ||
       edge.edge_type === "required_for";
-    const primary = structuralParentPairs.has(
-      `${edge.source_node_id}:${edge.target_node_id}`,
-    );
-    const curvature =
+    const directional =
+      structuralCandidate || edge.edge_type === "blocks" || edge.edge_type === "useful_for";
+    const primary = primaryEdgeIds.has(edge.id);
+    const family = structuralCandidate && primary ? "structural" : "semantic";
+    const layoutDirection =
       edge.edge_type === "belongs_to"
-        ? ((hash % 2 === 0 ? 1 : -1) * 0.04)
-        : edge.edge_type === "required_for"
-          ? ((hash % 2 === 0 ? 1 : -1) * 0.14)
-          : edge.edge_type === "prerequisite_for"
-            ? ((hash % 2 === 0 ? 1 : -1) * 0.18)
-            : ((hash % 2 === 0 ? 1 : -1) * 0.22);
+        ? "up"
+        : edge.edge_type === "required_for" || edge.edge_type === "prerequisite_for"
+          ? "down"
+          : "free";
+    let sourceAnchorOffset = 0;
+    let targetAnchorOffset = 0;
+
+    if (family === "structural") {
+      const parentId =
+        edge.edge_type === "belongs_to" ? edge.target_node_id : edge.source_node_id;
+      const childId =
+        edge.edge_type === "belongs_to" ? edge.source_node_id : edge.target_node_id;
+      const childOrder = childOrderByParent.get(`${parentId}:${childId}`);
+
+      if (childOrder) {
+        const parentNode = laidOutNodeMap.get(parentId);
+        const childNode = laidOutNodeMap.get(childId);
+        const spread =
+          childOrder.count <= 1
+            ? 0
+            : (childOrder.index - (childOrder.count - 1) / 2) *
+              Math.min((parentNode?.width ?? 120) * 0.22, 34);
+
+        if (edge.edge_type === "belongs_to") {
+          sourceAnchorOffset = clamp(spread * 0.28, -(childNode?.width ?? 120) * 0.16, (childNode?.width ?? 120) * 0.16);
+          targetAnchorOffset = spread;
+        } else {
+          sourceAnchorOffset = spread;
+          targetAnchorOffset = clamp(spread * 0.26, -(childNode?.width ?? 120) * 0.16, (childNode?.width ?? 120) * 0.16);
+        }
+      }
+    }
 
     return {
       ...edge,
-      curvature,
       directional,
       family,
+      layoutDirection,
       primary,
+      semanticIndex: 0,
+      semanticTotal: 1,
+      sourceAnchorOffset,
       source: edge.source_node_id,
       strength: edgeStrengthMap[edge.edge_type],
+      targetAnchorOffset,
       target: edge.target_node_id,
     };
+  });
+
+  const semanticGroups = new Map<string, GraphLink[]>();
+
+  laidOutLinks.forEach((link) => {
+    if (link.family === "structural") {
+      return;
+    }
+
+    const pairKey = [link.source_node_id, link.target_node_id].sort().join(":");
+    const group = semanticGroups.get(pairKey) ?? [];
+    group.push(link);
+    semanticGroups.set(pairKey, group);
+  });
+
+  semanticGroups.forEach((links) => {
+    links
+      .sort((linkA, linkB) => linkA.edge_type.localeCompare(linkB.edge_type))
+      .forEach((link, index) => {
+        link.semanticIndex = index;
+        link.semanticTotal = links.length;
+      });
   });
 
   return {
@@ -795,6 +928,27 @@ function getRenderedNodePosition(
   };
 }
 
+function getRoundedBoundaryAnchor(
+  node: GraphNode,
+  position: { x: number; y: number },
+  target: { x: number; y: number },
+  retreat = 0,
+) {
+  const dx = target.x - position.x;
+  const dy = target.y - position.y;
+  const distance = Math.max(Math.hypot(dx, dy), 1);
+  const rx = Math.max(node.width / 2 - 10, 18);
+  const ry = Math.max(node.height / 2 - 8, 16);
+  const scale = 1 / Math.max(Math.abs(dx) / rx, Math.abs(dy) / ry, 0.0001);
+  const boundaryX = position.x + dx * scale;
+  const boundaryY = position.y + dy * scale;
+
+  return {
+    x: boundaryX - (dx / distance) * retreat,
+    y: boundaryY - (dy / distance) * retreat,
+  };
+}
+
 function getLinkEndpoints(
   link: GraphLink,
   idleTime: number,
@@ -804,24 +958,31 @@ function getLinkEndpoints(
   const target = link.target as GraphNode;
   const sourcePosition = getRenderedNodePosition(source, idleTime, draggingNodeId);
   const targetPosition = getRenderedNodePosition(target, idleTime, draggingNodeId);
+
   if (link.family === "structural") {
-    const startX = sourcePosition.x;
-    const startY = sourcePosition.y + source.height / 2 - 5;
-    const endX = targetPosition.x;
-    const endY = targetPosition.y - target.height / 2 + 5;
-    const verticalSpan = Math.max(endY - startY, 44);
-    const bend = clamp((endX - startX) * 0.16, -42, 42);
+    const startSide = link.layoutDirection === "up" ? -1 : 1;
+    const endSide = link.layoutDirection === "up" ? 1 : -1;
+    const startX = sourcePosition.x + link.sourceAnchorOffset;
+    const startY = sourcePosition.y + startSide * (source.height / 2 - 5);
+    const rawEndX = targetPosition.x + link.targetAnchorOffset;
+    const rawEndY = targetPosition.y + endSide * (target.height / 2 - 5);
+    const endpointDx = rawEndX - startX;
+    const endpointDy = rawEndY - startY;
+    const directionLength = Math.max(Math.hypot(endpointDx, endpointDy), 1);
+    const endX = rawEndX - (endpointDx / directionLength) * 10;
+    const endY = rawEndY - (endpointDy / directionLength) * 10;
+    const verticalSpan = Math.max(Math.abs(endY - startY), 44);
     const controlOffset = clamp(
-      verticalSpan * (link.edge_type === "belongs_to" ? 0.42 : 0.36),
-      32,
-      104,
+      verticalSpan * (link.edge_type === "belongs_to" ? 0.44 : 0.36),
+      38,
+      108,
     );
 
     return {
-      controlX: startX + bend * 0.28,
-      controlX2: endX - bend * 0.58,
-      controlY: startY + controlOffset,
-      controlY2: endY - controlOffset * 0.74,
+      controlX: startX,
+      controlX2: endX,
+      controlY: startY + startSide * controlOffset,
+      controlY2: endY - endSide * controlOffset,
       endX,
       endY,
       startX,
@@ -832,27 +993,30 @@ function getLinkEndpoints(
   const dx = targetPosition.x - sourcePosition.x;
   const dy = targetPosition.y - sourcePosition.y;
   const distance = Math.max(Math.hypot(dx, dy), 1);
-  const directionX = dx / distance;
-  const directionY = dy / distance;
   const normalX = -dy / distance;
   const normalY = dx / distance;
-  const sourceInsetX = source.width * 0.24;
-  const targetInsetX = target.width * 0.24;
-  const sourceInsetY = source.height * 0.2;
-  const targetInsetY = target.height * 0.2;
-  const startX = sourcePosition.x + directionX * sourceInsetX + normalX * 5;
-  const startY = sourcePosition.y + directionY * sourceInsetY;
-  const endX = targetPosition.x - directionX * targetInsetX;
-  const endY = targetPosition.y - directionY * targetInsetY;
+  const semanticSpread =
+    link.semanticTotal <= 1
+      ? 0
+      : (link.semanticIndex - (link.semanticTotal - 1) / 2) * 14;
+  const midpoint = {
+    x: (sourcePosition.x + targetPosition.x) / 2,
+    y: (sourcePosition.y + targetPosition.y) / 2,
+  };
+  const startAnchor = getRoundedBoundaryAnchor(source, sourcePosition, targetPosition, 2);
+  const endAnchor = getRoundedBoundaryAnchor(target, targetPosition, sourcePosition, 10);
+  const startX = startAnchor.x + normalX * semanticSpread * 0.3;
+  const startY = startAnchor.y + normalY * semanticSpread * 0.3;
+  const endX = endAnchor.x + normalX * semanticSpread * 0.16;
+  const endY = endAnchor.y + normalY * semanticSpread * 0.16;
+  const curveMagnitude =
+    Math.min(92, Math.max(20, distance * 0.14 + Math.abs(semanticSpread) * 0.9)) *
+    (hashString(link.id) % 2 === 0 ? 1 : -1);
 
   return {
-    controlX:
-      (startX + endX) / 2 +
-      normalX * Math.min(84, Math.max(24, distance * 0.18)) * link.curvature,
+    controlX: midpoint.x + normalX * (curveMagnitude + semanticSpread),
     controlX2: undefined,
-    controlY:
-      (startY + endY) / 2 +
-      normalY * Math.min(84, Math.max(24, distance * 0.18)) * link.curvature,
+    controlY: midpoint.y + normalY * (curveMagnitude + semanticSpread),
     controlY2: undefined,
     endX,
     endY,
@@ -864,10 +1028,10 @@ function getLinkEndpoints(
 function getLinkPath(link: GraphLink, idleTime: number, draggingNodeId: string | null) {
   const { controlX, controlX2, controlY, controlY2, endX, endY, startX, startY } =
     getLinkEndpoints(
-    link,
-    idleTime,
-    draggingNodeId,
-  );
+      link,
+      idleTime,
+      draggingNodeId,
+    );
 
   if (link.family === "structural" && isDefined(controlX2) && isDefined(controlY2)) {
     return `M ${startX} ${startY} C ${controlX} ${controlY} ${controlX2} ${controlY2} ${endX} ${endY}`;
@@ -907,69 +1071,69 @@ function getEdgeVisualStyle(
   const structural = link.family === "structural";
   const directional = link.directional;
 
-  let opacity = 0.12;
-  let strokeWidth = 0.85;
-  let stroke = structural ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.12)";
+  let opacity = structural ? 0.28 : 0.08;
+  let strokeWidth = structural ? 1.55 : 0.82;
+  let stroke = structural ? "rgba(255,255,255,0.24)" : "rgba(255,255,255,0.10)";
   let dashArray: string | undefined;
   let markerEnd: string | undefined;
 
   switch (link.edge_type) {
     case "belongs_to":
-      opacity = 0.4;
-      strokeWidth = 1.8 + link.strength * 1.1;
-      stroke = "rgba(255,255,255,0.26)";
+      opacity = structural ? 0.52 : 0.18;
+      strokeWidth = 1.8 + link.strength * 1.55;
+      stroke = structural ? "rgba(255,255,255,0.34)" : "rgba(255,255,255,0.14)";
       break;
     case "required_for":
-      opacity = 0.32;
-      strokeWidth = 1.55 + link.strength * 0.95;
-      stroke = "rgba(255,255,255,0.22)";
-      dashArray = "10 7";
+      opacity = structural ? 0.44 : 0.16;
+      strokeWidth = 1.45 + link.strength * 1.35;
+      stroke = structural ? "rgba(255,255,255,0.30)" : "rgba(255,255,255,0.14)";
+      dashArray = "11 7";
       break;
     case "prerequisite_for":
-      opacity = 0.24;
-      strokeWidth = 1.18 + link.strength * 0.74;
-      stroke = "rgba(255,255,255,0.185)";
-      dashArray = "7 7";
+      opacity = structural ? 0.34 : 0.13;
+      strokeWidth = 1.22 + link.strength * 1.1;
+      stroke = structural ? "rgba(255,255,255,0.24)" : "rgba(255,255,255,0.12)";
+      dashArray = "8 7";
       break;
     case "supports":
-      opacity = 0.14;
-      strokeWidth = 0.92 + link.strength * 0.54;
-      stroke = "rgba(255,255,255,0.135)";
+      opacity = 0.12;
+      strokeWidth = 0.82 + link.strength * 0.62;
+      stroke = "rgba(255,255,255,0.13)";
       break;
     case "related_to":
-      opacity = 0.055;
-      strokeWidth = 0.62 + link.strength * 0.34;
-      stroke = "rgba(255,255,255,0.08)";
+      opacity = 0.045;
+      strokeWidth = 0.54 + link.strength * 0.38;
+      stroke = "rgba(255,255,255,0.072)";
       break;
     case "useful_for":
-      opacity = 0.11;
-      strokeWidth = 0.78 + link.strength * 0.42;
-      stroke = "rgba(255,255,255,0.112)";
+      opacity = 0.1;
+      strokeWidth = 0.74 + link.strength * 0.46;
+      stroke = "rgba(255,255,255,0.104)";
       break;
     case "blocks":
       opacity = 0.18;
-      strokeWidth = 1.02 + link.strength * 0.58;
-      stroke = "rgba(255,255,255,0.155)";
+      strokeWidth = 0.92 + link.strength * 0.7;
+      stroke = "rgba(255,255,255,0.16)";
       dashArray = "4 5";
       break;
     case "inspired_by":
-      opacity = 0.08;
-      strokeWidth = 0.68 + link.strength * 0.28;
-      stroke = "rgba(255,255,255,0.092)";
+      opacity = 0.07;
+      strokeWidth = 0.6 + link.strength * 0.26;
+      stroke = "rgba(255,255,255,0.088)";
       dashArray = "2 7";
       break;
   }
 
   if (emphasized) {
-    opacity = clamp(opacity * 2.25 + 0.12, 0, 0.96);
-    strokeWidth += structural ? 1.05 : 0.7;
-    stroke = structural ? "rgba(214,68,82,0.86)" : "rgba(214,68,82,0.58)";
+    opacity = clamp(opacity * 2.1 + 0.12, 0, 0.94);
+    strokeWidth += structural ? 1.15 : 0.68;
+    stroke = structural ? "rgba(214,68,82,0.88)" : "rgba(214,68,82,0.54)";
   }
 
   if (dimmed) {
-    opacity *= structural ? 0.24 : 0.16;
-    strokeWidth *= structural ? 0.82 : 0.76;
-    stroke = structural ? "rgba(255,255,255,0.068)" : "rgba(255,255,255,0.048)";
+    opacity *= structural ? 0.26 : 0.18;
+    strokeWidth *= structural ? 0.8 : 0.72;
+    stroke = structural ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.05)";
   }
 
   if (directional) {
@@ -1183,7 +1347,7 @@ export function GraphCanvas({
     let lastFrameTime = 0;
 
     const animate = (now: number) => {
-      if (now - lastFrameTime >= 46) {
+      if (now - lastFrameTime >= 32) {
         lastFrameTime = now;
         setIdleTime(now);
       }
@@ -1210,17 +1374,17 @@ export function GraphCanvas({
 
         switch (link.edge_type) {
           case "belongs_to":
-            return Math.max(source.height, target.height) + 54;
+            return Math.max(source.height, target.height) + 68;
           case "required_for":
-            return Math.max(source.width, target.width) * 0.42 + 122;
+            return Math.max(source.width, target.width) * 0.46 + 136;
           case "prerequisite_for":
-            return Math.max(source.width, target.width) * 0.46 + 132;
+            return Math.max(source.width, target.width) * 0.5 + 148;
           case "supports":
-            return Math.max(source.width, target.width) * 0.54 + 148;
+            return Math.max(source.width, target.width) * 0.58 + 168;
           case "related_to":
-            return Math.max(source.width, target.width) * 0.62 + 182;
+            return Math.max(source.width, target.width) * 0.74 + 226;
           default:
-            return Math.max(source.width, target.width) * 0.56 + 160;
+            return Math.max(source.width, target.width) * 0.62 + 188;
         }
       })
       .strength((link) => {
@@ -1249,7 +1413,7 @@ export function GraphCanvas({
       .force(
         "collide",
         forceCollide<GraphNode>().radius(
-          (node) => Math.max(node.width, node.height) * 0.48 + 16,
+          (node) => Math.max(node.width, node.height) * 0.52 + 22,
         ),
       )
       .force("restX", forceX<GraphNode>((node) => node.restX).strength(0.2))
@@ -1610,25 +1774,25 @@ export function GraphCanvas({
           </linearGradient>
           <marker
             id="edge-arrow-structural"
-            markerHeight="8.5"
+            markerHeight="10"
             markerUnits="userSpaceOnUse"
-            markerWidth="8.5"
+            markerWidth="10"
             orient="auto"
-            refX="7.2"
-            refY="4.25"
+            refX="8.6"
+            refY="5"
           >
-            <path d="M 0 0 L 8.5 4.25 L 0 8.5 z" fill="rgba(255,255,255,0.42)" />
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(255,255,255,0.52)" />
           </marker>
           <marker
             id="edge-arrow-emphasis"
-            markerHeight="8.5"
+            markerHeight="10"
             markerUnits="userSpaceOnUse"
-            markerWidth="8.5"
+            markerWidth="10"
             orient="auto"
-            refX="7.2"
-            refY="4.25"
+            refX="8.6"
+            refY="5"
           >
-            <path d="M 0 0 L 8.5 4.25 L 0 8.5 z" fill="rgba(214,68,82,0.92)" />
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(214,68,82,0.94)" />
           </marker>
         </defs>
 
@@ -1639,6 +1803,10 @@ export function GraphCanvas({
               (!focusNodeId && hoveredInteraction.connectedEdges.has(link.id));
             const dimmed = Boolean(focusNodeId) && !selectedInteraction.connectedEdges.has(link.id);
             const style = getEdgeVisualStyle(link, emphasized, dimmed);
+            const idlePulse =
+              emphasized || dimmed
+                ? 1
+                : 0.97 + Math.sin(idleTime * 0.00036 + hashString(link.id)) * 0.03;
 
             return (
               <path
@@ -1646,7 +1814,7 @@ export function GraphCanvas({
                 fill="none"
                 key={link.id}
                 markerEnd={style.markerEnd}
-                opacity={style.opacity}
+                opacity={style.opacity * idlePulse}
                 stroke={style.stroke}
                 strokeDasharray={style.dashArray}
                 strokeLinecap="round"
@@ -1673,8 +1841,7 @@ export function GraphCanvas({
             const nodeFilter = selected ? "url(#node-selected-shadow)" : "url(#node-shadow)";
             const lineHeight = node.lines.length === 1 ? 0 : node.fontSize * 1.04;
             const initialY = node.lines.length === 1 ? 2 : -lineHeight / 2 + 1;
-            const cueRadius =
-              node.visualTier === "root" ? 5.4 : node.visualTier === "anchor" ? 4.7 : 3.8;
+            const cueRadius = node.cueRadius;
             const nodeRadius = Math.min(node.width, node.height) * 0.44;
 
             return (

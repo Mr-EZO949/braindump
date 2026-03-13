@@ -4,6 +4,7 @@ import {
   getChatScopeTitle,
   getSuggestedPrompts,
 } from "@/lib/graph/chat";
+import { getFocusItems, getLinkedNodePerspectives } from "@/lib/graph/insights";
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import type { ChatMessage, ChatNodeContext, ChatScope, RailTab } from "@/types/chat";
 import type { GraphData } from "@/types/graph";
@@ -42,51 +43,8 @@ export function ContextRail({
   selectedNode,
 }: ContextRailProps) {
   const promptSuggestions = getSuggestedPrompts(chatScope);
-  const linkedNodes = selectedNode
-    ? Array.from(
-        graphData.edges
-          .filter(
-            (edge) =>
-              edge.source_node_id === selectedNode.id || edge.target_node_id === selectedNode.id,
-          )
-          .reduce((accumulator, edge) => {
-            const linkedNodeId =
-              edge.source_node_id === selectedNode.id
-                ? edge.target_node_id
-                : edge.source_node_id;
-            const linkedNode =
-              graphData.nodes.find((node) => node.id === linkedNodeId) ?? null;
-
-            if (!linkedNode) {
-              return accumulator;
-            }
-
-            const existing = accumulator.get(linkedNodeId);
-
-            if (existing) {
-              existing.edgeTypes.add(edge.edge_type);
-              return accumulator;
-            }
-
-            accumulator.set(linkedNodeId, {
-              edgeTypes: new Set([edge.edge_type]),
-              node: linkedNode,
-            });
-
-            return accumulator;
-          }, new Map<
-            string,
-            {
-              edgeTypes: Set<GraphData["edges"][number]["edge_type"]>;
-              node: GraphData["nodes"][number];
-            }
-          >())
-          .values(),
-      ).map(({ edgeTypes, node }) => ({
-        edgeTypes: Array.from(edgeTypes),
-        node,
-      }))
-    : [];
+  const linkedNodes = getLinkedNodePerspectives(graphData, selectedNode?.id ?? null);
+  const focusItems = getFocusItems(graphData, selectedNode);
 
   return (
     <div
@@ -127,6 +85,16 @@ export function ContextRail({
                 Details
               </button>
               <button
+                aria-selected={activeTab === "focus"}
+                className="rail-tab-button"
+                data-active={activeTab === "focus"}
+                onClick={() => onSetActiveTab("focus")}
+                role="tab"
+                type="button"
+              >
+                Focus
+              </button>
+              <button
                 aria-selected={activeTab === "chat"}
                 className="rail-tab-button"
                 data-active={activeTab === "chat"}
@@ -157,6 +125,20 @@ export function ContextRail({
                     Use workspace
                   </button>
                 ) : null}
+              </div>
+            ) : activeTab === "focus" ? (
+              <div className="mt-5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+                  Focus
+                </p>
+                <h2 className="mt-3 text-[18px] font-semibold tracking-[-0.04em] text-[var(--color-text-primary)]">
+                  {selectedNode ? selectedNode.title : "No selection"}
+                </h2>
+                <p className="mt-3 text-[13px] leading-6 text-[var(--color-text-secondary)]">
+                  {selectedNode
+                    ? "Contextual next actions derived from this branch when the graph supports them."
+                    : "Select a node to surface concrete next actions."}
+                </p>
               </div>
             ) : (
               <div className="mt-5">
@@ -260,6 +242,59 @@ export function ContextRail({
                 </p>
               </div>
             </div>
+          ) : activeTab === "focus" ? (
+            <div className="shell-scrollbar flex-1 overflow-y-auto px-6 py-6">
+              {selectedNode ? (
+                focusItems.length > 0 ? (
+                  <div className="space-y-3">
+                    {focusItems.map((item, index) => (
+                      <button
+                        className="w-full rounded-[14px] border border-[color:var(--color-border-faint)] bg-[rgba(255,255,255,0.015)] px-4 py-4 text-left transition-colors duration-150 ease-out hover:border-[rgba(214,68,82,0.22)] hover:bg-[rgba(255,255,255,0.028)]"
+                        key={item.id}
+                        onClick={() => {
+                          if (item.nodeId) {
+                            onSelectLinkedNode(item.nodeId);
+                          }
+                        }}
+                        type="button"
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="mt-[2px] text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                            {String(index + 1).padStart(2, "0")}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-medium tracking-[-0.02em] text-[var(--color-text-primary)]">
+                              {item.title}
+                            </p>
+                            <p className="mt-2 text-[12px] leading-5 text-[var(--color-text-secondary)]">
+                              {item.detail}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-[12px] font-medium tracking-[-0.01em] text-[var(--color-text-secondary)]">
+                      No actionable focus yet.
+                    </p>
+                    <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
+                      This branch does not currently expose concrete next steps worth surfacing.
+                    </p>
+                  </div>
+                )
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[12px] font-medium tracking-[-0.01em] text-[var(--color-text-secondary)]">
+                    No selection
+                  </p>
+                  <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
+                    Select a node to derive likely next steps from its local graph structure.
+                  </p>
+                </div>
+              )}
+            </div>
           ) : (
             <div className="shell-scrollbar flex-1 overflow-y-auto px-6 py-6">
               {selectedNode ? (
@@ -275,7 +310,9 @@ export function ContextRail({
                       </div>
                       <div className="context-detail-row">
                         <span className="context-detail-label">Importance</span>
-                        <span className="context-detail-value">{selectedNode.importance}</span>
+                        <span className="context-detail-value">
+                          {selectedNode.importance} · {selectedNode.importanceIndex}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -295,7 +332,7 @@ export function ContextRail({
                     </p>
                     <div className="mt-4 space-y-3">
                       {linkedNodes.length > 0 ? (
-                        linkedNodes.map(({ edgeTypes, node }) => (
+                        linkedNodes.map(({ labels, node }) => (
                           <button
                             className="context-linked-node"
                             key={`${selectedNode.id}-${node.id}`}
@@ -304,7 +341,7 @@ export function ContextRail({
                           >
                             <span className="context-linked-node-title">{node.title}</span>
                             <span className="context-linked-node-meta">
-                              {edgeTypes.map((edgeType) => edgeType.replaceAll("_", " ")).join(" • ")}
+                              {labels.join(" • ")}
                             </span>
                           </button>
                         ))

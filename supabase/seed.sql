@@ -2,6 +2,9 @@ do $$
 declare
   seed_user_id uuid;
 begin
+  alter table public.nodes
+  add column if not exists importance_index integer;
+
   select id
     into seed_user_id
   from auth.users
@@ -68,6 +71,55 @@ begin
       importance = excluded.importance,
       color = excluded.color,
       updated_at = now();
+
+  update public.nodes
+    set importance_index = case id
+      when '10000000-0000-0000-0000-000000000001' then 96
+      when '10000000-0000-0000-0000-000000000002' then 92
+      when '10000000-0000-0000-0000-000000000003' then 84
+      when '10000000-0000-0000-0000-000000000004' then 78
+      when '10000000-0000-0000-0000-000000000005' then 72
+      when '10000000-0000-0000-0000-000000000006' then 70
+      when '10000000-0000-0000-0000-000000000007' then 68
+      when '10000000-0000-0000-0000-000000000008' then 82
+      when '10000000-0000-0000-0000-000000000009' then 63
+      when '10000000-0000-0000-0000-000000000010' then 58
+      when '10000000-0000-0000-0000-000000000011' then 66
+      when '10000000-0000-0000-0000-000000000012' then 64
+      when '10000000-0000-0000-0000-000000000013' then 46
+      when '10000000-0000-0000-0000-000000000014' then 60
+      when '10000000-0000-0000-0000-000000000015' then 48
+      when '10000000-0000-0000-0000-000000000016' then 56
+      when '10000000-0000-0000-0000-000000000017' then 54
+      when '10000000-0000-0000-0000-000000000018' then 58
+      when '10000000-0000-0000-0000-000000000019' then 42
+      when '10000000-0000-0000-0000-000000000020' then 36
+      when '10000000-0000-0000-0000-000000000021' then 52
+      when '10000000-0000-0000-0000-000000000022' then 30
+      when '10000000-0000-0000-0000-000000000023' then 32
+      when '10000000-0000-0000-0000-000000000024' then 38
+      when '10000000-0000-0000-0000-000000000025' then 44
+      when '10000000-0000-0000-0000-000000000026' then 55
+      when '10000000-0000-0000-0000-000000000027' then 47
+      when '10000000-0000-0000-0000-000000000028' then 31
+      when '10000000-0000-0000-0000-000000000029' then 29
+      when '10000000-0000-0000-0000-000000000030' then 40
+      when '10000000-0000-0000-0000-000000000031' then 26
+      when '10000000-0000-0000-0000-000000000032' then 28
+      when '10000000-0000-0000-0000-000000000033' then 43
+      when '10000000-0000-0000-0000-000000000034' then 24
+      when '10000000-0000-0000-0000-000000000035' then 34
+      else importance_index
+    end
+  where id::text like '10000000-0000-0000-0000-%';
+
+  update public.nodes
+    set importance = case
+      when importance_index >= 72 then 'high'
+      when importance_index >= 45 then 'medium'
+      else 'low'
+    end
+  where id::text like '10000000-0000-0000-0000-%';
 
   insert into public.edges (
     id,

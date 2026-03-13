@@ -28,6 +28,7 @@ export interface Node {
   raw_text: string | null;
   node_type: NodeType;
   importance: Importance;
+  importance_index?: number | null;
   color: string | null;
   created_at: string;
   updated_at: string;

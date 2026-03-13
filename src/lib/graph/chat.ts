@@ -180,7 +180,7 @@ function inferNodeReply(
       },
       {
         label: "Importance",
-        value: node.importance,
+        value: `${node.importance} · ${node.importanceIndex}`,
       },
       {
         label: "Related nodes",
