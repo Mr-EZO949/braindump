@@ -142,14 +142,14 @@ const edgeStrengthMap: Record<EdgeType, number> = {
 };
 
 const importanceVisualBounds = {
-  maxFontSize: 18.5,
-  maxHeight: 110,
+  maxFontSize: 21,
+  maxHeight: 132,
   maxScore: 97,
-  maxWidth: 194,
-  minFontSize: 11.6,
-  minHeight: 46,
+  maxWidth: 236,
+  minFontSize: 10.4,
+  minHeight: 38,
   minScore: 22,
-  minWidth: 88,
+  minWidth: 72,
 };
 
 const defaultView: ViewState = {
@@ -344,7 +344,8 @@ function getAnchorScore(node: Node, childCount: number, depth: number, hasParent
 }
 
 function createNodeLayout(node: Node, importanceScore: number) {
-  const sizeScale = easeOutCubic(normalizeImportanceScore(importanceScore));
+  const normalizedScore = normalizeImportanceScore(importanceScore);
+  const sizeScale = Math.pow(normalizedScore, 1.28);
   const visualTier = getVisualTierFromScore(importanceScore);
   const fontSize = lerp(
     importanceVisualBounds.minFontSize,
@@ -352,14 +353,14 @@ function createNodeLayout(node: Node, importanceScore: number) {
     sizeScale,
   );
   const maxCharsPerLine =
-    importanceScore >= 84 ? 12 : importanceScore >= 60 ? 11 : importanceScore >= 40 ? 10 : 9;
+    importanceScore >= 84 ? 13 : importanceScore >= 64 ? 12 : importanceScore >= 42 ? 10 : 9;
   const lines = wrapTitle(node.title, maxCharsPerLine);
   const longestLineLength = lines.reduce(
     (longest, line) => Math.max(longest, line.length),
     0,
   );
-  const padX = lerp(14, 24, sizeScale);
-  const minWidth = lerp(importanceVisualBounds.minWidth, 138, sizeScale);
+  const padX = lerp(12, 26, sizeScale);
+  const minWidth = lerp(importanceVisualBounds.minWidth, 154, sizeScale);
   const maxWidth = lerp(126, importanceVisualBounds.maxWidth, sizeScale);
   const baseHeight = lerp(
     importanceVisualBounds.minHeight,
@@ -944,8 +945,8 @@ function getRoundedBoundaryAnchor(
   const boundaryY = position.y + dy * scale;
 
   return {
-    x: boundaryX - (dx / distance) * retreat,
-    y: boundaryY - (dy / distance) * retreat,
+    x: boundaryX + (dx / distance) * retreat,
+    y: boundaryY + (dy / distance) * retreat,
   };
 }
 
@@ -963,14 +964,9 @@ function getLinkEndpoints(
     const startSide = link.layoutDirection === "up" ? -1 : 1;
     const endSide = link.layoutDirection === "up" ? 1 : -1;
     const startX = sourcePosition.x + link.sourceAnchorOffset;
-    const startY = sourcePosition.y + startSide * (source.height / 2 - 5);
-    const rawEndX = targetPosition.x + link.targetAnchorOffset;
-    const rawEndY = targetPosition.y + endSide * (target.height / 2 - 5);
-    const endpointDx = rawEndX - startX;
-    const endpointDy = rawEndY - startY;
-    const directionLength = Math.max(Math.hypot(endpointDx, endpointDy), 1);
-    const endX = rawEndX - (endpointDx / directionLength) * 10;
-    const endY = rawEndY - (endpointDy / directionLength) * 10;
+    const startY = sourcePosition.y + startSide * (source.height / 2 + 7);
+    const endX = targetPosition.x + link.targetAnchorOffset;
+    const endY = targetPosition.y + endSide * (target.height / 2 + 10);
     const verticalSpan = Math.max(Math.abs(endY - startY), 44);
     const controlOffset = clamp(
       verticalSpan * (link.edge_type === "belongs_to" ? 0.44 : 0.36),
@@ -982,7 +978,7 @@ function getLinkEndpoints(
       controlX: startX,
       controlX2: endX,
       controlY: startY + startSide * controlOffset,
-      controlY2: endY - endSide * controlOffset,
+      controlY2: endY + endSide * controlOffset,
       endX,
       endY,
       startX,
@@ -1003,8 +999,8 @@ function getLinkEndpoints(
     x: (sourcePosition.x + targetPosition.x) / 2,
     y: (sourcePosition.y + targetPosition.y) / 2,
   };
-  const startAnchor = getRoundedBoundaryAnchor(source, sourcePosition, targetPosition, 2);
-  const endAnchor = getRoundedBoundaryAnchor(target, targetPosition, sourcePosition, 10);
+  const startAnchor = getRoundedBoundaryAnchor(source, sourcePosition, targetPosition, 5);
+  const endAnchor = getRoundedBoundaryAnchor(target, targetPosition, sourcePosition, 16);
   const startX = startAnchor.x + normalX * semanticSpread * 0.3;
   const startY = startAnchor.y + normalY * semanticSpread * 0.3;
   const endX = endAnchor.x + normalX * semanticSpread * 0.16;
@@ -1071,68 +1067,68 @@ function getEdgeVisualStyle(
   const structural = link.family === "structural";
   const directional = link.directional;
 
-  let opacity = structural ? 0.28 : 0.08;
-  let strokeWidth = structural ? 1.55 : 0.82;
-  let stroke = structural ? "rgba(255,255,255,0.24)" : "rgba(255,255,255,0.10)";
+  let opacity = structural ? 0.26 : 0.08;
+  let strokeWidth = structural ? 1.46 : 0.78;
+  let stroke = structural ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.10)";
   let dashArray: string | undefined;
   let markerEnd: string | undefined;
 
   switch (link.edge_type) {
     case "belongs_to":
-      opacity = structural ? 0.52 : 0.18;
-      strokeWidth = 1.8 + link.strength * 1.55;
-      stroke = structural ? "rgba(255,255,255,0.34)" : "rgba(255,255,255,0.14)";
+      opacity = structural ? 0.34 : 0.14;
+      strokeWidth = 1.26 + link.strength * 0.82;
+      stroke = structural ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.14)";
       break;
     case "required_for":
-      opacity = structural ? 0.44 : 0.16;
-      strokeWidth = 1.45 + link.strength * 1.35;
-      stroke = structural ? "rgba(255,255,255,0.30)" : "rgba(255,255,255,0.14)";
-      dashArray = "11 7";
-      break;
-    case "prerequisite_for":
-      opacity = structural ? 0.34 : 0.13;
-      strokeWidth = 1.22 + link.strength * 1.1;
-      stroke = structural ? "rgba(255,255,255,0.24)" : "rgba(255,255,255,0.12)";
+      opacity = structural ? 0.29 : 0.13;
+      strokeWidth = 1.44 + link.strength * 0.9;
+      stroke = structural ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.13)";
       dashArray = "8 7";
       break;
+    case "prerequisite_for":
+      opacity = structural ? 0.24 : 0.11;
+      strokeWidth = 1.14 + link.strength * 0.76;
+      stroke = structural ? "rgba(255,255,255,0.21)" : "rgba(255,255,255,0.11)";
+      dashArray = "6 7";
+      break;
     case "supports":
-      opacity = 0.12;
-      strokeWidth = 0.82 + link.strength * 0.62;
-      stroke = "rgba(255,255,255,0.13)";
+      opacity = 0.095;
+      strokeWidth = 0.92 + link.strength * 0.48;
+      stroke = "rgba(255,255,255,0.115)";
       break;
     case "related_to":
-      opacity = 0.045;
-      strokeWidth = 0.54 + link.strength * 0.38;
-      stroke = "rgba(255,255,255,0.072)";
+      opacity = 0.062;
+      strokeWidth = 0.54 + link.strength * 0.2;
+      stroke = "rgba(255,255,255,0.092)";
       break;
     case "useful_for":
-      opacity = 0.1;
-      strokeWidth = 0.74 + link.strength * 0.46;
-      stroke = "rgba(255,255,255,0.104)";
+      opacity = 0.082;
+      strokeWidth = 0.58 + link.strength * 0.26;
+      stroke = "rgba(255,255,255,0.098)";
       break;
     case "blocks":
-      opacity = 0.18;
-      strokeWidth = 0.92 + link.strength * 0.7;
-      stroke = "rgba(255,255,255,0.16)";
-      dashArray = "4 5";
+      opacity = 0.14;
+      strokeWidth = 0.74 + link.strength * 0.34;
+      stroke = "rgba(255,255,255,0.145)";
+      dashArray = "4 6";
       break;
     case "inspired_by":
-      opacity = 0.07;
-      strokeWidth = 0.6 + link.strength * 0.26;
-      stroke = "rgba(255,255,255,0.088)";
-      dashArray = "2 7";
+      opacity = 0.058;
+      strokeWidth = 0.48 + link.strength * 0.16;
+      stroke = "rgba(255,255,255,0.084)";
+      dashArray = "2 8";
       break;
   }
 
   if (emphasized) {
-    opacity = clamp(opacity * 2.1 + 0.12, 0, 0.94);
-    strokeWidth += structural ? 1.15 : 0.68;
-    stroke = structural ? "rgba(214,68,82,0.88)" : "rgba(214,68,82,0.54)";
+    opacity = clamp(opacity * 1.78 + 0.08, 0, 0.8);
+    strokeWidth += structural ? 0.36 : 0.22;
+    stroke = structural ? "rgba(198,76,88,0.62)" : "rgba(198,76,88,0.36)";
   }
 
   if (dimmed) {
-    opacity *= structural ? 0.26 : 0.18;
-    strokeWidth *= structural ? 0.8 : 0.72;
+    opacity *= structural ? 0.28 : 0.2;
+    strokeWidth *= structural ? 0.86 : 0.8;
     stroke = structural ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.05)";
   }
 
@@ -1774,25 +1770,25 @@ export function GraphCanvas({
           </linearGradient>
           <marker
             id="edge-arrow-structural"
-            markerHeight="10"
+            markerHeight="6"
             markerUnits="userSpaceOnUse"
-            markerWidth="10"
+            markerWidth="6"
             orient="auto"
-            refX="8.6"
-            refY="5"
+            refX="0.6"
+            refY="3"
           >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(255,255,255,0.52)" />
+            <path d="M 0 0 L 6 3 L 0 6 z" fill="rgba(255,255,255,0.38)" />
           </marker>
           <marker
             id="edge-arrow-emphasis"
-            markerHeight="10"
+            markerHeight="6"
             markerUnits="userSpaceOnUse"
-            markerWidth="10"
+            markerWidth="6"
             orient="auto"
-            refX="8.6"
-            refY="5"
+            refX="0.6"
+            refY="3"
           >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(214,68,82,0.94)" />
+            <path d="M 0 0 L 6 3 L 0 6 z" fill="rgba(198,76,88,0.68)" />
           </marker>
         </defs>
 
@@ -1806,7 +1802,7 @@ export function GraphCanvas({
             const idlePulse =
               emphasized || dimmed
                 ? 1
-                : 0.97 + Math.sin(idleTime * 0.00036 + hashString(link.id)) * 0.03;
+                : 0.988 + Math.sin(idleTime * 0.00026 + hashString(link.id)) * 0.012;
 
             return (
               <path
@@ -1817,8 +1813,10 @@ export function GraphCanvas({
                 opacity={style.opacity * idlePulse}
                 stroke={style.stroke}
                 strokeDasharray={style.dashArray}
-                strokeLinecap="round"
+                strokeLinecap={style.dashArray ? "round" : "butt"}
+                strokeLinejoin="round"
                 strokeWidth={style.strokeWidth}
+                vectorEffect="non-scaling-stroke"
               />
             );
           })}
