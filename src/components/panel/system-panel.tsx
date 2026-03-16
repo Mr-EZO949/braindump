@@ -1,9 +1,18 @@
 type SystemPanelProps = {
+  onSignOut: () => void;
   onClose: () => void;
   open: boolean;
+  signingOut: boolean;
+  userEmail: string | null;
 };
 
-export function SystemPanel({ onClose, open }: SystemPanelProps) {
+export function SystemPanel({
+  onClose,
+  onSignOut,
+  open,
+  signingOut,
+  userEmail,
+}: SystemPanelProps) {
   return (
     <aside
       aria-hidden={!open}
@@ -39,14 +48,14 @@ export function SystemPanel({ onClose, open }: SystemPanelProps) {
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
               Account
             </p>
-            <button className="system-row system-row-active mt-3" type="button">
-              <span>Profile</span>
+            <div className="system-row system-row-active mt-3">
+              <span>{userEmail ?? "Not signed in"}</span>
               <span className="text-[11px] tracking-[0.02em] text-[var(--color-text-muted)]">
-                Active
+                {userEmail ? "Active" : "Guest"}
               </span>
-            </button>
-            <button className="system-row mt-2" type="button">
-              <span>Notifications</span>
+            </div>
+            <button className="system-row mt-2" disabled={!userEmail || signingOut} onClick={onSignOut} type="button">
+              <span>{signingOut ? "Signing out..." : "Sign out"}</span>
             </button>
           </section>
 

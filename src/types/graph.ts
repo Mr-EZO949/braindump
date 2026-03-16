@@ -23,6 +23,7 @@ export type EdgeType =
 export interface Node {
   id: string;
   user_id: string;
+  workspace_id?: string | null;
   title: string;
   summary: string | null;
   raw_text: string | null;
@@ -37,9 +38,17 @@ export interface Node {
 export interface Edge {
   id: string;
   user_id: string;
+  workspace_id?: string | null;
   source_node_id: string;
   target_node_id: string;
   edge_type: EdgeType;
+  created_at: string;
+}
+
+export interface Workspace {
+  id: string;
+  user_id: string;
+  name: string;
   created_at: string;
 }
 

@@ -1,5 +1,12 @@
-import { AppShell } from "@/components/ui/app-shell";
+import { redirect } from "next/navigation";
 
-export default function Home() {
-  return <AppShell />;
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+
+export default async function Home() {
+  const supabase = await getSupabaseServerClient();
+  const {
+    data: { user },
+  } = supabase ? await supabase.auth.getUser() : { data: { user: null } };
+
+  redirect(user ? "/app" : "/login");
 }

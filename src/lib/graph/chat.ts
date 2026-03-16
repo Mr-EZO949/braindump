@@ -6,9 +6,9 @@ import type {
 } from "@/types/chat";
 
 const workspaceSnapshot = {
-  majorNodes: ["Neurolight", "Probability 2", "Data Sources", "Paper Ideas"],
-  bridgeNodes: ["Probability 2", "Research Notes"],
-  underdevelopedAreas: ["Paper Ideas", "Email Professor"],
+  majorNodes: ["Capstone Project", "Internship Search", "Coursework", "Skill Growth"],
+  bridgeNodes: ["Research Methods", "Systems Thinking"],
+  underdevelopedAreas: ["Portfolio Refresh", "Contact Advisor"],
 };
 
 function createId() {
@@ -24,12 +24,11 @@ function inferWorkspaceReply(message: string): { body: string; sections: ChatMes
     normalized.includes("next")
   ) {
     return {
-      body: "The strongest immediate thread is Neurolight supported by Probability 2 and Data Sources.",
+      body: "The strongest immediate thread is the Capstone Project supported by Research Methods and Systems Thinking.",
       sections: [
         {
           label: "Reason",
-          value:
-            "That chain is the clearest path from academic grounding into project execution.",
+          value: "That branch is the clearest path from coursework and skill growth into visible execution.",
         },
         {
           label: "Related nodes",
@@ -49,7 +48,7 @@ function inferWorkspaceReply(message: string): { body: string; sections: ChatMes
     normalized.includes("relationship")
   ) {
     return {
-      body: "The graph currently has one strong academic-to-project bridge and a weaker idea layer around it.",
+      body: "The graph currently has one strong coursework-to-project bridge and a thinner application layer around it.",
       sections: [
         {
           label: "Bridge",

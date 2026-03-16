@@ -131,7 +131,7 @@ const nodeTypeBranchOrder: Record<NodeType, number> = {
 const edgeStrengthMap: Record<EdgeType, number> = {
   belongs_to: 1,
   required_for: 0.88,
-  prerequisite_for: 0.72,
+  prerequisite_for: 0.88,
   supports: 0.56,
   useful_for: 0.44,
   blocks: 0.66,
@@ -285,16 +285,11 @@ function getPrimaryParentCandidate(edge: Edge) {
         priority: 100,
       };
     case "required_for":
-      return {
-        childId: edge.target_node_id,
-        parentId: edge.source_node_id,
-        priority: 70,
-      };
     case "prerequisite_for":
       return {
         childId: edge.target_node_id,
         parentId: edge.source_node_id,
-        priority: 60,
+        priority: 70,
       };
     default:
       return null;
@@ -1120,26 +1115,21 @@ function getEdgeVisualStyle(
       stroke = structural ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.14)";
       break;
     case "required_for":
+    case "prerequisite_for":
       opacity = structural ? 0.29 : 0.13;
       strokeWidth = 1.44 + link.strength * 0.9;
       stroke = structural ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.13)";
       dashArray = "8 7";
       break;
-    case "prerequisite_for":
-      opacity = structural ? 0.24 : 0.11;
-      strokeWidth = 1.14 + link.strength * 0.76;
-      stroke = structural ? "rgba(255,255,255,0.21)" : "rgba(255,255,255,0.11)";
-      dashArray = "6 7";
-      break;
     case "supports":
-      opacity = 0.095;
-      strokeWidth = 0.92 + link.strength * 0.48;
-      stroke = "rgba(255,255,255,0.115)";
+      opacity = 0.138;
+      strokeWidth = 0.88 + link.strength * 0.4;
+      stroke = "rgba(224,215,206,0.15)";
       break;
     case "related_to":
       opacity = 0.062;
-      strokeWidth = 0.54 + link.strength * 0.2;
-      stroke = "rgba(255,255,255,0.092)";
+      strokeWidth = 0.56 + link.strength * 0.18;
+      stroke = "rgba(255,255,255,0.095)";
       break;
     case "useful_for":
       opacity = 0.082;
@@ -1161,9 +1151,27 @@ function getEdgeVisualStyle(
   }
 
   if (emphasized) {
-    opacity = clamp(opacity * 1.78 + 0.08, 0, 0.8);
-    strokeWidth += structural ? 0.36 : 0.22;
-    stroke = structural ? "rgba(198,76,88,0.62)" : "rgba(198,76,88,0.36)";
+    if (link.edge_type === "belongs_to") {
+      opacity = clamp(opacity * 1.82 + 0.08, 0, 0.8);
+      strokeWidth += 0.34;
+      stroke = "rgba(198,76,88,0.62)";
+    } else if (link.edge_type === "supports") {
+      opacity = clamp(opacity * 1.9 + 0.08, 0, 0.58);
+      strokeWidth += 0.16;
+      stroke = "rgba(205,122,132,0.42)";
+    } else if (link.edge_type === "required_for" || link.edge_type === "prerequisite_for") {
+      opacity = clamp(opacity * 1.76 + 0.07, 0, 0.7);
+      strokeWidth += 0.22;
+      stroke = "rgba(198,118,128,0.48)";
+    } else if (link.edge_type === "related_to") {
+      opacity = clamp(opacity * 1.55 + 0.05, 0, 0.34);
+      strokeWidth += 0.08;
+      stroke = "rgba(187,132,140,0.26)";
+    } else {
+      opacity = clamp(opacity * 1.7 + 0.07, 0, 0.72);
+      strokeWidth += structural ? 0.32 : 0.18;
+      stroke = structural ? "rgba(198,76,88,0.56)" : "rgba(198,76,88,0.32)";
+    }
   }
 
   if (dimmed) {
@@ -1391,9 +1399,8 @@ export function GraphCanvas({
           case "belongs_to":
             return Math.max(source.height, target.height) + 68;
           case "required_for":
-            return Math.max(source.width, target.width) * 0.46 + 136;
           case "prerequisite_for":
-            return Math.max(source.width, target.width) * 0.5 + 148;
+            return Math.max(source.width, target.width) * 0.46 + 136;
           case "supports":
             return Math.max(source.width, target.width) * 0.58 + 168;
           case "related_to":
@@ -1407,9 +1414,8 @@ export function GraphCanvas({
           case "belongs_to":
             return 0.18;
           case "required_for":
-            return 0.07;
           case "prerequisite_for":
-            return 0.055;
+            return 0.07;
           case "supports":
             return 0.02;
           case "related_to":
@@ -1875,7 +1881,7 @@ export function GraphCanvas({
                   : searchHit
                     ? 0.3
                     : 0.24
-              : visual.surfaceTintOpacity * 1.26;
+              : visual.surfaceTintOpacity * 1.52;
             const actionWashOpacity = actionable
               ? selected
                 ? 0.28
@@ -1887,7 +1893,7 @@ export function GraphCanvas({
               : 0;
             const topBandHeight = actionable
               ? clamp(node.height * 0.08, 4, 6)
-              : clamp(node.height * 0.06, 3, 4.75);
+              : clamp(node.height * 0.072, 4, 6);
 
             return (
               <g
@@ -1920,15 +1926,15 @@ export function GraphCanvas({
                     />
                     <stop
                       offset="18%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.42)}
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.48)}
                     />
                     <stop
                       offset="50%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 1.08)}
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 1.18)}
                     />
                     <stop
                       offset="82%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.42)}
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.48)}
                     />
                     <stop offset="100%" stopColor={rgba(node.categoryColor, 0)} />
                   </linearGradient>

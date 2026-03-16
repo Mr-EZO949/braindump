@@ -22,7 +22,7 @@ type Perspective = "source" | "target";
 const relationshipPriority: Record<EdgeType, number> = {
   belongs_to: 90,
   required_for: 98,
-  prerequisite_for: 86,
+  prerequisite_for: 98,
   supports: 70,
   useful_for: 58,
   blocks: 96,
@@ -42,9 +42,8 @@ export function getDirectionalRelationshipLabel(
     case "belongs_to":
       return perspective === "source" ? "belongs to" : "contains";
     case "required_for":
-      return perspective === "source" ? "required for" : "requires";
     case "prerequisite_for":
-      return perspective === "source" ? "prerequisite for" : "depends on";
+      return perspective === "source" ? "required for" : "requires";
     case "supports":
       return perspective === "source" ? "supports" : "supported by";
     case "useful_for":
@@ -193,6 +192,7 @@ export function getFocusItems(
 
     switch (edge.edge_type) {
       case "required_for":
+      case "prerequisite_for":
         if (perspective === "target") {
           upsertFocusItem(
             grouped,
@@ -202,20 +202,6 @@ export function getFocusItems(
               `This is a hard dependency before ${selectedNode.title} can move.`,
               linkedNode.id,
               100,
-            ),
-          );
-        }
-        break;
-      case "prerequisite_for":
-        if (perspective === "target") {
-          upsertFocusItem(
-            grouped,
-            createFocusItem(
-              `${edge.id}-prerequisite`,
-              `Cover prerequisite: ${linkedNode.title}`,
-              `${linkedNode.title} sits upstream of this branch.`,
-              linkedNode.id,
-              90,
             ),
           );
         }
