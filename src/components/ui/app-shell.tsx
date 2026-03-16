@@ -18,12 +18,13 @@ import {
   loadWorkspaces,
 } from "@/lib/graph/data";
 import { demoGraphData } from "@/lib/graph/demo-data";
+import { getImportanceLabel } from "@/lib/graph/importance";
 import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
 import type { RailTab, ChatMessage, ChatScope } from "@/types/chat";
-import type { GraphData, Workspace } from "@/types/graph";
+import type { CreateNodeInput, GraphData, Node, Workspace } from "@/types/graph";
 
 type AuthUserState = {
   email: string | null;
@@ -32,6 +33,23 @@ type AuthUserState = {
 
 type AppShellProps = {
   initialUser: AuthUserState;
+};
+
+const defaultCreateNodeDraft: CreateNodeInput = {
+  custom_type: "",
+  importance_index: 58,
+  node_type: "concept",
+  raw_text: "",
+  summary: "",
+  title: "",
+};
+
+const nodeColorByType: Record<Exclude<CreateNodeInput["node_type"], "custom">, string> = {
+  class: "#96784d",
+  concept: "#677480",
+  goal: "#d8d0c4",
+  project: "#8c4a57",
+  task: "#a35258",
 };
 
 export function AppShell({ initialUser }: AppShellProps) {
@@ -54,6 +72,9 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [signingOut, setSigningOut] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+  const [createNodeDraft, setCreateNodeDraft] = useState<CreateNodeInput | null>(null);
+  const [createNodeError, setCreateNodeError] = useState<string | null>(null);
+  const [createNodeSubmitting, setCreateNodeSubmitting] = useState(false);
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -182,6 +203,8 @@ export function AppShell({ initialUser }: AppShellProps) {
     setComposerValue("");
     setChatMessages([]);
     setChatError(null);
+    setCreateNodeDraft(null);
+    setCreateNodeError(null);
     setChatScope(createWorkspaceScope(workspaceName));
   }, [workspaceName]);
 
@@ -236,8 +259,16 @@ export function AppShell({ initialUser }: AppShellProps) {
   };
 
   const handleSelectNode = (nodeId: string | null) => {
+    if (nodeId) {
+      setCreateNodeDraft(null);
+      setCreateNodeError(null);
+    }
+
     setSelectedNodeId(nodeId);
-    setRightPanelOpen(true);
+
+    if (nodeId) {
+      setRightPanelOpen(true);
+    }
   };
 
   const handleGraphSearchSubmit = () => {
@@ -248,7 +279,100 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
 
     setSelectedNodeId(matchingNode.id);
+    setCreateNodeDraft(null);
+    setCreateNodeError(null);
     setRightPanelOpen(true);
+  };
+
+  const handleOpenCreateNode = () => {
+    setSystemPanelOpen(false);
+    setWorkspaceMenuOpen(false);
+    setSelectedNodeId(null);
+    setActiveRailTab("details");
+    setRightPanelOpen(false);
+    setCreateNodeError(null);
+    setCreateNodeDraft({ ...defaultCreateNodeDraft });
+  };
+
+  const handleChangeCreateNodeField = <Field extends keyof CreateNodeInput>(
+    field: Field,
+    value: CreateNodeInput[Field],
+  ) => {
+    setCreateNodeDraft((currentDraft) => ({
+      ...(currentDraft ?? defaultCreateNodeDraft),
+      [field]: value,
+    }));
+  };
+
+  const handleCloseCreateNode = () => {
+    setCreateNodeDraft(null);
+    setCreateNodeError(null);
+  };
+
+  const handleSubmitCreateNode = async () => {
+    if (!supabase || !authUser?.id || !selectedWorkspaceId || !createNodeDraft) {
+      setCreateNodeError("Workspace or auth context is unavailable.");
+      return;
+    }
+
+    const title = createNodeDraft.title.trim();
+    const resolvedNodeType =
+      createNodeDraft.node_type === "custom"
+        ? createNodeDraft.custom_type.trim()
+        : createNodeDraft.node_type;
+
+    if (title.length === 0) {
+      setCreateNodeError("Title is required.");
+      return;
+    }
+
+    if (resolvedNodeType.length === 0) {
+      setCreateNodeError("Choose a node type or enter a custom type.");
+      return;
+    }
+
+    setCreateNodeSubmitting(true);
+    setCreateNodeError(null);
+
+    const payload = {
+      color:
+        createNodeDraft.node_type === "custom"
+          ? nodeColorByType.concept
+          : nodeColorByType[createNodeDraft.node_type],
+      importance: getImportanceLabel(createNodeDraft.importance_index),
+      importance_index: createNodeDraft.importance_index,
+      node_type: resolvedNodeType as Node["node_type"],
+      raw_text: createNodeDraft.raw_text.trim() || null,
+      summary: createNodeDraft.summary.trim() || null,
+      title,
+      user_id: authUser.id,
+      workspace_id: selectedWorkspaceId,
+    };
+
+    const { data, error } = await supabase
+      .from("nodes")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    setCreateNodeSubmitting(false);
+
+    if (error || !data) {
+      setCreateNodeError(error?.message ?? "Unable to create node.");
+      return;
+    }
+
+    const createdNode = data as Node;
+
+    setGraphData((currentGraphData) => ({
+      ...currentGraphData,
+      nodes: [...currentGraphData.nodes, createdNode],
+    }));
+    setCreateNodeDraft(null);
+    setCreateNodeError(null);
+    setSelectedNodeId(createdNode.id);
+    setRightPanelOpen(true);
+    setActiveRailTab("details");
   };
 
   const handleSignOut = async () => {
@@ -327,16 +451,25 @@ export function AppShell({ initialUser }: AppShellProps) {
               : "Add a thought or ask the graph..."
           }
           composerValue={composerValue}
+          createNodeDraft={createNodeDraft}
+          createNodeError={createNodeError}
+          createNodeSubmitting={createNodeSubmitting}
           graphData={graphData}
           graphLoading={graphLoading}
           graphSearchValue={graphSearchValue}
+          onChangeCreateNodeField={handleChangeCreateNodeField}
+          onCloseCreateNode={handleCloseCreateNode}
           onComposerChange={setComposerValue}
           onComposerSubmit={() => {
             void submitMessage(composerValue);
           }}
           onGraphSearchChange={setGraphSearchValue}
           onGraphSearchSubmit={handleGraphSearchSubmit}
+          onOpenCreateNode={handleOpenCreateNode}
           onSelectNode={handleSelectNode}
+          onSubmitCreateNode={() => {
+            void handleSubmitCreateNode();
+          }}
           selectedNodeId={selectedNodeId}
           submitting={chatLoading}
         />
@@ -353,10 +486,7 @@ export function AppShell({ initialUser }: AppShellProps) {
             void submitMessage(prompt);
           }}
           onSetActiveTab={setActiveRailTab}
-          onSelectLinkedNode={(nodeId) => {
-            setSelectedNodeId(nodeId);
-            setRightPanelOpen(true);
-          }}
+          onSelectLinkedNode={handleSelectNode}
           onToggle={() => setRightPanelOpen((open) => !open)}
           open={rightPanelOpen}
           selectedNode={selectedNode}

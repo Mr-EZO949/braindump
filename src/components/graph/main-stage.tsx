@@ -1,3 +1,6 @@
+"use client";
+
+import { CreateNodeSheet } from "@/components/graph/create-node-sheet";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import {
   ArrowUpIcon,
@@ -5,35 +8,52 @@ import {
   MicIcon,
   SearchIcon,
 } from "@/components/ui/icons";
-import type { GraphData } from "@/types/graph";
+import type { CreateNodeInput, GraphData } from "@/types/graph";
 
 type MainStageProps = {
   composerPlaceholder: string;
   composerValue: string;
+  createNodeDraft: CreateNodeInput | null;
+  createNodeError: string | null;
+  createNodeSubmitting: boolean;
   graphData: GraphData;
   graphLoading: boolean;
   graphSearchValue: string;
+  onChangeCreateNodeField: <Field extends keyof CreateNodeInput>(
+    field: Field,
+    value: CreateNodeInput[Field],
+  ) => void;
   onGraphSearchChange: (value: string) => void;
   onGraphSearchSubmit: () => void;
+  onCloseCreateNode: () => void;
   onSelectNode: (nodeId: string | null) => void;
+  onOpenCreateNode: () => void;
   selectedNodeId: string | null;
   onComposerChange: (value: string) => void;
   onComposerSubmit: () => void;
+  onSubmitCreateNode: () => void;
   submitting: boolean;
 };
 
 export function MainStage({
   composerPlaceholder,
   composerValue,
+  createNodeDraft,
+  createNodeError,
+  createNodeSubmitting,
   graphData,
   graphLoading,
   graphSearchValue,
+  onChangeCreateNodeField,
   onGraphSearchChange,
   onGraphSearchSubmit,
+  onCloseCreateNode,
   onSelectNode,
+  onOpenCreateNode,
   selectedNodeId,
   onComposerChange,
   onComposerSubmit,
+  onSubmitCreateNode,
   submitting,
 }: MainStageProps) {
   return (
@@ -55,6 +75,16 @@ export function MainStage({
         loading={graphLoading}
         onSelectNode={onSelectNode}
         searchQuery={graphSearchValue}
+      />
+
+      <CreateNodeSheet
+        draft={createNodeDraft}
+        error={createNodeError}
+        onChangeField={onChangeCreateNodeField}
+        onClose={onCloseCreateNode}
+        onOpen={onOpenCreateNode}
+        onSubmit={onSubmitCreateNode}
+        submitting={createNodeSubmitting}
       />
 
       <div className="absolute left-6 top-6 z-10">

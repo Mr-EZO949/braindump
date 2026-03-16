@@ -56,3 +56,12 @@ export interface GraphData {
   nodes: Node[];
   edges: Edge[];
 }
+
+export interface CreateNodeInput {
+  custom_type: string;
+  importance_index: number;
+  node_type: "goal" | "task" | "project" | "concept" | "class" | "custom";
+  raw_text: string;
+  summary: string;
+  title: string;
+}

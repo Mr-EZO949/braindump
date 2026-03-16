@@ -17,6 +17,12 @@ const fallbackTypeOffset: Record<Node["node_type"], number> = {
   task: -9,
 };
 
+const authoredImportanceIndex: Record<Importance, number> = {
+  high: 82,
+  low: 34,
+  medium: 58,
+};
+
 export const demoImportanceIndexById: Record<string, number> = {
   "10000000-0000-0000-0000-000000000001": 96,
   "10000000-0000-0000-0000-000000000002": 92,
@@ -87,4 +93,8 @@ export function getImportanceLabel(importanceIndex: number): Importance {
   }
 
   return "low";
+}
+
+export function getAuthoredImportanceIndex(importance: Importance) {
+  return authoredImportanceIndex[importance];
 }

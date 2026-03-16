@@ -1881,7 +1881,7 @@ export function GraphCanvas({
                   : searchHit
                     ? 0.3
                     : 0.24
-              : visual.surfaceTintOpacity * 1.52;
+              : visual.surfaceTintOpacity * 2.15;
             const actionWashOpacity = actionable
               ? selected
                 ? 0.28
@@ -1893,7 +1893,7 @@ export function GraphCanvas({
               : 0;
             const topBandHeight = actionable
               ? clamp(node.height * 0.08, 4, 6)
-              : clamp(node.height * 0.072, 4, 6);
+              : clamp(node.height * 0.094, 5, 7.5);
 
             return (
               <g
@@ -1926,15 +1926,15 @@ export function GraphCanvas({
                     />
                     <stop
                       offset="18%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.48)}
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.72)}
                     />
                     <stop
                       offset="50%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 1.18)}
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 1.56)}
                     />
                     <stop
                       offset="82%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.48)}
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.72)}
                     />
                     <stop offset="100%" stopColor={rgba(node.categoryColor, 0)} />
                   </linearGradient>

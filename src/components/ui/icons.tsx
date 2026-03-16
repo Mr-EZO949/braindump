@@ -83,6 +83,15 @@ export function ChevronRightIcon(props: IconProps) {
   );
 }
 
+export function CloseIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="m7 7 10 10" />
+      <path d="M17 7 7 17" />
+    </BaseIcon>
+  );
+}
+
 export function ArrowUpIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>
