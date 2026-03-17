@@ -30,6 +30,9 @@ export interface Node {
   node_type: NodeType;
   importance: Importance;
   importance_index?: number | null;
+  position_x?: number | null;
+  position_y?: number | null;
+  manual_position?: boolean | null;
   color: string | null;
   created_at: string;
   updated_at: string;
