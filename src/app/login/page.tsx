@@ -1,6 +1,9 @@
 import { redirect } from "next/navigation";
 
+import styles from "@/components/auth/auth-experience.module.css";
+import { AuthGraphScene } from "@/components/auth/auth-graph-scene";
 import { LoginForm } from "@/components/auth/login-form";
+import { ProductMark } from "@/components/ui/icons";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export default async function LoginPage() {
@@ -14,19 +17,32 @@ export default async function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--color-bg-base)] px-6 text-[var(--color-text-primary)]">
-      <div className="w-full max-w-sm rounded-[18px] border border-[color:var(--color-border-faint)] bg-[var(--color-bg-surface)] p-8 shadow-[0_22px_44px_rgba(0,0,0,0.28)]">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-          Login
-        </p>
-        <h1 className="mt-4 text-[24px] font-semibold tracking-[-0.04em]">
-          Sign in with email
-        </h1>
-        <p className="mt-3 text-[14px] leading-6 text-[var(--color-text-secondary)]">
-          Use email and password to sign in or create an account.
-        </p>
+    <main className={styles.page}>
+      <AuthGraphScene />
+      <div className={styles.shell}>
+        <section className={styles.authColumn}>
+          <div className={styles.authInner}>
+            <div className={styles.brandRow}>
+              <span className={styles.brandMark}>
+                <ProductMark className="h-[18px] w-[18px]" />
+              </span>
+              <span className={styles.brandText}>
+                <span className={styles.brandName}>Thought Router</span>
+                <span className={styles.brandMeta}>Private workspace</span>
+              </span>
+            </div>
 
-        <LoginForm />
+            <div className={styles.authHeader}>
+              <h1 className={styles.heading}>Access workspace.</h1>
+              <p className={styles.supporting}>
+                Sign in or create an account to enter your graph.
+              </p>
+            </div>
+
+            <LoginForm />
+          </div>
+        </section>
+        <div className={styles.authSpacer} aria-hidden />
       </div>
     </main>
   );
