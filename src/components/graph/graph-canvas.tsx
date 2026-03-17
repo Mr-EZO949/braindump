@@ -8,7 +8,7 @@ import {
   forceX,
   forceY,
 } from "d3-force";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PointerEvent as ReactPointerEvent,
   WheelEvent as ReactWheelEvent,
@@ -21,12 +21,15 @@ import type {
 } from "d3-force";
 
 import { getImportanceIndex } from "@/lib/graph/importance";
+import { getStructuralParentCandidate } from "@/lib/graph/structure";
 import type { Edge, EdgeType, GraphData, Node, NodeType } from "@/types/graph";
 
 type GraphCanvasProps = {
+  editMode: boolean;
   focusNodeId: string | null;
   graphData: GraphData;
   loading: boolean;
+  onCommitNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   onSelectNode: (nodeId: string | null) => void;
   searchQuery: string;
 };
@@ -57,15 +60,23 @@ type LabelLayout = {
   width: number;
 };
 
+type IdleOffset = {
+  x: number;
+  y: number;
+};
+
 type GraphNode = Node &
   SimulationNodeDatum &
   LabelLayout & {
     categoryColor: string;
+    driftAngle: number;
     depth: number;
     driftAmplitudeX: number;
     driftAmplitudeY: number;
     driftPhaseX: number;
     driftPhaseY: number;
+    driftRateA: number;
+    driftRateB: number;
     importanceScore: number;
     restX: number;
     restY: number;
@@ -276,26 +287,6 @@ function wrapTitle(title: string, maxCharsPerLine: number) {
   ];
 }
 
-function getPrimaryParentCandidate(edge: Edge) {
-  switch (edge.edge_type) {
-    case "belongs_to":
-      return {
-        childId: edge.source_node_id,
-        parentId: edge.target_node_id,
-        priority: 100,
-      };
-    case "required_for":
-    case "prerequisite_for":
-      return {
-        childId: edge.target_node_id,
-        parentId: edge.source_node_id,
-        priority: 70,
-      };
-    default:
-      return null;
-  }
-}
-
 function buildAdjacency(graphData: GraphData) {
   const adjacency = new Map<string, Set<string>>();
 
@@ -412,10 +403,13 @@ function createNodeLayout(node: Node, importanceScore: number) {
   return {
     categoryColor: nodeTypeCueMap[getVisualNodeType(node.node_type)],
     depth: 0,
-    driftAmplitudeX: lerp(4.6, 1.7, sizeScale),
-    driftAmplitudeY: lerp(3.15, 1.22, sizeScale),
+    driftAmplitudeX: lerp(2.9, 1.1, sizeScale),
+    driftAmplitudeY: lerp(2.4, 0.9, sizeScale),
+    driftAngle: ((hash >> 9) % 360) * (Math.PI / 180),
     driftPhaseX: (hash % 360) * (Math.PI / 180),
     driftPhaseY: ((hash >> 5) % 360) * (Math.PI / 180),
+    driftRateA: 0.00024 + ((hash >> 13) % 9) * 0.000012,
+    driftRateB: 0.00014 + ((hash >> 17) % 7) * 0.00001,
     fontSize,
     height,
     importanceScore,
@@ -469,7 +463,7 @@ function buildGraphLayout(graphData: GraphData) {
   >();
 
   graphData.edges.forEach((edge) => {
-    const candidate = getPrimaryParentCandidate(edge);
+    const candidate = getStructuralParentCandidate(edge);
 
     if (!candidate) {
       return;
@@ -755,6 +749,30 @@ function buildGraphLayout(graphData: GraphData) {
     });
   });
 
+  laidOutNodes.forEach((node) => {
+    const savedX = node.position_x;
+    const savedY = node.position_y;
+
+    if (
+      node.manual_position !== true ||
+      typeof savedX !== "number" ||
+      !Number.isFinite(savedX) ||
+      typeof savedY !== "number" ||
+      !Number.isFinite(savedY)
+    ) {
+      return;
+    }
+
+    node.restX = savedX;
+    node.restY = savedY;
+    node.x = savedX;
+    node.y = savedY;
+    node.fx = savedX;
+    node.fy = savedY;
+    node.vx = 0;
+    node.vy = 0;
+  });
+
   const primaryEdgeIds = new Set(
     Array.from(parentCandidates.values()).map((candidate) => candidate.edgeId),
   );
@@ -946,9 +964,34 @@ function getWorldPoint(
   };
 }
 
+function getIdleOffset(
+  node: GraphNode,
+  time: number,
+  freeze = false,
+): IdleOffset {
+  if (freeze) {
+    return { x: 0, y: 0 };
+  }
+
+  const localX =
+    Math.sin(time * node.driftRateA + node.driftPhaseX) * node.driftAmplitudeX * 0.72 +
+    Math.sin(time * node.driftRateB + node.driftPhaseY * 0.82) * node.driftAmplitudeX * 0.34;
+  const localY =
+    Math.cos(time * node.driftRateA * 0.92 + node.driftPhaseY) * node.driftAmplitudeY * 0.68 +
+    Math.sin(time * node.driftRateB * 1.08 + node.driftPhaseX * 0.74) * node.driftAmplitudeY * 0.32;
+  const cosAngle = Math.cos(node.driftAngle);
+  const sinAngle = Math.sin(node.driftAngle);
+
+  return {
+    x: localX * cosAngle - localY * sinAngle,
+    y: localX * sinAngle + localY * cosAngle,
+  };
+}
+
 function getRenderedNodePosition(
   node: GraphNode,
   draggingNodeId: string | null,
+  idleOffsets?: Map<string, IdleOffset>,
 ) {
   const baseX = node.x ?? node.restX;
   const baseY = node.y ?? node.restY;
@@ -957,9 +1000,11 @@ function getRenderedNodePosition(
     return { x: baseX, y: baseY };
   }
 
+  const idleOffset = idleOffsets?.get(node.id);
+
   return {
-    x: baseX,
-    y: baseY,
+    x: baseX + (idleOffset?.x ?? 0),
+    y: baseY + (idleOffset?.y ?? 0),
   };
 }
 
@@ -987,11 +1032,12 @@ function getRoundedBoundaryAnchor(
 function getLinkEndpoints(
   link: GraphLink,
   draggingNodeId: string | null,
+  idleOffsets?: Map<string, IdleOffset>,
 ) {
   const source = link.source as GraphNode;
   const target = link.target as GraphNode;
-  const sourcePosition = getRenderedNodePosition(source, draggingNodeId);
-  const targetPosition = getRenderedNodePosition(target, draggingNodeId);
+  const sourcePosition = getRenderedNodePosition(source, draggingNodeId, idleOffsets);
+  const targetPosition = getRenderedNodePosition(target, draggingNodeId, idleOffsets);
 
   if (link.family === "structural") {
     const startSide = link.layoutDirection === "up" ? -1 : 1;
@@ -1057,11 +1103,13 @@ function getLinkEndpoints(
 function getLinkPath(
   link: GraphLink,
   draggingNodeId: string | null,
+  idleOffsets?: Map<string, IdleOffset>,
 ) {
   const { controlX, controlX2, controlY, controlY2, endX, endY, startX, startY } =
     getLinkEndpoints(
       link,
       draggingNodeId,
+      idleOffsets,
     );
 
   if (link.family === "structural" && isDefined(controlX2) && isDefined(controlY2)) {
@@ -1317,16 +1365,23 @@ function updateAmbientGlow(
 }
 
 export function GraphCanvas({
+  editMode,
   focusNodeId,
   graphData,
   loading,
+  onCommitNodePosition,
   onSelectNode,
   searchQuery,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const linkElementRefs = useRef(new Map<string, SVGPathElement>());
+  const nodeElementRefs = useRef(new Map<string, SVGGElement>());
   const simulationRef = useRef<Simulation<GraphNode, GraphLink> | null>(null);
   const animationRef = useRef<number | null>(null);
-  const releaseTimeoutRef = useRef<number | null>(null);
+  const idleAnimationRef = useRef<number | null>(null);
+  const idleOffsetsRef = useRef(new Map<string, IdleOffset>());
+  const returnAnimationRef = useRef<number | null>(null);
+  const returningNodeRef = useRef<GraphNode | null>(null);
   const viewAnimationRef = useRef<number | null>(null);
   const nodesRef = useRef<GraphNode[]>([]);
   const dragStateRef = useRef<DragState | null>(null);
@@ -1340,6 +1395,16 @@ export function GraphCanvas({
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [view, setView] = useState<ViewState>(defaultView);
   const [, setFrameVersion] = useState(0);
+  const requestRender = useCallback(() => {
+    if (animationRef.current !== null) {
+      return;
+    }
+
+    animationRef.current = window.requestAnimationFrame(() => {
+      animationRef.current = null;
+      setFrameVersion((value) => value + 1);
+    });
+  }, []);
   const scene = useMemo(() => {
     const nextLayout = buildGraphLayout(graphData);
     const nodeMap = new Map(nextLayout.nodes.map((node) => [node.id, node]));
@@ -1442,38 +1507,26 @@ export function GraphCanvas({
       .velocityDecay(0.58)
       .alphaDecay(0.064)
       .alphaMin(0.012)
-      .alphaTarget(focusNodeId ? 0.004 : 0.008);
+      .alphaTarget(0);
 
     simulation.on("tick", () => {
-      const now = performance.now();
-      const idleForceScale = focusNodeId ? 0.00038 : 0.00082;
-
       scene.nodes.forEach((node) => {
         if (node.fx === null || node.fx === undefined) {
-          node.vx =
-            (node.vx ?? 0) +
-            Math.sin(now * 0.00058 + node.driftPhaseX) * node.driftAmplitudeX * idleForceScale;
-          node.x = lerp(node.x ?? node.restX, node.restX, 0.018);
-          node.vx = (node.vx ?? 0) * 0.9;
+          node.x = node.x ?? node.restX;
+        } else {
+          node.x = node.fx;
+          node.vx = 0;
         }
 
         if (node.fy === null || node.fy === undefined) {
-          node.vy =
-            (node.vy ?? 0) +
-            Math.cos(now * 0.00046 + node.driftPhaseY) * node.driftAmplitudeY * idleForceScale;
-          node.y = lerp(node.y ?? node.restY, node.restY, 0.09);
-          node.vy = (node.vy ?? 0) * 0.72;
+          node.y = node.y ?? node.restY;
+        } else {
+          node.y = node.fy;
+          node.vy = 0;
         }
       });
 
-      if (animationRef.current !== null) {
-        return;
-      }
-
-      animationRef.current = window.requestAnimationFrame(() => {
-        animationRef.current = null;
-        setFrameVersion((value) => value + 1);
-      });
+      requestRender();
     });
 
     simulationRef.current = simulation;
@@ -1487,7 +1540,66 @@ export function GraphCanvas({
         animationRef.current = null;
       }
     };
-  }, [focusNodeId, scene]);
+  }, [requestRender, scene]);
+
+  useEffect(() => {
+    idleOffsetsRef.current = new Map(
+      scene.nodes.map((node) => [node.id, { x: 0, y: 0 } satisfies IdleOffset]),
+    );
+
+    const animateIdle = (time: number) => {
+      const draggingNodeId = dragStateRef.current?.nodeId ?? null;
+      const returningNodeId = returningNodeRef.current?.id ?? null;
+      const nextOffsets = new Map<string, IdleOffset>();
+
+      scene.nodes.forEach((node) => {
+        const freeze = draggingNodeId === node.id || returningNodeId === node.id;
+        const offset = getIdleOffset(node, time, freeze);
+        nextOffsets.set(node.id, offset);
+
+        const element = nodeElementRefs.current.get(node.id);
+
+        if (!element) {
+          return;
+        }
+
+        const baseX = node.x ?? node.restX;
+        const baseY = node.y ?? node.restY;
+        element.setAttribute(
+          "transform",
+          `translate(${(baseX + offset.x).toFixed(2)}, ${(baseY + offset.y).toFixed(2)})`,
+        );
+      });
+
+      idleOffsetsRef.current = nextOffsets;
+
+      scene.links.forEach((link) => {
+        const element = linkElementRefs.current.get(link.id);
+
+        if (!element) {
+          return;
+        }
+
+        element.setAttribute(
+          "d",
+          getLinkPath(link, draggingNodeId, nextOffsets),
+        );
+      });
+
+      idleAnimationRef.current = window.requestAnimationFrame(animateIdle);
+    };
+
+    idleAnimationRef.current = window.requestAnimationFrame(animateIdle);
+
+    return () => {
+      if (idleAnimationRef.current !== null) {
+        window.cancelAnimationFrame(idleAnimationRef.current);
+        idleAnimationRef.current = null;
+      }
+
+      idleOffsetsRef.current = new Map();
+    };
+  }, [scene]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1576,10 +1688,11 @@ export function GraphCanvas({
 
   useEffect(() => {
     return () => {
-      if (releaseTimeoutRef.current !== null) {
-        window.clearTimeout(releaseTimeoutRef.current);
-        releaseTimeoutRef.current = null;
+      if (returnAnimationRef.current !== null) {
+        window.cancelAnimationFrame(returnAnimationRef.current);
+        returnAnimationRef.current = null;
       }
+      returningNodeRef.current = null;
 
       if (viewAnimationRef.current !== null) {
         window.cancelAnimationFrame(viewAnimationRef.current);
@@ -1606,9 +1719,10 @@ export function GraphCanvas({
 
         draggedNode.fx = worldPoint.x - dragState.offsetX;
         draggedNode.fy = worldPoint.y - dragState.offsetY;
+        draggedNode.x = draggedNode.fx;
+        draggedNode.y = draggedNode.fy;
         movedDuringPointerRef.current = true;
-        simulationRef.current?.alphaTarget(0.18).restart();
-        setFrameVersion((value) => value + 1);
+        requestRender();
         return;
       }
 
@@ -1629,23 +1743,93 @@ export function GraphCanvas({
         const draggedNode = nodesRef.current.find((node) => node.id === dragState.nodeId);
 
         if (draggedNode) {
-          draggedNode.fx = null;
-          draggedNode.fy = null;
-          draggedNode.vx = (draggedNode.vx ?? 0) * 0.42;
-          draggedNode.vy = (draggedNode.vy ?? 0) * 0.42;
-          simulationRef.current
-            ?.alpha(focusNodeId ? 0.12 : 0.2)
-            .alphaTarget(focusNodeId ? 0.01 : 0.02)
-            .restart();
+          const committedX = draggedNode.fx ?? draggedNode.x ?? draggedNode.restX;
+          const committedY = draggedNode.fy ?? draggedNode.y ?? draggedNode.restY;
+          const moved = movedDuringPointerRef.current;
 
-          if (releaseTimeoutRef.current !== null) {
-            window.clearTimeout(releaseTimeoutRef.current);
+          if (!moved) {
+            draggedNode.x = draggedNode.restX;
+            draggedNode.y = draggedNode.restY;
+            draggedNode.vx = 0;
+            draggedNode.vy = 0;
+
+            if (draggedNode.manual_position === true) {
+              draggedNode.fx = draggedNode.restX;
+              draggedNode.fy = draggedNode.restY;
+            } else {
+              draggedNode.fx = null;
+              draggedNode.fy = null;
+            }
+
+            requestRender();
+          } else if (editMode) {
+            draggedNode.manual_position = true;
+            draggedNode.position_x = committedX;
+            draggedNode.position_y = committedY;
+            draggedNode.restX = committedX;
+            draggedNode.restY = committedY;
+            draggedNode.x = committedX;
+            draggedNode.y = committedY;
+            draggedNode.fx = committedX;
+            draggedNode.fy = committedY;
+            draggedNode.vx = 0;
+            draggedNode.vy = 0;
+            requestRender();
+            onCommitNodePosition(draggedNode.id, { x: committedX, y: committedY });
+          } else {
+            const startX = committedX;
+            const startY = committedY;
+            const targetX = draggedNode.restX;
+            const targetY = draggedNode.restY;
+            const shouldRepin = draggedNode.manual_position === true;
+            const startTime = performance.now();
+            const duration = 260;
+
+            if (returnAnimationRef.current !== null) {
+              window.cancelAnimationFrame(returnAnimationRef.current);
+              returnAnimationRef.current = null;
+            }
+            returningNodeRef.current = draggedNode;
+
+            const animateReturn = (now: number) => {
+              const progress = clamp((now - startTime) / duration, 0, 1);
+              const eased = easeOutCubic(progress);
+              const nextX = lerp(startX, targetX, eased);
+              const nextY = lerp(startY, targetY, eased);
+
+              draggedNode.fx = nextX;
+              draggedNode.fy = nextY;
+              draggedNode.x = nextX;
+              draggedNode.y = nextY;
+              draggedNode.vx = 0;
+              draggedNode.vy = 0;
+              requestRender();
+
+              if (progress < 1) {
+                returnAnimationRef.current = window.requestAnimationFrame(animateReturn);
+                return;
+              }
+
+              draggedNode.x = targetX;
+              draggedNode.y = targetY;
+              draggedNode.vx = 0;
+              draggedNode.vy = 0;
+
+              if (shouldRepin) {
+                draggedNode.fx = targetX;
+                draggedNode.fy = targetY;
+              } else {
+                draggedNode.fx = null;
+                draggedNode.fy = null;
+              }
+
+              returnAnimationRef.current = null;
+              returningNodeRef.current = null;
+              requestRender();
+            };
+
+            returnAnimationRef.current = window.requestAnimationFrame(animateReturn);
           }
-
-          releaseTimeoutRef.current = window.setTimeout(() => {
-            simulationRef.current?.alphaTarget(0.006);
-            releaseTimeoutRef.current = null;
-          }, focusNodeId ? 1200 : 1800);
         }
       }
 
@@ -1666,7 +1850,7 @@ export function GraphCanvas({
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
     };
-  }, [focusNodeId]);
+  }, [editMode, onCommitNodePosition, requestRender]);
 
   const handleCanvasPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     updateAmbientGlow(containerRef.current, event.clientX, event.clientY, 0.92);
@@ -1708,10 +1892,34 @@ export function GraphCanvas({
   const handleNodePointerDown = (event: ReactPointerEvent<SVGGElement>, nodeId: string) => {
     event.stopPropagation();
     updateAmbientGlow(containerRef.current, event.clientX, event.clientY, 1);
+
     const targetNode = nodesRef.current.find((node) => node.id === nodeId);
 
     if (!targetNode) {
       return;
+    }
+
+    if (returnAnimationRef.current !== null) {
+      window.cancelAnimationFrame(returnAnimationRef.current);
+      returnAnimationRef.current = null;
+      const returningNode = returningNodeRef.current;
+
+      if (returningNode) {
+        returningNode.x = returningNode.restX;
+        returningNode.y = returningNode.restY;
+        returningNode.vx = 0;
+        returningNode.vy = 0;
+
+        if (returningNode.manual_position === true) {
+          returningNode.fx = returningNode.restX;
+          returningNode.fy = returningNode.restY;
+        } else {
+          returningNode.fx = null;
+          returningNode.fy = null;
+        }
+      }
+
+      returningNodeRef.current = null;
     }
 
     const worldPoint = getWorldPoint(
@@ -1719,17 +1927,22 @@ export function GraphCanvas({
       viewportRef.current,
       viewRef.current,
     );
+    const renderedPosition = getRenderedNodePosition(targetNode, null);
 
     dragStateRef.current = {
       nodeId,
-      offsetX: worldPoint.x - (targetNode.x ?? targetNode.restX),
-      offsetY: worldPoint.y - (targetNode.y ?? targetNode.restY),
+      offsetX: worldPoint.x - renderedPosition.x,
+      offsetY: worldPoint.y - renderedPosition.y,
     };
     movedDuringPointerRef.current = false;
     setDraggingNodeId(nodeId);
-    targetNode.fx = targetNode.x ?? targetNode.restX;
-    targetNode.fy = targetNode.y ?? targetNode.restY;
-    simulationRef.current?.alphaTarget(0.18).restart();
+    targetNode.x = renderedPosition.x;
+    targetNode.y = renderedPosition.y;
+    targetNode.fx = renderedPosition.x;
+    targetNode.fy = renderedPosition.y;
+    targetNode.vx = 0;
+    targetNode.vy = 0;
+    requestRender();
   };
 
   const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
@@ -1841,6 +2054,13 @@ export function GraphCanvas({
                 key={link.id}
                 markerEnd={style.markerEnd}
                 opacity={style.opacity}
+                ref={(element) => {
+                  if (element) {
+                    linkElementRefs.current.set(link.id, element);
+                  } else {
+                    linkElementRefs.current.delete(link.id);
+                  }
+                }}
                 stroke={style.stroke}
                 strokeDasharray={style.dashArray}
                 strokeLinecap={style.dashArray ? "round" : "butt"}
@@ -1916,6 +2136,14 @@ export function GraphCanvas({
                 }
                 onPointerDown={(event) => handleNodePointerDown(event, node.id)}
                 opacity={visual.opacity}
+                ref={(element) => {
+                  if (element) {
+                    nodeElementRefs.current.set(node.id, element);
+                  } else {
+                    nodeElementRefs.current.delete(node.id);
+                  }
+                }}
+                style={{ cursor: draggingNodeId === node.id ? "grabbing" : "grab" }}
                 transform={`translate(${position.x}, ${position.y})`}
               >
                 <defs>

@@ -1,11 +1,13 @@
 "use client";
 
-import { CreateNodeSheet } from "@/components/graph/create-node-sheet";
+import { CreateNodeSheet, EditNodeSheet } from "@/components/graph/create-node-sheet";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import {
   ArrowUpIcon,
   AttachmentIcon,
   MicIcon,
+  PencilIcon,
+  PlusIcon,
   SearchIcon,
 } from "@/components/ui/icons";
 import type { CreateNodeInput, GraphData } from "@/types/graph";
@@ -16,6 +18,15 @@ type MainStageProps = {
   createNodeDraft: CreateNodeInput | null;
   createNodeError: string | null;
   createNodeSubmitting: boolean;
+  deleteDescendantCount: number;
+  deleteEdgeCount: number;
+  deleteNodeCount: number;
+  deleteNodeConfirmOpen: boolean;
+  deleteNodeSubmitting: boolean;
+  editMode: boolean;
+  editNodeDraft: CreateNodeInput | null;
+  editNodeError: string | null;
+  editNodeSubmitting: boolean;
   graphData: GraphData;
   graphLoading: boolean;
   graphSearchValue: string;
@@ -23,15 +34,26 @@ type MainStageProps = {
     field: Field,
     value: CreateNodeInput[Field],
   ) => void;
+  onChangeEditNodeField: <Field extends keyof CreateNodeInput>(
+    field: Field,
+    value: CreateNodeInput[Field],
+  ) => void;
+  onCommitNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
+  onConfirmDeleteNode: () => void;
   onGraphSearchChange: (value: string) => void;
   onGraphSearchSubmit: () => void;
   onCloseCreateNode: () => void;
-  onSelectNode: (nodeId: string | null) => void;
+  onCloseEditNode: () => void;
   onOpenCreateNode: () => void;
+  onToggleEditMode: () => void;
+  onRequestDeleteNode: () => void;
+  onCancelDeleteNode: () => void;
+  onSelectNode: (nodeId: string | null) => void;
   selectedNodeId: string | null;
   onComposerChange: (value: string) => void;
   onComposerSubmit: () => void;
   onSubmitCreateNode: () => void;
+  onSubmitEditNode: () => void;
   submitting: boolean;
 };
 
@@ -41,25 +63,49 @@ export function MainStage({
   createNodeDraft,
   createNodeError,
   createNodeSubmitting,
+  deleteDescendantCount,
+  deleteEdgeCount,
+  deleteNodeCount,
+  deleteNodeConfirmOpen,
+  deleteNodeSubmitting,
+  editMode,
+  editNodeDraft,
+  editNodeError,
+  editNodeSubmitting,
   graphData,
   graphLoading,
   graphSearchValue,
+  onCancelDeleteNode,
   onChangeCreateNodeField,
-  onGraphSearchChange,
-  onGraphSearchSubmit,
+  onChangeEditNodeField,
+  onCommitNodePosition,
   onCloseCreateNode,
-  onSelectNode,
-  onOpenCreateNode,
-  selectedNodeId,
+  onCloseEditNode,
   onComposerChange,
   onComposerSubmit,
+  onConfirmDeleteNode,
+  onGraphSearchChange,
+  onGraphSearchSubmit,
+  onOpenCreateNode,
+  onToggleEditMode,
+  onRequestDeleteNode,
+  onSelectNode,
   onSubmitCreateNode,
+  onSubmitEditNode,
+  selectedNodeId,
   submitting,
 }: MainStageProps) {
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-bg-base)]">
       <div className="main-stage-material pointer-events-none absolute inset-0" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,transparent_62%,rgba(0,0,0,0.16)_100%)]" />
+      <div
+        className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${
+          editMode ? "opacity-100" : "opacity-0"
+        }`}
+      >
+        <div className="main-stage-edit-overlay" />
+      </div>
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-8 py-10">
         <div className="origin-marker" aria-hidden="true">
           <div className="origin-field" />
@@ -72,19 +118,69 @@ export function MainStage({
       <GraphCanvas
         focusNodeId={selectedNodeId}
         graphData={graphData}
+        editMode={editMode}
         loading={graphLoading}
+        onCommitNodePosition={onCommitNodePosition}
         onSelectNode={onSelectNode}
         searchQuery={graphSearchValue}
       />
+
+      <div className="absolute right-6 top-6 z-20 flex items-center gap-2">
+        <div
+          className={`graph-edit-mode-chip ${editMode ? "graph-edit-mode-chip-active" : ""}`}
+        >
+          Edit mode
+        </div>
+
+        <button
+          aria-hidden={!editMode}
+          aria-label="Create node"
+          className={`graph-create-trigger ${
+            editMode ? "graph-create-trigger-visible" : "graph-create-trigger-hidden"
+          }`}
+          onClick={onOpenCreateNode}
+          tabIndex={editMode ? 0 : -1}
+          type="button"
+        >
+          <PlusIcon className="h-[14px] w-[14px]" />
+          <span>New node</span>
+        </button>
+
+        <button
+          aria-label={editMode ? "Exit edit mode" : "Enter edit mode"}
+          aria-pressed={editMode}
+          className={`graph-edit-toggle ${editMode ? "graph-edit-toggle-active" : ""}`}
+          onClick={onToggleEditMode}
+          type="button"
+        >
+          <PencilIcon className="h-[14px] w-[14px]" />
+        </button>
+      </div>
 
       <CreateNodeSheet
         draft={createNodeDraft}
         error={createNodeError}
         onChangeField={onChangeCreateNodeField}
         onClose={onCloseCreateNode}
-        onOpen={onOpenCreateNode}
         onSubmit={onSubmitCreateNode}
         submitting={createNodeSubmitting}
+      />
+
+      <EditNodeSheet
+        deleteDescendantCount={deleteDescendantCount}
+        deleteEdgeCount={deleteEdgeCount}
+        deleteNodeCount={deleteNodeCount}
+        deleteConfirmOpen={deleteNodeConfirmOpen}
+        deleteSubmitting={deleteNodeSubmitting}
+        draft={editNodeDraft}
+        error={editNodeError}
+        onCancelDelete={onCancelDeleteNode}
+        onChangeField={onChangeEditNodeField}
+        onClose={onCloseEditNode}
+        onConfirmDelete={onConfirmDeleteNode}
+        onRequestDelete={onRequestDeleteNode}
+        onSubmit={onSubmitEditNode}
+        submitting={editNodeSubmitting}
       />
 
       <div className="absolute left-6 top-6 z-10">

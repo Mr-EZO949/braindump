@@ -16,9 +16,12 @@ import {
   findFirstMatchingNode,
   loadWorkspaceGraphData,
   loadWorkspaces,
+  persistLocalNodePosition,
+  removeLocalNodePosition,
 } from "@/lib/graph/data";
 import { demoGraphData } from "@/lib/graph/demo-data";
-import { getImportanceLabel } from "@/lib/graph/importance";
+import { getImportanceIndex, getImportanceLabel } from "@/lib/graph/importance";
+import { getStructuralSubtree } from "@/lib/graph/structure";
 import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -52,6 +55,30 @@ const nodeColorByType: Record<Exclude<CreateNodeInput["node_type"], "custom">, s
   task: "#a35258",
 };
 
+const baseEditableNodeTypes = new Set<CreateNodeInput["node_type"]>([
+  "goal",
+  "project",
+  "task",
+  "concept",
+  "class",
+]);
+
+function createDraftFromNode(node: Node): CreateNodeInput {
+  const resolvedType = node.node_type.toLowerCase();
+  const nodeType = baseEditableNodeTypes.has(resolvedType as CreateNodeInput["node_type"])
+    ? (resolvedType as Exclude<CreateNodeInput["node_type"], "custom">)
+    : "custom";
+
+  return {
+    custom_type: nodeType === "custom" ? node.node_type : "",
+    importance_index: getImportanceIndex(node),
+    node_type: nodeType,
+    raw_text: node.raw_text ?? "",
+    summary: node.summary ?? "",
+    title: node.title,
+  };
+}
+
 export function AppShell({ initialUser }: AppShellProps) {
   const router = useRouter();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
@@ -70,11 +97,17 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUserState | null>(initialUser);
   const [signingOut, setSigningOut] = useState(false);
+  const [editMode, setEditMode] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [createNodeDraft, setCreateNodeDraft] = useState<CreateNodeInput | null>(null);
   const [createNodeError, setCreateNodeError] = useState<string | null>(null);
   const [createNodeSubmitting, setCreateNodeSubmitting] = useState(false);
+  const [editNodeDraft, setEditNodeDraft] = useState<CreateNodeInput | null>(null);
+  const [editNodeError, setEditNodeError] = useState<string | null>(null);
+  const [editNodeSubmitting, setEditNodeSubmitting] = useState(false);
+  const [deleteNodeConfirmOpen, setDeleteNodeConfirmOpen] = useState(false);
+  const [deleteNodeSubmitting, setDeleteNodeSubmitting] = useState(false);
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -85,6 +118,16 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   const selectedNode = useMemo(
     () => buildChatNodeContext(graphData, selectedNodeId),
+    [graphData, selectedNodeId],
+  );
+
+  const selectedNodeRecord = useMemo(
+    () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
+    [graphData.nodes, selectedNodeId],
+  );
+
+  const selectedNodeDeletePlan = useMemo(
+    () => (selectedNodeId ? getStructuralSubtree(graphData, selectedNodeId) : null),
     [graphData, selectedNodeId],
   );
 
@@ -205,6 +248,10 @@ export function AppShell({ initialUser }: AppShellProps) {
     setChatError(null);
     setCreateNodeDraft(null);
     setCreateNodeError(null);
+    setEditNodeDraft(null);
+    setEditNodeError(null);
+    setDeleteNodeConfirmOpen(false);
+    setEditMode(false);
     setChatScope(createWorkspaceScope(workspaceName));
   }, [workspaceName]);
 
@@ -259,16 +306,34 @@ export function AppShell({ initialUser }: AppShellProps) {
   };
 
   const handleSelectNode = (nodeId: string | null) => {
-    if (nodeId) {
-      setCreateNodeDraft(null);
-      setCreateNodeError(null);
+    setCreateNodeDraft(null);
+    setCreateNodeError(null);
+    setEditNodeError(null);
+    setDeleteNodeConfirmOpen(false);
+
+    if (!nodeId) {
+      setSelectedNodeId(null);
+      setEditNodeDraft(null);
+      return;
     }
+
+    const nextSelectedNode = graphData.nodes.find((node) => node.id === nodeId);
 
     setSelectedNodeId(nodeId);
 
-    if (nodeId) {
-      setRightPanelOpen(true);
+    if (!nextSelectedNode) {
+      return;
     }
+
+    if (editMode) {
+      setActiveRailTab("details");
+      setRightPanelOpen(false);
+      setEditNodeDraft(createDraftFromNode(nextSelectedNode));
+      return;
+    }
+
+    setEditNodeDraft(null);
+    setRightPanelOpen(true);
   };
 
   const handleGraphSearchSubmit = () => {
@@ -281,12 +346,30 @@ export function AppShell({ initialUser }: AppShellProps) {
     setSelectedNodeId(matchingNode.id);
     setCreateNodeDraft(null);
     setCreateNodeError(null);
+    setEditNodeError(null);
+    setDeleteNodeConfirmOpen(false);
+
+    if (editMode) {
+      setActiveRailTab("details");
+      setRightPanelOpen(false);
+      setEditNodeDraft(createDraftFromNode(matchingNode));
+      return;
+    }
+
+    setEditNodeDraft(null);
     setRightPanelOpen(true);
   };
 
   const handleOpenCreateNode = () => {
+    if (!editMode) {
+      return;
+    }
+
     setSystemPanelOpen(false);
     setWorkspaceMenuOpen(false);
+    setEditNodeDraft(null);
+    setEditNodeError(null);
+    setDeleteNodeConfirmOpen(false);
     setSelectedNodeId(null);
     setActiveRailTab("details");
     setRightPanelOpen(false);
@@ -307,6 +390,48 @@ export function AppShell({ initialUser }: AppShellProps) {
   const handleCloseCreateNode = () => {
     setCreateNodeDraft(null);
     setCreateNodeError(null);
+  };
+
+  const handleChangeEditNodeField = <Field extends keyof CreateNodeInput>(
+    field: Field,
+    value: CreateNodeInput[Field],
+  ) => {
+    setEditNodeDraft((currentDraft) => ({
+      ...(currentDraft ?? defaultCreateNodeDraft),
+      [field]: value,
+    }));
+  };
+
+  const handleCloseEditNode = () => {
+    setEditNodeDraft(null);
+    setEditNodeError(null);
+    setDeleteNodeConfirmOpen(false);
+    setRightPanelOpen(false);
+  };
+
+  const handleToggleEditMode = () => {
+    setEditMode((currentMode) => {
+      const nextMode = !currentMode;
+
+      if (!nextMode) {
+        setCreateNodeDraft(null);
+        setCreateNodeError(null);
+        setEditNodeDraft(null);
+        setEditNodeError(null);
+        setDeleteNodeConfirmOpen(false);
+        setRightPanelOpen(Boolean(selectedNodeId));
+      } else if (selectedNodeRecord) {
+        setCreateNodeDraft(null);
+        setCreateNodeError(null);
+        setEditNodeDraft(createDraftFromNode(selectedNodeRecord));
+        setEditNodeError(null);
+        setDeleteNodeConfirmOpen(false);
+        setActiveRailTab("details");
+        setRightPanelOpen(false);
+      }
+
+      return nextMode;
+    });
   };
 
   const handleSubmitCreateNode = async () => {
@@ -373,6 +498,196 @@ export function AppShell({ initialUser }: AppShellProps) {
     setSelectedNodeId(createdNode.id);
     setRightPanelOpen(true);
     setActiveRailTab("details");
+  };
+
+  const handleSubmitEditNode = async () => {
+    if (
+      !supabase ||
+      !authUser?.id ||
+      !selectedWorkspaceId ||
+      !selectedNodeRecord ||
+      !editNodeDraft
+    ) {
+      setEditNodeError("Workspace or auth context is unavailable.");
+      return;
+    }
+
+    const title = editNodeDraft.title.trim();
+    const resolvedNodeType =
+      editNodeDraft.node_type === "custom"
+        ? editNodeDraft.custom_type.trim()
+        : editNodeDraft.node_type;
+
+    if (title.length === 0) {
+      setEditNodeError("Title is required.");
+      return;
+    }
+
+    if (resolvedNodeType.length === 0) {
+      setEditNodeError("Choose a node type or enter a custom type.");
+      return;
+    }
+
+    setEditNodeSubmitting(true);
+    setEditNodeError(null);
+
+    const payload = {
+      color:
+        editNodeDraft.node_type === "custom"
+          ? nodeColorByType.concept
+          : nodeColorByType[editNodeDraft.node_type],
+      importance: getImportanceLabel(editNodeDraft.importance_index),
+      importance_index: editNodeDraft.importance_index,
+      node_type: resolvedNodeType as Node["node_type"],
+      summary: editNodeDraft.summary.trim() || null,
+      title,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("nodes")
+      .update(payload)
+      .eq("id", selectedNodeRecord.id)
+      .eq("user_id", authUser.id)
+      .eq("workspace_id", selectedWorkspaceId)
+      .select("*")
+      .single();
+
+    setEditNodeSubmitting(false);
+
+    if (error || !data) {
+      setEditNodeError(error?.message ?? "Unable to update node.");
+      return;
+    }
+
+    const updatedNode = data as Node;
+
+    setGraphData((currentGraphData) => ({
+      ...currentGraphData,
+      nodes: currentGraphData.nodes.map((node) =>
+        node.id === updatedNode.id ? updatedNode : node,
+      ),
+    }));
+    setEditNodeDraft(null);
+    setEditNodeError(null);
+    setDeleteNodeConfirmOpen(false);
+    setSelectedNodeId(updatedNode.id);
+    setRightPanelOpen(false);
+    setActiveRailTab("details");
+  };
+
+  const handleDeleteNode = async () => {
+    if (
+      !supabase ||
+      !authUser?.id ||
+      !selectedWorkspaceId ||
+      !selectedNodeRecord ||
+      !selectedNodeDeletePlan
+    ) {
+      setEditNodeError("Workspace or auth context is unavailable.");
+      return;
+    }
+
+    const { edgeIds, nodeIds } = selectedNodeDeletePlan;
+
+    setDeleteNodeSubmitting(true);
+    setEditNodeError(null);
+
+    if (edgeIds.length > 0) {
+      const { error: deleteEdgesError } = await supabase
+        .from("edges")
+        .delete()
+        .in("id", edgeIds)
+        .eq("user_id", authUser.id)
+        .eq("workspace_id", selectedWorkspaceId);
+
+      if (deleteEdgesError) {
+        setDeleteNodeSubmitting(false);
+        setEditNodeError(deleteEdgesError.message);
+        return;
+      }
+    }
+
+    const { error: deleteNodeError } = await supabase
+      .from("nodes")
+      .delete()
+      .in("id", nodeIds)
+      .eq("user_id", authUser.id)
+      .eq("workspace_id", selectedWorkspaceId);
+
+    setDeleteNodeSubmitting(false);
+
+    if (deleteNodeError) {
+      setEditNodeError(deleteNodeError.message);
+      return;
+    }
+
+    nodeIds.forEach((nodeId) => {
+      removeLocalNodePosition(authUser.id, selectedWorkspaceId, nodeId);
+    });
+
+    setGraphData((currentGraphData) => ({
+      nodes: currentGraphData.nodes.filter((node) => !nodeIds.includes(node.id)),
+      edges: currentGraphData.edges.filter(
+        (edge) => !edgeIds.includes(edge.id),
+      ),
+    }));
+    setSelectedNodeId(null);
+    setEditNodeDraft(null);
+    setEditNodeError(null);
+    setDeleteNodeConfirmOpen(false);
+    setChatScope(createWorkspaceScope(workspaceName));
+    setRightPanelOpen(true);
+    if (activeRailTab === "chat") {
+      setActiveRailTab("details");
+    }
+  };
+
+  const handleCommitNodePosition = (nodeId: string, position: { x: number; y: number }) => {
+    if (!authUser?.id || !selectedWorkspaceId) {
+      return;
+    }
+
+    const normalizedPosition = {
+      x: Number(position.x.toFixed(2)),
+      y: Number(position.y.toFixed(2)),
+    };
+
+    persistLocalNodePosition(
+      authUser.id,
+      selectedWorkspaceId,
+      nodeId,
+      normalizedPosition,
+    );
+
+    setGraphData((currentGraphData) => ({
+      ...currentGraphData,
+      nodes: currentGraphData.nodes.map((node) =>
+        node.id === nodeId
+          ? {
+              ...node,
+              manual_position: true,
+              position_x: normalizedPosition.x,
+              position_y: normalizedPosition.y,
+            }
+          : node,
+      ),
+    }));
+
+    if (!supabase) {
+      return;
+    }
+
+    void supabase
+      .from("nodes")
+      .update({
+        manual_position: true,
+        position_x: normalizedPosition.x,
+        position_y: normalizedPosition.y,
+      })
+      .eq("id", nodeId)
+      .eq("user_id", authUser.id)
+      .eq("workspace_id", selectedWorkspaceId);
   };
 
   const handleSignOut = async () => {
@@ -454,11 +769,27 @@ export function AppShell({ initialUser }: AppShellProps) {
           createNodeDraft={createNodeDraft}
           createNodeError={createNodeError}
           createNodeSubmitting={createNodeSubmitting}
+          deleteDescendantCount={selectedNodeDeletePlan?.descendantCount ?? 0}
+          deleteEdgeCount={selectedNodeDeletePlan?.edgeIds.length ?? 0}
+          deleteNodeCount={selectedNodeDeletePlan?.nodeIds.length ?? 1}
+          deleteNodeConfirmOpen={deleteNodeConfirmOpen}
+          deleteNodeSubmitting={deleteNodeSubmitting}
+          editMode={editMode}
+          editNodeDraft={editNodeDraft}
+          editNodeError={editNodeError}
+          editNodeSubmitting={editNodeSubmitting}
           graphData={graphData}
           graphLoading={graphLoading}
           graphSearchValue={graphSearchValue}
+          onCancelDeleteNode={() => setDeleteNodeConfirmOpen(false)}
           onChangeCreateNodeField={handleChangeCreateNodeField}
+          onChangeEditNodeField={handleChangeEditNodeField}
+          onCommitNodePosition={handleCommitNodePosition}
+          onConfirmDeleteNode={() => {
+            void handleDeleteNode();
+          }}
           onCloseCreateNode={handleCloseCreateNode}
+          onCloseEditNode={handleCloseEditNode}
           onComposerChange={setComposerValue}
           onComposerSubmit={() => {
             void submitMessage(composerValue);
@@ -466,9 +797,14 @@ export function AppShell({ initialUser }: AppShellProps) {
           onGraphSearchChange={setGraphSearchValue}
           onGraphSearchSubmit={handleGraphSearchSubmit}
           onOpenCreateNode={handleOpenCreateNode}
+          onToggleEditMode={handleToggleEditMode}
+          onRequestDeleteNode={() => setDeleteNodeConfirmOpen(true)}
           onSelectNode={handleSelectNode}
           onSubmitCreateNode={() => {
             void handleSubmitCreateNode();
+          }}
+          onSubmitEditNode={() => {
+            void handleSubmitEditNode();
           }}
           selectedNodeId={selectedNodeId}
           submitting={chatLoading}

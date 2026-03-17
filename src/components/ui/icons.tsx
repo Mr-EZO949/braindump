@@ -48,6 +48,16 @@ export function PlusIcon(props: IconProps) {
   );
 }
 
+export function PencilIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="m15.5 5.5 3 3" />
+      <path d="M6 18.5 8.5 12l7-7a2.12 2.12 0 0 1 3 3l-7 7L6 18.5Z" />
+      <path d="M5.5 19.5 9 18" />
+    </BaseIcon>
+  );
+}
+
 export function WorkspaceIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>
