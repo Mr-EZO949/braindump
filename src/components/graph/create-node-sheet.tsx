@@ -2,9 +2,31 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 
-import { ChevronDownIcon, CloseIcon, PlusIcon } from "@/components/ui/icons";
+import { ChevronDownIcon, CloseIcon } from "@/components/ui/icons";
 import { getImportanceLabel } from "@/lib/graph/importance";
 import type { CreateNodeInput } from "@/types/graph";
+
+type SharedNodeSheetProps = {
+  deleteDescendantCount?: number;
+  deleteEdgeCount?: number;
+  deleteNodeCount?: number;
+  dangerConfirmOpen?: boolean;
+  deleteSubmitting?: boolean;
+  draft: CreateNodeInput | null;
+  error: string | null;
+  mode: "create" | "edit";
+  onCancelDelete?: () => void;
+  onChangeField: <Field extends keyof CreateNodeInput>(
+    field: Field,
+    value: CreateNodeInput[Field],
+  ) => void;
+  onClose: () => void;
+  onConfirmDelete?: () => void;
+  onRequestDelete?: () => void;
+  onSubmit: () => void;
+  showRawText?: boolean;
+  submitting: boolean;
+};
 
 type CreateNodeSheetProps = {
   draft: CreateNodeInput | null;
@@ -14,7 +36,26 @@ type CreateNodeSheetProps = {
     value: CreateNodeInput[Field],
   ) => void;
   onClose: () => void;
-  onOpen: () => void;
+  onSubmit: () => void;
+  submitting: boolean;
+};
+
+type EditNodeSheetProps = {
+  deleteDescendantCount: number;
+  deleteEdgeCount: number;
+  deleteNodeCount: number;
+  deleteConfirmOpen: boolean;
+  deleteSubmitting: boolean;
+  draft: CreateNodeInput | null;
+  error: string | null;
+  onCancelDelete: () => void;
+  onChangeField: <Field extends keyof CreateNodeInput>(
+    field: Field,
+    value: CreateNodeInput[Field],
+  ) => void;
+  onClose: () => void;
+  onConfirmDelete: () => void;
+  onRequestDelete: () => void;
   onSubmit: () => void;
   submitting: boolean;
 };
@@ -82,15 +123,24 @@ function getPreviewHeight(importanceIndex: number) {
   return clamp(72 + importanceIndex * 0.34, 74, 118);
 }
 
-export function CreateNodeSheet({
+function SharedNodeSheet({
+  deleteDescendantCount = 0,
+  deleteEdgeCount = 0,
+  deleteNodeCount = 1,
+  dangerConfirmOpen = false,
+  deleteSubmitting = false,
   draft,
   error,
+  mode,
+  onCancelDelete,
   onChangeField,
   onClose,
-  onOpen,
+  onConfirmDelete,
+  onRequestDelete,
   onSubmit,
+  showRawText = true,
   submitting,
-}: CreateNodeSheetProps) {
+}: SharedNodeSheetProps) {
   const [typeMenuOpen, setTypeMenuOpen] = useState(false);
   const open = Boolean(draft);
   const safeDraft = draft ?? {
@@ -107,11 +157,6 @@ export function CreateNodeSheet({
     onClose();
   }, [onClose]);
 
-  const handleOpen = useCallback(() => {
-    setTypeMenuOpen(false);
-    onOpen();
-  }, [onOpen]);
-
   useEffect(() => {
     if (!open) {
       return;
@@ -120,6 +165,10 @@ export function CreateNodeSheet({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        if (dangerConfirmOpen && onCancelDelete) {
+          onCancelDelete();
+          return;
+        }
         handleClose();
       }
     };
@@ -129,7 +178,7 @@ export function CreateNodeSheet({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleClose, open]);
+  }, [dangerConfirmOpen, handleClose, onCancelDelete, open]);
 
   const resolvedTypeLabel = getResolvedType(safeDraft);
   const importanceLabel = getImportanceLabel(safeDraft.importance_index);
@@ -141,6 +190,20 @@ export function CreateNodeSheet({
   const previewHeight = getPreviewHeight(safeDraft.importance_index);
   const taskPreview = safeDraft.node_type === "task";
   const sliderProgress = `${safeDraft.importance_index}%`;
+  const title = mode === "create" ? "Create node" : "Edit node";
+  const kicker = mode === "create" ? "New Thought" : "Selected Thought";
+  const copy =
+    mode === "create"
+      ? "Introduce a new thought into this workspace without leaving the graph."
+      : "Adjust the node without breaking the flow of the graph around it.";
+  const primaryActionLabel =
+    mode === "create"
+      ? submitting
+        ? "Creating..."
+        : "Create node"
+      : submitting
+        ? "Saving..."
+        : "Save changes";
 
   const activeTypeDescription = useMemo(
     () =>
@@ -149,110 +212,97 @@ export function CreateNodeSheet({
     [safeDraft.node_type],
   );
 
+  if (!open) {
+    return null;
+  }
+
   return (
-    <>
-      <div className="absolute right-6 top-6 z-20">
-        <button
-          aria-expanded={open}
-          className={`graph-create-trigger ${open ? "graph-create-trigger-open" : ""}`}
-          onClick={handleOpen}
-          type="button"
-        >
-          <PlusIcon className="h-[14px] w-[14px]" />
-          <span>New node</span>
-        </button>
-      </div>
+    <div aria-hidden={false} className="graph-create-overlay graph-create-overlay-open">
+      <button
+        aria-label={`Close ${mode === "create" ? "create" : "edit"} node`}
+        className="graph-create-overlay-backdrop"
+        onClick={handleClose}
+        tabIndex={0}
+        type="button"
+      />
 
-      <div
-        aria-hidden={!open}
-        className={`graph-create-overlay ${open ? "graph-create-overlay-open" : ""}`}
-      >
-        <button
-          aria-label="Close create node"
-          className="graph-create-overlay-backdrop"
-          onClick={handleClose}
-          tabIndex={open ? 0 : -1}
-          type="button"
-        />
-
-        <div className="graph-create-sheet-shell">
-          <div className={`graph-create-sheet ${open ? "graph-create-sheet-open" : ""}`}>
-            <div className="graph-create-sheet-header">
-              <div className="min-w-0">
-                <p className="graph-create-sheet-kicker">New Thought</p>
-                <h2 className="graph-create-sheet-title">Create node</h2>
-                <p className="graph-create-sheet-copy">
-                  Introduce a new thought into this workspace without leaving the graph.
-                </p>
-              </div>
-
-              <button
-                aria-label="Close create node"
-                className="graph-create-close"
-                onClick={handleClose}
-                type="button"
-              >
-                <CloseIcon className="h-[14px] w-[14px]" />
-              </button>
+      <div className="graph-create-sheet-shell">
+        <div className="graph-create-sheet graph-create-sheet-open">
+          <div className="graph-create-sheet-header">
+            <div className="min-w-0">
+              <p className="graph-create-sheet-kicker">{kicker}</p>
+              <h2 className="graph-create-sheet-title">{title}</h2>
+              <p className="graph-create-sheet-copy">{copy}</p>
             </div>
 
-            <div className="graph-create-sheet-body shell-scrollbar">
-              <div className="graph-create-preview-wrap">
-                <div className="graph-create-preview-frame">
-                  <div
-                    className={`graph-create-preview-node ${taskPreview ? "graph-create-preview-node-task" : ""}`}
-                    style={
-                      {
-                        "--create-node-accent": previewAccent,
-                        "--create-node-height": `${previewHeight}px`,
-                        "--create-node-width": `${previewWidth}px`,
-                      } as CSSProperties
-                    }
-                  >
-                    <div className="graph-create-preview-band" />
-                    {taskPreview ? <div className="graph-create-preview-wash" /> : null}
-                    <div className="graph-create-preview-sheen" />
-                    <div className="graph-create-preview-content">
-                      <span className="graph-create-preview-type">{resolvedTypeLabel}</span>
-                      <span className="graph-create-preview-title">
-                        {safeDraft.title.trim() || "Node title"}
-                      </span>
-                      <span className="graph-create-preview-meta">
-                        {importanceLabel} · {safeDraft.importance_index}
-                      </span>
-                    </div>
-                  </div>
+            <button
+              aria-label={`Close ${mode === "create" ? "create" : "edit"} node`}
+              className="graph-create-close"
+              onClick={handleClose}
+              type="button"
+            >
+              <CloseIcon className="h-[14px] w-[14px]" />
+            </button>
+          </div>
+
+          <div className="graph-create-preview-wrap">
+            <div className="graph-create-preview-frame">
+              <div
+                className={`graph-create-preview-node ${taskPreview ? "graph-create-preview-node-task" : ""}`}
+                style={
+                  {
+                    "--create-node-accent": previewAccent,
+                    "--create-node-height": `${previewHeight}px`,
+                    "--create-node-width": `${previewWidth}px`,
+                  } as CSSProperties
+                }
+              >
+                <div className="graph-create-preview-band" />
+                {taskPreview ? <div className="graph-create-preview-wash" /> : null}
+                <div className="graph-create-preview-sheen" />
+                <div className="graph-create-preview-content">
+                  <span className="graph-create-preview-type">{resolvedTypeLabel}</span>
+                  <span className="graph-create-preview-title">
+                    {safeDraft.title.trim() || "Node title"}
+                  </span>
+                  <span className="graph-create-preview-meta">
+                    {importanceLabel} · {safeDraft.importance_index}
+                  </span>
                 </div>
               </div>
+            </div>
+          </div>
 
-              <div className="graph-create-fields">
-                <label className="graph-create-field">
-                  <span className="graph-create-label">Title</span>
-                  <input
-                    className="graph-create-input graph-create-input-title"
-                    onChange={(event) => onChangeField("title", event.target.value)}
-                    placeholder="Node title"
-                    type="text"
-                    value={safeDraft.title}
-                  />
-                </label>
+          <div className="graph-create-sheet-body shell-scrollbar">
+            <div className="graph-create-fields">
+              <label className="graph-create-field">
+                <span className="graph-create-label">Title</span>
+                <input
+                  className="graph-create-input graph-create-input-title"
+                  onChange={(event) => onChangeField("title", event.target.value)}
+                  placeholder="Node title"
+                  type="text"
+                  value={safeDraft.title}
+                />
+              </label>
 
-                <label className="graph-create-field">
-                  <div className="space-y-1">
-                    <span className="graph-create-label">Summary</span>
-                    <p className="graph-create-helper">
-                      A concise human-readable description shown in context and details.
-                    </p>
-                  </div>
-                  <textarea
-                    className="graph-create-input graph-create-textarea graph-create-textarea-summary"
-                    onChange={(event) => onChangeField("summary", event.target.value)}
-                    placeholder="Short summary"
-                    rows={3}
-                    value={safeDraft.summary}
-                  />
-                </label>
+              <label className="graph-create-field">
+                <div className="space-y-1">
+                  <span className="graph-create-label">Summary</span>
+                  <p className="graph-create-helper">
+                    A concise human-readable description shown in context and details.
+                  </p>
+                </div>
+                <textarea
+                  className="graph-create-input graph-create-textarea graph-create-textarea-summary"
+                  onChange={(event) => onChangeField("summary", event.target.value)}
+                  placeholder="Short summary"
+                  rows={3}
+                  value={safeDraft.summary}
+                />
+              </label>
 
+              {showRawText ? (
                 <label className="graph-create-field">
                   <div className="space-y-1">
                     <span className="graph-create-label">Source note</span>
@@ -268,116 +318,213 @@ export function CreateNodeSheet({
                     value={safeDraft.raw_text}
                   />
                 </label>
+              ) : null}
 
-                <div className="graph-create-field">
-                  <span className="graph-create-label">Type</span>
-                  <div className="graph-type-select">
-                    <button
-                      aria-expanded={typeMenuOpen}
-                      className={`graph-type-trigger ${typeMenuOpen ? "graph-type-trigger-open" : ""}`}
-                      onClick={() => setTypeMenuOpen((current) => !current)}
-                      type="button"
-                    >
-                      <div className="min-w-0">
-                        <span className="graph-type-trigger-label">{resolvedTypeLabel}</span>
-                        <span className="graph-type-trigger-meta">{activeTypeDescription}</span>
-                      </div>
-                      <ChevronDownIcon
-                        className={`h-[14px] w-[14px] shrink-0 transition-transform duration-200 ${
-                          typeMenuOpen ? "rotate-180" : ""
-                        }`}
-                      />
-                    </button>
-
-                    <div className={`graph-type-menu ${typeMenuOpen ? "graph-type-menu-open" : ""}`}>
-                      {presetTypes.map((item) => {
-                        const active = item.value === safeDraft.node_type;
-
-                        return (
-                          <button
-                            className={`graph-type-option ${active ? "graph-type-option-active" : ""}`}
-                            key={item.value}
-                            onClick={() => {
-                              onChangeField("node_type", item.value);
-                              if (item.value !== "custom") {
-                                onChangeField("custom_type", "");
-                              }
-                              setTypeMenuOpen(false);
-                            }}
-                            type="button"
-                          >
-                            <span className="graph-type-option-label">{item.label}</span>
-                            <span className="graph-type-option-copy">{item.description}</span>
-                          </button>
-                        );
-                      })}
+              <div className="graph-create-field">
+                <span className="graph-create-label">Type</span>
+                <div className="graph-type-select">
+                  <button
+                    aria-expanded={typeMenuOpen}
+                    className={`graph-type-trigger ${typeMenuOpen ? "graph-type-trigger-open" : ""}`}
+                    onClick={() => setTypeMenuOpen((current) => !current)}
+                    type="button"
+                  >
+                    <div className="min-w-0">
+                      <span className="graph-type-trigger-label">{resolvedTypeLabel}</span>
+                      <span className="graph-type-trigger-meta">{activeTypeDescription}</span>
                     </div>
-                  </div>
-
-                  {safeDraft.node_type === "custom" ? (
-                    <input
-                      className="graph-create-input graph-create-input-inline"
-                      onChange={(event) => onChangeField("custom_type", event.target.value)}
-                      placeholder="Custom type label"
-                      type="text"
-                      value={safeDraft.custom_type}
+                    <ChevronDownIcon
+                      className={`h-[14px] w-[14px] shrink-0 transition-transform duration-200 ${
+                        typeMenuOpen ? "rotate-180" : ""
+                      }`}
                     />
-                  ) : null}
+                  </button>
+
+                  <div className={`graph-type-menu ${typeMenuOpen ? "graph-type-menu-open" : ""}`}>
+                    {presetTypes.map((item) => {
+                      const active = item.value === safeDraft.node_type;
+
+                      return (
+                        <button
+                          className={`graph-type-option ${active ? "graph-type-option-active" : ""}`}
+                          key={item.value}
+                          onClick={() => {
+                            onChangeField("node_type", item.value);
+                            if (item.value !== "custom") {
+                              onChangeField("custom_type", "");
+                            }
+                            setTypeMenuOpen(false);
+                          }}
+                          type="button"
+                        >
+                          <span className="graph-type-option-label">{item.label}</span>
+                          <span className="graph-type-option-copy">{item.description}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div className="graph-create-field">
-                  <div className="flex items-end justify-between gap-3">
-                    <span className="graph-create-label">Importance</span>
-                    <div className="graph-importance-pill">
-                      <span>{importanceLabel}</span>
-                      <span>{safeDraft.importance_index}</span>
-                    </div>
+                {safeDraft.node_type === "custom" ? (
+                  <input
+                    className="graph-create-input graph-create-input-inline"
+                    onChange={(event) => onChangeField("custom_type", event.target.value)}
+                    placeholder="Custom type label"
+                    type="text"
+                    value={safeDraft.custom_type}
+                  />
+                ) : null}
+              </div>
+
+              <div className="graph-create-field">
+                <div className="flex items-end justify-between gap-3">
+                  <span className="graph-create-label">Importance</span>
+                  <div className="graph-importance-pill">
+                    <span>{importanceLabel}</span>
+                    <span>{safeDraft.importance_index}</span>
                   </div>
-                  <div className="graph-importance-control">
-                    <div
-                      className="graph-importance-slider-wrap"
-                      style={{ "--graph-importance-progress": sliderProgress } as CSSProperties}
-                    >
-                      <input
-                        className="graph-importance-slider"
-                        max={100}
-                        min={0}
-                        onChange={(event) =>
-                          onChangeField("importance_index", Number(event.target.value))
-                        }
-                        step={1}
-                        type="range"
-                        value={safeDraft.importance_index}
-                      />
-                    </div>
-                    <div className="graph-importance-scale">
-                      <span>Low</span>
-                      <span>Medium</span>
-                      <span>High</span>
-                    </div>
+                </div>
+
+                <div className="graph-importance-control">
+                  <div
+                    className="graph-importance-slider-wrap"
+                    style={{ "--graph-importance-progress": sliderProgress } as CSSProperties}
+                  >
+                    <input
+                      className="graph-importance-slider"
+                      max={100}
+                      min={0}
+                      onChange={(event) =>
+                        onChangeField("importance_index", Number(event.target.value))
+                      }
+                      step={1}
+                      type="range"
+                      value={safeDraft.importance_index}
+                    />
+                  </div>
+                  <div className="graph-importance-scale">
+                    <span>Low</span>
+                    <span>Medium</span>
+                    <span>High</span>
                   </div>
                 </div>
               </div>
             </div>
+          </div>
 
-            {error ? <p className="graph-create-error">{error}</p> : null}
+          {error ? <p className="graph-create-error">{error}</p> : null}
 
-            <div className="graph-create-actions">
-              <button className="graph-create-secondary" onClick={handleClose} type="button">
-                Cancel
-              </button>
+          {mode === "edit" && dangerConfirmOpen ? (
+            <div className="graph-create-danger-panel">
+              <p className="graph-create-danger-title">Delete this node?</p>
+              <p className="graph-create-danger-copy">
+                This will remove {deleteNodeCount} {deleteNodeCount === 1 ? "node" : "nodes"}
+                {deleteDescendantCount > 0
+                  ? `, including ${deleteDescendantCount} ${deleteDescendantCount === 1 ? "descendant" : "descendants"}`
+                  : ""}
+                . {deleteEdgeCount > 0 ? `${deleteEdgeCount} attached ${deleteEdgeCount === 1 ? "connection" : "connections"} will also be removed. ` : ""}
+                The rest of the graph will remain.
+              </p>
+              <div className="graph-create-danger-actions">
+                <button className="graph-create-secondary" onClick={onCancelDelete} type="button">
+                  Keep node
+                </button>
+                <button
+                  className="graph-create-danger-confirm"
+                  disabled={deleteSubmitting}
+                  onClick={onConfirmDelete}
+                  type="button"
+                >
+                  {deleteSubmitting ? "Deleting..." : "Delete node"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="graph-create-actions">
+            {mode === "edit" ? (
               <button
-                className="graph-create-primary"
-                disabled={submitting || safeDraft.title.trim().length === 0}
-                onClick={onSubmit}
+                className="graph-create-danger-trigger"
+                onClick={dangerConfirmOpen ? onCancelDelete : onRequestDelete}
                 type="button"
               >
-                {submitting ? "Creating..." : "Create node"}
+                {dangerConfirmOpen ? "Cancel delete" : "Delete"}
               </button>
-            </div>
+            ) : null}
+            <button className="graph-create-secondary" onClick={handleClose} type="button">
+              Cancel
+            </button>
+            <button
+              className="graph-create-primary"
+              disabled={submitting || deleteSubmitting || safeDraft.title.trim().length === 0}
+              onClick={onSubmit}
+              type="button"
+            >
+              {primaryActionLabel}
+            </button>
           </div>
         </div>
       </div>
-    </>
+    </div>
+  );
+}
+
+export function CreateNodeSheet({
+  draft,
+  error,
+  onChangeField,
+  onClose,
+  onSubmit,
+  submitting,
+}: CreateNodeSheetProps) {
+  return (
+    <SharedNodeSheet
+      draft={draft}
+      error={error}
+      mode="create"
+      onChangeField={onChangeField}
+      onClose={onClose}
+      onSubmit={onSubmit}
+      showRawText
+      submitting={submitting}
+    />
+  );
+}
+
+export function EditNodeSheet({
+  deleteDescendantCount,
+  deleteEdgeCount,
+  deleteNodeCount,
+  deleteConfirmOpen,
+  deleteSubmitting,
+  draft,
+  error,
+  onCancelDelete,
+  onChangeField,
+  onClose,
+  onConfirmDelete,
+  onRequestDelete,
+  onSubmit,
+  submitting,
+}: EditNodeSheetProps) {
+  return (
+    <SharedNodeSheet
+      deleteDescendantCount={deleteDescendantCount}
+      deleteEdgeCount={deleteEdgeCount}
+      deleteNodeCount={deleteNodeCount}
+      dangerConfirmOpen={deleteConfirmOpen}
+      deleteSubmitting={deleteSubmitting}
+      draft={draft}
+      error={error}
+      mode="edit"
+      onCancelDelete={onCancelDelete}
+      onChangeField={onChangeField}
+      onClose={onClose}
+      onConfirmDelete={onConfirmDelete}
+      onRequestDelete={onRequestDelete}
+      onSubmit={onSubmit}
+      showRawText={false}
+      submitting={submitting}
+    />
   );
 }
