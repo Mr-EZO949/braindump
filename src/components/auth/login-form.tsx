@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import styles from "@/components/auth/auth-experience.module.css";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export function LoginForm() {
@@ -11,9 +12,12 @@ export function LoginForm() {
   const [authMode, setAuthMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const isSignUp = authMode === "sign-up";
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -36,20 +40,24 @@ export function LoginForm() {
       return;
     }
 
+    if (isSignUp && trimmedPassword !== confirmPassword.trim()) {
+      setErrorMessage("Passwords do not match.");
+      return;
+    }
+
     setLoading(true);
     setErrorMessage(null);
     setStatusMessage(null);
 
-    const authResult =
-      authMode === "sign-in"
-        ? await supabase.auth.signInWithPassword({
-            email: trimmedEmail,
-            password: trimmedPassword,
-          })
-        : await supabase.auth.signUp({
-            email: trimmedEmail,
-            password: trimmedPassword,
-          });
+    const authResult = isSignUp
+      ? await supabase.auth.signUp({
+          email: trimmedEmail,
+          password: trimmedPassword,
+        })
+      : await supabase.auth.signInWithPassword({
+          email: trimmedEmail,
+          password: trimmedPassword,
+        });
 
     const { data, error } = authResult;
 
@@ -66,22 +74,18 @@ export function LoginForm() {
     }
 
     setStatusMessage(
-      authMode === "sign-up"
-        ? "Account created. If email confirmation is enabled, confirm your email before signing in."
+      isSignUp
+        ? "Account created. Confirm your email only if confirmation is enabled in Supabase."
         : "Signed in successfully.",
     );
     setLoading(false);
   };
 
   return (
-    <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
-      <div className="grid grid-cols-2 gap-2 rounded-[14px] border border-[color:var(--color-border-faint)] bg-[rgba(255,255,255,0.015)] p-1">
+    <div className={styles.formShell}>
+      <div className={styles.modeToggle}>
         <button
-          className={`rounded-[10px] px-3 py-2 text-[13px] font-medium transition-colors duration-150 ease-out ${
-            authMode === "sign-in"
-              ? "bg-[rgba(255,255,255,0.06)] text-[var(--color-text-primary)]"
-              : "text-[var(--color-text-secondary)]"
-          }`}
+          className={`${styles.modeButton} ${authMode === "sign-in" ? styles.modeButtonActive : ""}`}
           onClick={() => {
             setAuthMode("sign-in");
             setErrorMessage(null);
@@ -92,11 +96,7 @@ export function LoginForm() {
           Sign in
         </button>
         <button
-          className={`rounded-[10px] px-3 py-2 text-[13px] font-medium transition-colors duration-150 ease-out ${
-            authMode === "sign-up"
-              ? "bg-[rgba(255,255,255,0.06)] text-[var(--color-text-primary)]"
-              : "text-[var(--color-text-secondary)]"
-          }`}
+          className={`${styles.modeButton} ${authMode === "sign-up" ? styles.modeButtonActive : ""}`}
           onClick={() => {
             setAuthMode("sign-up");
             setErrorMessage(null);
@@ -108,59 +108,74 @@ export function LoginForm() {
         </button>
       </div>
 
-      <label className="block">
-        <span className="mb-2 block text-[12px] font-medium tracking-[-0.01em] text-[var(--color-text-secondary)]">
-          Email
-        </span>
-        <input
-          autoComplete="email"
-          className="h-12 w-full rounded-[12px] border border-[color:var(--color-border-faint)] bg-[var(--color-bg-surface-elevated)] px-4 text-[14px] text-[var(--color-text-primary)] outline-none transition-[border-color,box-shadow] duration-150 ease-out placeholder:text-[var(--color-text-muted)] focus:border-[rgba(213,58,71,0.24)] focus:shadow-[var(--shadow-focus)]"
-          onChange={(event) => setEmail(event.target.value)}
-          placeholder="you@example.com"
-          type="email"
-          value={email}
-        />
-      </label>
+      <form className={styles.form} onSubmit={handleSubmit}>
+        <div className={styles.formGrid}>
+          <label className={styles.field}>
+            <span className={styles.label}>Email</span>
+            <span className={styles.inputWrap}>
+              <input
+                autoComplete="email"
+                className={styles.input}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@example.com"
+                type="email"
+                value={email}
+              />
+            </span>
+          </label>
 
-      <label className="block">
-        <span className="mb-2 block text-[12px] font-medium tracking-[-0.01em] text-[var(--color-text-secondary)]">
-          Password
-        </span>
-        <input
-          autoComplete={authMode === "sign-in" ? "current-password" : "new-password"}
-          className="h-12 w-full rounded-[12px] border border-[color:var(--color-border-faint)] bg-[var(--color-bg-surface-elevated)] px-4 text-[14px] text-[var(--color-text-primary)] outline-none transition-[border-color,box-shadow] duration-150 ease-out placeholder:text-[var(--color-text-muted)] focus:border-[rgba(213,58,71,0.24)] focus:shadow-[var(--shadow-focus)]"
-          onChange={(event) => setPassword(event.target.value)}
-          placeholder="At least 8 characters"
-          type="password"
-          value={password}
-        />
-      </label>
+          <label className={styles.field}>
+            <span className={styles.label}>Password</span>
+            <span className={styles.inputWrap}>
+              <input
+                autoComplete={isSignUp ? "new-password" : "current-password"}
+                className={styles.input}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="At least 8 characters"
+                type="password"
+                value={password}
+              />
+            </span>
+          </label>
 
-      {statusMessage ? (
-        <p className="rounded-[12px] border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] px-4 py-3 text-[13px] leading-5 text-[var(--color-text-secondary)]">
-          {statusMessage}
+          {isSignUp ? (
+            <label className={styles.field}>
+              <span className={styles.label}>Confirm password</span>
+              <span className={styles.inputWrap}>
+                <input
+                  autoComplete="new-password"
+                  className={styles.input}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  placeholder="Repeat your password"
+                  type="password"
+                  value={confirmPassword}
+                />
+              </span>
+            </label>
+          ) : null}
+        </div>
+
+        {statusMessage ? <p className={styles.status}>{statusMessage}</p> : null}
+        {errorMessage ? <p className={styles.error}>{errorMessage}</p> : null}
+
+        <div className={styles.submitRow}>
+          <button className={styles.submitButton} disabled={loading} type="submit">
+            {loading
+              ? isSignUp
+                ? "Creating account..."
+                : "Signing in..."
+              : isSignUp
+                ? "Create account"
+                : "Sign in"}
+          </button>
+        </div>
+
+        <p className={styles.helperLine}>
+          {isSignUp
+            ? "Create a private workspace."
+            : "Use your workspace account."}
         </p>
-      ) : null}
-
-      {errorMessage ? (
-        <p className="rounded-[12px] border border-[rgba(213,58,71,0.16)] bg-[rgba(213,58,71,0.07)] px-4 py-3 text-[13px] leading-5 text-[var(--color-text-secondary)]">
-          {errorMessage}
-        </p>
-      ) : null}
-
-      <button
-        className="shell-button shell-button-primary inline-flex h-12 w-full items-center justify-center px-4 text-[14px] font-medium"
-        disabled={loading}
-        type="submit"
-      >
-        {loading
-          ? authMode === "sign-in"
-            ? "Signing in..."
-            : "Creating account..."
-          : authMode === "sign-in"
-            ? "Sign in"
-            : "Create account"}
-      </button>
-    </form>
+      </form>
+    </div>
   );
 }
