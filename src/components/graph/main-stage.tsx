@@ -2,19 +2,13 @@
 
 import { CreateNodeSheet, EditNodeSheet } from "@/components/graph/create-node-sheet";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
-import {
-  ArrowUpIcon,
-  AttachmentIcon,
-  MicIcon,
-  PencilIcon,
-  PlusIcon,
-  SearchIcon,
-} from "@/components/ui/icons";
+import { PencilIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
+import type { LocalGraphCameraView } from "@/lib/graph/data";
+import type { EdgeRelationOptionId } from "@/lib/graph/relationships";
 import type { CreateNodeInput, GraphData } from "@/types/graph";
 
 type MainStageProps = {
-  composerPlaceholder: string;
-  composerValue: string;
+  cameraView: LocalGraphCameraView | null;
   createNodeDraft: CreateNodeInput | null;
   createNodeError: string | null;
   createNodeSubmitting: boolean;
@@ -27,39 +21,78 @@ type MainStageProps = {
   editNodeDraft: CreateNodeInput | null;
   editNodeError: string | null;
   editNodeSubmitting: boolean;
+  edgeConnectionDeleteSubmittingId: string | null;
+  edgeConnectionError: string | null;
+  edgeConnectionRelationId: EdgeRelationOptionId;
+  edgeConnectionSubmitting: boolean;
+  edgeConnectionTargetId: string;
+  edgeConnectionTargetOptions: Array<{
+    id: string;
+    node_type: string;
+    title: string;
+  }>;
+  edgeConnectionTypeOptions: Array<{
+    description: string;
+    id: EdgeRelationOptionId;
+    label: string;
+  }>;
+  edgeConnectionUpdateSubmittingId: string | null;
+  edgeConnections: Array<{
+    edgeId: string;
+    nodeId: string;
+    nodeType: string;
+    relationId: EdgeRelationOptionId;
+    title: string;
+  }>;
   graphData: GraphData;
+  graphImportanceFilter: string;
+  graphImportanceFilterOptions: Array<{
+    label: string;
+    value: string;
+  }>;
   graphLoading: boolean;
   graphSearchValue: string;
+  graphTypeFilter: string;
+  graphTypeFilterOptions: Array<{
+    label: string;
+    value: string;
+  }>;
   onChangeCreateNodeField: <Field extends keyof CreateNodeInput>(
     field: Field,
     value: CreateNodeInput[Field],
   ) => void;
+  onCameraViewChange: (view: LocalGraphCameraView) => void;
   onChangeEditNodeField: <Field extends keyof CreateNodeInput>(
     field: Field,
     value: CreateNodeInput[Field],
   ) => void;
+  onChangeGraphImportanceFilter: (value: string) => void;
+  onChangeGraphTypeFilter: (value: string) => void;
+  onChangeNewEdgeConnectionRelation: (relationId: EdgeRelationOptionId) => void;
+  onChangeNewEdgeConnectionTarget: (nodeId: string) => void;
   onCommitNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   onConfirmDeleteNode: () => void;
+  onCreateEdgeConnection: () => void;
+  onDeleteEdgeConnection: (edgeId: string) => void;
   onGraphSearchChange: (value: string) => void;
   onGraphSearchSubmit: () => void;
   onCloseCreateNode: () => void;
   onCloseEditNode: () => void;
   onOpenCreateNode: () => void;
+  onResetGraphFilters: () => void;
   onToggleEditMode: () => void;
   onRequestDeleteNode: () => void;
   onCancelDeleteNode: () => void;
   onSelectNode: (nodeId: string | null) => void;
   selectedNodeId: string | null;
-  onComposerChange: (value: string) => void;
-  onComposerSubmit: () => void;
   onSubmitCreateNode: () => void;
   onSubmitEditNode: () => void;
-  submitting: boolean;
+  onUpdateEdgeConnection: (edgeId: string, relationId: EdgeRelationOptionId) => void;
+  suppressInitialFocusAnimation: boolean;
 };
 
 export function MainStage({
-  composerPlaceholder,
-  composerValue,
+  cameraView,
   createNodeDraft,
   createNodeError,
   createNodeSubmitting,
@@ -72,29 +105,51 @@ export function MainStage({
   editNodeDraft,
   editNodeError,
   editNodeSubmitting,
+  edgeConnectionDeleteSubmittingId,
+  edgeConnectionError,
+  edgeConnectionRelationId,
+  edgeConnectionSubmitting,
+  edgeConnectionTargetId,
+  edgeConnectionTargetOptions,
+  edgeConnectionTypeOptions,
+  edgeConnectionUpdateSubmittingId,
+  edgeConnections,
   graphData,
+  graphImportanceFilter,
+  graphImportanceFilterOptions,
   graphLoading,
   graphSearchValue,
+  graphTypeFilter,
+  graphTypeFilterOptions,
   onCancelDeleteNode,
+  onCameraViewChange,
   onChangeCreateNodeField,
   onChangeEditNodeField,
+  onChangeGraphImportanceFilter,
+  onChangeGraphTypeFilter,
+  onChangeNewEdgeConnectionRelation,
+  onChangeNewEdgeConnectionTarget,
   onCommitNodePosition,
   onCloseCreateNode,
   onCloseEditNode,
-  onComposerChange,
-  onComposerSubmit,
   onConfirmDeleteNode,
+  onCreateEdgeConnection,
+  onDeleteEdgeConnection,
   onGraphSearchChange,
   onGraphSearchSubmit,
   onOpenCreateNode,
+  onResetGraphFilters,
   onToggleEditMode,
   onRequestDeleteNode,
   onSelectNode,
   onSubmitCreateNode,
   onSubmitEditNode,
+  onUpdateEdgeConnection,
   selectedNodeId,
-  submitting,
+  suppressInitialFocusAnimation,
 }: MainStageProps) {
+  const filtersActive = graphTypeFilter !== "all" || graphImportanceFilter !== "all";
+
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-bg-base)]">
       <div className="main-stage-material pointer-events-none absolute inset-0" />
@@ -119,10 +174,13 @@ export function MainStage({
         focusNodeId={selectedNodeId}
         graphData={graphData}
         editMode={editMode}
+        initialView={cameraView}
         loading={graphLoading}
         onCommitNodePosition={onCommitNodePosition}
         onSelectNode={onSelectNode}
+        onViewChange={onCameraViewChange}
         searchQuery={graphSearchValue}
+        suppressInitialFocusAnimation={suppressInitialFocusAnimation}
       />
 
       <div className="absolute right-6 top-6 z-20 flex items-center gap-2">
@@ -167,6 +225,15 @@ export function MainStage({
       />
 
       <EditNodeSheet
+        connectionDeleteSubmittingId={edgeConnectionDeleteSubmittingId}
+        connectionError={edgeConnectionError}
+        connectionRelationId={edgeConnectionRelationId}
+        connectionSubmitting={edgeConnectionSubmitting}
+        connectionTargetId={edgeConnectionTargetId}
+        connectionTargetOptions={edgeConnectionTargetOptions}
+        connectionTypeOptions={edgeConnectionTypeOptions}
+        connectionUpdateSubmittingId={edgeConnectionUpdateSubmittingId}
+        connections={edgeConnections}
         deleteDescendantCount={deleteDescendantCount}
         deleteEdgeCount={deleteEdgeCount}
         deleteNodeCount={deleteNodeCount}
@@ -176,74 +243,78 @@ export function MainStage({
         error={editNodeError}
         onCancelDelete={onCancelDeleteNode}
         onChangeField={onChangeEditNodeField}
+        onChangeNewConnectionRelation={onChangeNewEdgeConnectionRelation}
+        onChangeNewConnectionTarget={onChangeNewEdgeConnectionTarget}
         onClose={onCloseEditNode}
         onConfirmDelete={onConfirmDeleteNode}
+        onCreateConnection={onCreateEdgeConnection}
+        onDeleteConnection={onDeleteEdgeConnection}
         onRequestDelete={onRequestDeleteNode}
         onSubmit={onSubmitEditNode}
+        onUpdateConnection={onUpdateEdgeConnection}
         submitting={editNodeSubmitting}
       />
 
       <div className="absolute left-6 top-6 z-10">
-        <label className="graph-search-control">
-          <SearchIcon className="h-[13px] w-[13px] shrink-0 text-[var(--color-text-muted)]" />
-          <span className="sr-only">Graph search</span>
-          <input
-            className="graph-search-input"
-            onChange={(event) => onGraphSearchChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                onGraphSearchSubmit();
-              }
-            }}
-            placeholder="Find node"
-            type="search"
-            value={graphSearchValue}
-          />
-        </label>
-      </div>
+        <div className="graph-stage-controls">
+          <label className="graph-search-control">
+            <SearchIcon className="h-[13px] w-[13px] shrink-0 text-[var(--color-text-muted)]" />
+            <span className="sr-only">Graph search</span>
+            <input
+              className="graph-search-input"
+              onChange={(event) => onGraphSearchChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  onGraphSearchSubmit();
+                }
+              }}
+              placeholder="Find node"
+              type="search"
+              value={graphSearchValue}
+            />
+          </label>
 
-      <div className="absolute inset-x-0 bottom-6 z-10 flex justify-center px-6">
-        <div className="stage-composer" role="group" aria-label="Thought composer">
-          <button
-            aria-label="Add attachment"
-            className="composer-utility-button"
-            type="button"
-          >
-            <AttachmentIcon className="h-[15px] w-[15px]" />
-          </button>
+          <div className="graph-filter-row">
+            <label className="graph-filter-shell">
+              <span className="sr-only">Filter by node type</span>
+              <select
+                className="graph-filter-select"
+                onChange={(event) => onChangeGraphTypeFilter(event.target.value)}
+                value={graphTypeFilter}
+              >
+                {graphTypeFilterOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <textarea
-            className="stage-composer-textarea"
-            onChange={(event) => onComposerChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                onComposerSubmit();
-              }
-            }}
-            placeholder={composerPlaceholder}
-            rows={1}
-            value={composerValue}
-          />
+            <label className="graph-filter-shell">
+              <span className="sr-only">Filter by importance</span>
+              <select
+                className="graph-filter-select"
+                onChange={(event) => onChangeGraphImportanceFilter(event.target.value)}
+                value={graphImportanceFilter}
+              >
+                {graphImportanceFilterOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <button
-            aria-label="Start voice input"
-            className="composer-utility-button"
-            type="button"
-          >
-            <MicIcon className="h-[15px] w-[15px]" />
-          </button>
-
-          <button
-            aria-label="Send thought"
-            className="composer-send-button"
-            disabled={submitting || composerValue.trim().length === 0}
-            onClick={onComposerSubmit}
-            type="button"
-          >
-            <ArrowUpIcon className="h-[15px] w-[15px]" />
-          </button>
+            <button
+              className={`graph-filter-reset ${filtersActive ? "graph-filter-reset-active" : ""}`}
+              disabled={!filtersActive}
+              onClick={onResetGraphFilters}
+              type="button"
+            >
+              Reset
+            </button>
+          </div>
         </div>
       </div>
     </main>
