@@ -1,6 +1,6 @@
 import type { EdgeType, Importance, NodeType } from "@/types/graph";
 
-export type RailTab = "details" | "focus" | "chat";
+export type RailTab = "details" | "chat";
 
 export type ChatScope =
   | {

@@ -4,23 +4,67 @@ import {
   getChatScopeTitle,
   getSuggestedPrompts,
 } from "@/lib/graph/chat";
-import { getFocusItems, getLinkedNodePerspectives } from "@/lib/graph/insights";
-import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
+import { getLinkedNodePerspectives, type LinkedNodePerspective } from "@/lib/graph/insights";
+import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import type { ChatMessage, ChatNodeContext, ChatScope, RailTab } from "@/types/chat";
 import type { GraphData } from "@/types/graph";
+
+type LinkCategory = "parent" | "children" | "dependencies" | "blocking" | "supports" | "related";
+
+const CATEGORY_DISPLAY: Record<LinkCategory, string> = {
+  parent: "Parent",
+  children: "Children",
+  dependencies: "Dependencies",
+  blocking: "Blocking",
+  supports: "Supports",
+  related: "Related",
+};
+
+const CATEGORY_ORDER: LinkCategory[] = [
+  "parent",
+  "children",
+  "dependencies",
+  "blocking",
+  "supports",
+  "related",
+];
+
+function getLinkCategory(labels: string[]): LinkCategory {
+  for (const label of labels) {
+    if (label === "belongs to") return "parent";
+    if (label === "contains") return "children";
+    if (label === "required for" || label === "requires") return "dependencies";
+    if (label === "blocks" || label === "blocked by") return "blocking";
+    if (label === "supports" || label === "supported by") return "supports";
+  }
+  return "related";
+}
+
+function groupLinkedNodes(
+  linkedNodes: LinkedNodePerspective[],
+): Array<{ category: LinkCategory; label: string; nodes: LinkedNodePerspective[] }> {
+  return CATEGORY_ORDER.map((category) => ({
+    category,
+    label: CATEGORY_DISPLAY[category],
+    nodes: linkedNodes.filter((p) => getLinkCategory(p.labels) === category),
+  })).filter((g) => g.nodes.length > 0);
+}
 
 type ContextRailProps = {
   activeTab: RailTab;
   chatError: string | null;
+  chatInputValue: string;
   chatLoading: boolean;
   chatMessages: ChatMessage[];
   chatScope: ChatScope;
   graphData: GraphData;
+  onChatInputChange: (value: string) => void;
   onClearChatScope: () => void;
   onRetryChat: () => void;
   onSelectPrompt: (prompt: string) => void;
   onSelectLinkedNode: (nodeId: string) => void;
   onSetActiveTab: (tab: RailTab) => void;
+  onSubmitChatInput: (message: string) => void;
   onToggle: () => void;
   open: boolean;
   selectedNode: ChatNodeContext | null;
@@ -29,22 +73,25 @@ type ContextRailProps = {
 export function ContextRail({
   activeTab,
   chatError,
+  chatInputValue,
   chatLoading,
   chatMessages,
   chatScope,
   graphData,
+  onChatInputChange,
   onClearChatScope,
   onRetryChat,
   onSelectPrompt,
   onSelectLinkedNode,
   onSetActiveTab,
+  onSubmitChatInput,
   onToggle,
   open,
   selectedNode,
 }: ContextRailProps) {
   const promptSuggestions = getSuggestedPrompts(chatScope);
   const linkedNodes = getLinkedNodePerspectives(graphData, selectedNode?.id ?? null);
-  const focusItems = getFocusItems(graphData, selectedNode);
+  const linkedGroups = groupLinkedNodes(linkedNodes);
 
   return (
     <div
@@ -72,6 +119,7 @@ export function ContextRail({
         }`}
       >
         <div className="flex h-full flex-col">
+          {/* Tab strip + header */}
           <div className="border-b border-[color:var(--color-border-faint)] px-5 py-5">
             <div aria-label="Context rail mode" className="rail-tab-strip" role="tablist">
               <button
@@ -83,16 +131,6 @@ export function ContextRail({
                 type="button"
               >
                 Details
-              </button>
-              <button
-                aria-selected={activeTab === "focus"}
-                className="rail-tab-button"
-                data-active={activeTab === "focus"}
-                onClick={() => onSetActiveTab("focus")}
-                role="tab"
-                type="button"
-              >
-                Focus
               </button>
               <button
                 aria-selected={activeTab === "chat"}
@@ -126,48 +164,48 @@ export function ContextRail({
                   </button>
                 ) : null}
               </div>
-            ) : activeTab === "focus" ? (
-              <div className="mt-5">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                  Focus
-                </p>
-                <h2 className="mt-3 text-[18px] font-semibold tracking-[-0.04em] text-[var(--color-text-primary)]">
-                  {selectedNode ? selectedNode.title : "No selection"}
-                </h2>
-                <p className="mt-3 text-[13px] leading-6 text-[var(--color-text-secondary)]">
-                  {selectedNode
-                    ? "Contextual next actions derived from this branch when the graph supports them."
-                    : "Select a node to surface concrete next actions."}
-                </p>
-              </div>
             ) : (
               <div className="mt-5">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                  Context
+                  Inspector
                 </p>
                 <h2 className="mt-3 text-[18px] font-semibold tracking-[-0.04em] text-[var(--color-text-primary)]">
                   {selectedNode ? selectedNode.title : "No selection"}
                 </h2>
-                <p className="mt-3 text-[13px] leading-6 text-[var(--color-text-secondary)]">
-                  {selectedNode
-                    ? selectedNode.summary ?? "Node details will appear here."
-                    : "Select a node to inspect it."}
-                </p>
+                {selectedNode ? (
+                  <p className="mt-2 text-[12px] font-medium tracking-[-0.01em] text-[var(--color-text-secondary)]">
+                    {selectedNode.node_type}
+                    {" · "}
+                    {selectedNode.importance}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-[13px] leading-6 text-[var(--color-text-secondary)]">
+                    Select a node to inspect it.
+                  </p>
+                )}
               </div>
             )}
           </div>
 
+          {/* Tab body */}
           {activeTab === "chat" ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="shell-scrollbar flex-1 overflow-y-auto px-5 py-5">
                 {chatMessages.length === 0 ? (
                   <div className="space-y-6">
+                    {!selectedNode ? (
+                      <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
+                        Select a node to ask scoped questions about it, or chat across the whole
+                        workspace.
+                      </p>
+                    ) : null}
+
                     <div className="space-y-1">
                       <p className="text-[12px] font-medium tracking-[-0.01em] text-[var(--color-text-secondary)]">
                         Start with a scoped question.
                       </p>
                       <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
-                        The conversation stays attached to the current workspace or selected node.
+                        Chat stays attached to the selected node or workspace.
                       </p>
                     </div>
 
@@ -200,7 +238,10 @@ export function ContextRail({
                           {message.sections && message.sections.length > 0 ? (
                             <div className="chat-section-list">
                               {message.sections.map((section) => (
-                                <div className="chat-section-row" key={`${message.id}-${section.label}`}>
+                                <div
+                                  className="chat-section-row"
+                                  key={`${message.id}-${section.label}`}
+                                >
                                   <span className="chat-section-label">{section.label}</span>
                                   <p className="chat-section-value">{section.value}</p>
                                 </div>
@@ -236,74 +277,53 @@ export function ContextRail({
                 )}
               </div>
 
-              <div className="border-t border-[color:var(--color-border-faint)] px-5 py-4">
-                <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
-                  {getChatComposerCue(chatScope)}
-                </p>
+              {/* Chat input */}
+              <div className="border-t border-[color:var(--color-border-faint)] px-4 py-3">
+                <div className="flex items-end gap-2">
+                  <textarea
+                    className="rail-chat-input"
+                    onChange={(e) => onChatInputChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        onSubmitChatInput(chatInputValue);
+                      }
+                    }}
+                    placeholder={getChatComposerCue(chatScope)}
+                    rows={1}
+                    value={chatInputValue}
+                  />
+                  <button
+                    aria-label="Send"
+                    className="composer-send-button"
+                    disabled={chatLoading || chatInputValue.trim().length === 0}
+                    onClick={() => onSubmitChatInput(chatInputValue)}
+                    type="button"
+                  >
+                    <ArrowUpIcon className="h-[15px] w-[15px]" />
+                  </button>
+                </div>
               </div>
             </div>
-          ) : activeTab === "focus" ? (
-            <div className="shell-scrollbar flex-1 overflow-y-auto px-6 py-6">
-              {selectedNode ? (
-                focusItems.length > 0 ? (
-                  <div className="space-y-3">
-                    {focusItems.map((item, index) => (
-                      <button
-                        className="w-full rounded-[14px] border border-[color:var(--color-border-faint)] bg-[rgba(255,255,255,0.015)] px-4 py-4 text-left transition-colors duration-150 ease-out hover:border-[rgba(214,68,82,0.22)] hover:bg-[rgba(255,255,255,0.028)]"
-                        key={item.id}
-                        onClick={() => {
-                          if (item.nodeId) {
-                            onSelectLinkedNode(item.nodeId);
-                          }
-                        }}
-                        type="button"
-                      >
-                        <div className="flex items-start gap-3">
-                          <span className="mt-[2px] text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-                            {String(index + 1).padStart(2, "0")}
-                          </span>
-                          <div className="min-w-0">
-                            <p className="text-[13px] font-medium tracking-[-0.02em] text-[var(--color-text-primary)]">
-                              {item.title}
-                            </p>
-                            <p className="mt-2 text-[12px] leading-5 text-[var(--color-text-secondary)]">
-                              {item.detail}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-[12px] font-medium tracking-[-0.01em] text-[var(--color-text-secondary)]">
-                      No actionable focus yet.
-                    </p>
-                    <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
-                      This branch does not currently expose concrete next steps worth surfacing.
-                    </p>
-                  </div>
-                )
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-[12px] font-medium tracking-[-0.01em] text-[var(--color-text-secondary)]">
-                    No selection
-                  </p>
-                  <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
-                    Select a node to derive likely next steps from its local graph structure.
-                  </p>
-                </div>
-              )}
-            </div>
           ) : (
+            /* Details tab */
             <div className="shell-scrollbar flex-1 overflow-y-auto px-6 py-6">
               {selectedNode ? (
                 <div className="space-y-6">
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
+                      Summary
+                    </p>
+                    <p className="mt-4 text-[13px] leading-6 text-[var(--color-text-secondary)]">
+                      {selectedNode.summary ?? "No summary yet."}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
                       Node
                     </p>
-                    <div className="mt-4 grid gap-4">
+                    <div className="mt-4 grid gap-3">
                       <div className="context-detail-row">
                         <span className="context-detail-label">Type</span>
                         <span className="context-detail-value">{selectedNode.node_type}</span>
@@ -319,38 +339,38 @@ export function ContextRail({
 
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                      Summary
+                      Connections
                     </p>
-                    <p className="mt-4 text-[13px] leading-6 text-[var(--color-text-secondary)]">
-                      {selectedNode.summary ?? "No summary yet."}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                      Linked nodes
-                    </p>
-                    <div className="mt-4 space-y-3">
-                      {linkedNodes.length > 0 ? (
-                        linkedNodes.map(({ labels, node }) => (
-                          <button
-                            className="context-linked-node"
-                            key={`${selectedNode.id}-${node.id}`}
-                            onClick={() => onSelectLinkedNode(node.id)}
-                            type="button"
-                          >
-                            <span className="context-linked-node-title">{node.title}</span>
-                            <span className="context-linked-node-meta">
-                              {labels.join(" • ")}
-                            </span>
-                          </button>
-                        ))
-                      ) : (
-                        <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
-                          No linked nodes yet.
-                        </p>
-                      )}
-                    </div>
+                    {linkedGroups.length > 0 ? (
+                      <div className="mt-4 space-y-5">
+                        {linkedGroups.map(({ category, label, nodes }) => (
+                          <div key={category}>
+                            <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.15em] text-[var(--color-text-muted)]">
+                              {label}
+                            </p>
+                            <div className="space-y-1">
+                              {nodes.map(({ node, labels: nodeLabels }) => (
+                                <button
+                                  className="context-linked-node"
+                                  key={`${selectedNode.id}-${node.id}`}
+                                  onClick={() => onSelectLinkedNode(node.id)}
+                                  type="button"
+                                >
+                                  <span className="context-linked-node-title">{node.title}</span>
+                                  <span className="context-linked-node-meta">
+                                    {nodeLabels.join(" • ")}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-[12px] leading-5 text-[var(--color-text-muted)]">
+                        No connections yet.
+                      </p>
+                    )}
                   </div>
                 </div>
               ) : (
