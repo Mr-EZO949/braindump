@@ -129,6 +129,48 @@ export function MicIcon(props: IconProps) {
   );
 }
 
+export function NetworkIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="5" cy="7" r="1.5" />
+      <circle cx="19" cy="7" r="1.5" />
+      <circle cx="5" cy="17" r="1.5" />
+      <circle cx="19" cy="17" r="1.5" />
+      <path d="M10 12H6.5" />
+      <path d="M14 12h3.5" />
+      <path d="M10.5 10.5 6.5 8" />
+      <path d="M13.5 10.5 17.5 8" />
+      <path d="M10.5 13.5 6.5 16" />
+      <path d="M13.5 13.5 17.5 16" />
+    </BaseIcon>
+  );
+}
+
+export function SparklesIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M12 3v2" />
+      <path d="M12 19v2" />
+      <path d="M4.22 4.22 5.64 5.64" />
+      <path d="M18.36 18.36 19.78 19.78" />
+      <path d="M3 12h2" />
+      <path d="M19 12h2" />
+      <path d="M4.22 19.78 5.64 18.36" />
+      <path d="M18.36 5.64 19.78 4.22" />
+      <circle cx="12" cy="12" r="4" />
+    </BaseIcon>
+  );
+}
+
+export function BoltIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M13 3 4.5 13.5H12L11 21l8.5-10.5H13L13 3Z" />
+    </BaseIcon>
+  );
+}
+
 export function FilterIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>
