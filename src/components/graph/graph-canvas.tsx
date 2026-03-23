@@ -28,17 +28,22 @@ type GraphCanvasProps = {
   editMode: boolean;
   focusNodeId: string | null;
   graphData: GraphData;
+  initialView: ViewState | null;
   loading: boolean;
   onCommitNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   onSelectNode: (nodeId: string | null) => void;
+  onViewChange: (view: ViewState) => void;
   searchQuery: string;
+  suppressInitialFocusAnimation: boolean;
 };
 
-type ViewState = {
+export type GraphCanvasViewState = {
   panX: number;
   panY: number;
   zoom: number;
 };
+
+type ViewState = GraphCanvasViewState;
 
 type ViewTarget = {
   panX: number;
@@ -1368,10 +1373,13 @@ export function GraphCanvas({
   editMode,
   focusNodeId,
   graphData,
+  initialView,
   loading,
   onCommitNodePosition,
   onSelectNode,
+  onViewChange,
   searchQuery,
+  suppressInitialFocusAnimation,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const linkElementRefs = useRef(new Map<string, SVGPathElement>());
@@ -1383,6 +1391,7 @@ export function GraphCanvas({
   const returnAnimationRef = useRef<number | null>(null);
   const returningNodeRef = useRef<GraphNode | null>(null);
   const viewAnimationRef = useRef<number | null>(null);
+  const suppressInitialFocusAnimationRef = useRef(suppressInitialFocusAnimation);
   const nodesRef = useRef<GraphNode[]>([]);
   const dragStateRef = useRef<DragState | null>(null);
   const panStateRef = useRef<PanState | null>(null);
@@ -1447,8 +1456,24 @@ export function GraphCanvas({
   }, [view]);
 
   useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      onViewChange(view);
+    }, 90);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [onViewChange, view]);
+
+  useEffect(() => {
     viewportRef.current = viewport;
   }, [viewport]);
+
+  useEffect(() => {
+    if (suppressInitialFocusAnimation) {
+      suppressInitialFocusAnimationRef.current = true;
+    }
+  }, [suppressInitialFocusAnimation]);
 
   useEffect(() => {
     nodesRef.current = scene.nodes;
@@ -1633,8 +1658,15 @@ export function GraphCanvas({
     }
 
     didFitInitialViewRef.current = true;
-    setView(createFittedView(nodesRef.current, viewport.width, viewport.height));
-  }, [viewport.height, viewport.width]);
+
+    const frameId = window.requestAnimationFrame(() => {
+      setView(initialView ?? createFittedView(nodesRef.current, viewport.width, viewport.height));
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [initialView, viewport.height, viewport.width]);
 
   useEffect(() => {
     if (!focusNodeId || viewport.width === 0 || viewport.height === 0) {
@@ -1644,6 +1676,11 @@ export function GraphCanvas({
     const focusedNode = nodesRef.current.find((node) => node.id === focusNodeId);
 
     if (!focusedNode) {
+      return;
+    }
+
+    if (suppressInitialFocusAnimationRef.current) {
+      suppressInitialFocusAnimationRef.current = false;
       return;
     }
 

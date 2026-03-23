@@ -2,11 +2,35 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 
+import type { EdgeRelationOptionId } from "@/lib/graph/relationships";
 import { ChevronDownIcon, CloseIcon } from "@/components/ui/icons";
 import { getImportanceLabel } from "@/lib/graph/importance";
 import type { CreateNodeInput } from "@/types/graph";
 
 type SharedNodeSheetProps = {
+  connectionDeleteSubmittingId?: string | null;
+  connectionError?: string | null;
+  connectionRelationId?: EdgeRelationOptionId;
+  connectionSubmitting?: boolean;
+  connectionTargetId?: string;
+  connectionTargetOptions?: Array<{
+    id: string;
+    node_type: string;
+    title: string;
+  }>;
+  connectionTypeOptions?: Array<{
+    description: string;
+    id: EdgeRelationOptionId;
+    label: string;
+  }>;
+  connectionUpdateSubmittingId?: string | null;
+  connections?: Array<{
+    edgeId: string;
+    nodeId: string;
+    nodeType: string;
+    relationId: EdgeRelationOptionId;
+    title: string;
+  }>;
   deleteDescendantCount?: number;
   deleteEdgeCount?: number;
   deleteNodeCount?: number;
@@ -20,10 +44,15 @@ type SharedNodeSheetProps = {
     field: Field,
     value: CreateNodeInput[Field],
   ) => void;
+  onChangeNewConnectionRelation?: (relationId: EdgeRelationOptionId) => void;
+  onChangeNewConnectionTarget?: (nodeId: string) => void;
   onClose: () => void;
   onConfirmDelete?: () => void;
+  onCreateConnection?: () => void;
+  onDeleteConnection?: (edgeId: string) => void;
   onRequestDelete?: () => void;
   onSubmit: () => void;
+  onUpdateConnection?: (edgeId: string, relationId: EdgeRelationOptionId) => void;
   showRawText?: boolean;
   submitting: boolean;
 };
@@ -41,6 +70,29 @@ type CreateNodeSheetProps = {
 };
 
 type EditNodeSheetProps = {
+  connectionDeleteSubmittingId: string | null;
+  connectionError: string | null;
+  connectionRelationId: EdgeRelationOptionId;
+  connectionSubmitting: boolean;
+  connectionTargetId: string;
+  connectionTargetOptions: Array<{
+    id: string;
+    node_type: string;
+    title: string;
+  }>;
+  connectionTypeOptions: Array<{
+    description: string;
+    id: EdgeRelationOptionId;
+    label: string;
+  }>;
+  connectionUpdateSubmittingId: string | null;
+  connections: Array<{
+    edgeId: string;
+    nodeId: string;
+    nodeType: string;
+    relationId: EdgeRelationOptionId;
+    title: string;
+  }>;
   deleteDescendantCount: number;
   deleteEdgeCount: number;
   deleteNodeCount: number;
@@ -53,10 +105,15 @@ type EditNodeSheetProps = {
     field: Field,
     value: CreateNodeInput[Field],
   ) => void;
+  onChangeNewConnectionRelation: (relationId: EdgeRelationOptionId) => void;
+  onChangeNewConnectionTarget: (nodeId: string) => void;
   onClose: () => void;
   onConfirmDelete: () => void;
+  onCreateConnection: () => void;
+  onDeleteConnection: (edgeId: string) => void;
   onRequestDelete: () => void;
   onSubmit: () => void;
+  onUpdateConnection: (edgeId: string, relationId: EdgeRelationOptionId) => void;
   submitting: boolean;
 };
 
@@ -124,6 +181,15 @@ function getPreviewHeight(importanceIndex: number) {
 }
 
 function SharedNodeSheet({
+  connectionDeleteSubmittingId = null,
+  connectionError = null,
+  connectionRelationId = "contains",
+  connectionSubmitting = false,
+  connectionTargetId = "",
+  connectionTargetOptions = [],
+  connectionTypeOptions = [],
+  connectionUpdateSubmittingId = null,
+  connections = [],
   deleteDescendantCount = 0,
   deleteEdgeCount = 0,
   deleteNodeCount = 1,
@@ -134,14 +200,22 @@ function SharedNodeSheet({
   mode,
   onCancelDelete,
   onChangeField,
+  onChangeNewConnectionRelation,
+  onChangeNewConnectionTarget,
   onClose,
   onConfirmDelete,
+  onCreateConnection,
+  onDeleteConnection,
   onRequestDelete,
   onSubmit,
+  onUpdateConnection,
   showRawText = true,
   submitting,
 }: SharedNodeSheetProps) {
   const [typeMenuOpen, setTypeMenuOpen] = useState(false);
+  const [connectionDraftOverrides, setConnectionDraftOverrides] = useState<
+    Record<string, EdgeRelationOptionId>
+  >({});
   const open = Boolean(draft);
   const safeDraft = draft ?? {
     custom_type: "",
@@ -409,6 +483,161 @@ function SharedNodeSheet({
                   </div>
                 </div>
               </div>
+
+              {mode === "edit" ? (
+                <div className="graph-create-field">
+                  <div className="space-y-1">
+                    <span className="graph-create-label">Connections</span>
+                    <p className="graph-create-helper">
+                      Change connection types, remove links, or add a new relationship from this node.
+                    </p>
+                  </div>
+
+                  <div className="graph-connection-list">
+                    {connections.length > 0 ? (
+                      connections.map((connection) => {
+                        const draftRelationId =
+                          connectionDraftOverrides[connection.edgeId] ?? connection.relationId;
+                        const relationChanged = draftRelationId !== connection.relationId;
+
+                        return (
+                          <div className="graph-connection-row" key={connection.edgeId}>
+                            <div className="graph-connection-node">
+                              <span className="graph-connection-node-title">{connection.title}</span>
+                              <span className="graph-connection-node-meta">
+                                {connection.nodeType}
+                              </span>
+                            </div>
+
+                            <div className="graph-connection-controls">
+                              <div className="graph-connection-select-shell">
+                                <select
+                                  className="graph-connection-select"
+                                  onChange={(event) =>
+                                    setConnectionDraftOverrides((currentDrafts) => ({
+                                      ...currentDrafts,
+                                      [connection.edgeId]:
+                                        event.target.value as EdgeRelationOptionId,
+                                    }))
+                                  }
+                                  value={draftRelationId}
+                                >
+                                  {connectionTypeOptions.map((option) => (
+                                    <option key={option.id} value={option.id}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <ChevronDownIcon className="h-[12px] w-[12px] text-[var(--color-text-muted)]" />
+                              </div>
+
+                              <button
+                                className="graph-connection-action"
+                                disabled={
+                                  !relationChanged ||
+                                  connectionUpdateSubmittingId === connection.edgeId ||
+                                  connectionSubmitting
+                                }
+                                onClick={() =>
+                                  onUpdateConnection?.(connection.edgeId, draftRelationId)
+                                }
+                                type="button"
+                              >
+                                {connectionUpdateSubmittingId === connection.edgeId
+                                  ? "Saving..."
+                                  : "Update"}
+                              </button>
+
+                              <button
+                                className="graph-connection-action graph-connection-action-danger"
+                                disabled={connectionDeleteSubmittingId === connection.edgeId}
+                                onClick={() => onDeleteConnection?.(connection.edgeId)}
+                                type="button"
+                              >
+                                {connectionDeleteSubmittingId === connection.edgeId
+                                  ? "Removing..."
+                                  : "Remove"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <p className="graph-connection-empty">No connections yet.</p>
+                    )}
+                  </div>
+
+                  <div className="graph-connection-composer">
+                    <div className="graph-connection-composer-grid">
+                      <label className="graph-connection-composer-field">
+                        <span className="graph-create-label">Connect to</span>
+                        <div className="graph-connection-select-shell">
+                          <select
+                            className="graph-connection-select"
+                            onChange={(event) => onChangeNewConnectionTarget?.(event.target.value)}
+                            value={connectionTargetId}
+                          >
+                            <option value="">Select node</option>
+                            {connectionTargetOptions.map((node) => (
+                              <option key={node.id} value={node.id}>
+                                {node.title} · {node.node_type}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDownIcon className="h-[12px] w-[12px] text-[var(--color-text-muted)]" />
+                        </div>
+                      </label>
+
+                      <label className="graph-connection-composer-field">
+                        <span className="graph-create-label">Relation</span>
+                        <div className="graph-connection-select-shell">
+                          <select
+                            className="graph-connection-select"
+                            onChange={(event) =>
+                              onChangeNewConnectionRelation?.(
+                                event.target.value as EdgeRelationOptionId,
+                              )
+                            }
+                            value={connectionRelationId}
+                          >
+                            {connectionTypeOptions.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDownIcon className="h-[12px] w-[12px] text-[var(--color-text-muted)]" />
+                        </div>
+                        <p className="graph-connection-helper">
+                          {connectionTypeOptions.find((option) => option.id === connectionRelationId)
+                            ?.description ?? "Choose how this node should connect."}
+                        </p>
+                      </label>
+                    </div>
+
+                    <div className="graph-connection-composer-actions">
+                      <button
+                        className="graph-create-secondary"
+                        disabled={
+                          connectionSubmitting ||
+                          connectionTargetId.length === 0 ||
+                          connectionTargetOptions.length === 0
+                        }
+                        onClick={onCreateConnection}
+                        type="button"
+                      >
+                        {connectionSubmitting ? "Adding..." : "Add connection"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {connectionError ? (
+                    <p className="graph-create-error graph-create-error-inline">
+                      {connectionError}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -492,6 +721,15 @@ export function CreateNodeSheet({
 }
 
 export function EditNodeSheet({
+  connectionDeleteSubmittingId,
+  connectionError,
+  connectionRelationId,
+  connectionSubmitting,
+  connectionTargetId,
+  connectionTargetOptions,
+  connectionTypeOptions,
+  connectionUpdateSubmittingId,
+  connections,
   deleteDescendantCount,
   deleteEdgeCount,
   deleteNodeCount,
@@ -501,14 +739,28 @@ export function EditNodeSheet({
   error,
   onCancelDelete,
   onChangeField,
+  onChangeNewConnectionRelation,
+  onChangeNewConnectionTarget,
   onClose,
   onConfirmDelete,
+  onCreateConnection,
+  onDeleteConnection,
   onRequestDelete,
   onSubmit,
+  onUpdateConnection,
   submitting,
 }: EditNodeSheetProps) {
   return (
     <SharedNodeSheet
+      connectionDeleteSubmittingId={connectionDeleteSubmittingId}
+      connectionError={connectionError}
+      connectionRelationId={connectionRelationId}
+      connectionSubmitting={connectionSubmitting}
+      connectionTargetId={connectionTargetId}
+      connectionTargetOptions={connectionTargetOptions}
+      connectionTypeOptions={connectionTypeOptions}
+      connectionUpdateSubmittingId={connectionUpdateSubmittingId}
+      connections={connections}
       deleteDescendantCount={deleteDescendantCount}
       deleteEdgeCount={deleteEdgeCount}
       deleteNodeCount={deleteNodeCount}
@@ -519,10 +771,15 @@ export function EditNodeSheet({
       mode="edit"
       onCancelDelete={onCancelDelete}
       onChangeField={onChangeField}
+      onChangeNewConnectionRelation={onChangeNewConnectionRelation}
+      onChangeNewConnectionTarget={onChangeNewConnectionTarget}
       onClose={onClose}
       onConfirmDelete={onConfirmDelete}
+      onCreateConnection={onCreateConnection}
+      onDeleteConnection={onDeleteConnection}
       onRequestDelete={onRequestDelete}
       onSubmit={onSubmit}
+      onUpdateConnection={onUpdateConnection}
       showRawText={false}
       submitting={submitting}
     />
