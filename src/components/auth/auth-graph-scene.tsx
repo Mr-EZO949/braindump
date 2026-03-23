@@ -123,6 +123,8 @@ function projectNode(node: SceneNode): ProjectedNode {
 
 export function AuthGraphScene() {
   const [pointer, setPointer] = useState({ active: false, x: 0.56, y: 0.44 });
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 
   const projectedNodes = useMemo(
     () =>
@@ -179,7 +181,11 @@ export function AuthGraphScene() {
   return (
     <div
       className={styles.sceneViewport}
-      onMouseLeave={() => setPointer((current) => ({ ...current, active: false }))}
+      onMouseLeave={() => {
+        setPointer((current) => ({ ...current, active: false }));
+        setHoveredEdgeId(null);
+        setHoveredNodeId(null);
+      }}
       onMouseMove={(event) => {
         const rect = event.currentTarget.getBoundingClientRect();
         setPointer({
@@ -231,22 +237,52 @@ export function AuthGraphScene() {
                 : edge.tone === "support"
                   ? "url(#auth-edge-support)"
                   : "url(#auth-edge-related)";
-            const width = edge.tone === "structural" ? 2 : edge.tone === "support" ? 1.5 : 1.05;
+            const baseWidth =
+              edge.tone === "structural" ? 2 : edge.tone === "support" ? 1.5 : 1.05;
             const radialFalloff = 1 - edge.averageRadial * 0.46;
-            const opacity =
+            const baseOpacity =
               (edge.tone === "structural" ? 0.88 : edge.tone === "support" ? 0.58 : 0.28) *
               radialFalloff;
+            const hovered = hoveredEdgeId === edge.id;
+            const width = hovered ? baseWidth + 0.42 : baseWidth;
+            const opacity = hovered ? Math.min(baseOpacity + 0.16, 0.92) : baseOpacity;
+            const outlineOpacity = hovered
+              ? edge.tone === "structural"
+                ? 0.22
+                : edge.tone === "support"
+                  ? 0.17
+                  : 0.12
+              : 0;
+            const outlineWidth = width + (edge.tone === "structural" ? 2.4 : 2.05);
 
             return (
-              <path
-                key={edge.id}
-                className={styles.sceneEdge}
-                d={edge.path}
-                fill="none"
-                opacity={opacity}
-                stroke={stroke}
-                strokeWidth={width}
-              />
+              <g className={styles.sceneEdgeGroup} key={edge.id}>
+                <path
+                  className={styles.sceneEdgeHit}
+                  d={edge.path}
+                  fill="none"
+                  onPointerEnter={() => setHoveredEdgeId(edge.id)}
+                  onPointerLeave={() => setHoveredEdgeId((current) => (current === edge.id ? null : current))}
+                  stroke="transparent"
+                  strokeWidth={14}
+                />
+                <path
+                  className={styles.sceneEdgeOutline}
+                  d={edge.path}
+                  fill="none"
+                  opacity={outlineOpacity}
+                  stroke="rgba(244, 240, 234, 0.9)"
+                  strokeWidth={outlineWidth}
+                />
+                <path
+                  className={styles.sceneEdge}
+                  d={edge.path}
+                  fill="none"
+                  opacity={opacity}
+                  stroke={stroke}
+                  strokeWidth={width}
+                />
+              </g>
             );
           })}
         </svg>
@@ -267,9 +303,11 @@ export function AuthGraphScene() {
             const shiftX = (pointerX - projectedNode.projectedX) * 0.008 * proximity;
             const shiftY = (pointerY - projectedNode.projectedY) * 0.008 * proximity;
             const scale = baseScale + (node.anchor ? 0.056 : 0) + proximity * 0.018;
+            const hovered = hoveredNodeId === node.id;
             const borderAlpha =
               (node.depth === "front" ? 0.08 : node.depth === "mid" ? 0.06 : 0.045) +
-              (node.anchor ? 0.04 : 0);
+              (node.anchor ? 0.04 : 0) +
+              (hovered ? 0.08 : 0);
 
             return (
               <div
@@ -279,8 +317,14 @@ export function AuthGraphScene() {
                     : node.depth === "mid"
                       ? styles.sceneNodeMid
                       : styles.sceneNodeBack
-                }`}
+                } ${hovered ? styles.sceneNodeWrapHovered : ""}`}
                 key={node.id}
+                onMouseEnter={() => setHoveredNodeId(node.id)}
+                onMouseLeave={() =>
+                  setHoveredNodeId((currentNodeId) =>
+                    currentNodeId === node.id ? null : currentNodeId,
+                  )
+                }
                 style={{
                   height: `${node.height}px`,
                   left: `${(projectedNode.projectedX / SCENE_WIDTH) * 100}%`,
@@ -292,13 +336,14 @@ export function AuthGraphScene() {
                 <div
                   className={`${styles.sceneNode} ${node.active ? styles.sceneNodeActive : ""} ${
                     node.anchor ? styles.sceneNodeAnchor : ""
-                  }`}
+                  } ${hovered ? styles.sceneNodeHovered : ""}`}
                   style={{
                     "--auth-node-accent": node.accent,
                     animationDelay: `${index * 0.28}s`,
                     borderColor: `rgba(255,255,255,${borderAlpha + proximity * 0.08})`,
                   } as CSSProperties}
                 >
+                  <div className={styles.sceneNodeHoverAura} />
                   <div className={styles.sceneNodeBand} />
                   {node.task ? <div className={styles.sceneNodeWash} /> : null}
                   <div className={styles.sceneNodeSheen} />

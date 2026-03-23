@@ -416,6 +416,32 @@
   vector-effect: non-scaling-stroke;
   stroke-linecap: butt;
   stroke-linejoin: round;
+  pointer-events: none;
+  transition:
+    opacity 170ms ease-out,
+    stroke-width 170ms ease-out,
+    filter 170ms ease-out;
+}
+
+.sceneEdgeGroup {
+  pointer-events: visibleStroke;
+}
+
+.sceneEdgeHit {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: stroke;
+}
+
+.sceneEdgeOutline {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+  transition:
+    opacity 170ms ease-out,
+    stroke-width 170ms ease-out;
 }
 
 .sceneNodes {
@@ -426,7 +452,11 @@
 .sceneNodeWrap {
   position: absolute;
   transform-origin: center center;
-  transition: transform 140ms ease-out, opacity 180ms ease-out, filter 180ms ease-out;
+  transition: transform 180ms ease-out, opacity 180ms ease-out, filter 180ms ease-out;
+}
+
+.sceneNodeWrapHovered {
+  filter: brightness(1.02);
 }
 
 .sceneNodeFront {
@@ -462,6 +492,10 @@
     0 18px 32px rgba(0, 0, 0, 0.16),
     0 2px 0 rgba(255, 255, 255, 0.014);
   animation: authNodeDrift 12s ease-in-out infinite;
+  transition:
+    border-color 200ms ease-out,
+    box-shadow 220ms ease-out,
+    transform 180ms ease-out;
 }
 
 .sceneNodeActive {
@@ -475,6 +509,31 @@
     inset 0 -1px 0 rgba(0, 0, 0, 0.28),
     0 22px 40px rgba(0, 0, 0, 0.2),
     0 2px 0 rgba(255, 255, 255, 0.016);
+}
+
+.sceneNodeHovered {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.012),
+    inset 0 -11px 19px rgba(0, 0, 0, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.24),
+    0 20px 36px rgba(0, 0, 0, 0.18),
+    0 0 0 1px rgba(213, 58, 71, 0.12),
+    0 0 22px rgba(213, 58, 71, 0.08);
+}
+
+.sceneNodeHoverAura {
+  position: absolute;
+  inset: -12px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(213, 58, 71, 0.18) 0%, rgba(213, 58, 71, 0.04) 38%, transparent 72%);
+  opacity: 0;
+  filter: blur(14px);
+  transition: opacity 220ms ease-out;
+  pointer-events: none;
+}
+
+.sceneNodeHovered .sceneNodeHoverAura {
+  opacity: 0.68;
 }
 
 .sceneNodeBand {
