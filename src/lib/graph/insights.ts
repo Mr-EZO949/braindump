@@ -1,4 +1,5 @@
 import { getImportanceIndex } from "@/lib/graph/importance";
+import { getEdgeRelationOptionIdForSelection, type EdgeRelationOptionId } from "@/lib/graph/relationships";
 import type { ChatNodeContext } from "@/types/chat";
 import type { Edge, EdgeType, GraphData, Node } from "@/types/graph";
 
@@ -7,6 +8,14 @@ export interface LinkedNodePerspective {
   labels: string[];
   node: Node;
   priority: number;
+}
+
+export interface NodeConnection {
+  edge: Edge;
+  label: string;
+  node: Node;
+  priority: number;
+  relationId: EdgeRelationOptionId;
 }
 
 export interface FocusItem {
@@ -119,6 +128,51 @@ export function getLinkedNodePerspectives(
     }))
     .sort((entryA, entryB) => {
       return entryB.priority - entryA.priority || entryA.node.title.localeCompare(entryB.node.title);
+    });
+}
+
+export function getNodeConnections(
+  graphData: GraphData,
+  selectedNodeId: string | null,
+): NodeConnection[] {
+  if (!selectedNodeId) {
+    return [];
+  }
+
+  const nodesById = new Map(graphData.nodes.map((node) => [node.id, node]));
+
+  return graphData.edges
+    .flatMap((edge) => {
+      if (edge.source_node_id !== selectedNodeId && edge.target_node_id !== selectedNodeId) {
+        return [];
+      }
+
+      const perspective = getPerspectiveForNode(edge, selectedNodeId);
+      const linkedNodeId =
+        perspective === "source" ? edge.target_node_id : edge.source_node_id;
+      const linkedNode = nodesById.get(linkedNodeId);
+
+      if (!linkedNode) {
+        return [];
+      }
+
+      return [
+        {
+          edge,
+          label: getDirectionalRelationshipLabel(edge.edge_type, perspective),
+          node: linkedNode,
+          priority:
+            relationshipPriority[edge.edge_type] +
+            Math.round(getImportanceIndex(linkedNode) * 0.08),
+          relationId: getEdgeRelationOptionIdForSelection(edge, selectedNodeId),
+        },
+      ];
+    })
+    .sort((connectionA, connectionB) => {
+      return (
+        connectionB.priority - connectionA.priority ||
+        connectionA.node.title.localeCompare(connectionB.node.title)
+      );
     });
 }
 

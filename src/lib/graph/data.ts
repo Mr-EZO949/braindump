@@ -4,6 +4,17 @@ import { supabase } from "@/lib/supabase/client";
 import type { ChatNodeContext } from "@/types/chat";
 import type { Edge, GraphData, Node, Workspace } from "@/types/graph";
 
+export type LocalGraphCameraView = {
+  panX: number;
+  panY: number;
+  zoom: number;
+};
+
+export type LocalGraphViewState = {
+  cameraView: LocalGraphCameraView | null;
+  selectedNodeId: string | null;
+};
+
 const fallbackWorkspaces = (userId: string | null): Workspace[] => [
   {
     id: "workspace-general",
@@ -21,6 +32,17 @@ const fallbackWorkspaces = (userId: string | null): Workspace[] => [
 
 function getLocalPositionStorageKey(userId: string, workspaceId: string) {
   return `brain-dump:graph-layout:${userId}:${workspaceId}`;
+}
+
+function getLocalViewStateStorageKey(userId: string, workspaceId: string) {
+  return `brain-dump:view-state:${userId}:${workspaceId}`;
+}
+
+function defaultLocalViewState(): LocalGraphViewState {
+  return {
+    cameraView: null,
+    selectedNodeId: null,
+  };
 }
 
 function readLocalPositions(userId: string | null, workspaceId: string | null) {
@@ -49,6 +71,71 @@ function readLocalPositions(userId: string | null, workspaceId: string | null) {
     return parsedValue;
   } catch {
     return {};
+  }
+}
+
+function readLocalViewState(
+  userId: string | null,
+  workspaceId: string | null,
+): LocalGraphViewState {
+  if (typeof window === "undefined" || !userId || !workspaceId) {
+    return defaultLocalViewState();
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(getLocalViewStateStorageKey(userId, workspaceId));
+
+    if (!rawValue) {
+      return defaultLocalViewState();
+    }
+
+    const parsedValue = JSON.parse(rawValue) as Partial<LocalGraphViewState>;
+    const cameraView = parsedValue.cameraView;
+
+    return {
+      cameraView:
+        cameraView &&
+        Number.isFinite(cameraView.panX) &&
+        Number.isFinite(cameraView.panY) &&
+        Number.isFinite(cameraView.zoom)
+          ? {
+              panX: Number(cameraView.panX),
+              panY: Number(cameraView.panY),
+              zoom: Number(cameraView.zoom),
+            }
+          : null,
+      selectedNodeId:
+        typeof parsedValue.selectedNodeId === "string" ? parsedValue.selectedNodeId : null,
+    };
+  } catch {
+    return defaultLocalViewState();
+  }
+}
+
+function writeLocalViewState(
+  userId: string | null,
+  workspaceId: string | null,
+  patch: Partial<LocalGraphViewState>,
+) {
+  if (typeof window === "undefined" || !userId || !workspaceId) {
+    return;
+  }
+
+  try {
+    const currentState = readLocalViewState(userId, workspaceId);
+    const nextState: LocalGraphViewState = {
+      cameraView:
+        patch.cameraView === undefined ? currentState.cameraView : patch.cameraView,
+      selectedNodeId:
+        patch.selectedNodeId === undefined ? currentState.selectedNodeId : patch.selectedNodeId,
+    };
+
+    window.localStorage.setItem(
+      getLocalViewStateStorageKey(userId, workspaceId),
+      JSON.stringify(nextState),
+    );
+  } catch {
+    // Ignore storage failures. The app still works without local view persistence.
   }
 }
 
@@ -140,6 +227,37 @@ export function removeLocalNodePosition(
   } catch {
     // Ignore storage failures and keep DB persistence as the primary path.
   }
+}
+
+export function readLocalGraphViewState(
+  userId: string | null,
+  workspaceId: string | null,
+) {
+  return readLocalViewState(userId, workspaceId);
+}
+
+export function persistLocalSelectedNode(
+  userId: string | null,
+  workspaceId: string | null,
+  selectedNodeId: string | null,
+) {
+  writeLocalViewState(userId, workspaceId, { selectedNodeId });
+}
+
+export function persistLocalCameraView(
+  userId: string | null,
+  workspaceId: string | null,
+  cameraView: LocalGraphCameraView | null,
+) {
+  writeLocalViewState(userId, workspaceId, {
+    cameraView: cameraView
+      ? {
+          panX: Number(cameraView.panX.toFixed(2)),
+          panY: Number(cameraView.panY.toFixed(2)),
+          zoom: Number(cameraView.zoom.toFixed(4)),
+        }
+      : null,
+  });
 }
 
 function normalizeNodes(nodes: Node[]) {
