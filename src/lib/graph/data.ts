@@ -45,7 +45,7 @@ function defaultLocalViewState(): LocalGraphViewState {
   };
 }
 
-function readLocalPositions(userId: string | null, workspaceId: string | null) {
+export function readLocalPositions(userId: string | null, workspaceId: string | null) {
   if (
     typeof window === "undefined" ||
     !userId ||
