@@ -171,6 +171,16 @@ export function BoltIcon(props: IconProps) {
   );
 }
 
+export function ImageIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="4" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="m3 15 5-5 4 4 3-3 6 6" />
+    </BaseIcon>
+  );
+}
+
 export function FilterIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>
