@@ -8,7 +8,7 @@ import {
   forceX,
   forceY,
 } from "d3-force";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   PointerEvent as ReactPointerEvent,
   WheelEvent as ReactWheelEvent,
@@ -759,7 +759,6 @@ function buildGraphLayout(graphData: GraphData) {
     const savedY = node.position_y;
 
     if (
-      node.manual_position !== true ||
       typeof savedX !== "number" ||
       !Number.isFinite(savedX) ||
       typeof savedY !== "number" ||
@@ -768,6 +767,7 @@ function buildGraphLayout(graphData: GraphData) {
       return;
     }
 
+    node.manual_position = true;
     node.restX = savedX;
     node.restY = savedY;
     node.x = savedX;
@@ -821,7 +821,10 @@ function buildGraphLayout(graphData: GraphData) {
       edge.edge_type === "prerequisite_for" ||
       edge.edge_type === "required_for";
     const directional =
-      structuralCandidate || edge.edge_type === "blocks" || edge.edge_type === "useful_for";
+      structuralCandidate ||
+      edge.edge_type === "blocks" ||
+      edge.edge_type === "useful_for" ||
+      edge.edge_type === "supports";
     const primary = primaryEdgeIds.has(edge.id);
     const family = structuralCandidate && primary ? "structural" : "semantic";
     const layoutDirection =
@@ -940,7 +943,11 @@ function createFittedView(nodes: GraphNode[], width: number, height: number): Vi
     return defaultView;
   }
 
-  const bounds = getGraphBounds(nodes);
+  // Focus on manually pinned nodes when they exist — they represent the user's
+  // intentional layout. Using all nodes would zoom out to include scattered
+  // auto-layout nodes and make the graph look broken on first load.
+  const pinnedNodes = nodes.filter((n) => n.fx !== null && n.fx !== undefined);
+  const bounds = getGraphBounds(pinnedNodes.length > 0 ? pinnedNodes : nodes);
   const usableWidth = Math.max(width - 120, 360);
   const usableHeight = Math.max(height - 150, 340);
   const zoom = clamp(
@@ -1175,14 +1182,15 @@ function getEdgeVisualStyle(
       dashArray = "8 7";
       break;
     case "supports":
-      opacity = 0.138;
-      strokeWidth = 0.88 + link.strength * 0.4;
-      stroke = "rgba(224,215,206,0.15)";
+      opacity = structural ? 0.34 : 0.24;
+      strokeWidth = 1.0 + link.strength * 0.44;
+      stroke = structural ? "rgba(224,215,206,0.38)" : "rgba(224,215,206,0.28)";
       break;
     case "related_to":
-      opacity = 0.062;
-      strokeWidth = 0.56 + link.strength * 0.18;
-      stroke = "rgba(255,255,255,0.095)";
+      opacity = structural ? 0.28 : 0.20;
+      strokeWidth = 0.88 + link.strength * 0.28;
+      stroke = structural ? "rgba(255,255,255,0.32)" : "rgba(255,255,255,0.22)";
+      dashArray = "3 6";
       break;
     case "useful_for":
       opacity = 0.082;
@@ -1209,17 +1217,17 @@ function getEdgeVisualStyle(
       strokeWidth += 0.34;
       stroke = "rgba(198,76,88,0.62)";
     } else if (link.edge_type === "supports") {
-      opacity = clamp(opacity * 1.9 + 0.08, 0, 0.58);
-      strokeWidth += 0.16;
-      stroke = "rgba(205,122,132,0.42)";
+      opacity = clamp(opacity * 1.8 + 0.07, 0, 0.64);
+      strokeWidth += 0.18;
+      stroke = "rgba(205,140,150,0.52)";
     } else if (link.edge_type === "required_for" || link.edge_type === "prerequisite_for") {
       opacity = clamp(opacity * 1.76 + 0.07, 0, 0.7);
       strokeWidth += 0.22;
       stroke = "rgba(198,118,128,0.48)";
     } else if (link.edge_type === "related_to") {
-      opacity = clamp(opacity * 1.55 + 0.05, 0, 0.34);
-      strokeWidth += 0.08;
-      stroke = "rgba(187,132,140,0.26)";
+      opacity = clamp(opacity * 1.7 + 0.06, 0, 0.56);
+      strokeWidth += 0.12;
+      stroke = "rgba(200,160,168,0.44)";
     } else {
       opacity = clamp(opacity * 1.7 + 0.07, 0, 0.72);
       strokeWidth += structural ? 0.32 : 0.18;
@@ -1477,7 +1485,6 @@ export function GraphCanvas({
 
   useEffect(() => {
     nodesRef.current = scene.nodes;
-    didFitInitialViewRef.current = false;
 
     const linkForce = forceLink<GraphNode, GraphLink>(scene.links)
       .id((node) => node.id)
@@ -1648,25 +1655,14 @@ export function GraphCanvas({
     };
   }, []);
 
-  useEffect(() => {
-    if (viewport.width === 0 || viewport.height === 0 || nodesRef.current.length === 0) {
-      return;
-    }
-
-    if (didFitInitialViewRef.current) {
-      return;
-    }
+  useLayoutEffect(() => {
+    if (didFitInitialViewRef.current) return;
+    if (viewport.width === 0 || viewport.height === 0) return;
+    if (scene.nodes.length === 0) return;
 
     didFitInitialViewRef.current = true;
-
-    const frameId = window.requestAnimationFrame(() => {
-      setView(initialView ?? createFittedView(nodesRef.current, viewport.width, viewport.height));
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [initialView, viewport.height, viewport.width]);
+    setView(initialView ?? createFittedView(scene.nodes, viewport.width, viewport.height));
+  }, [scene, initialView, viewport.width, viewport.height]);
 
   useEffect(() => {
     if (!focusNodeId || viewport.width === 0 || viewport.height === 0) {
