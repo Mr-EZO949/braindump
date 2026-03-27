@@ -8,6 +8,11 @@ import { MainStage } from "@/components/graph/main-stage";
 import { AssistantMode } from "@/components/assistant/assistant-mode";
 import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
+import { ProposedNodesReview } from "@/components/ui/proposed-nodes-review";
+import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
+import { MergeAlert } from "@/components/ui/merge-alert";
+import type { ProposedEdgeWithNodes } from "@/lib/ai/connection";
+import type { MergeCandidate } from "@/lib/ai/merge";
 import {
   createAssistantReply,
   createNodeScope,
@@ -41,6 +46,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
 import type { RailTab, ChatMessage, ChatScope } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, Node, Workspace } from "@/types/graph";
+import type { ProposedNode } from "@/types/ai";
 
 type AuthUserState = {
   email: string | null;
@@ -113,6 +119,13 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [appMode, setAppMode] = useState<AppMode>("graph");
   const [brainDumpOpen, setBrainDumpOpen] = useState(false);
   const [brainDumpValue, setBrainDumpValue] = useState("");
+  const [brainDumpSubmitting, setBrainDumpSubmitting] = useState(false);
+  const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
+  const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
+  const [proposedEdges, setProposedEdges] = useState<ProposedEdgeWithNodes[]>([]);
+  const [edgeReviewOpen, setEdgeReviewOpen] = useState(false);
+  const [analyzingConnections, setAnalyzingConnections] = useState(false);
+  const [mergeCandidates, setMergeCandidates] = useState<MergeCandidate[]>([]);
 
   // Panel state
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
@@ -1093,12 +1106,132 @@ export function AppShell({ initialUser }: AppShellProps) {
     router.replace("/login");
   };
 
-  const handleBrainDumpSubmit = () => {
+  const handleBrainDumpSubmit = async () => {
     const trimmed = brainDumpValue.trim();
-    if (!trimmed) return;
-    // Structural surface — AI wiring comes next
-    setBrainDumpValue("");
-    setBrainDumpOpen(false);
+    if (!trimmed || brainDumpSubmitting || !selectedWorkspaceId) return;
+
+    setBrainDumpSubmitting(true);
+    try {
+      const res = await fetch("/api/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ raw_text: trimmed, workspace_id: selectedWorkspaceId }),
+      });
+      const data = await res.json() as {
+        proposed_nodes?: ProposedNode[];
+        error?: string;
+      };
+      setBrainDumpValue("");
+      setBrainDumpOpen(false);
+      if (data.proposed_nodes && data.proposed_nodes.length > 0) {
+        setProposedNodes(data.proposed_nodes);
+        setProposedReviewOpen(true);
+      }
+    } finally {
+      setBrainDumpSubmitting(false);
+    }
+  };
+
+  const handleProposalReview = async (
+    actions: Array<{
+      id: string;
+      action: "accept" | "reject";
+      edits?: { proposed_title: string; proposed_summary: string | null; proposed_node_type: string };
+    }>
+  ) => {
+    const res = await fetch("/api/proposals/nodes/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actions }),
+    });
+    const data = await res.json() as { accepted_nodes?: Node[] };
+    if (data.accepted_nodes && data.accepted_nodes.length > 0) {
+      const nodes = data.accepted_nodes;
+
+      // Cluster new nodes near the viewport center instead of scattering them.
+      // Viewport center in graph coords = (-panX/zoom, -panY/zoom).
+      const zoom = cameraView?.zoom ?? 1;
+      const panX = cameraView?.panX ?? 0;
+      const panY = cameraView?.panY ?? 0;
+      const cx = -panX / zoom;
+      const cy = -panY / zoom;
+
+      const SPACING = 220; // graph units between nodes
+      const cols = Math.ceil(Math.sqrt(nodes.length));
+      const startX = cx - ((cols - 1) * SPACING) / 2;
+      const startY = cy - (Math.ceil(nodes.length / cols) - 1) * SPACING / 2;
+
+      const positioned = nodes.map((node, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const px = Math.round(startX + col * SPACING);
+        const py = Math.round(startY + row * SPACING);
+        if (authUser?.id && selectedWorkspaceId) {
+          persistLocalNodePosition(authUser.id, selectedWorkspaceId, node.id, { x: px, y: py });
+        }
+        return { ...node, position_x: px, position_y: py, manual_position: true };
+      });
+
+      setGraphData((prev) => ({
+        ...prev,
+        nodes: [...prev.nodes, ...positioned],
+      }));
+    }
+    setProposedReviewOpen(false);
+    setProposedNodes([]);
+
+    // Phase 5 — trigger connection analysis for newly accepted nodes
+    if (data.accepted_nodes && data.accepted_nodes.length > 0 && selectedWorkspaceId) {
+      const nodeIds = (data.accepted_nodes as Node[]).map((n) => n.id);
+      setAnalyzingConnections(true);
+      void fetch("/api/nodes/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ node_ids: nodeIds, workspace_id: selectedWorkspaceId }),
+      })
+        .then((r) => r.json() as Promise<{ proposed_edges?: ProposedEdgeWithNodes[]; merge_candidates?: MergeCandidate[] }>)
+        .then((d) => {
+          if (d.merge_candidates && d.merge_candidates.length > 0) {
+            setMergeCandidates(d.merge_candidates);
+          }
+          if (d.proposed_edges && d.proposed_edges.length > 0) {
+            setProposedEdges(d.proposed_edges);
+            setEdgeReviewOpen(true);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setAnalyzingConnections(false));
+    }
+  };
+
+  const handleEdgeReview = async (
+    actions: Array<{ id: string; action: "accept" | "reject" }>
+  ) => {
+    await fetch("/api/proposals/edges/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actions }),
+    });
+
+    // Add accepted edges to graph state immediately
+    const acceptedIds = new Set(actions.filter((a) => a.action === "accept").map((a) => a.id));
+    const newEdges = proposedEdges
+      .filter((e) => acceptedIds.has(e.id))
+      .map((e): Edge => ({
+        id: e.id,
+        user_id: authUser?.id ?? "",
+        source_node_id: e.source_node_id,
+        target_node_id: e.target_node_id,
+        edge_type: e.edge_type as Edge["edge_type"],
+        created_at: new Date().toISOString(),
+      }));
+
+    if (newEdges.length > 0) {
+      setGraphData((prev) => ({ ...prev, edges: [...prev.edges, ...newEdges] }));
+    }
+
+    setEdgeReviewOpen(false);
+    setProposedEdges([]);
   };
 
   return (
@@ -1282,7 +1415,87 @@ export function AppShell({ initialUser }: AppShellProps) {
         </AnimatePresence>
       </div>
 
+      {/* Proposed nodes review — centered modal */}
+      <AnimatePresence>
+        {proposedReviewOpen && proposedNodes.length > 0 && (
+          <motion.div
+            key="prn-backdrop"
+            className="fixed inset-0 z-[60] flex items-center justify-center"
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            style={{ background: "rgba(0,0,0,0.45)" }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setProposedReviewOpen(false);
+                setProposedNodes([]);
+              }
+            }}
+          >
+            <ProposedNodesReview
+              proposals={proposedNodes}
+              onAccept={handleProposalReview}
+              onClose={() => {
+                setProposedReviewOpen(false);
+                setProposedNodes([]);
+              }}
+              submitting={false}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* AI status chip — shown during extraction and connection analysis */}
+      <AnimatePresence>
+        {(brainDumpSubmitting || analyzingConnections) && (
+          <motion.div
+            key="ai-status"
+            className="ai-status-chip"
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.15 }}
+          >
+            <span className="ai-status-dot" />
+            {brainDumpSubmitting ? "Extracting nodes…" : "Finding connections…"}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Merge duplicate alerts */}
+      {mergeCandidates.length > 0 && (
+        <MergeAlert
+          candidates={mergeCandidates}
+          onKeepBoth={(c) =>
+            setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id))
+          }
+          onRemoveNew={(c) => {
+            void fetch(`/api/nodes/${c.new_node_id}/archive`, { method: "POST" }).then(() => {
+              setGraphData((prev) => ({
+                ...prev,
+                nodes: prev.nodes.filter((n) => n.id !== c.new_node_id),
+              }));
+              setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
+            });
+          }}
+        />
+      )}
+
+      {/* Proposed edges review — centered modal */}
+      {edgeReviewOpen && proposedEdges.length > 0 && (
+        <ProposedEdgesReview
+          edges={proposedEdges}
+          onConfirm={(actions) => void handleEdgeReview(actions)}
+          onDismiss={() => {
+            setEdgeReviewOpen(false);
+            setProposedEdges([]);
+          }}
+        />
+      )}
+
       {/* Floating dock / brain dump overlay */}
+
       <AnimatePresence mode="wait" initial={false}>
         {brainDumpOpen ? (
           <motion.div
@@ -1299,8 +1512,8 @@ export function AppShell({ initialUser }: AppShellProps) {
                 setBrainDumpOpen(false);
                 setBrainDumpValue("");
               }}
-              onSubmit={handleBrainDumpSubmit}
-              submitting={false}
+              onSubmit={() => void handleBrainDumpSubmit()}
+              submitting={brainDumpSubmitting}
               value={brainDumpValue}
             />
           </motion.div>

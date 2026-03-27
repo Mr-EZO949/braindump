@@ -153,6 +153,7 @@ const edgeStrengthMap: Record<EdgeType, number> = {
   blocks: 0.66,
   inspired_by: 0.34,
   related_to: 0.24,
+  depends_on: 0.88,
 };
 
 const importanceVisualBounds = {
