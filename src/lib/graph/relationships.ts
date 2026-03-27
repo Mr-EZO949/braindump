@@ -172,5 +172,7 @@ export function getEdgeRelationOptionIdForSelection(
       return selectedIsSource ? "useful_for" : "helped_by";
     case "inspired_by":
       return selectedIsSource ? "inspired_by" : "inspires";
+    case "depends_on":
+      return selectedIsSource ? "required_for" : "requires";
   }
 }

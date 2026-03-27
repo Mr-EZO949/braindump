@@ -37,6 +37,7 @@ const relationshipPriority: Record<EdgeType, number> = {
   blocks: 96,
   inspired_by: 42,
   related_to: 30,
+  depends_on: 98,
 };
 
 function getPerspectiveForNode(edge: Edge, nodeId: string): Perspective {
@@ -63,6 +64,8 @@ export function getDirectionalRelationshipLabel(
       return perspective === "source" ? "inspired by" : "inspires";
     case "related_to":
       return "related to";
+    case "depends_on":
+      return perspective === "source" ? "depends on" : "depended on by";
   }
 }
 
