@@ -8,6 +8,10 @@ export type NodeType =
   | "question"
   | "goal";
 
+// Added in AI Phase 1A — lifecycle status for nodes and edges.
+export type NodeStatus = "active" | "completed" | "paused" | "archived";
+export type EdgeStatus = "active" | "decayed" | "orphaned" | "user_rejected";
+
 export type Importance = "low" | "medium" | "high";
 
 export type EdgeType =
@@ -18,7 +22,8 @@ export type EdgeType =
   | "belongs_to"
   | "useful_for"
   | "blocks"
-  | "inspired_by";
+  | "inspired_by"
+  | "depends_on";
 
 export interface Node {
   id: string;
@@ -36,6 +41,10 @@ export interface Node {
   color: string | null;
   created_at: string;
   updated_at: string;
+  // AI Phase 1A columns — optional so existing queries don't break before migration
+  status?: NodeStatus | null;
+  completed_at?: string | null;
+  current_importance_score?: number | null;
 }
 
 export interface Edge {
@@ -46,6 +55,13 @@ export interface Edge {
   target_node_id: string;
   edge_type: EdgeType;
   created_at: string;
+  // AI Phase 1A columns — optional so existing queries don't break before migration
+  status?: EdgeStatus | null;
+  confidence?: number | null;
+  explanation?: string | null;
+  user_rejected?: boolean | null;
+  user_confirmed?: boolean | null;
+  updated_at?: string | null;
 }
 
 export interface Workspace {

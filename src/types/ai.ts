@@ -1,0 +1,309 @@
+// AI-specific types for the Thought Router AI layer.
+// These complement graph.ts types and cover proposals, runs, feedback, and lifecycle.
+
+import type { NodeType, EdgeType, NodeStatus, EdgeStatus } from "./graph";
+
+// Re-export so consumers can import all AI-related types from one place.
+export type { NodeStatus, EdgeStatus };
+
+export type ProposalStatus = "pending_review" | "accepted" | "rejected";
+
+export type EdgeProposalStatus = "pending_review" | "accepted" | "rejected";
+
+export type RawEntrySourceType =
+  | "brain_dump"
+  | "assistant_save"
+  | "voice"
+  | "planner_convert";
+
+export type RawEntryStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed";
+
+export type AIRunType =
+  | "extract"
+  | "embed"
+  | "rerank"
+  | "infer_edge"
+  | "assistant"
+  | "plan"
+  | "merge_check"
+  | "lifecycle_cascade";
+
+export type AIRunStatus = "success" | "failed" | "retrying";
+
+export type FeedbackEventType =
+  | "accept_node"
+  | "reject_node"
+  | "reject_edge"
+  | "confirm_edge"
+  | "edit_plan"
+  | "dismiss_merge"
+  | "complete_node"
+  | "reopen_node"
+  | "archive_node"
+  | "boost_node"
+  | "demote_node";
+
+export type LifecycleAction =
+  | "score_recomputed"
+  | "edge_decayed"
+  | "unblocked"
+  | "suggested_archive";
+
+export type PlanBlockType = "focus" | "admin" | "break" | "buffer";
+
+export type PlanBlockCompletionStatus = "pending" | "completed" | "skipped";
+
+export type PlanningWindow = "1h" | "2h" | "day" | "custom";
+
+// ---------------------------------------------------------------------------
+// Raw ingestion
+// ---------------------------------------------------------------------------
+
+export interface RawEntry {
+  id: string;
+  user_id: string;
+  workspace_id: string;
+  raw_text: string;
+  source_type: RawEntrySourceType;
+  status: RawEntryStatus;
+  error_message: string | null;
+  retry_count: number;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Proposals
+// ---------------------------------------------------------------------------
+
+export interface ProposedNode {
+  id: string;
+  raw_entry_id: string;
+  workspace_id: string;
+  user_id: string;
+  ai_run_id: string;
+  proposed_title: string;
+  proposed_summary: string | null;
+  proposed_node_type: NodeType;
+  extraction_confidence: number;
+  source_span: string | null;
+  proposal_status: ProposalStatus;
+  created_at: string;
+}
+
+export interface ProposedEdge {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  ai_run_id: string;
+  source_node_id: string;
+  target_node_id: string;
+  edge_type: EdgeType;
+  confidence: number;
+  explanation: string | null;
+  proposal_status: EdgeProposalStatus;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// AI provenance
+// ---------------------------------------------------------------------------
+
+export interface AIRun {
+  id: string;
+  run_type: AIRunType;
+  provider: string;
+  model_name: string;
+  prompt_version: string;
+  input_hash: string | null;
+  output_hash: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  latency_ms: number | null;
+  estimated_cost: number | null;
+  status: AIRunStatus;
+  error_text: string | null;
+  created_at: string;
+}
+
+export interface AIArtifact {
+  id: string;
+  ai_run_id: string;
+  artifact_type: string;
+  payload: Record<string, unknown>;
+  linked_entity_ids: string[] | null;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Feedback and scoring
+// ---------------------------------------------------------------------------
+
+export interface FeedbackEvent {
+  id: string;
+  event_type: FeedbackEventType;
+  entity_type: string;
+  entity_id: string;
+  user_id: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface NodeScore {
+  id: string;
+  node_id: string;
+  score_version: string;
+  urgency_score: number;
+  goal_alignment_score: number;
+  planner_score: number;
+  recency_score: number;
+  graph_centrality_score: number;
+  user_confirmation_score: number;
+  ai_prior_score: number;
+  blocker_resolved_bonus: number;
+  final_score: number;
+  computed_at: string;
+}
+
+export interface EdgeScore {
+  id: string;
+  edge_id: string;
+  confidence: number;
+  confirmation_count: number;
+  rejection_count: number;
+  stale: boolean;
+  decay_factor: number;
+  final_weight: number;
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+export interface LifecycleEvent {
+  id: string;
+  node_id: string;
+  previous_status: NodeStatus;
+  new_status: NodeStatus;
+  user_id: string;
+  cascade_triggered: boolean;
+  created_at: string;
+}
+
+export interface CascadeResult {
+  id: string;
+  lifecycle_event_id: string;
+  affected_node_id: string;
+  action_taken: LifecycleAction;
+  details: Record<string, unknown> | null;
+}
+
+// ---------------------------------------------------------------------------
+// Planning
+// ---------------------------------------------------------------------------
+
+export interface PlanSession {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  planning_window: PlanningWindow;
+  scope: string | null;
+  status: string;
+  created_at: string;
+}
+
+export interface PlanBlock {
+  id: string;
+  plan_session_id: string;
+  node_id: string | null;
+  title: string;
+  start_offset: number;
+  duration_minutes: number;
+  reason: string | null;
+  block_type: PlanBlockType;
+  completion_status: PlanBlockCompletionStatus;
+}
+
+export interface PlanFeedback {
+  id: string;
+  plan_session_id: string;
+  accepted: boolean;
+  edited: boolean;
+  rejected: boolean;
+  completion_status: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Provider method I/O shapes
+// ---------------------------------------------------------------------------
+
+export interface ExtractionInput {
+  raw_text: string;
+  workspace_id: string;
+  user_id: string;
+}
+
+export interface ExtractionOutput {
+  proposed_nodes: Omit<
+    ProposedNode,
+    "id" | "ai_run_id" | "raw_entry_id" | "created_at"
+  >[];
+  prompt_version: string;
+}
+
+export interface EmbeddingInput {
+  text: string;
+}
+
+export interface EmbeddingOutput {
+  embedding: number[];
+  token_count: number | null;
+}
+
+export interface RerankInput {
+  query: string;
+  candidates: { id: string; text: string }[];
+}
+
+export interface RerankOutput {
+  ranked: { id: string; score: number }[];
+}
+
+export interface EdgeInferenceInput {
+  source_node: { id: string; title: string; summary: string | null };
+  target_node: { id: string; title: string; summary: string | null };
+  workspace_context?: string;
+}
+
+export interface EdgeInferenceOutput {
+  related: boolean;
+  edge_type: EdgeType | null;
+  confidence: number;
+  explanation: string;
+  prompt_version: string;
+}
+
+export interface AssistantInput {
+  message: string;
+  context: string;
+  scope: string;
+}
+
+export interface AssistantOutput {
+  answer: string;
+  prompt_version: string;
+}
+
+export interface PlanInput {
+  planning_window: PlanningWindow;
+  candidate_nodes: { id: string; title: string; summary: string | null; node_type: NodeType }[];
+  workspace_context?: string;
+}
+
+export interface PlanOutput {
+  blocks: Omit<PlanBlock, "id" | "plan_session_id">[];
+  prompt_version: string;
+}
