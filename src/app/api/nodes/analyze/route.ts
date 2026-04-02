@@ -64,7 +64,13 @@ export async function POST(req: NextRequest) {
   // Step 2: Run connection analysis for each node in parallel — failures are per-node.
   const results = await Promise.all(
     node_ids.map((nodeId) =>
-      runConnectionAnalysis({ nodeId, workspaceId: workspace_id, userId: user.id, supabase })
+      runConnectionAnalysis({
+        nodeId,
+        excludeNodeIds: node_ids.filter((candidateId) => candidateId !== nodeId),
+        workspaceId: workspace_id,
+        userId: user.id,
+        supabase,
+      })
         .catch(() => ({ proposed: 0, skipped: 0, failed: 1 }))
     )
   );
@@ -74,11 +80,10 @@ export async function POST(req: NextRequest) {
     { proposed: 0, skipped: 0, failed: 0 }
   );
 
-  // Fetch ALL pending edges for this workspace — not filtered to just the new nodes.
-  // This surfaces any edges from previous runs that were never reviewed.
   const proposed_edges = await fetchPendingEdges({
     workspaceId: workspace_id,
     userId: user.id,
+    nodeIds: node_ids,
     supabase,
   });
 

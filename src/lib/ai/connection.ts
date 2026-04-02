@@ -9,6 +9,7 @@ import { matchNodes, generateAndStoreEmbedding } from "@/lib/ai/embeddings";
 import { AI_CANDIDATES, AI_CONFIDENCE, AI_FLAGS } from "@/lib/ai/config";
 // MAX_INFERENCE_PAIRS is derived from AI_CANDIDATES.INFERENCE_MAX below
 import { INFER_EDGE_PROMPT_VERSION } from "@/lib/ai/prompts/infer-edge";
+import { buildWorkspaceProfileContext } from "./workspace-profile";
 
 // Max candidates sent to edge inference per node — keep in sync with AI_CANDIDATES.INFERENCE_MAX.
 const MAX_INFERENCE_PAIRS = AI_CANDIDATES.INFERENCE_MAX;
@@ -35,6 +36,7 @@ export interface ProposedEdgeWithNodes {
 
 export async function runConnectionAnalysis(params: {
   nodeId: string;
+  excludeNodeIds?: string[];
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
@@ -44,6 +46,7 @@ export async function runConnectionAnalysis(params: {
   }
 
   const { nodeId, workspaceId, userId, supabase } = params;
+  const excludedNodeIds = new Set(params.excludeNodeIds ?? []);
 
   // 1. Fetch source node
   const { data: sourceNode } = await supabase
@@ -59,6 +62,17 @@ export async function runConnectionAnalysis(params: {
 
   const sourceTitle = sourceNode.title as string;
   const sourceSummary = sourceNode.summary as string | null;
+  let workspaceContext: string | undefined;
+  try {
+    const context = await buildWorkspaceProfileContext({
+      workspaceId,
+      userId,
+      supabase,
+    });
+    workspaceContext = context.workspaceContext;
+  } catch {
+    workspaceContext = undefined;
+  }
 
   // 2. Ensure embedding exists (no-op if already embedded)
   await generateAndStoreEmbedding({
@@ -72,7 +86,7 @@ export async function runConnectionAnalysis(params: {
 
   // 3. Retrieve top K similar nodes via embedding
   const queryText = [sourceTitle, sourceSummary].filter(Boolean).join("\n");
-  const candidates = await matchNodes({
+  const matchedCandidates = await matchNodes({
     queryText,
     workspaceId,
     userId,
@@ -81,6 +95,9 @@ export async function runConnectionAnalysis(params: {
     includeCompleted: false,
     limit: AI_CANDIDATES.RETRIEVAL_K,
   }).catch(() => []);
+  const candidates = matchedCandidates.filter(
+    (candidate) => !excludedNodeIds.has(candidate.node_id)
+  );
 
   if (candidates.length === 0) {
     return { proposed: 0, skipped: 0, failed: 0 };
@@ -131,6 +148,13 @@ export async function runConnectionAnalysis(params: {
     .eq("user_id", userId)
     .or(`source_node_id.eq.${nodeId},target_node_id.eq.${nodeId}`);
 
+  const { data: canonicalEdges } = await supabase
+    .from("edges")
+    .select("source_node_id, target_node_id, status")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", userId)
+    .or(`source_node_id.eq.${nodeId},target_node_id.eq.${nodeId}`);
+
   const rejectedPairs = new Set(
     (existing ?? [])
       .filter((p) => (p.proposal_status as string) === "rejected")
@@ -141,6 +165,20 @@ export async function runConnectionAnalysis(params: {
       .filter((p) => (p.proposal_status as string) !== "rejected")
       .map((p) => `${p.source_node_id as string}:${p.target_node_id as string}`)
   );
+  const canonicalPairs = new Set(
+    (canonicalEdges ?? [])
+      .filter((edge) => (edge.status as string | null) !== "orphaned")
+      .map((edge) => `${edge.source_node_id as string}:${edge.target_node_id as string}`)
+  );
+
+  type InferredEdgeCandidate = {
+    candidateId: string;
+    confidence: number;
+    edge_type: string;
+    explanation: string;
+  };
+
+  const inferredCandidates: InferredEdgeCandidate[] = [];
 
   // 7. Infer edges in parallel — failures are per-pair, never propagate
   let proposed = 0;
@@ -157,6 +195,7 @@ export async function runConnectionAnalysis(params: {
 
       if (activePairs.has(fwd) || activePairs.has(rev)) { skipped++; return; }
       if (rejectedPairs.has(fwd) || rejectedPairs.has(rev)) { skipped++; return; }
+      if (canonicalPairs.has(fwd) || canonicalPairs.has(rev)) { skipped++; return; }
 
       try {
         const result = await aiProvider().inferEdge({
@@ -166,13 +205,13 @@ export async function runConnectionAnalysis(params: {
             title: candidate.title,
             summary: candidate.summary,
           },
+          workspace_context: workspaceContext,
         });
 
         // Persist ai_run (best-effort)
         void supabase.from("ai_runs").insert({
           ...result.run,
           run_type: "infer_edge",
-          provider: "gemini",
           prompt_version: INFER_EDGE_PROMPT_VERSION,
           status: "success",
           user_id: userId,
@@ -185,26 +224,90 @@ export async function runConnectionAnalysis(params: {
           out.edge_type &&
           out.confidence >= AI_CONFIDENCE.EDGE_INFERENCE_MIN
         ) {
-          const { error } = await supabase.from("proposed_edges").insert({
-            workspace_id: workspaceId,
-            user_id: userId,
-            source_node_id: nodeId,
-            target_node_id: candidateId,
-            edge_type: out.edge_type,
+          inferredCandidates.push({
+            candidateId,
             confidence: out.confidence,
+            edge_type: out.edge_type,
             explanation: out.explanation,
-            proposal_status: "pending_review",
           });
-          if (error) failed++;
-          else proposed++;
         } else {
           skipped++;
         }
-      } catch {
+      } catch (err) {
+        console.error("[connection] inferEdge failed:", err instanceof Error ? err.message : err);
         failed++;
       }
     })
   );
+
+  if (inferredCandidates.length === 0) {
+    return { proposed, skipped, failed };
+  }
+
+  const structuralTypePriority: Record<string, number> = {
+    belongs_to: 4,
+    prerequisite_for: 3,
+    required_for: 3,
+    depends_on: 2,
+  };
+
+  const selected: InferredEdgeCandidate[] = [];
+
+  const bestStructural = [...inferredCandidates]
+    .filter((candidate) => candidate.edge_type in structuralTypePriority)
+    .sort((a, b) => {
+      const priorityDelta =
+        structuralTypePriority[b.edge_type] - structuralTypePriority[a.edge_type];
+      if (priorityDelta !== 0) return priorityDelta;
+      return b.confidence - a.confidence;
+    })[0];
+
+  if (bestStructural) {
+    selected.push(bestStructural);
+  }
+
+  const bestSemantic = [...inferredCandidates]
+    .filter((candidate) => {
+      if (bestStructural && candidate.candidateId === bestStructural.candidateId) return false;
+      if (candidate.edge_type in structuralTypePriority) return false;
+      if (candidate.edge_type === "related_to") return candidate.confidence >= 0.82;
+      return candidate.confidence >= 0.7;
+    })
+    .sort((a, b) => b.confidence - a.confidence)[0];
+
+  if (bestSemantic) {
+    selected.push(bestSemantic);
+  }
+
+  skipped += Math.max(inferredCandidates.length - selected.length, 0);
+
+  for (const candidate of selected) {
+    const normalized =
+      candidate.edge_type === "depends_on"
+        ? {
+            edge_type: "required_for",
+            source_node_id: candidate.candidateId,
+            target_node_id: nodeId,
+          }
+        : {
+            edge_type: candidate.edge_type,
+            source_node_id: nodeId,
+            target_node_id: candidate.candidateId,
+          };
+
+    const { error } = await supabase.from("proposed_edges").insert({
+      workspace_id: workspaceId,
+      user_id: userId,
+      source_node_id: normalized.source_node_id,
+      target_node_id: normalized.target_node_id,
+      edge_type: normalized.edge_type,
+      confidence: candidate.confidence,
+      explanation: candidate.explanation,
+      proposal_status: "pending_review",
+    });
+    if (error) failed++;
+    else proposed++;
+  }
 
   return { proposed, skipped, failed };
 }

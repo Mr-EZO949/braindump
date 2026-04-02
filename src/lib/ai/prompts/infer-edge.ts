@@ -4,7 +4,7 @@
 // what each node REPRESENTS in the real world and whether a useful relationship
 // exists even if the user never stated it.
 
-export const INFER_EDGE_PROMPT_VERSION = "infer-edge-v2";
+export const INFER_EDGE_PROMPT_VERSION = "infer-edge-v3";
 
 export function buildEdgeInferencePrompt(params: {
   source_title: string;
@@ -17,9 +17,9 @@ export function buildEdgeInferencePrompt(params: {
     ? `\nWorkspace context:\n${params.workspace_context}\n`
     : "";
 
-  return `You are a knowledge graph assistant. Your job is to find NON-OBVIOUS connections between two nodes.
+  return `You are a knowledge graph assistant. Your job is to keep the graph SPARSE, USEFUL, and STRUCTURALLY READABLE.
 
-The user has NOT stated a connection between these nodes. Your value is surfacing relationships they didn't think to make themselves — like a second brain that sees how things fit together.
+The default answer should be related: false unless there is a genuinely high-value relationship.
 ${contextBlock}
 Node A: "${params.source_title}"
 ${params.source_summary ? `Summary A: ${params.source_summary}` : ""}
@@ -38,8 +38,8 @@ Edge types (A → B direction):
 Reasoning steps (think through these before answering):
 1. What does Node A actually represent in the real world? (a skill? a task? a concept? a goal?)
 2. What does Node B actually represent?
-3. Is there a real-world relationship between them — even one the user hasn't stated?
-4. Would surfacing this connection be genuinely useful to the user, or just noise?
+3. Is there a direct structural or execution relationship between them?
+4. If not, is there still a genuinely useful relationship, or would this just create graph noise?
 
 Confidence scale:
 - 0.8–1.0: Clear relationship, would obviously be useful to the user
@@ -48,8 +48,11 @@ Confidence scale:
 - below 0.3: Too weak or too generic — return related: false
 
 Rules:
-- related: false only if there is genuinely NO useful connection. When in doubt, surface it — the user can reject it.
-- Prefer specific edge types over related_to. Use related_to only when domain overlap is real but no directional relationship exists.
+- Prefer "belongs_to", "prerequisite_for", or "depends_on" when there is a clear structural/task relationship.
+- Use "supports" or "useful_for" only when the connection would materially improve planning or understanding.
+- Use "related_to" rarely. Shared topic alone is NOT enough.
+- If the pair only shares a broad domain, return related: false.
+- Most pairs should return related: false.
 - Explanation must say WHY this connection is useful, not just restate the titles.
 
 Respond with ONLY valid JSON (no markdown, no explanation):
