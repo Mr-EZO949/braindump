@@ -3,8 +3,6 @@ import {
   dependencyPressure,
   blocksPenalty,
   blockerBonus,
-  goalAlignment,
-  urgency,
   clamp,
   calibrateWorkspaceScore,
   type EdgeRow,
