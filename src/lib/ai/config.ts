@@ -24,9 +24,11 @@ export const AI_FLAGS = {
 // ---------------------------------------------------------------------------
 
 export const AI_MODELS = {
-  // Primary LLM for extraction, inference, assistant, planning
-  GEMINI_LLM: "gemini-2.5-flash",
-  // Embedding model — 3072 dimensions (gemini-embedding-001)
+  // Claude — all LLM tasks (extraction, edge inference, assistant, planning)
+  CLAUDE_SONNET: "claude-sonnet-4-6",
+  // Gemini — embeddings only (Claude has no embedding API)
+  GEMINI_FAST: "gemini-2.5-flash",
+  GEMINI_PRO: "gemini-2.5-flash",
   GEMINI_EMBEDDING: "gemini-embedding-001",
   // Cohere reranking
   COHERE_RERANK: "rerank-v3.5",
@@ -53,9 +55,8 @@ export const AI_CONFIDENCE = {
   // Minimum extraction confidence to include in proposals (0–1)
   EXTRACTION_MIN: 0.6,
   // Minimum edge inference confidence to create a proposed_edge (0–1)
-  // Low on purpose — proposals are reviewed by the user, so false positives
-  // are fine. Missing real connections is the worse outcome.
-  EDGE_INFERENCE_MIN: 0.3,
+  // Kept deliberately above "speculative" territory so the graph stays sparse.
+  EDGE_INFERENCE_MIN: 0.55,
   // Minimum confidence to surface a merge suggestion (0–1)
   MERGE_DETECTION_MIN: 0.75,
 } as const;
@@ -69,9 +70,9 @@ export const AI_CANDIDATES = {
   // Top K results returned from embedding similarity search
   RETRIEVAL_K: 20,
   // Top N kept after Cohere reranking
-  RERANK_N: 10,
+  RERANK_N: 6,
   // Max candidates passed to edge inference per new node
-  INFERENCE_MAX: 8,
+  INFERENCE_MAX: 4,
   // Max duplicate candidates surfaced per node
   MERGE_MAX: 3,
 } as const;
@@ -101,12 +102,15 @@ export const AI_TOKEN_BUDGETS = {
 // ---------------------------------------------------------------------------
 
 export const AI_COST_PER_1M_TOKENS = {
-  // Gemini 2.0 Flash (input / output)
+  // Claude Sonnet 4.6 (input / output)
+  CLAUDE_SONNET_INPUT: 3.0,
+  CLAUDE_SONNET_OUTPUT: 15.0,
+  // Gemini 2.5 Flash — kept for embeddings only
   GEMINI_FLASH_INPUT: 0.075,
   GEMINI_FLASH_OUTPUT: 0.3,
-  // Gemini text-embedding-004 (input only)
+  // Gemini embedding (input only)
   GEMINI_EMBEDDING_INPUT: 0.0001,
-  // Cohere Rerank v3.5 (per 1K search units; mapped to per-call below)
+  // Cohere Rerank v3.5 (per 1K search units)
   COHERE_RERANK_PER_CALL: 0.002,
 } as const;
 

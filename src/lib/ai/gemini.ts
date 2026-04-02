@@ -67,12 +67,13 @@ function estimateCost(inputTokens: number, outputTokens: number): number {
 function baseRun(
   run_type: AIRun["run_type"],
   prompt_version: string,
-  inputText: string
+  inputText: string,
+  model_name: string
 ): Omit<AIRun, "id" | "created_at"> {
   return {
     run_type,
     provider: "gemini",
-    model_name: AI_MODELS.GEMINI_LLM,
+    model_name,
     prompt_version,
     input_hash: shortHash(inputText),
     output_hash: null,
@@ -104,11 +105,11 @@ export class GeminiProvider implements AIProvider {
     input: ExtractionInput
   ): Promise<AIProviderResult<ExtractionOutput>> {
     const prompt = buildExtractionPrompt(input);
-    const run = baseRun("extract", EXTRACT_PROMPT_VERSION, prompt);
+    const run = baseRun("extract", EXTRACT_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_FAST);
     const start = Date.now();
 
     const model = this.genAI.getGenerativeModel({
-      model: AI_MODELS.GEMINI_LLM,
+      model: AI_MODELS.GEMINI_FAST,
       generationConfig: {
         temperature: AI_TEMPERATURE.EXTRACTION,
         responseMimeType: "application/json",
@@ -246,11 +247,11 @@ export class GeminiProvider implements AIProvider {
       workspace_context: input.workspace_context,
     });
 
-    const run = baseRun("infer_edge", INFER_EDGE_PROMPT_VERSION, prompt);
+    const run = baseRun("infer_edge", INFER_EDGE_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_PRO);
     const start = Date.now();
 
     const model = this.genAI.getGenerativeModel({
-      model: AI_MODELS.GEMINI_LLM,
+      model: AI_MODELS.GEMINI_PRO,
       generationConfig: {
         temperature: AI_TEMPERATURE.EDGE_INFERENCE,
         responseMimeType: "application/json",
@@ -292,11 +293,11 @@ export class GeminiProvider implements AIProvider {
     const userPrompt = buildAssistantUserPrompt(input);
     const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
 
-    const run = baseRun("assistant", ASSISTANT_PROMPT_VERSION, fullPrompt);
+    const run = baseRun("assistant", ASSISTANT_PROMPT_VERSION, fullPrompt, AI_MODELS.GEMINI_FAST);
     const start = Date.now();
 
     const model = this.genAI.getGenerativeModel({
-      model: AI_MODELS.GEMINI_LLM,
+      model: AI_MODELS.GEMINI_FAST,
       generationConfig: {
         temperature: AI_TEMPERATURE.ASSISTANT,
       },
@@ -344,11 +345,11 @@ export class GeminiProvider implements AIProvider {
       workspace_context: input.workspace_context,
     });
 
-    const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt);
+    const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_FAST);
     const start = Date.now();
 
     const model = this.genAI.getGenerativeModel({
-      model: AI_MODELS.GEMINI_LLM,
+      model: AI_MODELS.GEMINI_FAST,
       generationConfig: {
         temperature: AI_TEMPERATURE.PLANNER,
         responseMimeType: "application/json",
