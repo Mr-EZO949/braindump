@@ -69,6 +69,11 @@ export interface Workspace {
   user_id: string;
   name: string;
   created_at: string;
+  profile_role?: string | null;
+  profile_summary?: string | null;
+  profile_payload?: WorkspaceProfile | null;
+  bootstrap_root_node_id?: string | null;
+  bootstrap_completed_at?: string | null;
 }
 
 export interface GraphData {
@@ -83,4 +88,26 @@ export interface CreateNodeInput {
   raw_text: string;
   summary: string;
   title: string;
+}
+
+export type WorkspaceProfileAreaType =
+  | "academic"
+  | "project"
+  | "career"
+  | "health"
+  | "life_admin"
+  | "personal";
+
+export interface WorkspaceProfileArea {
+  title: string;
+  area_type: WorkspaceProfileAreaType;
+}
+
+export interface WorkspaceProfile {
+  version: number;
+  role: string | null;
+  current_focus: string | null;
+  success_title: string | null;
+  goals: string[];
+  areas: WorkspaceProfileArea[];
 }
