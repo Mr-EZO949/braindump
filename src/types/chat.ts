@@ -1,6 +1,9 @@
-import type { EdgeType, Importance, NodeType } from "@/types/graph";
+import type { AssistantMode } from "@/types/ai";
+import type { EdgeType, Importance, NodeStatus, NodeType } from "@/types/graph";
 
-export type RailTab = "details" | "chat";
+export type { AssistantMode };
+
+export type RailTab = "details" | "chat" | "planner";
 
 export type ChatScope =
   | {
@@ -23,6 +26,8 @@ export interface ChatNodeContext {
   node_type: NodeType;
   importance: Importance;
   importanceIndex: number;
+  currentImportanceScore?: number | null;
+  status: NodeStatus | null;
   connectedNodeTitles: string[];
   edgeTypes: EdgeType[];
 }

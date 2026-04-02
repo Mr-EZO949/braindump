@@ -1,0 +1,241 @@
+// POST /api/assistant/plan — Phase 10.2
+// Builds a time-blocked AI plan for the current workspace session.
+//
+// Flow:
+//   1. Auth + workspace ownership check
+//   2. buildPlannerCandidates — selects top active nodes, promotes recently unblocked
+//   3. buildWorkspaceProfileContext — assembles persona/goal context string
+//   4. aiProvider().buildPlan() — calls Claude, returns structured PlanOutput
+//   5. Persist ai_run → plan_sessions → plan_blocks
+//   6. Return { session, blocks }
+
+import { NextRequest, NextResponse } from "next/server";
+
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { aiProvider } from "@/lib/ai";
+import { buildPlannerCandidates } from "@/lib/ai/planner";
+import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
+import { AI_MODELS, AI_COST_PER_1M_TOKENS } from "@/lib/ai/config";
+import { PLAN_PROMPT_VERSION } from "@/lib/ai/prompts/plan";
+import type { PlanningWindow } from "@/types/ai";
+
+const VALID_WINDOWS: PlanningWindow[] = ["1h", "2h", "day", "custom"];
+
+export async function POST(req: NextRequest) {
+  // -------------------------------------------------------------------------
+  // Auth
+  // -------------------------------------------------------------------------
+  const supabase = await getSupabaseServerClient();
+  if (!supabase) {
+    return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // -------------------------------------------------------------------------
+  // Parse body
+  // -------------------------------------------------------------------------
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const {
+    workspace_id,
+    planning_window = "2h",
+    scope = null,
+    custom_minutes = null,
+  } = body as {
+    workspace_id: string;
+    planning_window?: string;
+    scope?: string | null;
+    custom_minutes?: number | null;
+  };
+
+  if (!workspace_id || typeof workspace_id !== "string") {
+    return NextResponse.json({ error: "workspace_id is required" }, { status: 400 });
+  }
+
+  const resolvedWindow: PlanningWindow = VALID_WINDOWS.includes(planning_window as PlanningWindow)
+    ? (planning_window as PlanningWindow)
+    : "2h";
+
+  if (resolvedWindow === "custom" && (!custom_minutes || custom_minutes < 15)) {
+    return NextResponse.json(
+      { error: "custom_minutes must be at least 15 when planning_window is 'custom'" },
+      { status: 400 },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Verify workspace belongs to user
+  // -------------------------------------------------------------------------
+  const { data: workspace, error: wsError } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("id", workspace_id)
+    .eq("user_id", user.id)
+    .single();
+
+  if (wsError || !workspace) {
+    return NextResponse.json({ error: "Workspace not found or access denied" }, { status: 404 });
+  }
+
+  // -------------------------------------------------------------------------
+  // Build candidates + workspace context in parallel
+  // -------------------------------------------------------------------------
+  const [candidates, profileCtx] = await Promise.all([
+    buildPlannerCandidates({ workspaceId: workspace_id, userId: user.id, supabase }),
+    buildWorkspaceProfileContext({ workspaceId: workspace_id, userId: user.id, supabase }),
+  ]);
+
+  if (candidates.length === 0) {
+    return NextResponse.json(
+      { error: "No active work items found. Add some tasks or goals first." },
+      { status: 422 },
+    );
+  }
+
+  // Append recently-unblocked signal to workspace context so Claude knows
+  const recentlyUnblockedTitles = candidates
+    .filter((c) => c.recently_unblocked)
+    .map((c) => `"${c.title}"`)
+    .join(", ");
+
+  const workspaceContext = [
+    profileCtx.workspaceContext,
+    recentlyUnblockedTitles
+      ? `Recently unblocked (depended-on work just completed): ${recentlyUnblockedTitles}`
+      : null,
+    scope ? `Planning scope: ${scope}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  // -------------------------------------------------------------------------
+  // Call AI planner
+  // -------------------------------------------------------------------------
+  const provider = aiProvider();
+
+  let planResult;
+  try {
+    planResult = await provider.buildPlan({
+      planning_window: resolvedWindow,
+      candidate_nodes: candidates.map((c) => ({
+        id: c.id,
+        title: c.title,
+        summary: c.summary,
+        node_type: c.node_type,
+      })),
+      workspace_context: workspaceContext || undefined,
+    });
+  } catch (err) {
+    console.error("[assistant/plan] buildPlan failed:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Planning failed" },
+      { status: 502 },
+    );
+  }
+
+  const { output, run: runMeta } = planResult;
+
+  // -------------------------------------------------------------------------
+  // Persist ai_run
+  // -------------------------------------------------------------------------
+  const { data: aiRunRow } = await supabase
+    .from("ai_runs")
+    .insert({
+      user_id: user.id,
+      workspace_id,
+      run_type: "plan",
+      provider: "claude",
+      model_name: AI_MODELS.CLAUDE_SONNET,
+      prompt_version: PLAN_PROMPT_VERSION,
+      input_hash: runMeta.input_hash,
+      output_hash: runMeta.output_hash,
+      input_tokens: runMeta.input_tokens,
+      output_tokens: runMeta.output_tokens,
+      latency_ms: runMeta.latency_ms,
+      estimated_cost:
+        runMeta.input_tokens != null && runMeta.output_tokens != null
+          ? (runMeta.input_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT +
+            (runMeta.output_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT
+          : null,
+      status: "success",
+      error_text: null,
+    })
+    .select("id")
+    .single();
+
+  // -------------------------------------------------------------------------
+  // Persist plan_session
+  // -------------------------------------------------------------------------
+  const sessionInsert: Record<string, unknown> = {
+    user_id: user.id,
+    workspace_id,
+    ai_run_id: aiRunRow?.id ?? null,
+    planning_window: resolvedWindow,
+    scope: scope ?? null,
+    status: "draft",
+  };
+  if (resolvedWindow === "custom" && custom_minutes) {
+    sessionInsert.custom_minutes = custom_minutes;
+  }
+
+  const { data: sessionRow, error: sessionError } = await supabase
+    .from("plan_sessions")
+    .insert(sessionInsert)
+    .select()
+    .single();
+
+  if (sessionError || !sessionRow) {
+    console.error("[assistant/plan] plan_sessions insert failed:", sessionError);
+    return NextResponse.json({ error: "Failed to persist plan session" }, { status: 500 });
+  }
+
+  // -------------------------------------------------------------------------
+  // Persist plan_blocks
+  // -------------------------------------------------------------------------
+  const blockRows = output.blocks.map((b) => ({
+    plan_session_id: sessionRow.id,
+    node_id: b.node_id ?? null,
+    title: b.title,
+    start_offset: b.start_offset,
+    duration_minutes: b.duration_minutes,
+    reason: b.reason ?? null,
+    block_type: b.block_type,
+    completion_status: "pending" as const,
+  }));
+
+  const { data: insertedBlocks, error: blocksError } = await supabase
+    .from("plan_blocks")
+    .insert(blockRows)
+    .select();
+
+  if (blocksError) {
+    console.error("[assistant/plan] plan_blocks insert failed:", blocksError);
+    // Session was created — return what we have so the client isn't left empty
+    return NextResponse.json(
+      { session: sessionRow, blocks: [], recently_unblocked_node_ids: [], warning: "Blocks failed to persist" },
+      { status: 207 },
+    );
+  }
+
+  const recentlyUnblockedNodeIds = candidates
+    .filter((c) => c.recently_unblocked)
+    .map((c) => c.id);
+
+  return NextResponse.json({
+    session: sessionRow,
+    blocks: insertedBlocks ?? [],
+    recently_unblocked_node_ids: recentlyUnblockedNodeIds,
+  });
+}
