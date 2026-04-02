@@ -84,11 +84,11 @@ export function getImportanceIndex(node: Pick<Node, "id" | "importance" | "impor
 }
 
 export function getImportanceLabel(importanceIndex: number): Importance {
-  if (importanceIndex >= 72) {
+  if (importanceIndex >= 78) {
     return "high";
   }
 
-  if (importanceIndex >= 45) {
+  if (importanceIndex >= 40) {
     return "medium";
   }
 
