@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { computeWorkspaceScores } from "@/lib/ai/scoring";
 
 interface ReviewAction {
   id: string; // proposed_edge id
@@ -47,12 +48,24 @@ export async function POST(req: NextRequest) {
   }
 
   const proposalMap = new Map(proposals.map((p) => [p.id as string, p]));
-  const feedbackRows: unknown[] = [];
+  const feedbackRows: Array<Record<string, unknown>> = [];
+  let affectedNodeIds: string[] = [];
 
   // ---------------------------------------------------------------------------
   // Process accepts
   // ---------------------------------------------------------------------------
   const toAccept = actions.filter((a) => a.action === "accept");
+  let acceptedEdges:
+    | Array<{
+        created_at: string;
+        edge_type: string;
+        id: string;
+        source_node_id: string;
+        target_node_id: string;
+        user_id: string;
+        workspace_id: string;
+      }>
+    | null = null;
 
   if (toAccept.length > 0) {
     const edgeRows = toAccept.flatMap((action) => {
@@ -60,6 +73,7 @@ export async function POST(req: NextRequest) {
       if (!proposal) return [];
       return [{
         user_id: user.id,
+        workspace_id: proposal.workspace_id as string,
         source_node_id: proposal.source_node_id as string,
         target_node_id: proposal.target_node_id as string,
         edge_type: proposal.edge_type as string,
@@ -67,9 +81,10 @@ export async function POST(req: NextRequest) {
     });
 
     if (edgeRows.length > 0) {
-      const { error: insertError } = await supabase
+      const { data: insertedEdges, error: insertError } = await supabase
         .from("edges")
-        .insert(edgeRows);
+        .insert(edgeRows)
+        .select("*");
 
       if (insertError) {
         return NextResponse.json(
@@ -77,6 +92,25 @@ export async function POST(req: NextRequest) {
           { status: 500 }
         );
       }
+
+      acceptedEdges =
+        (insertedEdges as Array<{
+          created_at: string;
+          edge_type: string;
+          id: string;
+          source_node_id: string;
+          target_node_id: string;
+          user_id: string;
+          workspace_id: string;
+        }> | null) ?? [];
+      affectedNodeIds = Array.from(
+        new Set(
+          (acceptedEdges ?? []).flatMap((edge) => [
+            edge.source_node_id,
+            edge.target_node_id,
+          ])
+        )
+      );
     }
 
     await supabase
@@ -86,14 +120,14 @@ export async function POST(req: NextRequest) {
       .eq("user_id", user.id);
 
     feedbackRows.push(
-      ...toAccept.map((a) => ({
+      ...((acceptedEdges ?? []).map((edge) => ({
         user_id: user.id,
-        workspace_id: proposalMap.get(a.id)?.workspace_id as string,
-        event_type: "accept_edge",
-        entity_type: "proposed_edge",
-        entity_id: a.id,
+        workspace_id: edge.workspace_id,
+        event_type: "confirm_edge",
+        entity_type: "edge",
+        entity_id: edge.id,
         metadata: null,
-      }))
+      })))
     );
   }
 
@@ -125,8 +159,30 @@ export async function POST(req: NextRequest) {
     await supabase.from("feedback_events").insert(feedbackRows);
   }
 
+  let updatedNodes: Array<Record<string, unknown>> = [];
+
+  // Phase 7 — recompute scores when edges change graph topology.
+  if (toAccept.length > 0) {
+    const workspaceId = proposals[0]?.workspace_id as string | undefined;
+    if (workspaceId) {
+      await computeWorkspaceScores({ workspaceId, userId: user.id, supabase });
+
+      if (affectedNodeIds.length > 0) {
+        const { data: refreshedNodes } = await supabase
+          .from("nodes")
+          .select("*")
+          .in("id", affectedNodeIds)
+          .eq("user_id", user.id);
+
+        updatedNodes = (refreshedNodes ?? []) as Array<Record<string, unknown>>;
+      }
+    }
+  }
+
   return NextResponse.json({
     accepted_count: toAccept.length,
+    accepted_edges: acceptedEdges ?? [],
     rejected_count: toReject.length,
+    updated_nodes: updatedNodes,
   });
 }
