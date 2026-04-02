@@ -18,6 +18,7 @@ interface EditState {
 }
 
 interface ProposedNodesReviewProps {
+  existingNodeTitles: Record<string, string>;
   proposals: ProposedNode[];
   onAccept: (
     actions: Array<{
@@ -31,6 +32,7 @@ interface ProposedNodesReviewProps {
 }
 
 export function ProposedNodesReview({
+  existingNodeTitles,
   proposals,
   onAccept,
   onClose,
@@ -57,7 +59,11 @@ export function ProposedNodesReview({
     if (editingId === id) return;
     setChecked((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
   };
@@ -124,6 +130,9 @@ export function ProposedNodesReview({
           const isChecked = checked.has(proposal.id);
           const isEditing = editingId === proposal.id;
           const color = NODE_COLOR_BY_TYPE[edit.proposed_node_type] ?? "#677480";
+          const existingParentTitle = proposal.existing_parent_node_id
+            ? existingNodeTitles[proposal.existing_parent_node_id] ?? null
+            : null;
 
           return (
             <div key={proposal.id}>
@@ -189,6 +198,9 @@ export function ProposedNodesReview({
                     </div>
                     {edit.proposed_summary && (
                       <p className="prn-desc">{edit.proposed_summary}</p>
+                    )}
+                    {existingParentTitle && (
+                      <div className="prn-attach-hint">Attach under {existingParentTitle}</div>
                     )}
                     <div className="prn-body-bottom">
                       <span className="prn-conf">{Math.round(proposal.extraction_confidence * 100)}% confidence</span>

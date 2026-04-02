@@ -80,7 +80,9 @@ type MainStageProps = {
   onCloseEditNode: () => void;
   onOpenCreateNode: () => void;
   onResetGraphFilters: () => void;
+  onToggleShowArchived: () => void;
   onToggleEditMode: () => void;
+  showArchived: boolean;
   onRequestDeleteNode: () => void;
   onCancelDeleteNode: () => void;
   onSelectNode: (nodeId: string | null) => void;
@@ -139,6 +141,7 @@ export function MainStage({
   onGraphSearchSubmit,
   onOpenCreateNode,
   onResetGraphFilters,
+  onToggleShowArchived,
   onToggleEditMode,
   onRequestDeleteNode,
   onSelectNode,
@@ -146,6 +149,7 @@ export function MainStage({
   onSubmitEditNode,
   onUpdateEdgeConnection,
   selectedNodeId,
+  showArchived,
   suppressInitialFocusAnimation,
 }: MainStageProps) {
   const filtersActive = graphTypeFilter !== "all" || graphImportanceFilter !== "all";
@@ -305,6 +309,14 @@ export function MainStage({
                 ))}
               </select>
             </label>
+
+            <button
+              className={`graph-filter-reset ${showArchived ? "graph-filter-reset-active" : ""}`}
+              onClick={onToggleShowArchived}
+              type="button"
+            >
+              {showArchived ? "Hide archived" : "Archived"}
+            </button>
 
             <button
               className={`graph-filter-reset ${filtersActive ? "graph-filter-reset-active" : ""}`}

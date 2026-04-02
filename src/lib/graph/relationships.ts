@@ -25,6 +25,8 @@ export type EdgeRelationOption = {
   label: string;
 };
 
+const hiddenEdgeTypesInUi = new Set<EdgeType>(["blocks"]);
+
 export const edgeRelationOptions: EdgeRelationOption[] = [
   {
     id: "contains",
@@ -118,6 +120,14 @@ export const edgeRelationOptions: EdgeRelationOption[] = [
     direction: "selected-target",
   },
 ];
+
+export const visibleEdgeRelationOptions = edgeRelationOptions.filter(
+  (option) => !hiddenEdgeTypesInUi.has(option.edgeType),
+);
+
+export function isEdgeHiddenInUi(edgeType: EdgeType) {
+  return hiddenEdgeTypesInUi.has(edgeType);
+}
 
 export function getEdgeRelationOption(
   relationId: EdgeRelationOptionId,

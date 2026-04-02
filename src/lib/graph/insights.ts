@@ -1,5 +1,9 @@
 import { getImportanceIndex } from "@/lib/graph/importance";
-import { getEdgeRelationOptionIdForSelection, type EdgeRelationOptionId } from "@/lib/graph/relationships";
+import {
+  getEdgeRelationOptionIdForSelection,
+  isEdgeHiddenInUi,
+  type EdgeRelationOptionId,
+} from "@/lib/graph/relationships";
 import type { ChatNodeContext } from "@/types/chat";
 import type { Edge, EdgeType, GraphData, Node } from "@/types/graph";
 
@@ -89,6 +93,10 @@ export function getLinkedNodePerspectives(
   >();
 
   graphData.edges.forEach((edge) => {
+    if (isEdgeHiddenInUi(edge.edge_type)) {
+      return;
+    }
+
     if (edge.source_node_id !== selectedNodeId && edge.target_node_id !== selectedNodeId) {
       return;
     }
@@ -146,6 +154,10 @@ export function getNodeConnections(
 
   return graphData.edges
     .flatMap((edge) => {
+      if (isEdgeHiddenInUi(edge.edge_type)) {
+        return [];
+      }
+
       if (edge.source_node_id !== selectedNodeId && edge.target_node_id !== selectedNodeId) {
         return [];
       }
@@ -234,6 +246,10 @@ export function getFocusItems(
   const grouped = new Map<string, FocusItem>();
 
   graphData.edges.forEach((edge) => {
+    if (isEdgeHiddenInUi(edge.edge_type)) {
+      return;
+    }
+
     if (edge.source_node_id !== selectedNode.id && edge.target_node_id !== selectedNode.id) {
       return;
     }
@@ -259,20 +275,6 @@ export function getFocusItems(
               `This is a hard dependency before ${selectedNode.title} can move.`,
               linkedNode.id,
               100,
-            ),
-          );
-        }
-        break;
-      case "blocks":
-        if (perspective === "target") {
-          upsertFocusItem(
-            grouped,
-            createFocusItem(
-              `${edge.id}-blocker`,
-              `Resolve blocker: ${linkedNode.title}`,
-              `${linkedNode.title} is actively constraining progress here.`,
-              linkedNode.id,
-              96,
             ),
           );
         }

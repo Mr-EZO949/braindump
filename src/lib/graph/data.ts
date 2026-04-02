@@ -564,6 +564,8 @@ export function buildChatNodeContext(
     node_type: node.node_type,
     importance: getImportanceLabel(getImportanceIndex(node)),
     importanceIndex: getImportanceIndex(node),
+    currentImportanceScore: node.current_importance_score ?? null,
+    status: node.status ?? null,
     connectedNodeTitles,
     edgeTypes: neighboringEdges.map((edge) => edge.edge_type),
   };

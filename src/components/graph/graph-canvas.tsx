@@ -8,7 +8,7 @@ import {
   forceX,
   forceY,
 } from "d3-force";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PointerEvent as ReactPointerEvent,
   WheelEvent as ReactWheelEvent,
@@ -355,15 +355,15 @@ function normalizeImportanceScore(score: number) {
 }
 
 function getVisualTierFromScore(score: number): VisualTier {
-  if (score >= 86) {
+  if (score >= 90) {
     return "root";
   }
 
-  if (score >= 68) {
+  if (score >= 74) {
     return "anchor";
   }
 
-  if (score >= 44) {
+  if (score >= 40) {
     return "body";
   }
 
@@ -371,6 +371,9 @@ function getVisualTierFromScore(score: number): VisualTier {
 }
 
 function getImportanceScore(node: Node) {
+  if (typeof node.current_importance_score === "number" && Number.isFinite(node.current_importance_score)) {
+    return clamp(node.current_importance_score, importanceVisualBounds.minScore, importanceVisualBounds.maxScore);
+  }
   return clamp(getImportanceIndex(node), importanceVisualBounds.minScore, importanceVisualBounds.maxScore);
 }
 
@@ -431,14 +434,36 @@ function createNodeLayout(node: Node, importanceScore: number) {
 }
 
 function getVerticalOffset(depth: number, componentIndex: number) {
-  const firstGap = componentIndex === 0 ? 258 : 224;
-  const laterGap = componentIndex === 0 ? 196 : 172;
+  const firstGap = componentIndex === 0 ? 220 : 190;
+  const laterGap = componentIndex === 0 ? 168 : 148;
 
   if (depth === 0) {
     return 0;
   }
 
   return firstGap + (depth - 1) * laterGap;
+}
+
+function getComponentCenterOffset(
+  componentIndex: number,
+  componentWidth: number,
+  componentHeight: number,
+) {
+  if (componentIndex === 0) {
+    return { x: 0, y: -72 };
+  }
+
+  const compactIndex = componentIndex - 1;
+  const columns = 3;
+  const column = compactIndex % columns;
+  const row = Math.floor(compactIndex / columns);
+  const xSpacing = 480 + Math.min(componentWidth * 0.18, 90);
+  const ySpacing = 300 + Math.min(componentHeight * 0.15, 80);
+
+  return {
+    x: (column - (columns - 1) / 2) * xSpacing,
+    y: 280 + row * ySpacing,
+  };
 }
 
 function getTreeBounds(nodes: GraphNode[]) {
@@ -605,7 +630,7 @@ function buildGraphLayout(graphData: GraphData) {
       });
 
     const normalizedRoots = roots.length > 0 ? roots : [component[0]];
-    const horizontalGap = componentIndex === 0 ? 32 : 26;
+    const horizontalGap = componentIndex === 0 ? 38 : 30;
     const subtreeWidthCache = new Map<string, number>();
 
     const getSortedChildren = (parentId: string) =>
@@ -708,14 +733,15 @@ function buildGraphLayout(graphData: GraphData) {
       });
     };
 
+    const rootSpacing = componentIndex === 0 ? 72 : 56;
     const totalRootWidth = normalizedRoots.reduce((totalWidth, rootId, rootIndex) => {
-      return totalWidth + computeSubtreeWidth(rootId) + (rootIndex === 0 ? 0 : 58);
+      return totalWidth + computeSubtreeWidth(rootId) + (rootIndex === 0 ? 0 : rootSpacing);
     }, 0);
     let rootLeftEdge = -totalRootWidth / 2;
 
     normalizedRoots.forEach((rootId, rootIndex) => {
       if (rootIndex > 0) {
-        rootLeftEdge += 58;
+        rootLeftEdge += rootSpacing;
       }
 
       placeNode(rootId, rootLeftEdge, 0);
@@ -728,24 +754,15 @@ function buildGraphLayout(graphData: GraphData) {
     const bounds = getTreeBounds(componentNodes);
     const componentWidth = bounds.maxX - bounds.minX;
     const componentHeight = bounds.maxY - bounds.minY;
-    const islandRow = Math.floor((componentIndex - 1) / 2);
-    const componentOffset =
-      componentIndex === 0
-        ? { x: 0, y: -520 }
-        : {
-            x:
-              (componentIndex % 2 === 1 ? -1 : 1) *
-              (1360 +
-                islandRow * 260 +
-                componentWidth * 0.44),
-            y:
-              260 +
-              islandRow *
-                Math.max(460, componentHeight * 0.9 + 300),
-          };
+    const componentOffset = getComponentCenterOffset(
+      componentIndex,
+      componentWidth,
+      componentHeight,
+    );
     const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
     const shiftX = componentOffset.x - centerX;
-    const shiftY = componentOffset.y - bounds.minY;
+    const shiftY = componentOffset.y - centerY;
 
     componentNodes.forEach((node) => {
       node.restX += shiftX;
@@ -949,15 +966,15 @@ function createFittedView(nodes: GraphNode[], width: number, height: number): Vi
   // auto-layout nodes and make the graph look broken on first load.
   const pinnedNodes = nodes.filter((n) => n.fx !== null && n.fx !== undefined);
   const bounds = getGraphBounds(pinnedNodes.length > 0 ? pinnedNodes : nodes);
-  const usableWidth = Math.max(width - 120, 360);
-  const usableHeight = Math.max(height - 150, 340);
+  const usableWidth = Math.max(width - 100, 360);
+  const usableHeight = Math.max(height - 120, 340);
   const zoom = clamp(
     Math.min(usableWidth / Math.max(bounds.width, 1), usableHeight / Math.max(bounds.height, 1)),
     0.68,
     1.06,
   );
-  const targetX = width * 0.46;
-  const targetY = height * 0.34;
+  const targetX = width * 0.5;
+  const targetY = height * 0.42;
 
   return {
     panX: targetX - width / 2 - bounds.centerX * zoom,
@@ -1155,6 +1172,26 @@ function getInteractionSets(graphData: GraphData, nodeId: string | null) {
   return { connectedEdges, connectedNodes };
 }
 
+// Edge decay: fade edges connected to completed nodes over time.
+// No ranking engine needed — computed live from completed_at.
+// decay_start_days=3, decay_full_days=30, floor=0.05
+function computeEdgeDecay(link: GraphLink): number {
+  const src = link.source as GraphNode | undefined;
+  const tgt = link.target as GraphNode | undefined;
+
+  const completedAts = [src?.completed_at, tgt?.completed_at].filter(Boolean) as string[];
+  if (completedAts.length === 0) return 1;
+
+  // Use the most recently completed node to drive decay
+  const mostRecentMs = Math.max(...completedAts.map((d) => new Date(d).getTime()));
+  const daysSince = (Date.now() - mostRecentMs) / (1000 * 60 * 60 * 24);
+
+  if (daysSince < 3) return 1;
+  if (daysSince >= 30) return 0.05;
+  // Linear interpolation from 1.0 at day 3 → 0.05 at day 30
+  return 1 - ((daysSince - 3) / (30 - 3)) * (1 - 0.05);
+}
+
 function getEdgeVisualStyle(
   link: GraphLink,
   emphasized: boolean,
@@ -1256,6 +1293,8 @@ function getEdgeVisualStyle(
 }
 
 function getNodeVisualState(options: {
+  archived: boolean;
+  completed: boolean;
   hovered: boolean;
   inHoveredNeighborhood: boolean;
   inSelectedNeighborhood: boolean;
@@ -1264,6 +1303,8 @@ function getNodeVisualState(options: {
   selectedNodeId: string | null;
 }) {
   const {
+    archived,
+    completed,
     hovered,
     inHoveredNeighborhood,
     inSelectedNeighborhood,
@@ -1271,6 +1312,20 @@ function getNodeVisualState(options: {
     selected,
     selectedNodeId,
   } = options;
+
+  // Archived nodes are shown only when the filter is toggled — always highly muted
+  if (archived && !selected) {
+    return {
+      border: "rgba(255,255,255,0.028)",
+      surfaceTintOpacity: 0.04,
+      glowOpacity: 0,
+      heatOpacity: 0,
+      opacity: 0.22,
+      shadowOpacity: 0.06,
+      text: "rgba(200,195,190,0.35)",
+      topSheenOpacity: 0.08,
+    };
+  }
 
   if (selected) {
     return {
@@ -1347,6 +1402,19 @@ function getNodeVisualState(options: {
       shadowOpacity: 0.28,
       text: "#f0ece6",
       topSheenOpacity: 0.54,
+    };
+  }
+
+  if (completed && !selected) {
+    return {
+      border: "rgba(255,255,255,0.05)",
+      surfaceTintOpacity: 0.07,
+      glowOpacity: 0,
+      heatOpacity: 0,
+      opacity: 0.46,
+      shadowOpacity: 0.12,
+      text: "rgba(210,220,210,0.5)",
+      topSheenOpacity: 0.14,
     };
   }
 
@@ -1495,31 +1563,31 @@ export function GraphCanvas({
 
         switch (link.edge_type) {
           case "belongs_to":
-            return Math.max(source.height, target.height) + 68;
+            return Math.max(source.height, target.height) + 52;
           case "required_for":
           case "prerequisite_for":
-            return Math.max(source.width, target.width) * 0.46 + 136;
+            return Math.max(source.width, target.width) * 0.44 + 120;
           case "supports":
-            return Math.max(source.width, target.width) * 0.58 + 168;
+            return Math.max(source.width, target.width) * 0.52 + 150;
           case "related_to":
-            return Math.max(source.width, target.width) * 0.74 + 226;
+            return Math.max(source.width, target.width) * 0.68 + 200;
           default:
-            return Math.max(source.width, target.width) * 0.62 + 188;
+            return Math.max(source.width, target.width) * 0.56 + 170;
         }
       })
       .strength((link) => {
         switch (link.edge_type) {
           case "belongs_to":
-            return 0.18;
+            return 0.24;
           case "required_for":
           case "prerequisite_for":
-            return 0.07;
+            return 0.09;
           case "supports":
-            return 0.02;
+            return 0.025;
           case "related_to":
-            return 0.008;
+            return 0.01;
           default:
-            return 0.012;
+            return 0.015;
         }
       }) as ForceLink<GraphNode, GraphLink>;
 
@@ -1527,19 +1595,19 @@ export function GraphCanvas({
       .force("link", linkForce)
       .force(
         "charge",
-        forceManyBody<GraphNode>().strength((node) => -148 - node.width * 0.9),
+        forceManyBody<GraphNode>().strength((node) => -120 - node.width * 0.7),
       )
       .force(
         "collide",
         forceCollide<GraphNode>().radius(
-          (node) => Math.max(node.width, node.height) * 0.52 + 22,
+          (node) => Math.max(node.width, node.height) * 0.56 + 28,
         ),
       )
-      .force("restX", forceX<GraphNode>((node) => node.restX).strength(0.12))
-      .force("restY", forceY<GraphNode>((node) => node.restY).strength(0.58))
-      .velocityDecay(0.58)
-      .alphaDecay(0.064)
-      .alphaMin(0.012)
+      .force("restX", forceX<GraphNode>((node) => node.restX).strength(0.32))
+      .force("restY", forceY<GraphNode>((node) => node.restY).strength(0.64))
+      .velocityDecay(0.64)
+      .alphaDecay(0.072)
+      .alphaMin(0.014)
       .alphaTarget(0);
 
     simulation.on("tick", () => {
@@ -1656,13 +1724,19 @@ export function GraphCanvas({
     };
   }, []);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (didFitInitialViewRef.current) return;
     if (viewport.width === 0 || viewport.height === 0) return;
     if (scene.nodes.length === 0) return;
 
     didFitInitialViewRef.current = true;
-    setView(initialView ?? createFittedView(scene.nodes, viewport.width, viewport.height));
+    const frame = window.requestAnimationFrame(() => {
+      setView(initialView ?? createFittedView(scene.nodes, viewport.width, viewport.height));
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
   }, [scene, initialView, viewport.width, viewport.height]);
 
   useEffect(() => {
@@ -1718,7 +1792,7 @@ export function GraphCanvas({
     };
 
     viewAnimationRef.current = window.requestAnimationFrame(animate);
-  }, [focusNodeId, viewport.height, viewport.width]);
+  }, [focusNodeId, scene, viewport.height, viewport.width]);
 
   useEffect(() => {
     return () => {
@@ -2079,7 +2153,9 @@ export function GraphCanvas({
               selectedInteraction.connectedEdges.has(link.id) ||
               (!focusNodeId && hoveredInteraction.connectedEdges.has(link.id));
             const dimmed = Boolean(focusNodeId) && !selectedInteraction.connectedEdges.has(link.id);
+            const decay = computeEdgeDecay(link);
             const style = getEdgeVisualStyle(link, emphasized, dimmed);
+            style.opacity *= decay;
 
             return (
               <path
@@ -2113,6 +2189,8 @@ export function GraphCanvas({
             const inSelectedNeighborhood = selectedInteraction.connectedNodes.has(node.id);
             const searchHit = searchMatches.has(node.id);
             const visual = getNodeVisualState({
+              archived: node.status === "archived",
+              completed: node.status === "completed",
               hovered,
               inHoveredNeighborhood,
               inSelectedNeighborhood,
@@ -2296,6 +2374,7 @@ export function GraphCanvas({
                     fontWeight={560}
                     letterSpacing="-0.02em"
                     textAnchor="middle"
+                    textDecoration={node.status === "completed" ? "line-through" : undefined}
                     y={initialY}
                   >
                     {node.lines.map((line, index) => (
