@@ -45,12 +45,30 @@ const VALID_NODE_TYPES = new Set([
   "goal",
 ]);
 
+const VALID_EXTRACTION_SOFT_LINK_TYPES = new Set([
+  "supports",
+  "related_to",
+  "prerequisite_for",
+  "useful_for",
+  "inspired_by",
+]);
+
+const EXTRACTION_SOFT_LINK_PRIORITY: Record<string, number> = {
+  prerequisite_for: 5,
+  supports: 4,
+  useful_for: 3,
+  inspired_by: 2,
+  related_to: 1,
+};
+
 export function validateExtractionOutput(raw: unknown): ExtractionOutput {
   if (!isObject(raw)) throw new Error("Extraction output must be an object");
   if (!Array.isArray(raw.proposed_nodes))
     throw new Error("Extraction output missing proposed_nodes array");
   if (!isString(raw.prompt_version))
     throw new Error("Extraction output missing prompt_version");
+
+  const seenLocalRefs = new Set<string>();
 
   const nodes = raw.proposed_nodes.map((n: unknown, i: number) => {
     if (!isObject(n)) throw new Error(`proposed_nodes[${i}] is not an object`);
@@ -66,8 +84,108 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
       throw new Error(`proposed_nodes[${i}] missing workspace_id`);
     if (!isString(n.user_id))
       throw new Error(`proposed_nodes[${i}] missing user_id`);
+    if (!isString(n.local_ref) || !n.local_ref.trim())
+      throw new Error(`proposed_nodes[${i}] missing local_ref`);
+
+    const localRef = n.local_ref.trim();
+    if (seenLocalRefs.has(localRef))
+      throw new Error(`proposed_nodes[${i}] duplicate local_ref: ${localRef}`);
+    seenLocalRefs.add(localRef);
+
+    const primaryParentLocalRef =
+      isString(n.primary_parent_local_ref) && n.primary_parent_local_ref.trim()
+        ? n.primary_parent_local_ref.trim()
+        : null;
+    if (primaryParentLocalRef === localRef) {
+      throw new Error(`proposed_nodes[${i}] cannot parent itself`);
+    }
+
+    const existingParentNodeId =
+      isString(n.existing_parent_node_id) && n.existing_parent_node_id.trim()
+        ? n.existing_parent_node_id.trim()
+        : null;
+    if (existingParentNodeId === localRef) {
+      throw new Error(`proposed_nodes[${i}] cannot attach to itself`);
+    }
+    if (primaryParentLocalRef && existingParentNodeId) {
+      throw new Error(
+        `proposed_nodes[${i}] cannot define both primary_parent_local_ref and existing_parent_node_id`
+      );
+    }
+
+    const dependsOnLocalRefs = Array.isArray(n.depends_on_local_refs)
+      ? n.depends_on_local_refs
+          .filter(isString)
+          .map((ref) => ref.trim())
+          .filter(Boolean)
+      : [];
+    if (dependsOnLocalRefs.some((ref) => ref === localRef)) {
+      throw new Error(`proposed_nodes[${i}] cannot depend on itself`);
+    }
+
+    const softLinks = Array.isArray(n.soft_links)
+      ? n.soft_links
+          .filter(isObject)
+          .map((link, linkIndex) => {
+            if (
+              !isString(link.target_local_ref) ||
+              !link.target_local_ref.trim()
+            ) {
+              throw new Error(
+                `proposed_nodes[${i}].soft_links[${linkIndex}] missing target_local_ref`
+              );
+            }
+            if (
+              !isString(link.edge_type) ||
+              !VALID_EXTRACTION_SOFT_LINK_TYPES.has(link.edge_type)
+            ) {
+              throw new Error(
+                `proposed_nodes[${i}].soft_links[${linkIndex}] invalid edge_type: ${String(link.edge_type)}`
+              );
+            }
+
+            const targetLocalRef = link.target_local_ref.trim();
+            if (targetLocalRef === localRef) {
+              throw new Error(
+                `proposed_nodes[${i}].soft_links[${linkIndex}] cannot point to self`
+              );
+            }
+
+            return {
+              target_local_ref: targetLocalRef,
+              edge_type:
+                link.edge_type as ExtractionOutput["proposed_nodes"][number]["soft_links"][number]["edge_type"],
+              rationale:
+                isString(link.rationale) && link.rationale.trim()
+                  ? link.rationale.trim()
+                  : null,
+            };
+          })
+      : [];
+
+    const dedupedSoftLinks = Array.from(
+      softLinks.reduce((map, link) => {
+        const existing = map.get(link.target_local_ref);
+        if (!existing) {
+          map.set(link.target_local_ref, link);
+          return map;
+        }
+
+        const existingPriority =
+          EXTRACTION_SOFT_LINK_PRIORITY[existing.edge_type] ?? 0;
+        const nextPriority =
+          EXTRACTION_SOFT_LINK_PRIORITY[link.edge_type] ?? 0;
+
+        if (nextPriority > existingPriority) {
+          map.set(link.target_local_ref, link);
+        }
+
+        return map;
+      }, new Map<string, typeof softLinks[number]>()).values()
+    ).slice(0, 2);
 
     return {
+      local_ref: localRef,
       workspace_id: n.workspace_id as string,
       user_id: n.user_id as string,
       proposed_title: (n.proposed_title as string).trim(),
@@ -75,12 +193,48 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
         ? n.proposed_summary
         : null,
       proposed_node_type: n.proposed_node_type as ExtractionOutput["proposed_nodes"][number]["proposed_node_type"],
+      primary_parent_local_ref: primaryParentLocalRef,
+      existing_parent_node_id: existingParentNodeId,
+      depends_on_local_refs: Array.from(new Set(dependsOnLocalRefs)).slice(0, 2),
+      soft_links: dedupedSoftLinks,
+      accepted_node_id: null,
       extraction_confidence: isNumber(n.extraction_confidence)
         ? Math.min(1, Math.max(0, n.extraction_confidence))
         : 0.5,
       source_span: isString(n.source_span) ? n.source_span : null,
       proposal_status: "pending_review" as const,
     };
+  });
+
+  const knownLocalRefs = new Set(nodes.map((node) => node.local_ref));
+
+  nodes.forEach((node, index) => {
+    if (
+      node.primary_parent_local_ref &&
+      !knownLocalRefs.has(node.primary_parent_local_ref)
+    ) {
+      throw new Error(
+        `proposed_nodes[${index}] references unknown parent local_ref: ${node.primary_parent_local_ref}`
+      );
+    }
+
+    const invalidDependency = node.depends_on_local_refs.find(
+      (ref) => !knownLocalRefs.has(ref)
+    );
+    if (invalidDependency) {
+      throw new Error(
+        `proposed_nodes[${index}] references unknown dependency local_ref: ${invalidDependency}`
+      );
+    }
+
+    const invalidSoftLink = node.soft_links.find(
+      (link) => !knownLocalRefs.has(link.target_local_ref)
+    );
+    if (invalidSoftLink) {
+      throw new Error(
+        `proposed_nodes[${index}] references unknown soft link local_ref: ${invalidSoftLink.target_local_ref}`
+      );
+    }
   });
 
   return {

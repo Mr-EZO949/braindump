@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { runExtraction, chunkText } from "@/lib/ai/extraction";
+import { runExtraction } from "@/lib/ai/extraction";
 import { AI_INGESTION, AI_FLAGS } from "@/lib/ai/config";
 import type { RawEntrySourceType } from "@/types/ai";
 

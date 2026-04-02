@@ -59,6 +59,19 @@ export type PlanBlockCompletionStatus = "pending" | "completed" | "skipped";
 
 export type PlanningWindow = "1h" | "2h" | "day" | "custom";
 
+export type ExtractionSoftLinkType =
+  | "supports"
+  | "related_to"
+  | "prerequisite_for"
+  | "useful_for"
+  | "inspired_by";
+
+export interface ExtractionSoftLink {
+  target_local_ref: string;
+  edge_type: ExtractionSoftLinkType;
+  rationale: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Raw ingestion
 // ---------------------------------------------------------------------------
@@ -85,6 +98,12 @@ export interface ProposedNode {
   workspace_id: string;
   user_id: string;
   ai_run_id: string;
+  local_ref: string | null;
+  primary_parent_local_ref: string | null;
+  existing_parent_node_id: string | null;
+  depends_on_local_refs: string[];
+  soft_links: ExtractionSoftLink[];
+  accepted_node_id: string | null;
   proposed_title: string;
   proposed_summary: string | null;
   proposed_node_type: NodeType;
@@ -244,6 +263,13 @@ export interface ExtractionInput {
   raw_text: string;
   workspace_id: string;
   user_id: string;
+  workspace_context?: string;
+  existing_nodes?: Array<{
+    id: string;
+    title: string;
+    summary: string | null;
+    node_type: NodeType;
+  }>;
 }
 
 export interface ExtractionOutput {
@@ -286,10 +312,13 @@ export interface EdgeInferenceOutput {
   prompt_version: string;
 }
 
+export type AssistantMode = "explain" | "plan" | "transform";
+
 export interface AssistantInput {
   message: string;
   context: string;
   scope: string;
+  mode?: AssistantMode;
 }
 
 export interface AssistantOutput {
