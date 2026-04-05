@@ -1,13 +1,15 @@
 // PATCH /api/nodes/[id]/status
 // Lifecycle status transitions: active ↔ completed, active ↔ paused, any → archived, archived → active.
 // Logs lifecycle_events (immutable) and feedback_events on every valid transition.
-// On complete/reopen: queues prerequisite cascade to find newly-available downstream nodes.
+// On complete: auto-completes active belongs_to descendants, runs prerequisite cascades,
+// and recomputes scores synchronously so the UI can update immediately.
+// On reopen: runs prerequisite cascade for the reopened node.
 // On archive: orphans all connected edges.
 // On unarchive (archived → active): restores orphaned edges to active.
 
-import { after } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
-import { drainAIJobsWithAdminClient, enqueueAIJob } from "@/lib/ai/jobs";
+import { runPrerequisiteCascade } from "@/lib/ai/lifecycle";
+import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { NodeStatus } from "@/types/graph";
 
@@ -29,6 +31,71 @@ const FEEDBACK_EVENT: Partial<Record<string, string>> = {
   "completed->archived": "archive_node",
   "paused->archived": "archive_node",
 };
+
+type WorkspaceNodeRow = {
+  completed_at: string | null;
+  id: string;
+  status: NodeStatus | null;
+  title: string | null;
+};
+
+type WorkspaceEdgeRow = {
+  edge_type: string | null;
+  source_node_id: string;
+  status: string | null;
+  target_node_id: string;
+};
+
+function collectBelongsToDescendantIds(params: {
+  edges: WorkspaceEdgeRow[];
+  includeNode: (node: WorkspaceNodeRow) => boolean;
+  nodes: WorkspaceNodeRow[];
+  rootNodeId: string;
+}) {
+  const { edges, includeNode, nodes, rootNodeId } = params;
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+  const childrenByParent = new Map<string, string[]>();
+
+  for (const edge of edges) {
+    if (edge.edge_type !== "belongs_to") {
+      continue;
+    }
+
+    if (edge.status === "orphaned" || edge.status === "user_rejected") {
+      continue;
+    }
+
+    const children = childrenByParent.get(edge.target_node_id) ?? [];
+    children.push(edge.source_node_id);
+    childrenByParent.set(edge.target_node_id, children);
+  }
+
+  const descendants: string[] = [];
+  const visited = new Set<string>();
+  const stack = [...(childrenByParent.get(rootNodeId) ?? [])];
+
+  while (stack.length > 0) {
+    const nodeId = stack.pop();
+    if (!nodeId || visited.has(nodeId)) {
+      continue;
+    }
+
+    visited.add(nodeId);
+
+    const node = nodeMap.get(nodeId);
+    if (node && includeNode(node)) {
+      descendants.push(nodeId);
+    }
+
+    for (const childId of childrenByParent.get(nodeId) ?? []) {
+      if (!visited.has(childId)) {
+        stack.push(childId);
+      }
+    }
+  }
+
+  return descendants;
+}
 
 export async function PATCH(
   req: NextRequest,
@@ -59,7 +126,7 @@ export async function PATCH(
   // Fetch current node
   const { data: node, error: fetchError } = await supabase
     .from("nodes")
-    .select("id, status, workspace_id")
+    .select("id, status, workspace_id, completed_at")
     .eq("id", id)
     .eq("user_id", user.id)
     .single();
@@ -83,19 +150,20 @@ export async function PATCH(
   }
 
   // Build node update payload
+  const nowIso = new Date().toISOString();
   const updatePayload: Record<string, unknown> = {
     status: newStatus,
-    updated_at: new Date().toISOString(),
+    updated_at: nowIso,
   };
 
   if (newStatus === "completed") {
-    updatePayload.completed_at = new Date().toISOString();
+    updatePayload.completed_at = nowIso;
   } else if (previousStatus === "completed") {
     updatePayload.completed_at = null;
   }
 
   if (newStatus === "archived") {
-    updatePayload.archived_at = new Date().toISOString();
+    updatePayload.archived_at = nowIso;
   } else if (previousStatus === "archived") {
     updatePayload.archived_at = null;
   }
@@ -127,7 +195,7 @@ export async function PATCH(
   const feedbackKey = `${previousStatus}->${newStatus}`;
   const feedbackType = FEEDBACK_EVENT[feedbackKey];
   if (feedbackType && node.workspace_id) {
-    void supabase.from("feedback_events").insert({
+    await supabase.from("feedback_events").insert({
       user_id: user.id,
       workspace_id: node.workspace_id,
       event_type: feedbackType,
@@ -155,88 +223,166 @@ export async function PATCH(
       .or(`source_node_id.eq.${id},target_node_id.eq.${id}`);
   }
 
-  // 6.3 — belongs_to cascade: find active children when a parent is completed
-  let affectedChildren: Array<{ id: string; title: string }> = [];
-  if (newStatus === "completed") {
-    const { data: childEdges } = await supabase
-      .from("edges")
-      .select("source_node_id")
-      .eq("user_id", user.id)
-      .eq("target_node_id", id)
-      .eq("edge_type", "belongs_to")
-      .eq("status", "active");
+  let autoCompletedNodeIds: string[] = [];
+  let autoReopenedNodeIds: string[] = [];
+  const newlyAvailable: Array<{ id: string; title: string }> = [];
 
-    if (childEdges && childEdges.length > 0) {
-      const childIds = childEdges.map((e: { source_node_id: string }) => e.source_node_id);
-      const { data: childNodes } = await supabase
+  if (
+    node.workspace_id &&
+    (newStatus === "completed" || (newStatus === "active" && previousStatus === "completed"))
+  ) {
+    const [{ data: workspaceNodes }, { data: workspaceEdges }] = await Promise.all([
+      supabase
         .from("nodes")
-        .select("id, title, status")
-        .in("id", childIds)
-        .eq("user_id", user.id)
-        .neq("status", "completed")
-        .neq("status", "archived");
+        .select("id, title, status, completed_at")
+        .eq("workspace_id", node.workspace_id)
+        .eq("user_id", user.id),
+      supabase
+        .from("edges")
+        .select("source_node_id, target_node_id, edge_type, status")
+        .eq("workspace_id", node.workspace_id)
+        .eq("user_id", user.id),
+    ]);
 
-      affectedChildren = (childNodes ?? []).map((n: { id: string; title: string }) => ({
-        id: n.id,
-        title: n.title,
-      }));
+    const workspaceNodeRows = (workspaceNodes ?? []) as WorkspaceNodeRow[];
+    const workspaceEdgeRows = (workspaceEdges ?? []) as WorkspaceEdgeRow[];
+
+    if (newStatus === "completed") {
+      autoCompletedNodeIds = collectBelongsToDescendantIds({
+        edges: workspaceEdgeRows,
+        includeNode: (workspaceNode) =>
+          workspaceNode.status !== "completed" && workspaceNode.status !== "archived",
+        nodes: workspaceNodeRows,
+        rootNodeId: id,
+      });
+    } else {
+      const parentCompletedAt = typeof node.completed_at === "string" ? node.completed_at : null;
+      autoReopenedNodeIds = parentCompletedAt
+        ? collectBelongsToDescendantIds({
+            edges: workspaceEdgeRows,
+            includeNode: (workspaceNode) =>
+              workspaceNode.status === "completed" &&
+              workspaceNode.completed_at === parentCompletedAt,
+            nodes: workspaceNodeRows,
+            rootNodeId: id,
+          })
+        : [];
     }
+
+    if (autoCompletedNodeIds.length > 0 || autoReopenedNodeIds.length > 0) {
+      const affectedDescendantNodeIds =
+        newStatus === "completed" ? autoCompletedNodeIds : autoReopenedNodeIds;
+      await supabase
+        .from("nodes")
+        .update({
+          status: newStatus,
+          completed_at: newStatus === "completed" ? nowIso : null,
+          updated_at: nowIso,
+        })
+        .eq("user_id", user.id)
+        .in("id", affectedDescendantNodeIds);
+
+      const previousStatusByNodeId = new Map(
+        workspaceNodeRows.map((workspaceNode) => [
+          workspaceNode.id,
+          workspaceNode.status ?? "active",
+        ]),
+      );
+
+      const { data: childLifecycleEvents } = await supabase
+        .from("lifecycle_events")
+        .insert(
+          affectedDescendantNodeIds.map((nodeId) => ({
+            node_id: nodeId,
+            user_id: user.id,
+            previous_status: previousStatusByNodeId.get(nodeId) ?? "active",
+            new_status: newStatus,
+            cascade_triggered: false,
+          })),
+        )
+        .select("id, node_id");
+
+      await supabase.from("feedback_events").insert(
+        affectedDescendantNodeIds.map((nodeId) => ({
+          user_id: user.id,
+          workspace_id: node.workspace_id,
+          event_type: newStatus === "completed" ? "complete_node" : "reopen_node",
+          entity_type: "node",
+          entity_id: nodeId,
+          metadata: {
+            previous_status: previousStatusByNodeId.get(nodeId) ?? "active",
+            new_status: newStatus,
+            triggered_by_parent_id: id,
+            cascade: "belongs_to_subtree",
+          },
+        })),
+      );
+
+      for (const lifecycleEvent of childLifecycleEvents ?? []) {
+        const cascade = await runPrerequisiteCascade({
+          triggeredByNodeId: lifecycleEvent.node_id as string,
+          newStatus,
+          workspaceId: node.workspace_id,
+          userId: user.id,
+          lifecycleEventId: lifecycleEvent.id as string,
+          supabase,
+        });
+
+        newlyAvailable.push(...cascade.newlyAvailable);
+      }
+    }
+  }
+
+  if (
+    node.workspace_id &&
+    le?.id &&
+    (newStatus === "completed" || (newStatus === "active" && previousStatus === "completed"))
+  ) {
+    const cascade = await runPrerequisiteCascade({
+      triggeredByNodeId: id,
+      newStatus,
+      workspaceId: node.workspace_id,
+      userId: user.id,
+      lifecycleEventId: le.id,
+      supabase,
+    });
+
+    newlyAvailable.push(...cascade.newlyAvailable);
   }
 
   let updatedNode = null;
+  let updatedNodes: unknown[] = [];
+  let recomputedScores: unknown[] = [];
   if (node.workspace_id) {
-    const queuedJobs = [
-      enqueueAIJob({
-        supabase,
-        userId: user.id,
-        workspaceId: node.workspace_id as string,
-        jobType: "score_recompute",
-        payload: {
-          workspace_id: node.workspace_id,
-        },
-      }),
-    ];
-
-    if (
-      le?.id &&
-      (newStatus === "completed" ||
-        (newStatus === "active" && previousStatus === "completed"))
-    ) {
-      queuedJobs.push(
-        enqueueAIJob({
-          supabase,
-          userId: user.id,
-          workspaceId: node.workspace_id as string,
-          jobType: "lifecycle_cascade",
-          payload: {
-            lifecycle_event_id: le.id,
-            new_status: newStatus,
-            triggered_by_node_id: id,
-            workspace_id: node.workspace_id,
-          },
-        }),
-      );
-    }
-
-    await Promise.all(queuedJobs);
-
-    after(async () => {
-      try {
-        await drainAIJobsWithAdminClient();
-      } catch (error) {
-        console.error("[api/nodes/status] failed to drain AI jobs:", error);
-      }
+    const scoreResult = await computeWorkspaceScores({
+      workspaceId: node.workspace_id,
+      userId: user.id,
+      supabase,
     });
+
+    recomputedScores = scoreResult.nodeUpdates;
+
+    const affectedNodeIds = [id, ...autoCompletedNodeIds, ...autoReopenedNodeIds];
+    const { data: refreshedNodes } = await supabase
+      .from("nodes")
+      .select("*")
+      .in("id", affectedNodeIds)
+      .eq("user_id", user.id);
+
+    updatedNodes = refreshedNodes ?? [];
+    updatedNode =
+      (refreshedNodes ?? []).find((refreshedNode) => refreshedNode.id === id) ?? null;
+  } else {
+    const { data: refreshedNode } = await supabase
+      .from("nodes")
+      .select("*")
+      .eq("id", id)
+      .eq("user_id", user.id)
+      .single();
+
+    updatedNode = refreshedNode ?? null;
+    updatedNodes = updatedNode ? [updatedNode] : [];
   }
-
-  const { data: refreshedNode } = await supabase
-    .from("nodes")
-    .select("*")
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .single();
-
-  updatedNode = refreshedNode ?? null;
 
   return NextResponse.json({
     node_id: id,
@@ -245,8 +391,10 @@ export async function PATCH(
     changed: true,
     lifecycle_event_id: le?.id ?? null,
     updated_node: updatedNode,
-    affected_children: affectedChildren,
-    newly_available: [],
-    recomputed_scores: [],
+    updated_nodes: updatedNodes,
+    auto_completed_node_ids: autoCompletedNodeIds,
+    auto_reopened_node_ids: autoReopenedNodeIds,
+    newly_available: [...new Map(newlyAvailable.map((item) => [item.id, item])).values()],
+    recomputed_scores: recomputedScores,
   });
 }

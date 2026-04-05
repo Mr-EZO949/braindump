@@ -38,6 +38,10 @@ function getLocalViewStateStorageKey(userId: string, workspaceId: string) {
   return `brain-dump:view-state:${userId}:${workspaceId}`;
 }
 
+function getLocalWorkspaceStorageKey(userId: string) {
+  return `brain-dump:selected-workspace:${userId}`;
+}
+
 function defaultLocalViewState(): LocalGraphViewState {
   return {
     cameraView: null,
@@ -258,6 +262,40 @@ export function persistLocalCameraView(
         }
       : null,
   });
+}
+
+export function readLocalSelectedWorkspaceId(userId: string | null) {
+  if (typeof window === "undefined" || !userId) {
+    return null;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(getLocalWorkspaceStorageKey(userId));
+    return rawValue && rawValue.trim().length > 0 ? rawValue : null;
+  } catch {
+    return null;
+  }
+}
+
+export function persistLocalSelectedWorkspaceId(
+  userId: string | null,
+  workspaceId: string | null,
+) {
+  if (typeof window === "undefined" || !userId) {
+    return;
+  }
+
+  try {
+    const storageKey = getLocalWorkspaceStorageKey(userId);
+
+    if (workspaceId) {
+      window.localStorage.setItem(storageKey, workspaceId);
+    } else {
+      window.localStorage.removeItem(storageKey);
+    }
+  } catch {
+    // Ignore storage failures. The app still works without local workspace persistence.
+  }
 }
 
 function normalizeNodes(nodes: Node[]) {

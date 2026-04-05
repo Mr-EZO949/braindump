@@ -27,7 +27,9 @@ import {
   loadWorkspaces,
   persistLocalCameraView,
   persistLocalNodePosition,
+  persistLocalSelectedWorkspaceId,
   persistLocalSelectedNode,
+  readLocalSelectedWorkspaceId,
   readLocalGraphViewState,
   removeLocalNodePosition,
   type LocalGraphCameraView,
@@ -189,6 +191,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [graphLoading, setGraphLoading] = useState(true);
   const [graphSearchValue, setGraphSearchValue] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [focusRequestKey, setFocusRequestKey] = useState(0);
   const [authUser, setAuthUser] = useState<AuthUserState | null>(initialUser);
   const [signingOut, setSigningOut] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -219,9 +222,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [edgeSubmitting, setEdgeSubmitting] = useState(false);
   const [edgeDeleteSubmittingId, setEdgeDeleteSubmittingId] = useState<string | null>(null);
   const [edgeUpdateSubmittingId, setEdgeUpdateSubmittingId] = useState<string | null>(null);
-  const [cascadeChildren, setCascadeChildren] = useState<Array<{ id: string; title: string }>>([]);
-  const [cascadeParentTitle, setCascadeParentTitle] = useState<string | null>(null);
-  const [cascadeSubmitting, setCascadeSubmitting] = useState(false);
   // Bootstrap wizard — shown when a new empty workspace is created OR loaded empty
   const [bootstrapWorkspaceId, setBootstrapWorkspaceId] = useState<string | null>(null);
   // Onboarding tutorial — shown once per user (persisted via localStorage)
@@ -379,11 +379,20 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       setWorkspaces(nextWorkspaces);
       setSelectedWorkspaceId((currentWorkspaceId) => {
+        const storedWorkspaceId = readLocalSelectedWorkspaceId(authUser?.id ?? null);
+
         if (
           currentWorkspaceId &&
           nextWorkspaces.some((workspace) => workspace.id === currentWorkspaceId)
         ) {
           return currentWorkspaceId;
+        }
+
+        if (
+          storedWorkspaceId &&
+          nextWorkspaces.some((workspace) => workspace.id === storedWorkspaceId)
+        ) {
+          return storedWorkspaceId;
         }
 
         return (
@@ -416,11 +425,6 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       setGraphData(nextGraphData);
       setGraphLoading(false);
-
-      // Show bootstrap wizard for any workspace that loads with 0 nodes
-      if (nextGraphData.nodes.length === 0 && selectedWorkspaceId) {
-        setBootstrapWorkspaceId(selectedWorkspaceId);
-      }
     });
 
     return () => {
@@ -476,6 +480,14 @@ export function AppShell({ initialUser }: AppShellProps) {
   }, [chatMessages.length, defaultChatScope]);
 
   useEffect(() => {
+    if (workspaces.length === 0) {
+      return;
+    }
+
+    persistLocalSelectedWorkspaceId(authUser?.id ?? null, selectedWorkspaceId);
+  }, [authUser?.id, selectedWorkspaceId, workspaces.length]);
+
+  useEffect(() => {
     setSelectedNodeId(null);
     setGraphSearchValue("");
     setRailChatInput("");
@@ -502,9 +514,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     setViewStateHydrated(false);
     setInitialCameraView(localViewState.cameraView);
     setPendingRestoredSelectionId(localViewState.selectedNodeId);
-    setSuppressInitialFocusAnimation(
-      Boolean(localViewState.cameraView || localViewState.selectedNodeId),
-    );
+    setSuppressInitialFocusAnimation(Boolean(localViewState.selectedNodeId));
   }, [authUser?.id, selectedWorkspaceId]);
 
   useEffect(() => {
@@ -662,6 +672,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     const nextSelectedNode = graphData.nodes.find((node) => node.id === nodeId);
 
     setSelectedNodeId(nodeId);
+    setFocusRequestKey((currentKey) => currentKey + 1);
 
     if (!nextSelectedNode) {
       return;
@@ -689,6 +700,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
 
     setSelectedNodeId(matchingNode.id);
+    setFocusRequestKey((currentKey) => currentKey + 1);
     setCreateNodeDraft(null);
     setCreateNodeError(null);
     setEditNodeError(null);
@@ -1594,10 +1606,13 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     const data = await res.json() as {
       updated_node?: Node | null;
-      affected_children?: Array<{ id: string; title: string }>;
+      updated_nodes?: Node[];
       recomputed_scores?: Array<{ id: string; current_importance_score: number; importance_index: number; importance: string }>;
     };
     const updatedNode = data.updated_node ?? null;
+    const updatedNodeMap = new Map(
+      (data.updated_nodes ?? []).map((updated) => [updated.id, updated]),
+    );
     const scoreMap = new Map(
       (data.recomputed_scores ?? []).map((s) => [s.id, s]),
     );
@@ -1606,57 +1621,26 @@ export function AppShell({ initialUser }: AppShellProps) {
     setGraphData((prev) => ({
       ...prev,
       nodes: prev.nodes.map((n) => {
-        if (n.id === nodeId) {
-          return {
-            ...n,
-            ...(updatedNode ?? {}),
-            status,
-            completed_at:
-              updatedNode?.completed_at ??
-              (status === "completed" ? new Date().toISOString() : n.completed_at),
-          };
-        }
+        const nextNodeState = updatedNodeMap.get(n.id) ?? (n.id === nodeId ? updatedNode : null);
         const scoreUpdate = scoreMap.get(n.id);
-        if (scoreUpdate) {
-          return {
-            ...n,
-            current_importance_score: scoreUpdate.current_importance_score,
-            importance_index: scoreUpdate.importance_index,
-            importance: scoreUpdate.importance as Node["importance"],
-          };
+
+        if (!nextNodeState && !scoreUpdate) {
+          return n;
         }
-        return n;
+
+        return {
+          ...n,
+          ...(nextNodeState ?? {}),
+          ...(scoreUpdate
+            ? {
+                current_importance_score: scoreUpdate.current_importance_score,
+                importance_index: scoreUpdate.importance_index,
+                importance: scoreUpdate.importance as Node["importance"],
+              }
+            : {}),
+        };
       }),
     }));
-
-    // 6.3 belongs_to cascade: prompt user about active child nodes
-    if (status === "completed" && data.affected_children && data.affected_children.length > 0) {
-      const parentTitle = graphData.nodes.find((n) => n.id === nodeId)?.title ?? null;
-      setCascadeParentTitle(parentTitle);
-      setCascadeChildren(data.affected_children);
-    }
-  };
-
-  const handleCascadeComplete = async () => {
-    setCascadeSubmitting(true);
-    for (const child of cascadeChildren) {
-      await fetch(`/api/nodes/${child.id}/status`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "completed" }),
-      });
-    }
-    setGraphData((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) =>
-        cascadeChildren.some((c) => c.id === n.id)
-          ? { ...n, status: "completed" as const, completed_at: new Date().toISOString() }
-          : n,
-      ),
-    }));
-    setCascadeChildren([]);
-    setCascadeParentTitle(null);
-    setCascadeSubmitting(false);
   };
 
   return (
@@ -1741,6 +1725,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               transition={{ duration: 0.14, ease: "easeOut" }}
             >
               <MainStage
+                key={selectedWorkspaceId ?? "workspace-none"}
                 cameraView={initialCameraView}
                 createNodeDraft={createNodeDraft}
                 createNodeError={createNodeError}
@@ -1817,6 +1802,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 onUpdateEdgeConnection={(edgeId, relationId) => {
                   void handleUpdateEdge(edgeId, relationId);
                 }}
+                focusRequestKey={focusRequestKey}
                 selectedNodeId={selectedNodeId}
                 suppressInitialFocusAnimation={suppressInitialFocusAnimation}
               />
@@ -2033,66 +2019,6 @@ export function AppShell({ initialUser }: AppShellProps) {
         />
       )}
 
-      {/* 6.3 belongs_to cascade dialog */}
-      <AnimatePresence>
-        {cascadeChildren.length > 0 && (
-          <motion.div
-            key="cascade-backdrop"
-            className="fixed inset-0 z-60 flex items-center justify-center"
-            style={{ background: "rgba(0,0,0,0.45)" }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            initial={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-          >
-            <motion.div
-              className="cascade-dialog"
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              initial={{ opacity: 0, scale: 0.96 }}
-              transition={{ duration: 0.15 }}
-            >
-              <p className="cascade-dialog-heading">
-                You completed{cascadeParentTitle ? ` "${cascadeParentTitle}"` : " a parent node"}.
-              </p>
-              <p className="cascade-dialog-sub">
-                {cascadeChildren.length === 1
-                  ? "This child node is still active. Is it also done?"
-                  : `${cascadeChildren.length} child nodes are still active. Are they also done?`}
-              </p>
-              <ul className="cascade-dialog-list">
-                {cascadeChildren.map((child) => (
-                  <li key={child.id} className="cascade-dialog-item">
-                    {child.title}
-                  </li>
-                ))}
-              </ul>
-              <div className="cascade-dialog-actions">
-                <button
-                  className="cascade-dialog-btn-skip"
-                  disabled={cascadeSubmitting}
-                  onClick={() => {
-                    setCascadeChildren([]);
-                    setCascadeParentTitle(null);
-                  }}
-                  type="button"
-                >
-                  Skip
-                </button>
-                <button
-                  className="cascade-dialog-btn-confirm"
-                  disabled={cascadeSubmitting}
-                  onClick={() => void handleCascadeComplete()}
-                  type="button"
-                >
-                  {cascadeSubmitting ? "Marking done…" : "Mark all done"}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Floating dock / brain dump overlay */}
 
       <AnimatePresence mode="wait" initial={false}>
@@ -2146,7 +2072,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         )}
       </AnimatePresence>
 
-      {/* Workspace bootstrap wizard — shown when bootstrapWorkspaceId matches current workspace */}
+      {/* Workspace bootstrap wizard — only shown for an in-progress creation flow */}
       {bootstrapWorkspaceId && bootstrapWorkspaceId === selectedWorkspaceId && (
         <WorkspaceBootstrapWizard
           workspaceId={selectedWorkspaceId}

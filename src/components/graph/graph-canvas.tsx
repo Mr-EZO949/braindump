@@ -27,6 +27,7 @@ import type { Edge, EdgeType, GraphData, Node, NodeType } from "@/types/graph";
 type GraphCanvasProps = {
   editMode: boolean;
   focusNodeId: string | null;
+  focusRequestKey: number;
   graphData: GraphData;
   initialView: ViewState | null;
   loading: boolean;
@@ -1457,6 +1458,7 @@ function updateAmbientGlow(
 export function GraphCanvas({
   editMode,
   focusNodeId,
+  focusRequestKey,
   graphData,
   initialView,
   loading,
@@ -1476,7 +1478,9 @@ export function GraphCanvas({
   const returnAnimationRef = useRef<number | null>(null);
   const returningNodeRef = useRef<GraphNode | null>(null);
   const viewAnimationRef = useRef<number | null>(null);
+  const focusFollowUpTimeoutRef = useRef<number | null>(null);
   const suppressInitialFocusAnimationRef = useRef(suppressInitialFocusAnimation);
+  const lastHandledFocusRequestRef = useRef(focusRequestKey);
   const nodesRef = useRef<GraphNode[]>([]);
   const dragStateRef = useRef<DragState | null>(null);
   const panStateRef = useRef<PanState | null>(null);
@@ -1559,6 +1563,103 @@ export function GraphCanvas({
     [graphData, hoveredNodeId],
   );
 
+  const getFocusView = useCallback((nodeId: string): ViewTarget | null => {
+    const currentViewport = viewportRef.current;
+
+    if (currentViewport.width === 0 || currentViewport.height === 0) {
+      return null;
+    }
+
+    const focusedNode = nodesRef.current.find((node) => node.id === nodeId);
+
+    if (!focusedNode) {
+      return null;
+    }
+
+    const targetZoom = clamp(Math.max(viewRef.current.zoom, 0.92), 0.72, 1.1);
+    const targetY = currentViewport.height * 0.37;
+    const targetX = currentViewport.width * 0.46;
+    const nodeX = focusedNode.x ?? focusedNode.restX;
+    const nodeY = focusedNode.y ?? focusedNode.restY;
+    return {
+      panX: targetX - currentViewport.width / 2 - nodeX * targetZoom,
+      panY: targetY - currentViewport.height / 2 - nodeY * targetZoom,
+      zoom: targetZoom,
+    };
+  }, []);
+
+  const animateToView = useCallback((nextView: ViewTarget, immediate: boolean) => {
+    if (viewAnimationRef.current !== null) {
+      window.cancelAnimationFrame(viewAnimationRef.current);
+      viewAnimationRef.current = null;
+    }
+
+    if (immediate) {
+      setView(nextView);
+      return;
+    }
+
+    const startView = viewRef.current;
+    const startTime = performance.now();
+    const duration = 260;
+
+    const animate = (now: number) => {
+      const progress = clamp((now - startTime) / duration, 0, 1);
+      const eased = easeOutCubic(progress);
+
+      setView({
+        panX: lerp(startView.panX, nextView.panX, eased),
+        panY: lerp(startView.panY, nextView.panY, eased),
+        zoom: lerp(startView.zoom, nextView.zoom, eased),
+      });
+
+      if (progress < 1) {
+        viewAnimationRef.current = window.requestAnimationFrame(animate);
+      } else {
+        viewAnimationRef.current = null;
+      }
+    };
+
+    viewAnimationRef.current = window.requestAnimationFrame(animate);
+  }, []);
+
+  const focusNodeInView = useCallback(
+    (
+      nodeId: string,
+      options?: {
+        followUp?: boolean;
+        immediate?: boolean;
+      },
+    ) => {
+      if (focusFollowUpTimeoutRef.current !== null) {
+        window.clearTimeout(focusFollowUpTimeoutRef.current);
+        focusFollowUpTimeoutRef.current = null;
+      }
+
+      const nextView = getFocusView(nodeId);
+
+      if (!nextView) {
+        return false;
+      }
+
+      animateToView(nextView, options?.immediate ?? false);
+
+      if (options?.followUp) {
+        focusFollowUpTimeoutRef.current = window.setTimeout(() => {
+          focusFollowUpTimeoutRef.current = null;
+          const retryView = getFocusView(nodeId);
+
+          if (retryView) {
+            animateToView(retryView, true);
+          }
+        }, 240);
+      }
+
+      return true;
+    },
+    [animateToView, getFocusView],
+  );
+
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
@@ -1578,9 +1679,7 @@ export function GraphCanvas({
   }, [viewport]);
 
   useEffect(() => {
-    if (suppressInitialFocusAnimation) {
-      suppressInitialFocusAnimationRef.current = true;
-    }
+    suppressInitialFocusAnimationRef.current = suppressInitialFocusAnimation;
   }, [suppressInitialFocusAnimation]);
 
   useEffect(() => {
@@ -1775,58 +1874,39 @@ export function GraphCanvas({
       return;
     }
 
-    const focusedNode = nodesRef.current.find((node) => node.id === focusNodeId);
+    const hasExplicitFocusRequest = focusRequestKey !== lastHandledFocusRequestRef.current;
 
-    if (!focusedNode) {
-      return;
-    }
-
-    if (suppressInitialFocusAnimationRef.current) {
+    if (suppressInitialFocusAnimationRef.current && !hasExplicitFocusRequest) {
       suppressInitialFocusAnimationRef.current = false;
       return;
     }
 
-    if (viewAnimationRef.current !== null) {
-      window.cancelAnimationFrame(viewAnimationRef.current);
-      viewAnimationRef.current = null;
-    }
+    suppressInitialFocusAnimationRef.current = false;
+    lastHandledFocusRequestRef.current = focusRequestKey;
+    const frame = window.requestAnimationFrame(() => {
+      focusNodeInView(focusNodeId, { followUp: true });
+    });
 
-    const startView = viewRef.current;
-    const targetZoom = clamp(Math.max(startView.zoom, 0.92), 0.72, 1.1);
-    const targetY = viewport.height * 0.37;
-    const targetX = viewport.width * 0.46;
-    const nodeX = focusedNode.x ?? focusedNode.restX;
-    const nodeY = focusedNode.y ?? focusedNode.restY;
-    const nextView: ViewTarget = {
-      panX: targetX - viewport.width / 2 - nodeX * targetZoom,
-      panY: targetY - viewport.height / 2 - nodeY * targetZoom,
-      zoom: targetZoom,
+    return () => {
+      window.cancelAnimationFrame(frame);
     };
-    const startTime = performance.now();
-    const duration = 260;
-
-    const animate = (now: number) => {
-      const progress = clamp((now - startTime) / duration, 0, 1);
-      const eased = easeOutCubic(progress);
-
-      setView({
-        panX: lerp(startView.panX, nextView.panX, eased),
-        panY: lerp(startView.panY, nextView.panY, eased),
-        zoom: lerp(startView.zoom, nextView.zoom, eased),
-      });
-
-      if (progress < 1) {
-        viewAnimationRef.current = window.requestAnimationFrame(animate);
-      } else {
-        viewAnimationRef.current = null;
-      }
-    };
-
-    viewAnimationRef.current = window.requestAnimationFrame(animate);
-  }, [focusNodeId, scene, viewport.height, viewport.width]);
+  }, [
+    focusNodeId,
+    focusNodeInView,
+    focusRequestKey,
+    scene,
+    suppressInitialFocusAnimation,
+    viewport.height,
+    viewport.width,
+  ]);
 
   useEffect(() => {
     return () => {
+      if (focusFollowUpTimeoutRef.current !== null) {
+        window.clearTimeout(focusFollowUpTimeoutRef.current);
+        focusFollowUpTimeoutRef.current = null;
+      }
+
       if (returnAnimationRef.current !== null) {
         window.cancelAnimationFrame(returnAnimationRef.current);
         returnAnimationRef.current = null;

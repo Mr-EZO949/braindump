@@ -89,6 +89,7 @@ type MainStageProps = {
   onCancelDeleteNode: () => void;
   onSelectNode: (nodeId: string | null) => void;
   selectedNodeId: string | null;
+  focusRequestKey: number;
   onSubmitCreateNode: () => void;
   onSubmitEditNode: () => void;
   onUpdateEdgeConnection: (edgeId: string, relationId: EdgeRelationOptionId) => void;
@@ -153,6 +154,7 @@ export function MainStage({
   onSubmitEditNode,
   onUpdateEdgeConnection,
   selectedNodeId,
+  focusRequestKey,
   showArchived,
   suppressInitialFocusAnimation,
 }: MainStageProps) {
@@ -180,6 +182,7 @@ export function MainStage({
       </div>
       <GraphCanvas
         focusNodeId={selectedNodeId}
+        focusRequestKey={focusRequestKey}
         graphData={graphData}
         editMode={editMode}
         initialView={cameraView}
