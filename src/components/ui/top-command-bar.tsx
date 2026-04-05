@@ -59,7 +59,7 @@ export function TopCommandBar({
               onClick={onToggleWorkspaceMenu}
               type="button"
             >
-              <span className="truncate">{workspaceName}</span>
+              <span className="workspace-trigger-name truncate">{workspaceName}</span>
               <ChevronDownIcon
                 className={`h-[12px] w-[12px] text-[var(--color-text-muted)] transition-transform duration-150 ease-out ${
                   workspaceMenuOpen ? "rotate-180" : ""
@@ -80,11 +80,14 @@ export function TopCommandBar({
                   return (
                     <div
                       className={`workspace-menu-entry ${confirmingDelete ? "workspace-menu-entry-confirming" : ""}`}
+                      data-active={active ? "true" : "false"}
                       key={workspace.id}
                     >
                       <div className="workspace-menu-row">
                         <button
-                          className={`workspace-menu-item workspace-menu-item-grow ${active ? "workspace-menu-item-active" : ""}`}
+                          className={`workspace-menu-item workspace-menu-item-grow ${
+                            active ? "workspace-menu-item-active" : ""
+                          } ${confirmingDelete ? "workspace-menu-item-confirming" : ""}`}
                           onClick={() => {
                             setConfirmDeleteId(null);
                             onSelectWorkspace(workspace.id);
@@ -94,48 +97,45 @@ export function TopCommandBar({
                           <span className="workspace-menu-item-name">{workspace.name}</span>
                         </button>
 
-                        {workspaces.length > 1 && !confirmingDelete ? (
-                          <button
-                            className="workspace-delete-trigger"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setConfirmDeleteId(workspace.id);
-                            }}
-                            title="Delete workspace"
-                            type="button"
-                          >
-                            <TrashIcon className="h-[13px] w-[13px]" />
-                          </button>
+                        {workspaces.length > 1 ? (
+                          confirmingDelete ? (
+                            <div className="workspace-delete-actions workspace-delete-actions-inline">
+                              <button
+                                className="workspace-delete-cancel"
+                                onClick={() => setConfirmDeleteId(null)}
+                                type="button"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                className="workspace-delete-ok"
+                                disabled={deleting}
+                                onClick={async () => {
+                                  setDeleting(true);
+                                  await onDeleteWorkspace(workspace.id);
+                                  setConfirmDeleteId(null);
+                                  setDeleting(false);
+                                }}
+                                type="button"
+                              >
+                                {deleting ? "Deleting…" : "Delete"}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              className="workspace-delete-trigger"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDeleteId(workspace.id);
+                              }}
+                              title="Delete workspace"
+                              type="button"
+                            >
+                              <TrashIcon className="h-[13px] w-[13px]" />
+                            </button>
+                          )
                         ) : null}
                       </div>
-
-                      {confirmingDelete ? (
-                        <div className="workspace-delete-confirm">
-                          <p className="workspace-delete-name">Delete {workspace.name}?</p>
-                          <div className="workspace-delete-actions">
-                            <button
-                              className="workspace-delete-cancel"
-                              onClick={() => setConfirmDeleteId(null)}
-                              type="button"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              className="workspace-delete-ok"
-                              disabled={deleting}
-                              onClick={async () => {
-                                setDeleting(true);
-                                await onDeleteWorkspace(workspace.id);
-                                setConfirmDeleteId(null);
-                                setDeleting(false);
-                              }}
-                              type="button"
-                            >
-                              {deleting ? "Deleting…" : "Delete"}
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
                     </div>
                   );
                 })}
