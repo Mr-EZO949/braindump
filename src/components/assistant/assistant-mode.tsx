@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useCallback, useRef, useState } from "react";
+import React, { useEffect, useCallback, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowUpIcon,
@@ -16,6 +16,7 @@ import {
 } from "@/components/panel/planner-panel";
 import type { PlanBlock, PlanSession, PlanningWindow } from "@/types/ai";
 import type { GraphData } from "@/types/graph";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -29,6 +30,17 @@ type PlanTask = {
   created_at: string;
   completed_at: string | null;
   node_id?: string | null; // set on tasks created from AI plan blocks
+};
+
+type PlanTaskRow = {
+  created_at: string;
+  done: boolean;
+  duration_minutes: number | null;
+  id: string;
+  node_id: string | null;
+  scheduled_date: string | null;
+  start_time: string | null;
+  title: string;
 };
 
 type TaskDraft = {
@@ -99,6 +111,14 @@ function isValidTimeString(value: string): boolean {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(value);
 }
 
+function normalizeStoredTime(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  const match = /^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d(?:\.\d+)?)?$/.exec(normalized);
+  if (!match) return null;
+  return `${match[1]}:${match[2]}`;
+}
+
 function parseTimeToMinutes(value: string | null): number | null {
   if (!value || !isValidTimeString(value)) return null;
   const [hours, minutes] = value.split(":").map(Number);
@@ -131,9 +151,7 @@ function formatMinutesToTime(value: number): string {
   const normalized = ((value % minutesInDay) + minutesInDay) % minutesInDay;
   const hours = Math.floor(normalized / 60);
   const minutes = normalized % 60;
-  const period = hours >= 12 ? "PM" : "AM";
-  const displayHour = hours % 12 || 12;
-  return `${displayHour}:${minutes.toString().padStart(2, "0")} ${period}`;
+  return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
 }
 
 function formatStartTime(value: string | null): string | null {
@@ -161,7 +179,7 @@ function sanitizeTaskDuration(value: unknown): number | null {
 }
 
 function sanitizeTaskTime(value: unknown): string | null {
-  return typeof value === "string" && isValidTimeString(value) ? value : null;
+  return normalizeStoredTime(value);
 }
 
 function sanitizeTaskDate(value: unknown): string | null {
@@ -486,12 +504,40 @@ function normalizeTask(raw: unknown): PlanTask | null {
     id: task.id,
     title: task.title,
     done: Boolean(task.done),
-    date: sanitizeTaskDate(task.date),
+    date: sanitizeTaskDate(task.date ?? task.scheduled_date),
     start_time: sanitizeTaskTime(task.start_time),
     duration_minutes: sanitizeTaskDuration(task.duration_minutes),
     created_at: createdAt,
     completed_at: completedAt,
     node_id: typeof task.node_id === "string" ? task.node_id : null,
+  };
+}
+
+function normalizeTaskList(rawTasks: unknown[]): PlanTask[] {
+  return rawTasks
+    .map(normalizeTask)
+    .filter((task): task is PlanTask => Boolean(task))
+    .sort(compareTasks);
+}
+
+function toPlanTaskInsert(
+  task: PlanTask,
+  workspaceId: string,
+  userId: string,
+): Omit<PlanTaskRow, "id"> & {
+  user_id: string;
+  workspace_id: string;
+} {
+  return {
+    user_id: userId,
+    workspace_id: workspaceId,
+    title: task.title,
+    done: task.done,
+    scheduled_date: task.date,
+    start_time: task.start_time,
+    duration_minutes: task.duration_minutes,
+    created_at: task.created_at,
+    node_id: task.node_id ?? null,
   };
 }
 
@@ -851,6 +897,10 @@ function saveTasks(workspaceId: string | null, tasks: PlanTask[]) {
   localStorage.setItem(sk("tasks", workspaceId), JSON.stringify(tasks));
 }
 
+function clearSavedTasks(workspaceId: string | null) {
+  localStorage.removeItem(sk("tasks", workspaceId));
+}
+
 function loadConversations(workspaceId: string | null): Conversation[] {
   try {
     return JSON.parse(
@@ -915,10 +965,7 @@ const TIMELINE_DEFAULT_START = 8;
 const TIMELINE_DEFAULT_END = 20;
 
 function fmtHour(h: number): string {
-  if (h === 0) return "12 AM";
-  if (h < 12) return `${h} AM`;
-  if (h === 12) return "12 PM";
-  return `${h - 12} PM`;
+  return `${h.toString().padStart(2, "0")}:00`;
 }
 
 type AnyTimeChipProps = {
@@ -1361,6 +1408,9 @@ export function AssistantMode({
   selectedNodeId,
   workspaceId,
 }: AssistantModeProps) {
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const planTaskSelectClause =
+    "id, title, done, scheduled_date, start_time, duration_minutes, created_at, node_id";
   const today = toDateString(new Date());
   const weekDays = getWeekDays(new Date());
 
@@ -1381,6 +1431,8 @@ export function AssistantMode({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [lastChatAttempt, setLastChatAttempt] = useState<string | null>(null);
+  const [taskError, setTaskError] = useState<string | null>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
 
   // Assistant mode
   const [assistantMode, setAssistantMode] = useState<"explain" | "plan" | "transform">("plan");
@@ -1391,10 +1443,80 @@ export function AssistantMode({
   const threadEndRef = useRef<HTMLDivElement>(null);
   const plannerRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    if (!supabase) {
+      setAuthUserId(null);
+      return;
+    }
+
+    let active = true;
+    void supabase.auth.getUser().then(({ data }) => {
+      if (!active) return;
+      setAuthUserId(data.user?.id ?? null);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [supabase]);
+
+  const loadPersistedTasks = useCallback(async () => {
+    if (!workspaceId) {
+      setTasks([]);
+      clearSavedTasks(workspaceId);
+      return;
+    }
+
+    const legacyTasks = loadTasks(workspaceId);
+
+    if (!supabase || !authUserId) {
+      setTasks(legacyTasks);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("plan_tasks")
+      .select(planTaskSelectClause)
+      .eq("workspace_id", workspaceId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      setTasks(legacyTasks);
+      setTaskError("Could not load saved tasks.");
+      return;
+    }
+
+    let rows = (data ?? []) as PlanTaskRow[];
+
+    if (rows.length === 0 && legacyTasks.length > 0) {
+      const { data: migratedRows, error: migrateError } = await supabase
+        .from("plan_tasks")
+        .insert(legacyTasks.map((task) => toPlanTaskInsert(task, workspaceId, authUserId)))
+        .select(planTaskSelectClause);
+
+      if (!migrateError && migratedRows) {
+        rows = migratedRows as PlanTaskRow[];
+        clearSavedTasks(workspaceId);
+      }
+    }
+
+    const nextTasks = rows.length > 0 ? normalizeTaskList(rows) : legacyTasks;
+    setTasks(nextTasks);
+    saveTasks(workspaceId, nextTasks);
+  }, [authUserId, planTaskSelectClause, supabase, workspaceId]);
+
   // ── Load from storage ──────────────────────────────────────────────────────
 
   useEffect(() => {
-    setTasks(loadTasks(workspaceId));
+    let active = true;
+
+    setTaskError(null);
+
+    void loadPersistedTasks().catch(() => {
+      if (!active) return;
+      setTaskError("Could not load saved tasks.");
+    });
+
     const convs = loadConversations(workspaceId);
     setConversations(convs);
     const savedId = loadCurrentConvId(workspaceId);
@@ -1407,8 +1529,11 @@ export function AssistantMode({
     setSelectedDate(today);
     setTaskEditor(null);
     setPlannerState(INITIAL_PLANNER_STATE);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId]);
+
+    return () => {
+      active = false;
+    };
+  }, [loadPersistedTasks, today, workspaceId]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -1505,91 +1630,251 @@ export function AssistantMode({
   }, []);
 
   const submitTask = useCallback(
-    (draft: {
+    async (draft: {
       title: string;
       date: string | null;
       start_time: string | null;
       duration_minutes: number | null;
     }) => {
       if (!taskEditor) return;
+      setTaskError(null);
 
       if (taskEditor.mode === "create") {
-        persistTasks([
-          ...tasks,
-          {
-            id: `t-${Date.now()}`,
-            title: draft.title,
-            done: false,
-            date: draft.date,
-            start_time: draft.start_time,
-            duration_minutes: draft.duration_minutes,
-            created_at: new Date().toISOString(),
-            completed_at: null,
-          },
-        ]);
+        const nextTask: PlanTask = {
+          id: `t-${Date.now()}`,
+          title: draft.title,
+          done: false,
+          date: draft.date,
+          start_time: draft.start_time,
+          duration_minutes: draft.duration_minutes,
+          created_at: new Date().toISOString(),
+          completed_at: null,
+        };
+
+        if (!supabase || !workspaceId || !authUserId) {
+          persistTasks([...tasks, nextTask].sort(compareTasks));
+        } else {
+          const { data, error } = await supabase
+            .from("plan_tasks")
+            .insert(toPlanTaskInsert(nextTask, workspaceId, authUserId))
+            .select(planTaskSelectClause)
+            .single();
+
+          if (error || !data) {
+            setTaskError("Could not save task.");
+            return;
+          }
+
+          const savedTask = normalizeTask(data);
+          if (!savedTask) {
+            setTaskError("Could not save task.");
+            return;
+          }
+
+          persistTasks([...tasks, savedTask].sort(compareTasks));
+        }
       } else {
-        persistTasks(
-          tasks.map((task) =>
-            task.id === taskEditor.taskId
-              ? {
-                  ...task,
-                  title: draft.title,
-                  date: draft.date,
-                  start_time: draft.start_time,
-                  duration_minutes: draft.duration_minutes,
-                }
-              : task,
-          ),
-        );
+        const existingTask = tasks.find((task) => task.id === taskEditor.taskId);
+        if (!existingTask) {
+          return;
+        }
+
+        if (!supabase || !workspaceId) {
+          persistTasks(
+            tasks
+              .map((task) =>
+                task.id === taskEditor.taskId
+                  ? {
+                      ...task,
+                      title: draft.title,
+                      date: draft.date,
+                      start_time: draft.start_time,
+                      duration_minutes: draft.duration_minutes,
+                    }
+                  : task,
+              )
+              .sort(compareTasks),
+          );
+        } else {
+          const { data, error } = await supabase
+            .from("plan_tasks")
+            .update({
+              title: draft.title,
+              scheduled_date: draft.date,
+              start_time: draft.start_time,
+              duration_minutes: draft.duration_minutes,
+            })
+            .eq("id", taskEditor.taskId)
+            .eq("workspace_id", workspaceId)
+            .select(planTaskSelectClause)
+            .single();
+
+          if (error || !data) {
+            setTaskError("Could not save task.");
+            return;
+          }
+
+          const savedTask = normalizeTask({
+            ...data,
+            completed_at: existingTask.completed_at,
+          });
+          if (!savedTask) {
+            setTaskError("Could not save task.");
+            return;
+          }
+
+          persistTasks(
+            tasks
+              .map((task) => (task.id === taskEditor.taskId ? savedTask : task))
+              .sort(compareTasks),
+          );
+        }
       }
 
       setTaskEditor(null);
     },
-    [persistTasks, taskEditor, tasks],
+    [authUserId, persistTasks, planTaskSelectClause, supabase, taskEditor, tasks, workspaceId],
   );
 
   const toggleTask = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const task = tasks.find((t) => t.id === id);
       if (!task) return;
       const nowDone = !task.done;
-      persistTasks(
-        tasks.map((t) =>
-          t.id === id
-            ? { ...t, done: nowDone, completed_at: nowDone ? new Date().toISOString() : null }
-            : t,
-        ),
-      );
+      const completedAt = nowDone ? new Date().toISOString() : null;
+      setTaskError(null);
+
+      if (!supabase || !workspaceId) {
+        persistTasks(
+          tasks
+            .map((t) =>
+              t.id === id
+                ? { ...t, done: nowDone, completed_at: completedAt }
+                : t,
+            )
+            .sort(compareTasks),
+        );
+      } else {
+        const { data, error } = await supabase
+          .from("plan_tasks")
+          .update({ done: nowDone })
+          .eq("id", id)
+          .eq("workspace_id", workspaceId)
+          .select(planTaskSelectClause)
+          .single();
+
+        if (error || !data) {
+          setTaskError("Could not update task.");
+          return;
+        }
+
+        const savedTask = normalizeTask({
+          ...data,
+          completed_at: completedAt,
+        });
+        if (!savedTask) {
+          setTaskError("Could not update task.");
+          return;
+        }
+
+        persistTasks(
+          tasks
+            .map((t) => (t.id === id ? savedTask : t))
+            .sort(compareTasks),
+        );
+      }
+
       // Phase 10.3 — mark linked graph node as completed when task is checked off
-      if (nowDone && task.node_id) {
+      if (task.node_id) {
         void fetch(`/api/nodes/${task.node_id}/status`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "completed" }),
+          body: JSON.stringify({ status: nowDone ? "completed" : "active" }),
         });
       }
     },
-    [tasks, persistTasks],
+    [persistTasks, planTaskSelectClause, supabase, tasks, workspaceId],
   );
 
   const deleteTask = useCallback(
-    (id: string) => persistTasks(tasks.filter((t) => t.id !== id)),
-    [tasks, persistTasks],
+    async (id: string) => {
+      setTaskError(null);
+
+      if (!supabase || !workspaceId) {
+        persistTasks(tasks.filter((t) => t.id !== id));
+        return;
+      }
+
+      const { error } = await supabase
+        .from("plan_tasks")
+        .delete()
+        .eq("id", id)
+        .eq("workspace_id", workspaceId);
+
+      if (error) {
+        setTaskError("Could not delete task.");
+        return;
+      }
+
+      persistTasks(tasks.filter((t) => t.id !== id));
+    },
+    [persistTasks, supabase, tasks, workspaceId],
   );
 
   const updateTaskTiming = useCallback(
-    (id: string, timing: { start_time: string; duration_minutes: number }) => {
-      persistTasks(
-        tasks.map((task) =>
-          task.id === id
-            ? {
-                ...task,
-                start_time: timing.start_time,
-                duration_minutes: timing.duration_minutes,
-              }
-            : task,
-        ),
-      );
+    async (id: string, timing: { start_time: string; duration_minutes: number }) => {
+      setTaskError(null);
+
+      if (!supabase || !workspaceId) {
+        persistTasks(
+          tasks
+            .map((task) =>
+              task.id === id
+                ? {
+                    ...task,
+                    start_time: timing.start_time,
+                    duration_minutes: timing.duration_minutes,
+                  }
+                : task,
+            )
+            .sort(compareTasks),
+        );
+      } else {
+        const existingTask = tasks.find((task) => task.id === id);
+        if (!existingTask) return;
+
+        const { data, error } = await supabase
+          .from("plan_tasks")
+          .update({
+            start_time: timing.start_time,
+            duration_minutes: timing.duration_minutes,
+          })
+          .eq("id", id)
+          .eq("workspace_id", workspaceId)
+          .select(planTaskSelectClause)
+          .single();
+
+        if (error || !data) {
+          setTaskError("Could not update task timing.");
+          return;
+        }
+
+        const savedTask = normalizeTask({
+          ...data,
+          completed_at: existingTask.completed_at,
+        });
+        if (!savedTask) {
+          setTaskError("Could not update task timing.");
+          return;
+        }
+
+        persistTasks(
+          tasks
+            .map((task) => (task.id === id ? savedTask : task))
+            .sort(compareTasks),
+        );
+      }
+
       setTaskEditor((current) =>
         current?.mode === "edit" && current.taskId === id
           ? {
@@ -1603,7 +1888,7 @@ export function AssistantMode({
           : current,
       );
     },
-    [persistTasks, tasks],
+    [persistTasks, planTaskSelectClause, supabase, tasks, workspaceId],
   );
 
   // ── Conversation operations ────────────────────────────────────────────────
@@ -1819,7 +2104,24 @@ export function AssistantMode({
       }
 
       if (newTasks.length > 0) {
-        persistTasks([...tasks, ...newTasks]);
+        if (!supabase || !workspaceId || !authUserId) {
+          persistTasks([...tasks, ...newTasks].sort(compareTasks));
+        } else {
+          const { data, error } = await supabase
+            .from("plan_tasks")
+            .insert(newTasks.map((task) => toPlanTaskInsert(task, workspaceId, authUserId)))
+            .select(planTaskSelectClause);
+
+          if (error || !data) {
+            setPlannerState((prev) => ({
+              ...prev,
+              error: "Plan was accepted, but tasks could not be saved.",
+            }));
+            return;
+          }
+
+          persistTasks([...tasks, ...normalizeTaskList(data)].sort(compareTasks));
+        }
       }
 
       // Switch to task view at the date these tasks were scheduled onto.
@@ -1903,6 +2205,8 @@ export function AssistantMode({
               What&apos;s next?
             </button>
           </div>
+
+          {taskError ? <p className="planner-error planner-error-inline">{taskError}</p> : null}
 
           {/* AI plan view OR manual task list */}
           {plannerState.session || plannerState.loading || plannerState.error ? (
