@@ -1,9 +1,6 @@
-import type { AssistantMode } from "@/types/ai";
 import type { EdgeType, Importance, NodeStatus, NodeType } from "@/types/graph";
 
-export type { AssistantMode };
-
-export type RailTab = "details" | "chat" | "planner";
+export type RailTab = "details" | "chat";
 
 export type ChatScope =
   | {

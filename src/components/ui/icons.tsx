@@ -102,6 +102,18 @@ export function CloseIcon(props: IconProps) {
   );
 }
 
+export function TrashIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M4.5 7h15" />
+      <path d="M9 4.5h6" />
+      <path d="M7.5 7 8.3 18a2 2 0 0 0 2 1.85h3.4A2 2 0 0 0 15.7 18L16.5 7" />
+      <path d="M10 10.5v5" />
+      <path d="M14 10.5v5" />
+    </BaseIcon>
+  );
+}
+
 export function ArrowUpIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>
@@ -187,6 +199,19 @@ export function FilterIcon(props: IconProps) {
       <path d="M5 7h14" />
       <path d="M8 12h8" />
       <path d="M10.5 17h3" />
+    </BaseIcon>
+  );
+}
+
+export function GripVerticalIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <circle cx="9" cy="7" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="12" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="17" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="7" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="17" r="0.9" fill="currentColor" stroke="none" />
     </BaseIcon>
   );
 }

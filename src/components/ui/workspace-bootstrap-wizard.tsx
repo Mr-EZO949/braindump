@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { CloseIcon, PlusIcon } from "@/components/ui/icons";
 import type { WorkspaceProfileAreaType } from "@/types/graph";
 
 interface GoalRow {
@@ -55,6 +56,7 @@ export function WorkspaceBootstrapWizard({
   const trimmedSuccessTitle = successTitle.trim();
   const trimmedRole = role.trim();
   const canProceed = Boolean(trimmedSuccessTitle);
+  const totalNodeCount = 1 + validGoals.length + validAreas.length;
 
   function goTo(nextStep: number, direction: "forward" | "back") {
     setDir(direction);
@@ -112,174 +114,164 @@ export function WorkspaceBootstrapWizard({
   return (
     <div className="bootstrap-overlay">
       <div className="bootstrap-modal">
-        {/* Header */}
         <div className="bootstrap-header">
           <div className="bootstrap-heading-block">
-            <span className="bootstrap-eyebrow">{workspaceName}</span>
-            <h2 className="bootstrap-heading">
-              {step === 0 ? "Set up your workspace." : "Looks good?"}
-            </h2>
+            <div className="bootstrap-topline">
+              <span className="bootstrap-workspace-label">{workspaceName}</span>
+            </div>
+            <h2 className="bootstrap-heading">{step === 0 ? "Set up workspace" : "Review"}</h2>
           </div>
-          <button className="bootstrap-skip" onClick={onSkip} type="button">
-            Skip
-          </button>
         </div>
 
-        {/* Step 0 — Form */}
         {step === 0 && (
           <div className="bootstrap-body" data-dir={dir === "back" ? "back" : undefined}>
-            {/* Identity */}
-            <div className="bootstrap-section">
-              <label className="bootstrap-label" htmlFor="bootstrap-role">
-                Who are you? <span className="bootstrap-optional">optional</span>
-              </label>
-              <div className="bootstrap-input-wrap">
-                <input
-                  id="bootstrap-role"
-                  className="bootstrap-input"
-                  type="text"
-                  placeholder="e.g. CS student balancing classes and side projects"
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  maxLength={140}
-                  autoComplete="off"
-                />
-              </div>
-            </div>
+            <div className="bootstrap-form-grid">
+              <section className="bootstrap-panel bootstrap-panel--feature bootstrap-panel--full">
+                <div className="bootstrap-panel-head">
+                  <label className="bootstrap-label" htmlFor="bootstrap-root">
+                    Root outcome
+                  </label>
+                </div>
+                <div className="bootstrap-input-wrap bootstrap-input-wrap--root">
+                  <input
+                    id="bootstrap-root"
+                    className="bootstrap-input bootstrap-input--root"
+                    type="text"
+                    placeholder="e.g. Launch My SaaS, Student Success, Career Growth"
+                    value={successTitle}
+                    onChange={(e) => setSuccessTitle(e.target.value)}
+                    maxLength={80}
+                    autoComplete="off"
+                    autoFocus
+                  />
+                </div>
+              </section>
 
-            {/* Root outcome */}
-            <div className="bootstrap-section">
-              <label className="bootstrap-label" htmlFor="bootstrap-root">
-                Root outcome
-              </label>
-              <div className="bootstrap-input-wrap bootstrap-input-wrap--root">
-                <input
-                  id="bootstrap-root"
-                  className="bootstrap-input bootstrap-input--root"
-                  type="text"
-                  placeholder="e.g. Launch My SaaS, Student Success, Career Growth"
-                  value={successTitle}
-                  onChange={(e) => setSuccessTitle(e.target.value)}
-                  maxLength={80}
-                  autoComplete="off"
-                  autoFocus
-                />
-              </div>
-              <p className="bootstrap-helper">Everything in this workspace traces back to this.</p>
-            </div>
-
-            <div className="bootstrap-divider" />
-
-            {/* Goals */}
-            <div className="bootstrap-section">
-              <label className="bootstrap-label">
-                Big goals <span className="bootstrap-optional">optional</span>
-              </label>
-              <div className="bootstrap-field-list">
-                {goals.map((g, i) => (
-                  <div key={g.id} className="bootstrap-input-wrap">
+              <section className="bootstrap-panel">
+                <div className="bootstrap-subsection">
+                  <label className="bootstrap-label" htmlFor="bootstrap-role">Who are you?</label>
+                  <div className="bootstrap-input-wrap">
                     <input
+                      id="bootstrap-role"
                       className="bootstrap-input"
                       type="text"
-                      placeholder={
-                        i === 0
-                          ? "e.g. Be a high-performing student"
-                          : i === 1
-                            ? "e.g. Build strong habits"
-                            : "e.g. Become financially independent"
-                      }
-                      value={g.title}
-                      onChange={(e) => updateGoal(g.id, e.target.value)}
-                      maxLength={80}
+                      placeholder="e.g. CS student balancing classes and side projects"
+                      value={role}
+                      onChange={(e) => setRole(e.target.value)}
+                      maxLength={140}
                       autoComplete="off"
                     />
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
 
-            {/* Areas */}
-            <div className="bootstrap-section">
-              <label className="bootstrap-label">
-                Active areas <span className="bootstrap-optional">optional</span>
-              </label>
-              <div className="bootstrap-field-list">
-                {areas.map((a) => (
-                  <div key={a.id} className="bootstrap-context-row">
-                    <div className="bootstrap-input-wrap bootstrap-input-context">
-                      <input
-                        className="bootstrap-input"
-                        type="text"
-                        placeholder="e.g. Stats 302, Restaurant SaaS, Health habits"
-                        value={a.title}
-                        onChange={(e) => updateArea(a.id, { title: e.target.value })}
-                        maxLength={80}
-                        autoComplete="off"
-                      />
-                    </div>
-                    <select
-                      className="bootstrap-select"
-                      value={a.area_type}
-                      onChange={(e) =>
-                        updateArea(a.id, { area_type: e.target.value as WorkspaceProfileAreaType })
-                      }
-                    >
-                      {AREA_TYPE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                    {areas.length > 1 && (
-                      <button
-                        className="bootstrap-remove-btn"
-                        onClick={() => removeArea(a.id)}
-                        aria-label="Remove"
-                        type="button"
-                      >
-                        ×
-                      </button>
-                    )}
+                <div className="bootstrap-subsection-divider" />
+
+                <div className="bootstrap-subsection">
+                  <label className="bootstrap-label">Big goals</label>
+                  <div className="bootstrap-field-list">
+                    {goals.map((g, i) => (
+                      <div key={g.id} className="bootstrap-input-wrap">
+                        <input
+                          className="bootstrap-input"
+                          type="text"
+                          placeholder={
+                            i === 0
+                              ? "e.g. Be a high-performing student"
+                              : i === 1
+                                ? "e.g. Build strong habits"
+                                : "e.g. Become financially independent"
+                          }
+                          value={g.title}
+                          onChange={(e) => updateGoal(g.id, e.target.value)}
+                          maxLength={80}
+                          autoComplete="off"
+                        />
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              {areas.length < 6 && (
-                <button className="bootstrap-add-btn" onClick={addArea} type="button">
-                  <span>+</span> Add area
-                </button>
-              )}
+                </div>
+              </section>
+
+              <section className="bootstrap-panel">
+                <div className="bootstrap-panel-head">
+                  <label className="bootstrap-label">Active areas</label>
+                  <span className="bootstrap-panel-meta">{validAreas.length}</span>
+                </div>
+                <div className="bootstrap-field-list">
+                  {areas.map((a) => (
+                    <div key={a.id} className="bootstrap-context-row">
+                      <div className="bootstrap-input-wrap bootstrap-input-context">
+                        <input
+                          className="bootstrap-input"
+                          type="text"
+                          placeholder="e.g. Stats 302, Restaurant SaaS, Health habits"
+                          value={a.title}
+                          onChange={(e) => updateArea(a.id, { title: e.target.value })}
+                          maxLength={80}
+                          autoComplete="off"
+                        />
+                      </div>
+                      <select
+                        className="bootstrap-select"
+                        value={a.area_type}
+                        onChange={(e) =>
+                          updateArea(a.id, { area_type: e.target.value as WorkspaceProfileAreaType })
+                        }
+                      >
+                        {AREA_TYPE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      {areas.length > 1 && (
+                        <button
+                          className="bootstrap-remove-btn"
+                          onClick={() => removeArea(a.id)}
+                          aria-label="Remove"
+                          type="button"
+                        >
+                          <CloseIcon className="h-[12px] w-[12px]" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {areas.length < 6 && (
+                  <button className="bootstrap-add-btn" onClick={addArea} type="button">
+                    <PlusIcon className="h-[12px] w-[12px]" />
+                    <span>Add area</span>
+                  </button>
+                )}
+              </section>
             </div>
 
-            <div className="bootstrap-footer bootstrap-footer--right">
+            {error && <p className="bootstrap-error">{error}</p>}
+
+            <div className="bootstrap-footer">
+              <button className="bootstrap-cancel" onClick={onSkip} type="button">
+                Cancel
+              </button>
               <button
                 className="bootstrap-next"
                 onClick={() => goTo(1, "forward")}
                 disabled={!canProceed}
                 type="button"
               >
-                Review →
+                Review
               </button>
             </div>
           </div>
         )}
 
-        {/* Step 1 — Review */}
         {step === 1 && (
           <div className="bootstrap-body" data-dir={dir === "back" ? "back" : undefined}>
-            <p className="bootstrap-review-desc">
-              This creates {1 + validGoals.length + validAreas.length} connected nodes. You can
-              edit anything later.
-            </p>
-
-            {/* Tree preview */}
-            <div className="bootstrap-tree">
+            <div className="bootstrap-review-shell">
+              <div className="bootstrap-review-meta">
+                {trimmedRole ? <span>{trimmedRole}</span> : null}
+                <span>{totalNodeCount} nodes</span>
+              </div>
               <div className="bootstrap-tree-root">
-                <div className="bootstrap-tree-root-icon">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <circle cx="8" cy="8" r="5.5" />
-                    <path d="M8 5v3l2 1.5" strokeLinecap="round" />
-                  </svg>
-                </div>
                 <div className="bootstrap-tree-root-text">
                   <span className="bootstrap-tree-root-label">Root</span>
                   <span className="bootstrap-tree-root-title">{trimmedSuccessTitle}</span>
@@ -287,11 +279,12 @@ export function WorkspaceBootstrapWizard({
               </div>
 
               {(validGoals.length > 0 || validAreas.length > 0) && (
-                <div className="bootstrap-tree-children">
+                <div className="bootstrap-review-grid">
                   {validGoals.length > 0 && (
-                    <div className="bootstrap-tree-section">
+                    <section className="bootstrap-tree-section">
                       <div className="bootstrap-tree-section-head">
                         <span className="bootstrap-tree-section-label">Goals</span>
+                        <span className="bootstrap-panel-meta">{validGoals.length}</span>
                       </div>
                       <div className="bootstrap-tree-items">
                         {validGoals.map((g) => (
@@ -300,13 +293,14 @@ export function WorkspaceBootstrapWizard({
                           </div>
                         ))}
                       </div>
-                    </div>
+                    </section>
                   )}
 
                   {validAreas.length > 0 && (
-                    <div className="bootstrap-tree-section">
+                    <section className="bootstrap-tree-section">
                       <div className="bootstrap-tree-section-head">
                         <span className="bootstrap-tree-section-label">Areas</span>
+                        <span className="bootstrap-panel-meta">{validAreas.length}</span>
                       </div>
                       <div className="bootstrap-tree-items">
                         {validAreas.map((a) => (
@@ -318,7 +312,7 @@ export function WorkspaceBootstrapWizard({
                           </div>
                         ))}
                       </div>
-                    </div>
+                    </section>
                   )}
                 </div>
               )}
@@ -327,22 +321,27 @@ export function WorkspaceBootstrapWizard({
             {error && <p className="bootstrap-error">{error}</p>}
 
             <div className="bootstrap-footer">
-              <button
-                className="bootstrap-back"
-                onClick={() => goTo(0, "back")}
-                disabled={submitting}
-                type="button"
-              >
-                ← Edit
+              <button className="bootstrap-cancel" onClick={onSkip} type="button">
+                Cancel
               </button>
-              <button
-                className="bootstrap-submit"
-                onClick={handleSubmit}
-                disabled={submitting}
-                type="button"
-              >
-                {submitting ? "Setting up…" : "Create workspace"}
-              </button>
+              <div className="bootstrap-footer-actions">
+                <button
+                  className="bootstrap-back"
+                  onClick={() => goTo(0, "back")}
+                  disabled={submitting}
+                  type="button"
+                >
+                  Edit
+                </button>
+                <button
+                  className="bootstrap-submit"
+                  onClick={handleSubmit}
+                  disabled={submitting}
+                  type="button"
+                >
+                  {submitting ? "Setting up…" : "Create workspace"}
+                </button>
+              </div>
             </div>
           </div>
         )}

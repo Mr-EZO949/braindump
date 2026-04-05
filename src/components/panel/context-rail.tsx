@@ -6,7 +6,8 @@ import {
 } from "@/lib/graph/chat";
 import { getLinkedNodePerspectives, type LinkedNodePerspective } from "@/lib/graph/insights";
 import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
-import type { AssistantMode, ChatMessage, ChatNodeContext, ChatScope, RailTab } from "@/types/chat";
+import { ChatRichText } from "@/components/ui/chat-rich-text";
+import type { ChatMessage, ChatNodeContext, ChatScope, RailTab } from "@/types/chat";
 import type { GraphData, NodeStatus } from "@/types/graph";
 
 type LinkCategory = "parent" | "children" | "dependencies" | "supports" | "related";
@@ -43,14 +44,11 @@ function groupLinkedNodes(
 
 type ContextRailProps = {
   activeTab: RailTab;
-  assistantMode: AssistantMode;
-  chatError: string | null;
   chatInputValue: string;
   chatLoading: boolean;
   chatMessages: ChatMessage[];
   chatScope: ChatScope;
   graphData: GraphData;
-  onAssistantModeChange: (mode: AssistantMode) => void;
   onChatInputChange: (value: string) => void;
   onClearChatScope: () => void;
   onRetryChat: () => void;
@@ -73,22 +71,13 @@ function getScoreTier(score: number): string {
   return "Low priority";
 }
 
-const ASSISTANT_MODES: { value: AssistantMode; label: string }[] = [
-  { value: "explain", label: "Explain" },
-  { value: "plan", label: "Plan" },
-  { value: "transform", label: "Transform" },
-];
-
 export function ContextRail({
   activeTab,
-  assistantMode,
-  chatError,
   chatInputValue,
   chatLoading,
   chatMessages,
   chatScope,
   graphData,
-  onAssistantModeChange,
   onChatInputChange,
   onClearChatScope,
   onFindConnections,
@@ -179,21 +168,6 @@ export function ContextRail({
                     </button>
                   ) : null}
                 </div>
-
-                {/* Mode selector */}
-                <div className="assistant-mode-strip" role="group" aria-label="Assistant mode">
-                  {ASSISTANT_MODES.map(({ value, label }) => (
-                    <button
-                      key={value}
-                      className="assistant-mode-btn"
-                      data-active={assistantMode === value}
-                      onClick={() => onAssistantModeChange(value)}
-                      type="button"
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
               </div>
             ) : (
               <div className="mt-5">
@@ -254,67 +228,70 @@ export function ContextRail({
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="chat-messages">
                     {chatMessages.map((message) =>
                       message.role === "user" ? (
-                        <div className="flex justify-end" key={message.id}>
-                          <div className="chat-message-user">
-                            <p>{message.body}</p>
-                          </div>
+                        <div className="chat-msg-user" key={message.id}>
+                          <p>{message.body}</p>
                         </div>
-                      ) : (
-                        <div className="chat-message-assistant" key={message.id}>
-                          <p className="chat-message-body">{message.body}</p>
+                      ) : message.body.trim().length === 0 && message.status !== "error" ? null : (
+                        <div className="chat-msg-assistant" key={message.id}>
+                          <div className="chat-msg-assistant-card">
+                            <ChatRichText body={message.body} />
 
-                          {message.sections && message.sections.length > 0 ? (
-                            <div className="chat-section-list">
-                              {message.sections.map((section) => (
-                                <div
-                                  className="chat-section-row"
-                                  key={`${message.id}-${section.label}`}
+                            {message.sections && message.sections.length > 0 ? (
+                              <div className="chat-section-list">
+                                {message.sections.map((section) => (
+                                  <div
+                                    className="chat-section-row"
+                                    key={`${message.id}-${section.label}`}
+                                  >
+                                    <span className="chat-section-label">{section.label}</span>
+                                    <p className="chat-section-value">{section.value}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {message.status === "error" ? (
+                              <div className="chat-answer-actions">
+                                <button
+                                  className="chat-answer-action-btn"
+                                  onClick={onRetryChat}
+                                  type="button"
                                 >
-                                  <span className="chat-section-label">{section.label}</span>
-                                  <p className="chat-section-value">{section.value}</p>
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-
-                          {message.body.length > 0 && message.status !== "error" ? (
-                            <div className="chat-answer-actions">
-                              <button
-                                className="chat-answer-action-btn"
-                                onClick={() => onSaveAnswerAsNode(message.body)}
-                                type="button"
-                                title="Save as node"
-                              >
-                                Save as node
-                              </button>
-                            </div>
-                          ) : null}
+                                  Retry
+                                </button>
+                              </div>
+                            ) : message.body.length > 0 ? (
+                              <div className="chat-answer-actions">
+                                <button
+                                  className="chat-answer-action-btn"
+                                  onClick={() => onSaveAnswerAsNode(message.body)}
+                                  type="button"
+                                  title="Save as node"
+                                >
+                                  Save as node
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       ),
                     )}
 
                     {chatLoading ? (
-                      <div className="chat-loading-indicator" aria-live="polite">
-                        <span className="text-[12px] font-medium text-[var(--color-text-secondary)]">
-                          Reasoning
-                        </span>
-                        <span className="chat-loading-dot" />
-                        <span className="chat-loading-dot" />
-                        <span className="chat-loading-dot" />
-                      </div>
-                    ) : null}
-
-                    {chatError ? (
-                      <div className="chat-error-state" role="status">
-                        <p className="text-[12px] leading-5 text-[var(--color-text-secondary)]">
-                          {chatError}
-                        </p>
-                        <button className="rail-scope-action" onClick={onRetryChat} type="button">
-                          Retry
-                        </button>
+                      <div className="chat-msg-assistant">
+                        <div className="chat-msg-assistant-card">
+                          <div className="chat-loading-indicator" aria-live="polite">
+                            <span className="text-[12px] font-medium text-[var(--color-text-secondary)]">
+                              Reasoning
+                            </span>
+                            <span className="chat-loading-dot" />
+                            <span className="chat-loading-dot" />
+                            <span className="chat-loading-dot" />
+                          </div>
+                        </div>
                       </div>
                     ) : null}
                   </div>

@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import {
   ChevronDownIcon,
-  WorkspaceIcon,
+  PlusIcon,
+  TrashIcon,
 } from "@/components/ui/icons";
 import type { Workspace } from "@/types/graph";
 
@@ -58,7 +59,6 @@ export function TopCommandBar({
               onClick={onToggleWorkspaceMenu}
               type="button"
             >
-              <WorkspaceIcon className="h-[13px] w-[13px] text-[var(--color-text-tertiary)]" />
               <span className="truncate">{workspaceName}</span>
               <ChevronDownIcon
                 className={`h-[12px] w-[12px] text-[var(--color-text-muted)] transition-transform duration-150 ease-out ${
@@ -72,67 +72,74 @@ export function TopCommandBar({
                 workspaceMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-1 opacity-0"
               }`}
             >
-              {workspaces.map((workspace) => {
-                const active = workspace.id === selectedWorkspaceId;
-                const confirmingDelete = confirmDeleteId === workspace.id;
+              <div className="workspace-menu-list">
+                {workspaces.map((workspace) => {
+                  const active = workspace.id === selectedWorkspaceId;
+                  const confirmingDelete = confirmDeleteId === workspace.id;
 
-                return (
-                  <div className="workspace-menu-row" key={workspace.id}>
-                    <button
-                      className={`workspace-menu-item workspace-menu-item-grow ${active ? "workspace-menu-item-active" : ""}`}
-                      onClick={() => {
-                        setConfirmDeleteId(null);
-                        onSelectWorkspace(workspace.id);
-                      }}
-                      type="button"
+                  return (
+                    <div
+                      className={`workspace-menu-entry ${confirmingDelete ? "workspace-menu-entry-confirming" : ""}`}
+                      key={workspace.id}
                     >
-                      <span>{workspace.name}</span>
-                      {active ? (
-                        <span className="text-[11px] text-[var(--color-text-muted)]">Current</span>
-                      ) : null}
-                    </button>
-
-                    {confirmingDelete ? (
-                      <div className="workspace-delete-confirm">
+                      <div className="workspace-menu-row">
                         <button
-                          className="workspace-delete-cancel"
-                          onClick={() => setConfirmDeleteId(null)}
-                          type="button"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          className="workspace-delete-ok"
-                          disabled={deleting}
-                          onClick={async () => {
-                            setDeleting(true);
-                            await onDeleteWorkspace(workspace.id);
+                          className={`workspace-menu-item workspace-menu-item-grow ${active ? "workspace-menu-item-active" : ""}`}
+                          onClick={() => {
                             setConfirmDeleteId(null);
-                            setDeleting(false);
+                            onSelectWorkspace(workspace.id);
                           }}
                           type="button"
                         >
-                          {deleting ? "…" : "Delete"}
+                          <span className="workspace-menu-item-name">{workspace.name}</span>
                         </button>
+
+                        {workspaces.length > 1 && !confirmingDelete ? (
+                          <button
+                            className="workspace-delete-trigger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDeleteId(workspace.id);
+                            }}
+                            title="Delete workspace"
+                            type="button"
+                          >
+                            <TrashIcon className="h-[13px] w-[13px]" />
+                          </button>
+                        ) : null}
                       </div>
-                    ) : (
-                      workspaces.length > 1 && (
-                        <button
-                          className="workspace-delete-trigger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmDeleteId(workspace.id);
-                          }}
-                          title="Delete workspace"
-                          type="button"
-                        >
-                          ✕
-                        </button>
-                      )
-                    )}
-                  </div>
-                );
-              })}
+
+                      {confirmingDelete ? (
+                        <div className="workspace-delete-confirm">
+                          <p className="workspace-delete-name">Delete {workspace.name}?</p>
+                          <div className="workspace-delete-actions">
+                            <button
+                              className="workspace-delete-cancel"
+                              onClick={() => setConfirmDeleteId(null)}
+                              type="button"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              className="workspace-delete-ok"
+                              disabled={deleting}
+                              onClick={async () => {
+                                setDeleting(true);
+                                await onDeleteWorkspace(workspace.id);
+                                setConfirmDeleteId(null);
+                                setDeleting(false);
+                              }}
+                              type="button"
+                            >
+                              {deleting ? "Deleting…" : "Delete"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
 
               <div className="workspace-menu-divider" />
 
@@ -184,7 +191,8 @@ export function TopCommandBar({
                   }}
                   type="button"
                 >
-                  + New workspace
+                  <PlusIcon className="h-[13px] w-[13px]" />
+                  <span>New workspace</span>
                 </button>
               )}
             </div>

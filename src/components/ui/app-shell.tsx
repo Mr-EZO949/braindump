@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -12,6 +12,7 @@ import { ProposedNodesReview } from "@/components/ui/proposed-nodes-review";
 import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
 import { MergeAlert } from "@/components/ui/merge-alert";
 import { WorkspaceBootstrapWizard } from "@/components/ui/workspace-bootstrap-wizard";
+import { OnboardingTutorial, shouldShowTutorial } from "@/components/ui/onboarding-tutorial";
 import type { ProposedEdgeWithNodes } from "@/lib/ai/connection";
 import type { MergeCandidate } from "@/lib/ai/merge";
 import {
@@ -45,7 +46,7 @@ import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
-import type { RailTab, ChatMessage, ChatScope, AssistantMode } from "@/types/chat";
+import type { RailTab, ChatMessage, ChatScope } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, Node, Workspace } from "@/types/graph";
 import type { ProposedNode } from "@/types/ai";
 
@@ -56,6 +57,22 @@ type AuthUserState = {
 
 type AppShellProps = {
   initialUser: AuthUserState;
+};
+
+type AnalysisResponse = {
+  proposed_edges?: ProposedEdgeWithNodes[];
+  merge_candidates?: MergeCandidate[];
+  proposed?: number;
+  skipped?: number;
+  failed?: number;
+  paused?: number;
+  warning?: string;
+  error?: string;
+};
+
+type AINotice = {
+  tone: "warning" | "error";
+  message: string;
 };
 
 const defaultCreateNodeDraft: CreateNodeInput = {
@@ -112,6 +129,27 @@ function createDraftFromNode(node: Node): CreateNodeInput {
   };
 }
 
+function buildAnalysisNotice(result: AnalysisResponse): AINotice | null {
+  if (result.warning && result.warning.trim()) {
+    return {
+      tone: "warning",
+      message: result.warning.trim(),
+    };
+  }
+
+  if (result.failed && result.failed > 0) {
+    return {
+      tone: "warning",
+      message:
+        result.proposed_edges && result.proposed_edges.length > 0
+          ? `Some connection checks failed (${result.failed}), but partial results are still shown.`
+          : `Connection analysis failed for ${result.failed} item${result.failed === 1 ? "" : "s"}. Retry when ready.`,
+    };
+  }
+
+  return null;
+}
+
 export function AppShell({ initialUser }: AppShellProps) {
   const router = useRouter();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
@@ -119,14 +157,20 @@ export function AppShell({ initialUser }: AppShellProps) {
   // App-level mode state
   const [appMode, setAppMode] = useState<AppMode>("graph");
   const [brainDumpOpen, setBrainDumpOpen] = useState(false);
+  // Workspace captured at open time — stays fixed even if the user switches workspace mid-dump.
+  const [brainDumpWorkspaceId, setBrainDumpWorkspaceId] = useState<string | null>(null);
   const [brainDumpValue, setBrainDumpValue] = useState("");
   const [brainDumpSubmitting, setBrainDumpSubmitting] = useState(false);
+  const [brainDumpRetrying, setBrainDumpRetrying] = useState(false);
+  const [brainDumpError, setBrainDumpError] = useState<string | null>(null);
+  const [brainDumpFailedEntryId, setBrainDumpFailedEntryId] = useState<string | null>(null);
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
   const [proposedEdges, setProposedEdges] = useState<ProposedEdgeWithNodes[]>([]);
   const [edgeReviewOpen, setEdgeReviewOpen] = useState(false);
   const [analyzingConnections, setAnalyzingConnections] = useState(false);
   const [mergeCandidates, setMergeCandidates] = useState<MergeCandidate[]>([]);
+  const [aiNotice, setAiNotice] = useState<AINotice | null>(null);
 
   // Panel state
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
@@ -139,8 +183,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatScope, setChatScope] = useState<ChatScope>(createWorkspaceScope("General"));
   const [chatLoading, setChatLoading] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
-  const [assistantMode, setAssistantMode] = useState<AssistantMode>("explain");
 
   // Graph state
   const [graphData, setGraphData] = useState<GraphData>(demoGraphData);
@@ -182,6 +224,13 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [cascadeSubmitting, setCascadeSubmitting] = useState(false);
   // Bootstrap wizard — shown when a new empty workspace is created OR loaded empty
   const [bootstrapWorkspaceId, setBootstrapWorkspaceId] = useState<string | null>(null);
+  // Onboarding tutorial — shown once per user (persisted via localStorage)
+  const [showTutorial, setShowTutorial] = useState(false);
+  const tutorialShownRef = useRef(false);
+  const workspaceCreationFlowRef = useRef<{
+    previousWorkspaceId: string | null;
+    workspaceId: string;
+  } | null>(null);
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -209,6 +258,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     ];
   }, [graphData.nodes]);
 
+  // Completed nodes are hidden by default; user can reveal them via the filter bar.
+  const [hideCompleted, setHideCompleted] = useState(true);
+
   const filteredGraphData = useMemo(() => {
     const minimumImportance =
       importanceFilter === "all" ? null : Number.parseInt(importanceFilter, 10);
@@ -216,6 +268,11 @@ export function AppShell({ initialUser }: AppShellProps) {
     const nodes = graphData.nodes.filter((node) => {
       // Archived nodes are hidden unless the user toggled the archive view
       if (node.status === "archived" && !showArchived) {
+        return false;
+      }
+
+      // Completed nodes are hidden by default
+      if (node.status === "completed" && hideCompleted) {
         return false;
       }
 
@@ -241,7 +298,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           visibleNodeIds.has(edge.target_node_id),
       ),
     };
-  }, [graphData, importanceFilter, nodeTypeFilter, showArchived]);
+  }, [graphData, hideCompleted, importanceFilter, nodeTypeFilter, showArchived]);
 
   const selectedNodeRecord = useMemo(
     () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -423,7 +480,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     setGraphSearchValue("");
     setRailChatInput("");
     setChatMessages([]);
-    setChatError(null);
     setCreateNodeDraft(null);
     setCreateNodeError(null);
     setEditNodeDraft(null);
@@ -518,7 +574,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     setRightPanelOpen(true);
     setActiveRailTab("chat");
     setChatScope(nextScope);
-    setChatError(null);
     setRailChatInput("");
 
     const assistantMsgId = `chat-${Math.random().toString(36).slice(2, 10)}`;
@@ -545,7 +600,6 @@ export function AppShell({ initialUser }: AppShellProps) {
           message: trimmedMessage,
           workspace_id: selectedWorkspaceId,
           selected_node_id: nextScope.kind === "node" ? nextScope.node.id : null,
-          mode: assistantMode,
         }),
       });
 
@@ -574,7 +628,6 @@ export function AppShell({ initialUser }: AppShellProps) {
             : m,
         ),
       );
-      setChatError("Response unavailable. Try again.");
     } finally {
       setChatLoading(false);
     }
@@ -1170,29 +1223,151 @@ export function AppShell({ initialUser }: AppShellProps) {
     router.replace("/login");
   };
 
+  const deleteWorkspace = async (
+    workspaceId: string,
+    options?: { fallbackWorkspaceId?: string | null },
+  ) => {
+    const res = await fetch(`/api/workspaces/${workspaceId}`, { method: "DELETE" });
+    if (!res.ok) {
+      return false;
+    }
+
+    const remainingWorkspaces = workspaces.filter((workspace) => workspace.id !== workspaceId);
+    setWorkspaces(remainingWorkspaces);
+
+    if (selectedWorkspaceId === workspaceId) {
+      if (
+        options?.fallbackWorkspaceId &&
+        remainingWorkspaces.some((workspace) => workspace.id === options.fallbackWorkspaceId)
+      ) {
+        setSelectedWorkspaceId(options.fallbackWorkspaceId);
+      } else {
+        setSelectedWorkspaceId(remainingWorkspaces[0]?.id ?? null);
+      }
+    }
+
+    setBootstrapWorkspaceId((currentWorkspaceId) =>
+      currentWorkspaceId === workspaceId ? null : currentWorkspaceId,
+    );
+
+    if (workspaceCreationFlowRef.current?.workspaceId === workspaceId) {
+      workspaceCreationFlowRef.current = null;
+    }
+
+    return true;
+  };
+
+  const handleCancelWorkspaceCreation = async () => {
+    if (
+      !bootstrapWorkspaceId ||
+      workspaceCreationFlowRef.current?.workspaceId !== bootstrapWorkspaceId
+    ) {
+      setBootstrapWorkspaceId(null);
+      return;
+    }
+
+    const previousWorkspaceId = workspaceCreationFlowRef.current.previousWorkspaceId;
+    const fallbackWorkspaceId =
+      previousWorkspaceId &&
+      workspaces.some((workspace) => workspace.id === previousWorkspaceId)
+        ? previousWorkspaceId
+        : workspaces.find((workspace) => workspace.id !== bootstrapWorkspaceId)?.id ?? null;
+
+    const deleted = await deleteWorkspace(bootstrapWorkspaceId, { fallbackWorkspaceId });
+
+    if (!deleted) {
+      setBootstrapWorkspaceId(null);
+    }
+  };
+
   const handleBrainDumpSubmit = async () => {
     const trimmed = brainDumpValue.trim();
-    if (!trimmed || brainDumpSubmitting || !selectedWorkspaceId) return;
+    // Use the workspace captured at open time, not the current selection.
+    const targetWorkspaceId = brainDumpWorkspaceId ?? selectedWorkspaceId;
+    if (!trimmed || brainDumpSubmitting || !targetWorkspaceId) return;
 
     setBrainDumpSubmitting(true);
+    setBrainDumpError(null);
+    setBrainDumpFailedEntryId(null);
     try {
       const res = await fetch("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ raw_text: trimmed, workspace_id: selectedWorkspaceId }),
+        body: JSON.stringify({ raw_text: trimmed, workspace_id: targetWorkspaceId }),
       });
       const data = await res.json() as {
         proposed_nodes?: ProposedNode[];
+        raw_entry_id?: string;
         error?: string;
+        message?: string;
       };
+      if (!res.ok && res.status !== 207) {
+        setBrainDumpError(data.error ?? data.message ?? "Could not process that brain dump.");
+        setBrainDumpFailedEntryId(data.raw_entry_id ?? null);
+        return;
+      }
+      if (res.status === 207) {
+        setBrainDumpError(data.error ?? data.message ?? "Extraction failed. Retry when ready.");
+        setBrainDumpFailedEntryId(data.raw_entry_id ?? null);
+        return;
+      }
+
       setBrainDumpValue("");
       setBrainDumpOpen(false);
+      setBrainDumpError(null);
+      setBrainDumpFailedEntryId(null);
       if (data.proposed_nodes && data.proposed_nodes.length > 0) {
         setProposedNodes(data.proposed_nodes);
         setProposedReviewOpen(true);
       }
+    } catch (err) {
+      setBrainDumpError(
+        err instanceof Error ? err.message : "Could not process that brain dump.",
+      );
     } finally {
       setBrainDumpSubmitting(false);
+    }
+  };
+
+  const handleBrainDumpRetry = async () => {
+    if (!brainDumpFailedEntryId || brainDumpRetrying) {
+      return;
+    }
+
+    setBrainDumpRetrying(true);
+    setBrainDumpError(null);
+    try {
+      const res = await fetch(`/api/entries/${brainDumpFailedEntryId}/retry`, {
+        method: "POST",
+      });
+      const data = await res.json() as {
+        proposed_nodes?: ProposedNode[];
+        raw_entry_id?: string;
+        error?: string;
+      };
+
+      if (!res.ok && res.status !== 207) {
+        setBrainDumpError(data.error ?? "Retry failed.");
+        return;
+      }
+      if (res.status === 207) {
+        setBrainDumpError(data.error ?? "Retry failed.");
+        setBrainDumpFailedEntryId(data.raw_entry_id ?? brainDumpFailedEntryId);
+        return;
+      }
+
+      setBrainDumpValue("");
+      setBrainDumpOpen(false);
+      setBrainDumpError(null);
+      setBrainDumpFailedEntryId(null);
+      if (data.proposed_nodes && data.proposed_nodes.length > 0) {
+        setProposedNodes(data.proposed_nodes);
+        setProposedReviewOpen(true);
+      }
+    } catch (err) {
+      setBrainDumpError(err instanceof Error ? err.message : "Retry failed.");
+    } finally {
+      setBrainDumpRetrying(false);
     }
   };
 
@@ -1271,24 +1446,50 @@ export function AppShell({ initialUser }: AppShellProps) {
     // Phase 5 — trigger connection analysis for newly accepted nodes
     if (data.accepted_nodes && data.accepted_nodes.length > 0 && selectedWorkspaceId) {
       const nodeIds = (data.accepted_nodes as Node[]).map((n) => n.id);
-      setAnalyzingConnections(true);
-      void fetch("/api/nodes/analyze", {
+      void analyzeNodes(nodeIds);
+    }
+  };
+
+  const applyAnalysisResult = (result: AnalysisResponse) => {
+    if (result.merge_candidates && result.merge_candidates.length > 0) {
+      setMergeCandidates(result.merge_candidates);
+    }
+    if (result.proposed_edges && result.proposed_edges.length > 0) {
+      setProposedEdges(result.proposed_edges);
+      setEdgeReviewOpen(true);
+    }
+
+    setAiNotice(buildAnalysisNotice(result));
+  };
+
+  const analyzeNodes = async (nodeIds: string[]) => {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+
+    setAnalyzingConnections(true);
+    setAiNotice(null);
+
+    try {
+      const res = await fetch("/api/nodes/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ node_ids: nodeIds, workspace_id: selectedWorkspaceId }),
-      })
-        .then((r) => r.json() as Promise<{ proposed_edges?: ProposedEdgeWithNodes[]; merge_candidates?: MergeCandidate[] }>)
-        .then((d) => {
-          if (d.merge_candidates && d.merge_candidates.length > 0) {
-            setMergeCandidates(d.merge_candidates);
-          }
-          if (d.proposed_edges && d.proposed_edges.length > 0) {
-            setProposedEdges(d.proposed_edges);
-            setEdgeReviewOpen(true);
-          }
-        })
-        .catch(() => {})
-        .finally(() => setAnalyzingConnections(false));
+      });
+      const data = await res.json() as AnalysisResponse;
+
+      if (!res.ok) {
+        throw new Error(data.error ?? "Connection analysis failed.");
+      }
+
+      applyAnalysisResult(data);
+    } catch (error) {
+      setAiNotice({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Connection analysis failed.",
+      });
+    } finally {
+      setAnalyzingConnections(false);
     }
   };
 
@@ -1344,13 +1545,53 @@ export function AppShell({ initialUser }: AppShellProps) {
   };
 
   const handleStatusChange = async (nodeId: string, status: Node["status"]) => {
+    const previousNode = graphData.nodes.find((n) => n.id === nodeId);
+    if (!previousNode) return;
+
+    // Apply optimistic update immediately so the UI responds on first click.
+    function applyStatusLocally(prev: GraphData, targetStatus: Node["status"]): GraphData {
+      return {
+        ...prev,
+        nodes: prev.nodes.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                status: targetStatus,
+                completed_at:
+                  targetStatus === "completed" ? new Date().toISOString() : n.completed_at,
+              }
+            : n,
+        ),
+        edges:
+          targetStatus === "archived"
+            ? prev.edges.map((e) =>
+                e.source_node_id === nodeId || e.target_node_id === nodeId
+                  ? { ...e, status: "orphaned" as const }
+                  : e,
+              )
+            : prev.edges.map((e) =>
+                (e.source_node_id === nodeId || e.target_node_id === nodeId) &&
+                e.status === "orphaned"
+                  ? { ...e, status: "active" as const }
+                  : e,
+              ),
+      };
+    }
+
+    setGraphData((prev) => applyStatusLocally(prev, status));
+
     const res = await fetch(`/api/nodes/${nodeId}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
     });
 
-    if (!res.ok) return;
+    if (!res.ok) {
+      // Revert optimistic update on failure
+      setGraphData((prev) => applyStatusLocally(prev, previousNode.status));
+      return;
+    }
+
     const data = await res.json() as {
       updated_node?: Node | null;
       affected_children?: Array<{ id: string; title: string }>;
@@ -1361,6 +1602,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       (data.recomputed_scores ?? []).map((s) => [s.id, s]),
     );
 
+    // Merge authoritative server state (scores etc.) onto the already-optimistic UI
     setGraphData((prev) => ({
       ...prev,
       nodes: prev.nodes.map((n) => {
@@ -1385,20 +1627,6 @@ export function AppShell({ initialUser }: AppShellProps) {
         }
         return n;
       }),
-      // Orphan edges when archiving, restore when unarchiving
-      edges:
-        status === "archived"
-          ? prev.edges.map((e) =>
-              e.source_node_id === nodeId || e.target_node_id === nodeId
-                ? { ...e, status: "orphaned" as const }
-                : e,
-            )
-          : prev.edges.map((e) =>
-              (e.source_node_id === nodeId || e.target_node_id === nodeId) &&
-              e.status === "orphaned"
-                ? { ...e, status: "active" as const }
-                : e,
-            ),
     }));
 
     // 6.3 belongs_to cascade: prompt user about active child nodes
@@ -1454,19 +1682,17 @@ export function AppShell({ initialUser }: AppShellProps) {
           });
           if (!res.ok) return;
           const workspace = (await res.json()) as Workspace;
+          workspaceCreationFlowRef.current = {
+            previousWorkspaceId: selectedWorkspaceId,
+            workspaceId: workspace.id,
+          };
           setWorkspaces((prev) => [...prev, workspace]);
           setSelectedWorkspaceId(workspace.id);
           setBootstrapWorkspaceId(workspace.id);
           setWorkspaceMenuOpen(false);
         }}
         onDeleteWorkspace={async (workspaceId) => {
-          const res = await fetch(`/api/workspaces/${workspaceId}`, { method: "DELETE" });
-          if (!res.ok) return;
-          setWorkspaces((prev) => prev.filter((w) => w.id !== workspaceId));
-          if (selectedWorkspaceId === workspaceId) {
-            const remaining = workspaces.filter((w) => w.id !== workspaceId);
-            setSelectedWorkspaceId(remaining[0]?.id ?? null);
-          }
+          await deleteWorkspace(workspaceId);
         }}
         selectedWorkspaceId={selectedWorkspaceId}
         systemPanelOpen={systemPanelOpen}
@@ -1577,6 +1803,8 @@ export function AppShell({ initialUser }: AppShellProps) {
                 onResetGraphFilters={handleResetFilters}
                 onToggleShowArchived={() => setShowArchived((v) => !v)}
                 showArchived={showArchived}
+                hideCompleted={hideCompleted}
+                onToggleHideCompleted={() => setHideCompleted((v) => !v)}
                 onToggleEditMode={handleToggleEditMode}
                 onRequestDeleteNode={() => setDeleteNodeConfirmOpen(true)}
                 onSelectNode={handleSelectNode}
@@ -1594,14 +1822,11 @@ export function AppShell({ initialUser }: AppShellProps) {
               />
               <ContextRail
                 activeTab={activeRailTab}
-                assistantMode={assistantMode}
-                chatError={chatError}
                 chatInputValue={railChatInput}
                 chatLoading={chatLoading}
                 chatMessages={chatMessages}
                 chatScope={chatScope}
                 graphData={graphData}
-                onAssistantModeChange={setAssistantMode}
                 onChatInputChange={setRailChatInput}
                 onClearChatScope={() => setChatScope(createWorkspaceScope(workspaceName))}
                 onRetryChat={retryLastMessage}
@@ -1614,22 +1839,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 }}
                 onFindConnections={(nodeId) => {
                   if (!selectedWorkspaceId) return;
-                  setAnalyzingConnections(true);
-                  void fetch("/api/nodes/analyze", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ node_ids: [nodeId], workspace_id: selectedWorkspaceId }),
-                  })
-                    .then((r) => r.json() as Promise<{ proposed_edges?: ProposedEdgeWithNodes[]; merge_candidates?: MergeCandidate[] }>)
-                    .then((d) => {
-                      if (d.merge_candidates?.length) setMergeCandidates(d.merge_candidates);
-                      if (d.proposed_edges?.length) {
-                        setProposedEdges(d.proposed_edges);
-                        setEdgeReviewOpen(true);
-                      }
-                    })
-                    .catch(() => {})
-                    .finally(() => setAnalyzingConnections(false));
+                  void analyzeNodes([nodeId]);
                 }}
                 onSelectLinkedNode={handleSelectNode}
                 onSubmitChatInput={(message) => {
@@ -1663,7 +1873,6 @@ export function AppShell({ initialUser }: AppShellProps) {
                 graphData={graphData}
                 selectedNodeId={selectedNodeId}
                 workspaceId={selectedWorkspaceId}
-                workspaceName={workspaceName}
               />
             </motion.div>
           )}
@@ -1719,21 +1928,95 @@ export function AppShell({ initialUser }: AppShellProps) {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {aiNotice && (
+          <motion.div
+            key={`${aiNotice.tone}:${aiNotice.message}`}
+            className={`ai-notice ai-notice--${aiNotice.tone}`}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.15 }}
+          >
+            <span>{aiNotice.message}</span>
+            <button
+              className="ai-notice-dismiss"
+              onClick={() => setAiNotice(null)}
+              type="button"
+            >
+              Dismiss
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Merge duplicate alerts */}
       {mergeCandidates.length > 0 && (
         <MergeAlert
           candidates={mergeCandidates}
-          onKeepBoth={(c) =>
-            setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id))
-          }
-          onRemoveNew={(c) => {
-            void fetch(`/api/nodes/${c.new_node_id}/archive`, { method: "POST" }).then(() => {
-              setGraphData((prev) => ({
-                ...prev,
-                nodes: prev.nodes.filter((n) => n.id !== c.new_node_id),
-              }));
-              setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
+          onKeepBoth={(c) => {
+            // Dismiss — keep both, record in DB (best-effort)
+            void fetch(`/api/nodes/merge-suggestions/${c.suggestion_id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: "dismissed" }),
             });
+            setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
+          }}
+          onNever={(c) => {
+            // Suppress pair forever
+            void fetch(`/api/nodes/merge-suggestions/${c.suggestion_id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: "never" }),
+            });
+            setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
+          }}
+          onMerge={(c) => {
+            // Safe merge: reattach edges from new → existing, archive new
+            void fetch(`/api/nodes/${c.new_node_id}/merge`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                target_node_id: c.existing_node_id,
+                suggestion_id: c.suggestion_id,
+              }),
+            })
+              .then((r) => r.json() as Promise<{
+                archived_node_id?: string;
+                recomputed_scores?: Array<{ id: string; current_importance_score: number; importance_index: number; importance: string }>;
+              }>)
+              .then((data) => {
+                const scoreMap = new Map(
+                  (data.recomputed_scores ?? []).map((s) => [s.id, s]),
+                );
+                setGraphData((prev) => ({
+                  ...prev,
+                  nodes: prev.nodes
+                    .filter((n) => n.id !== data.archived_node_id)
+                    .map((n) => {
+                      const scoreUpdate = scoreMap.get(n.id);
+                      return scoreUpdate
+                        ? {
+                            ...n,
+                            current_importance_score: scoreUpdate.current_importance_score,
+                            importance_index: scoreUpdate.importance_index,
+                            importance: scoreUpdate.importance as Node["importance"],
+                          }
+                        : n;
+                    }),
+                  edges: prev.edges.filter(
+                    (e) =>
+                      e.source_node_id !== data.archived_node_id &&
+                      e.target_node_id !== data.archived_node_id,
+                  ),
+                }));
+                setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
+              })
+              .catch(() => {
+                // If merge fails, still dismiss from UI
+                setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
+              });
           }}
         />
       )}
@@ -1823,12 +2106,19 @@ export function AppShell({ initialUser }: AppShellProps) {
             transition={{ duration: 0.12 }}
           >
             <BrainDumpOverlay
+              errorMessage={brainDumpError}
               onChange={setBrainDumpValue}
               onClose={() => {
                 setBrainDumpOpen(false);
+                setBrainDumpWorkspaceId(null);
                 setBrainDumpValue("");
+                setBrainDumpError(null);
+                setBrainDumpFailedEntryId(null);
               }}
+              onRetry={() => void handleBrainDumpRetry()}
               onSubmit={() => void handleBrainDumpSubmit()}
+              retryAvailable={Boolean(brainDumpFailedEntryId)}
+              retrying={brainDumpRetrying}
               submitting={brainDumpSubmitting}
               value={brainDumpValue}
             />
@@ -1845,7 +2135,12 @@ export function AppShell({ initialUser }: AppShellProps) {
             <ModeDock
               mode={appMode}
               onSetMode={setAppMode}
-              onOpenBrainDump={() => setBrainDumpOpen(true)}
+              onOpenBrainDump={() => {
+                setBrainDumpError(null);
+                setBrainDumpFailedEntryId(null);
+                setBrainDumpWorkspaceId(selectedWorkspaceId);
+                setBrainDumpOpen(true);
+              }}
             />
           </motion.div>
         )}
@@ -1857,7 +2152,15 @@ export function AppShell({ initialUser }: AppShellProps) {
           workspaceId={selectedWorkspaceId}
           workspaceName={workspaceName}
           onComplete={() => {
+            if (workspaceCreationFlowRef.current?.workspaceId === selectedWorkspaceId) {
+              workspaceCreationFlowRef.current = null;
+            }
             setBootstrapWorkspaceId(null);
+            // Show tutorial after bootstrap for new users
+            if (!tutorialShownRef.current && authUser && shouldShowTutorial(authUser.id)) {
+              tutorialShownRef.current = true;
+              setShowTutorial(true);
+            }
             void loadWorkspaceGraphData(
               authUser?.id ?? null,
               selectedWorkspaceId,
@@ -1866,8 +2169,15 @@ export function AppShell({ initialUser }: AppShellProps) {
               setGraphData(nextGraphData);
             });
           }}
-          onSkip={() => setBootstrapWorkspaceId(null)}
+          onSkip={() => {
+            void handleCancelWorkspaceCreation();
+          }}
         />
+      )}
+
+      {/* Onboarding tutorial — shown once per user */}
+      {showTutorial && authUser && (
+        <OnboardingTutorial userId={authUser.id} onDone={() => setShowTutorial(false)} />
       )}
     </div>
   );

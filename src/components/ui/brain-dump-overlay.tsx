@@ -11,28 +11,76 @@ type AttachedImage = {
 };
 
 type BrainDumpOverlayProps = {
+  errorMessage?: string | null;
   onChange: (value: string) => void;
   onClose: () => void;
+  onRetry?: () => void;
   onSubmit: (images: AttachedImage[]) => void;
+  retryAvailable?: boolean;
+  retrying?: boolean;
   submitting: boolean;
   value: string;
 };
 
+// Web Speech API type shim (not in all TS lib versions)
+type SpeechRecognitionInstance = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+};
+
+type SpeechRecognitionEvent = {
+  resultIndex: number;
+  results: {
+    [index: number]: {
+      isFinal: boolean;
+      [index: number]: { transcript: string };
+    };
+    length: number;
+  };
+};
+
+declare global {
+  interface Window {
+    SpeechRecognition?: new () => SpeechRecognitionInstance;
+    webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
+  }
+}
+
+function getSpeechRecognition(): (new () => SpeechRecognitionInstance) | null {
+  if (typeof window === "undefined") return null;
+  return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
+}
+
 export function BrainDumpOverlay({
+  errorMessage = null,
   onChange,
   onClose,
+  onRetry,
   onSubmit,
+  retryAvailable = false,
+  retrying = false,
   submitting,
   value,
 }: BrainDumpOverlayProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  // Track the transcript appended so far from the current recording session
+  // so interim results can be rendered without duplicating committed text.
+  const committedTranscriptRef = useRef("");
+  const valueAtStartRef = useRef("");
 
   const [images, setImages] = useState<AttachedImage[]>([]);
   const [recording, setRecording] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  const [interimText, setInterimText] = useState("");
+  const speechSupported = typeof window !== "undefined" && getSpeechRecognition() !== null;
 
   useEffect(() => {
     textareaRef.current?.focus();
@@ -46,6 +94,13 @@ export function BrainDumpOverlay({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
+  // Stop recognition on unmount
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.stop();
+    };
+  }, []);
+
   // ── Image attachment ────────────────────────────────────────────────────────
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -58,7 +113,6 @@ export function BrainDumpOverlay({
         name: f.name,
       }));
     setImages((prev) => [...prev, ...next]);
-    // reset input so same file can be re-selected
     e.target.value = "";
   };
 
@@ -70,55 +124,91 @@ export function BrainDumpOverlay({
     });
   };
 
-  // ── Voice recording ─────────────────────────────────────────────────────────
-
-  const startRecording = useCallback(async () => {
-    setMicError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      chunksRef.current = [];
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      recorder.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        const url = URL.createObjectURL(blob);
-        // Append voice note as a special image-like attachment (audio preview)
-        setImages((prev) => [
-          ...prev,
-          { id: `voice-${Date.now()}`, url, name: "Voice note" },
-        ]);
-      };
-
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setRecording(true);
-    } catch {
-      setMicError("Microphone access denied");
-    }
-  }, []);
+  // ── Voice transcription (Web Speech API) ───────────────────────────────────
 
   const stopRecording = useCallback(() => {
-    mediaRecorderRef.current?.stop();
-    mediaRecorderRef.current = null;
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
     setRecording(false);
+    setInterimText("");
+    committedTranscriptRef.current = "";
   }, []);
+
+  const startRecording = useCallback(() => {
+    const SpeechRecognition = getSpeechRecognition();
+    if (!SpeechRecognition) {
+      setMicError("Voice input not supported in this browser");
+      return;
+    }
+    setMicError(null);
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    // Snapshot the textarea value at start so we can safely append to it.
+    valueAtStartRef.current = value;
+    committedTranscriptRef.current = "";
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = "";
+      let newCommitted = committedTranscriptRef.current;
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          // Append a space between the existing text and the new transcript
+          newCommitted += (newCommitted.length > 0 ? " " : "") + transcript.trim();
+        } else {
+          interim = transcript;
+        }
+      }
+
+      committedTranscriptRef.current = newCommitted;
+      setInterimText(interim);
+
+      // Merge: original value + committed voice text
+      const base = valueAtStartRef.current.trimEnd();
+      const appended = base.length > 0
+        ? base + " " + newCommitted
+        : newCommitted;
+      onChange(appended);
+    };
+
+    recognition.onerror = (event: { error: string }) => {
+      if (event.error === "not-allowed") {
+        setMicError("Microphone access denied");
+      } else if (event.error !== "no-speech") {
+        setMicError(`Transcription error: ${event.error}`);
+      }
+      stopRecording();
+    };
+
+    recognition.onend = () => {
+      // Auto-restart if user didn't manually stop (handles browser timeout)
+      if (recognitionRef.current) {
+        try { recognition.start(); } catch { /* ignore if already stopped */ }
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setRecording(true);
+  }, [value, onChange, stopRecording]);
 
   const toggleRecording = () => {
     if (recording) {
       stopRecording();
     } else {
-      void startRecording();
+      startRecording();
     }
   };
 
   // ── Submit ──────────────────────────────────────────────────────────────────
 
   const handleSubmit = () => {
+    if (recording) stopRecording();
     onSubmit(images);
     images.forEach((img) => URL.revokeObjectURL(img.url));
     setImages([]);
@@ -153,15 +243,8 @@ export function BrainDumpOverlay({
         <div className="brain-dump-attachments">
           {images.map((img) => (
             <div className="brain-dump-attachment" key={img.id}>
-              {img.name === "Voice note" ? (
-                <div className="brain-dump-voice-chip">
-                  <MicIcon className="h-[12px] w-[12px]" />
-                  <span>Voice note</span>
-                </div>
-              ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img alt={img.name} className="brain-dump-thumb" src={img.url} />
-              )}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img alt={img.name} className="brain-dump-thumb" src={img.url} />
               <button
                 aria-label={`Remove ${img.name}`}
                 className="brain-dump-attachment-remove"
@@ -175,22 +258,43 @@ export function BrainDumpOverlay({
         </div>
       ) : null}
 
-      <textarea
-        className="brain-dump-textarea"
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            handleSubmit();
-          }
-        }}
-        placeholder="Drop a raw thought, paste text, or capture it..."
-        ref={textareaRef}
-        rows={3}
-        value={value}
-      />
+      <div className="brain-dump-textarea-wrap">
+        <textarea
+          className="brain-dump-textarea"
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSubmit();
+            }
+          }}
+          placeholder={recording ? "Listening…" : "Drop a raw thought, paste text, or capture it..."}
+          ref={textareaRef}
+          rows={3}
+          value={value}
+        />
+        {/* Inline interim transcription preview */}
+        {recording && interimText ? (
+          <span className="brain-dump-interim">{interimText}</span>
+        ) : null}
+      </div>
 
       {micError ? <p className="brain-dump-mic-error">{micError}</p> : null}
+      {errorMessage ? (
+        <div className="brain-dump-error">
+          <p className="brain-dump-error-text">{errorMessage}</p>
+          {retryAvailable && onRetry ? (
+            <button
+              className="brain-dump-retry-btn"
+              disabled={retrying || submitting}
+              onClick={onRetry}
+              type="button"
+            >
+              {retrying ? "Retrying…" : "Retry extraction"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="brain-dump-footer">
         <div className="brain-dump-actions">
@@ -212,16 +316,18 @@ export function BrainDumpOverlay({
           >
             <ImageIcon className="h-[15px] w-[15px]" />
           </button>
-          <button
-            aria-label={recording ? "Stop recording" : "Record voice note"}
-            className={`brain-dump-action-btn${recording ? " brain-dump-action-btn-active" : ""}`}
-            onClick={toggleRecording}
-            title={recording ? "Stop recording" : "Record voice"}
-            type="button"
-          >
-            <MicIcon className="h-[15px] w-[15px]" />
-            {recording ? <span className="brain-dump-rec-dot" /> : null}
-          </button>
+          {speechSupported ? (
+            <button
+              aria-label={recording ? "Stop voice input" : "Start voice input"}
+              className={`brain-dump-action-btn${recording ? " brain-dump-action-btn-active" : ""}`}
+              onClick={toggleRecording}
+              title={recording ? "Stop voice input" : "Dictate"}
+              type="button"
+            >
+              <MicIcon className="h-[15px] w-[15px]" />
+              {recording ? <span className="brain-dump-rec-dot" /> : null}
+            </button>
+          ) : null}
         </div>
 
         <button

@@ -21,7 +21,7 @@ import type {
 } from "d3-force";
 
 import { getImportanceIndex } from "@/lib/graph/importance";
-import { getStructuralParentCandidate } from "@/lib/graph/structure";
+import { buildPrimaryStructuralTree, getStructuralParentCandidate } from "@/lib/graph/structure";
 import type { Edge, EdgeType, GraphData, Node, NodeType } from "@/types/graph";
 
 type GraphCanvasProps = {
@@ -1430,6 +1430,14 @@ function getNodeVisualState(options: {
   };
 }
 
+function countDescendants(nodeId: string, childrenByParent: Map<string, string[]>): number {
+  let count = 0;
+  for (const child of childrenByParent.get(nodeId) ?? []) {
+    count += 1 + countDescendants(child, childrenByParent);
+  }
+  return count;
+}
+
 function updateAmbientGlow(
   element: HTMLDivElement | null,
   clientX: number,
@@ -1481,6 +1489,29 @@ export function GraphCanvas({
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [view, setView] = useState<ViewState>(defaultView);
   const [, setFrameVersion] = useState(0);
+  const [collapsedNodeIds, setCollapsedNodeIds] = useState(() => new Set<string>());
+
+  // Structural children map derived from graphData — used for collapse logic.
+  const childrenByParent = useMemo(
+    () => buildPrimaryStructuralTree(graphData).childrenByParent,
+    [graphData],
+  );
+
+  // Set of all node IDs that are hidden because an ancestor is collapsed.
+  const hiddenNodeIds = useMemo(() => {
+    if (collapsedNodeIds.size === 0) return new Set<string>();
+    const hidden = new Set<string>();
+    function collect(nodeId: string) {
+      for (const child of childrenByParent.get(nodeId) ?? []) {
+        if (!hidden.has(child)) {
+          hidden.add(child);
+          collect(child);
+        }
+      }
+    }
+    collapsedNodeIds.forEach(collect);
+    return hidden;
+  }, [collapsedNodeIds, childrenByParent]);
   const requestRender = useCallback(() => {
     if (animationRef.current !== null) {
       return;
@@ -1997,6 +2028,23 @@ export function GraphCanvas({
     onSelectNode(null);
   };
 
+  const handleNodeDoubleClick = useCallback(
+    (event: React.MouseEvent, nodeId: string) => {
+      event.stopPropagation();
+      if ((childrenByParent.get(nodeId) ?? []).length === 0) return;
+      setCollapsedNodeIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(nodeId)) {
+          next.delete(nodeId);
+        } else {
+          next.add(nodeId);
+        }
+        return next;
+      });
+    },
+    [childrenByParent],
+  );
+
   const handleNodePointerDown = (event: ReactPointerEvent<SVGGElement>, nodeId: string) => {
     event.stopPropagation();
     updateAmbientGlow(containerRef.current, event.clientX, event.clientY, 1);
@@ -2148,7 +2196,11 @@ export function GraphCanvas({
         </defs>
 
         <g transform={worldTransform}>
-          {scene.links.map((link) => {
+          {scene.links.filter(
+            (link) =>
+              !hiddenNodeIds.has(link.source_node_id) &&
+              !hiddenNodeIds.has(link.target_node_id),
+          ).map((link) => {
             const emphasized =
               selectedInteraction.connectedEdges.has(link.id) ||
               (!focusNodeId && hoveredInteraction.connectedEdges.has(link.id));
@@ -2181,10 +2233,15 @@ export function GraphCanvas({
             );
           })}
 
-          {scene.nodes.map((node) => {
+          {scene.nodes.filter((node) => !hiddenNodeIds.has(node.id)).map((node) => {
             const position = getRenderedNodePosition(node, draggingNodeId);
             const selected = focusNodeId === node.id;
             const hovered = hoveredNodeId === node.id;
+            const isCollapsed = collapsedNodeIds.has(node.id);
+            const nodeChildCount = (childrenByParent.get(node.id) ?? []).length;
+            const hiddenDescendantCount = isCollapsed
+              ? countDescendants(node.id, childrenByParent)
+              : 0;
             const inHoveredNeighborhood = hoveredInteraction.connectedNodes.has(node.id);
             const inSelectedNeighborhood = selectedInteraction.connectedNodes.has(node.id);
             const searchHit = searchMatches.has(node.id);
@@ -2240,6 +2297,7 @@ export function GraphCanvas({
 
                   onSelectNode(node.id);
                 }}
+                onDoubleClick={(event) => handleNodeDoubleClick(event, node.id)}
                 onMouseEnter={() => setHoveredNodeId(node.id)}
                 onMouseLeave={() =>
                   setHoveredNodeId((currentNodeId) =>
@@ -2255,7 +2313,7 @@ export function GraphCanvas({
                     nodeElementRefs.current.delete(node.id);
                   }
                 }}
-                style={{ cursor: draggingNodeId === node.id ? "grabbing" : "grab" }}
+                style={{ cursor: draggingNodeId === node.id ? "grabbing" : nodeChildCount > 0 ? "grab" : "grab" }}
                 transform={`translate(${position.x}, ${position.y})`}
               >
                 <defs>
@@ -2388,6 +2446,46 @@ export function GraphCanvas({
                     ))}
                   </text>
                 </g>
+
+                {/* Collapsed-children badge — shown when node has hidden subtree */}
+                {isCollapsed && hiddenDescendantCount > 0 && (
+                  <g
+                    style={{ pointerEvents: "none" }}
+                    transform={`translate(0, ${node.height / 2 + 11})`}
+                  >
+                    <rect
+                      fill="rgba(196,65,80,0.86)"
+                      height={14}
+                      rx={7}
+                      stroke="rgba(255,255,255,0.12)"
+                      strokeWidth={0.8}
+                      width={hiddenDescendantCount > 9 ? 28 : 24}
+                      x={hiddenDescendantCount > 9 ? -14 : -12}
+                      y={-7}
+                    />
+                    <text
+                      fill="rgba(255,255,255,0.92)"
+                      fontSize={8}
+                      fontWeight={700}
+                      letterSpacing="-0.01em"
+                      textAnchor="middle"
+                      y={3}
+                    >
+                      +{hiddenDescendantCount}
+                    </text>
+                  </g>
+                )}
+
+                {/* Subtle collapse-available dot — shown on nodes with children that are not collapsed */}
+                {!isCollapsed && nodeChildCount > 0 && (
+                  <circle
+                    cx={0}
+                    cy={node.height / 2 + 5}
+                    fill="rgba(255,255,255,0.18)"
+                    r={2.5}
+                    style={{ pointerEvents: "none" }}
+                  />
+                )}
               </g>
             );
           })}

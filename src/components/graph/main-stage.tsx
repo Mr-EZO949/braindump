@@ -79,7 +79,9 @@ type MainStageProps = {
   onCloseCreateNode: () => void;
   onCloseEditNode: () => void;
   onOpenCreateNode: () => void;
+  hideCompleted: boolean;
   onResetGraphFilters: () => void;
+  onToggleHideCompleted: () => void;
   onToggleShowArchived: () => void;
   onToggleEditMode: () => void;
   showArchived: boolean;
@@ -123,6 +125,7 @@ export function MainStage({
   graphSearchValue,
   graphTypeFilter,
   graphTypeFilterOptions,
+  hideCompleted,
   onCancelDeleteNode,
   onCameraViewChange,
   onChangeCreateNodeField,
@@ -141,6 +144,7 @@ export function MainStage({
   onGraphSearchSubmit,
   onOpenCreateNode,
   onResetGraphFilters,
+  onToggleHideCompleted,
   onToggleShowArchived,
   onToggleEditMode,
   onRequestDeleteNode,
@@ -309,6 +313,15 @@ export function MainStage({
                 ))}
               </select>
             </label>
+
+            <button
+              className={`graph-filter-reset ${!hideCompleted ? "graph-filter-reset-active" : ""}`}
+              onClick={onToggleHideCompleted}
+              title={hideCompleted ? "Show completed nodes" : "Hide completed nodes"}
+              type="button"
+            >
+              {hideCompleted ? "Completed" : "Hide done"}
+            </button>
 
             <button
               className={`graph-filter-reset ${showArchived ? "graph-filter-reset-active" : ""}`}
