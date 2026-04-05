@@ -5,7 +5,7 @@ import type { AssistantMode } from "@/types/ai";
 
 export const ASSISTANT_PROMPT_VERSION = "assistant-v2";
 
-const BASE_RULES = `You are a personal knowledge assistant for Thought Router, a graph-based thinking tool.
+const BASE_RULES = `You are a personal knowledge assistant for BrainDump, a graph-based thinking tool.
 You help users understand their ideas, plan work, and navigate their knowledge graph.
 
 Rules:

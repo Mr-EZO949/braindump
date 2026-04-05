@@ -1,4 +1,4 @@
-// AI provider abstraction for Thought Router.
+// AI provider abstraction for BrainDump.
 // Application code talks ONLY to this interface — never to Gemini or Cohere SDKs directly.
 // This allows swapping providers without rewriting route handlers.
 

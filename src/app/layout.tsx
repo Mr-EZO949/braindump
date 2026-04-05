@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Thought Router",
+  title: "BrainDump",
   description: "M1 product skeleton",
 };
 

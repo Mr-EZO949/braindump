@@ -27,7 +27,7 @@ export default async function LoginPage() {
                 <ProductMark className="h-[18px] w-[18px]" />
               </span>
               <span className={styles.brandText}>
-                <span className={styles.brandName}>Thought Router</span>
+                <span className={styles.brandName}>BrainDump</span>
                 <span className={styles.brandMeta}>Private workspace</span>
               </span>
             </div>

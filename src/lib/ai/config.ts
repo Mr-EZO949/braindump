@@ -1,4 +1,4 @@
-// AI configuration module for Thought Router.
+// AI configuration module for BrainDump.
 // All tunables live here — never as magic numbers in route handlers or services.
 // Every value here is a conscious decision, not a default left unchanged.
 
