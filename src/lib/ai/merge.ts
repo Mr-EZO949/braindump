@@ -1,25 +1,70 @@
-// Merge detection — Phase 6
-// After a node is accepted, check if a near-identical node already exists.
-// Uses cosine similarity via the match_nodes RPC — same infra as connection engine.
-// Never blocks node acceptance. Failures return empty arrays.
+// Merge detection — Phase 11
+// After a node is accepted, check for near-identical existing nodes.
+// Pipeline:
+//   1. Embedding similarity filter (AI_DEDUP.SIMILARITY_THRESHOLD)
+//   2. Type-compatibility filter (don't suggest merging goal↔task etc.)
+//   3. AI merge-check: LLM verifies "same entity?" (when AI_MERGE_SUGGESTIONS_ENABLED)
+//   4. Persist passing candidates as merge_suggestions rows
+// Never blocks node acceptance. All failures return empty arrays.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { matchNodes } from "@/lib/ai/embeddings";
-import { AI_DEDUP, AI_FLAGS } from "@/lib/ai/config";
+import { aiProvider } from "@/lib/ai/index";
+import { AI_DEDUP, AI_FLAGS, AI_MODELS, AI_COST_PER_1M_TOKENS } from "@/lib/ai/config";
+import { MERGE_CHECK_PROMPT_VERSION } from "@/lib/ai/prompts/merge-check";
+import type { NodeType } from "@/types/graph";
+import {
+  hashText,
+  logFailedAIRun,
+  logMalformedOutputFailure,
+  normalizeAIError,
+  isMalformedAIResponseError,
+} from "@/lib/ai/errors";
+import { persistAIRun } from "@/lib/ai/telemetry";
+
+// ---------------------------------------------------------------------------
+// Type compatibility
+// Only suggest merging nodes whose types are plausibly the same entity.
+// ---------------------------------------------------------------------------
+
+const COMPATIBLE_TYPES: Record<string, Set<string>> = {
+  goal:    new Set(["goal", "project"]),
+  project: new Set(["project", "goal", "task"]),
+  task:    new Set(["task", "project", "concept", "idea"]),
+  concept: new Set(["concept", "idea", "task"]),
+  class:   new Set(["class", "concept"]),
+  idea:    new Set(["idea", "concept", "task"]),
+  journal: new Set(["journal"]),
+  question: new Set(["question", "concept", "idea"]),
+};
+
+function typesAreCompatible(a: string, b: string): boolean {
+  return COMPATIBLE_TYPES[a]?.has(b) ?? COMPATIBLE_TYPES[b]?.has(a) ?? true;
+}
+
+// ---------------------------------------------------------------------------
+// Public interface
+// ---------------------------------------------------------------------------
 
 export interface MergeCandidate {
+  suggestion_id: string;
   new_node_id: string;
   new_node_title: string;
+  new_node_summary: string | null;
+  new_node_type: string;
   existing_node_id: string;
   existing_node_title: string;
+  existing_node_summary: string | null;
   existing_node_type: string;
   similarity: number;
+  ai_confidence: number | null;
+  ai_reason: string | null;
 }
 
 // Finds existing nodes that are near-duplicates of the given new nodes.
-// Returns one candidate per new node — the highest-similarity match above threshold.
+// Returns at most one candidate per new node — the highest-similarity verified match.
 export async function detectDuplicates(params: {
-  newNodes: Array<{ id: string; title: string; summary: string | null }>;
+  newNodes: Array<{ id: string; title: string; summary: string | null; node_type?: NodeType | string }>;
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
@@ -42,19 +87,141 @@ export async function detectDuplicates(params: {
     }).catch(() => []);
 
     const topMatch = matches.find(
-      (m) => m.similarity >= AI_DEDUP.SIMILARITY_THRESHOLD
+      (m) =>
+        m.similarity >= AI_DEDUP.SIMILARITY_THRESHOLD &&
+        typesAreCompatible(node.node_type ?? "concept", m.node_type),
     );
 
-    if (topMatch) {
-      results.push({
-        new_node_id: node.id,
-        new_node_title: node.title,
-        existing_node_id: topMatch.node_id,
-        existing_node_title: topMatch.title,
-        existing_node_type: topMatch.node_type,
+    if (!topMatch) continue;
+
+    // AI merge check
+    let aiConfidence: number | null = null;
+    let aiReason: string | null = null;
+    let aiRunId: string | null = null;
+
+    try {
+      const checkResult = await aiProvider().checkMerge({
+        new_node: {
+          title: node.title,
+          summary: node.summary,
+          node_type: (node.node_type ?? "concept") as NodeType,
+        },
+        existing_node: {
+          title: topMatch.title,
+          summary: topMatch.summary,
+          node_type: topMatch.node_type as NodeType,
+        },
         similarity: topMatch.similarity,
       });
+
+      const { output, run: runMeta } = checkResult;
+
+      // Only surface if AI also agrees it's the same entity
+      if (!output.same_entity) continue;
+
+      aiConfidence = output.confidence;
+      aiReason = output.reason;
+
+      // Persist ai_run (best-effort)
+      aiRunId = await persistAIRun({
+        supabase,
+        userId,
+        workspaceId,
+        source: "merge-check",
+        run: {
+          run_type: "merge_check",
+          provider: "claude",
+          model_name: AI_MODELS.CLAUDE_SONNET,
+          prompt_version: MERGE_CHECK_PROMPT_VERSION,
+          input_hash: runMeta.input_hash,
+          output_hash: runMeta.output_hash,
+          input_tokens: runMeta.input_tokens,
+          output_tokens: runMeta.output_tokens,
+          latency_ms: runMeta.latency_ms,
+          estimated_cost:
+            runMeta.input_tokens != null && runMeta.output_tokens != null
+              ? (runMeta.input_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT +
+                (runMeta.output_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT
+              : null,
+          status: "success",
+          error_text: null,
+        },
+      });
+    } catch (err) {
+      const normalized = normalizeAIError(err, "Merge check failed");
+      if (isMalformedAIResponseError(err)) {
+        void logMalformedOutputFailure({
+          supabase,
+          userId,
+          workspaceId,
+          error: err,
+          linkedEntityIds: [node.id, topMatch.node_id],
+        });
+      } else {
+        void logFailedAIRun({
+          supabase,
+          userId,
+          workspaceId,
+          runType: "merge_check",
+          provider: "claude",
+          modelName: AI_MODELS.CLAUDE_SONNET,
+          promptVersion: MERGE_CHECK_PROMPT_VERSION,
+          inputHash: hashText(`${node.title}\n${topMatch.title}`),
+          error: normalized.message,
+        });
+      }
+      // AI check failed — skip this pair (don't surface unverified suggestions)
+      continue;
     }
+
+    // Check if we already have a 'never' suppression for this pair
+    const { data: existingSuppression } = await supabase
+      .from("merge_suggestions")
+      .select("id, status")
+      .eq("workspace_id", workspaceId)
+      .eq("new_node_id", node.id)
+      .eq("existing_node_id", topMatch.node_id)
+      .eq("status", "never")
+      .maybeSingle();
+
+    if (existingSuppression) continue;
+
+    // Persist suggestion (upsert — if already pending, update ai fields)
+    const { data: suggestionRow } = await supabase
+      .from("merge_suggestions")
+      .upsert(
+        {
+          workspace_id: workspaceId,
+          user_id: userId,
+          new_node_id: node.id,
+          existing_node_id: topMatch.node_id,
+          similarity: topMatch.similarity,
+          ai_confidence: aiConfidence,
+          ai_reason: aiReason,
+          status: "pending",
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "workspace_id,new_node_id,existing_node_id" },
+      )
+      .select("id")
+      .single();
+
+    void aiRunId; // referenced for traceability
+
+    results.push({
+      suggestion_id: suggestionRow?.id ?? crypto.randomUUID(),
+      new_node_id: node.id,
+      new_node_title: node.title,
+      new_node_summary: node.summary,
+      new_node_type: node.node_type ?? "concept",
+      existing_node_id: topMatch.node_id,
+      existing_node_title: topMatch.title,
+      existing_node_summary: topMatch.summary,
+      existing_node_type: topMatch.node_type,
+      similarity: topMatch.similarity,
+      ai_confidence: aiConfidence,
+      ai_reason: aiReason,
+    });
   }
 
   return results;

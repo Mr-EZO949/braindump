@@ -52,6 +52,7 @@ function init() {
     inferEdge: (input) => claude.inferEdge(input),
     answerAssistant: (input) => claude.answerAssistant(input),
     buildPlan: (input) => claude.buildPlan(input),
+    checkMerge: (input) => claude.checkMerge(input),
     generateEmbedding: (input) => gemini.generateEmbedding(input),
     rerankCandidates: (input) => gemini.rerankCandidates(input),
   });

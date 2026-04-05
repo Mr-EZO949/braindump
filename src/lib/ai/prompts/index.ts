@@ -23,6 +23,11 @@ export {
   buildPlanPrompt,
 } from "./plan";
 
+export {
+  MERGE_CHECK_PROMPT_VERSION,
+  buildMergeCheckPrompt,
+} from "./merge-check";
+
 // ---------------------------------------------------------------------------
 // Version map — single source of truth for all prompt versions
 // Used by eval harness to tag results and by observability for cost tracking.
@@ -33,6 +38,7 @@ export const PROMPT_VERSIONS = {
   infer_edge: "infer-edge-v3",
   assistant: "assistant-v2",
   plan: "plan-v1",
+  merge_check: "merge-check-v1",
   embed: "embed-v1",
   rerank: "rerank-v1",
 } as const;

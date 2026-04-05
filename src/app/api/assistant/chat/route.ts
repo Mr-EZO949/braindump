@@ -12,7 +12,10 @@ import {
   buildAssistantUserPrompt,
   ASSISTANT_PROMPT_VERSION,
 } from "@/lib/ai/prompts/assistant";
-import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS } from "@/lib/ai/config";
+import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS, AI_RATE_LIMITS } from "@/lib/ai/config";
+import { checkAIRunRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
+import { hashText, logFailedAIRun, normalizeAIError } from "@/lib/ai/errors";
+import { persistAIRun } from "@/lib/ai/telemetry";
 import type { AssistantMode } from "@/types/ai";
 
 const VALID_MODES: AssistantMode[] = ["explain", "plan", "transform"];
@@ -59,6 +62,12 @@ export async function POST(req: NextRequest) {
   if (!message || typeof message !== "string" || !message.trim()) {
     return new Response("message is required", { status: 400 });
   }
+  if (message.length > AI_RATE_LIMITS.CHAT_MESSAGE_MAX_CHARS) {
+    return new Response(
+      `Message too long. Maximum ${AI_RATE_LIMITS.CHAT_MESSAGE_MAX_CHARS} characters.`,
+      { status: 400 },
+    );
+  }
   if (!workspace_id || typeof workspace_id !== "string") {
     return new Response("workspace_id is required", { status: 400 });
   }
@@ -78,6 +87,20 @@ export async function POST(req: NextRequest) {
 
   if (wsError || !workspace) {
     return new Response("Workspace not found or access denied", { status: 404 });
+  }
+
+  // Rate limit: max N chat messages per hour
+  const rl = await checkAIRunRateLimit({
+    supabase,
+    userId: user.id,
+    runType: "assistant",
+    maxPerHour: AI_RATE_LIMITS.CHAT_PER_HOUR,
+  });
+  if (!rl.allowed) {
+    return new Response(
+      JSON.stringify({ error: "Rate limit exceeded. Try again later.", reset_at: rl.resetAt }),
+      { status: 429, headers: { "Content-Type": "application/json", "Retry-After": "3600" } },
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -109,13 +132,31 @@ export async function POST(req: NextRequest) {
   const client = new Anthropic({ apiKey: claudeKey });
   const start = Date.now();
 
-  const claudeStream = client.messages.stream({
-    model: AI_MODELS.CLAUDE_SONNET,
-    max_tokens: 1024,
-    temperature: AI_TEMPERATURE.ASSISTANT,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-  });
+  let claudeStream: ReturnType<typeof client.messages.stream>;
+  try {
+    claudeStream = client.messages.stream({
+      model: AI_MODELS.CLAUDE_SONNET,
+      max_tokens: 1024,
+      temperature: AI_TEMPERATURE.ASSISTANT,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
+    });
+  } catch (err) {
+    const normalized = normalizeAIError(err, "Assistant failed to start");
+    await logFailedAIRun({
+      supabase,
+      userId: user.id,
+      workspaceId: workspace_id,
+      runType: "assistant",
+      provider: "claude",
+      modelName: AI_MODELS.CLAUDE_SONNET,
+      promptVersion: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}`,
+      inputHash: hashText(userPrompt),
+      latencyMs: Date.now() - start,
+      error: normalized.message,
+    });
+    return new Response(normalized.userMessage, { status: 502 });
+  }
 
   // ---------------------------------------------------------------------------
   // Build streaming response — text/plain token feed
@@ -125,6 +166,7 @@ export async function POST(req: NextRequest) {
       let inputTokens = 0;
       let outputTokens = 0;
       let fullText = "";
+      let streamError: ReturnType<typeof normalizeAIError> | null = null;
 
       try {
         for await (const event of claudeStream) {
@@ -144,10 +186,11 @@ export async function POST(req: NextRequest) {
           }
         }
       } catch (err) {
+        streamError = normalizeAIError(err, "Assistant response was interrupted");
         controller.enqueue(
-          new TextEncoder().encode("\n\n[Error: response interrupted]"),
+          new TextEncoder().encode(`\n\n[${streamError.userMessage} Retry the request.]`),
         );
-        console.error("[assistant/chat] stream error:", err);
+        console.error("[assistant/chat] stream error:", streamError.message);
       }
 
       // -----------------------------------------------------------------------
@@ -159,21 +202,25 @@ export async function POST(req: NextRequest) {
           (inputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT +
           (outputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT;
 
-        await supabase.from("ai_runs").insert({
-          user_id: user.id,
-          workspace_id,
-          run_type: "assistant",
-          provider: "claude",
-          model_name: AI_MODELS.CLAUDE_SONNET,
-          prompt_version: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}`,
-          input_hash: null,
-          output_hash: null,
-          input_tokens: inputTokens,
-          output_tokens: outputTokens,
-          latency_ms: latencyMs,
-          estimated_cost: estimatedCost,
-          status: "success",
-          error_text: null,
+        await persistAIRun({
+          supabase,
+          userId: user.id,
+          workspaceId: workspace_id,
+          source: "assistant-chat",
+          run: {
+            run_type: "assistant",
+            provider: "claude",
+            model_name: AI_MODELS.CLAUDE_SONNET,
+            prompt_version: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}`,
+            input_hash: null,
+            output_hash: null,
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            latency_ms: latencyMs,
+            estimated_cost: estimatedCost,
+            status: streamError ? "failed" : "success",
+            error_text: streamError?.message ?? null,
+          },
         });
 
         // Phase 8.5 — log context stats if answer is too generic (no node title mentioned)

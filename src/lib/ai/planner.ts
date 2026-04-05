@@ -15,6 +15,7 @@ type SupabaseClient = any;
 
 const MAX_CANDIDATES = 20;
 const RECENTLY_UNBLOCKED_WINDOW_HOURS = 24;
+const RECENT_PLAN_WINDOW_DAYS = 7;
 
 export interface PlannerCandidate {
   id: string;
@@ -35,8 +36,12 @@ export async function buildPlannerCandidates(params: {
     Date.now() - RECENTLY_UNBLOCKED_WINDOW_HOURS * 60 * 60 * 1000,
   ).toISOString();
 
-  // Run both queries in parallel.
-  const [nodesResult, cascadeResult] = await Promise.all([
+  const recentPlanAfter = new Date(
+    Date.now() - RECENT_PLAN_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  // Run all queries in parallel.
+  const [nodesResult, cascadeResult, recentPlanBlocksResult] = await Promise.all([
     params.supabase
       .from("nodes")
       .select("id, title, summary, node_type, status, current_importance_score")
@@ -60,6 +65,24 @@ export async function buildPlannerCandidates(params: {
       .gte("lifecycle_events.created_at", unblockedAfter)
       .eq("lifecycle_events.nodes.workspace_id", params.workspaceId)
       .eq("lifecycle_events.nodes.user_id", params.userId),
+
+    // Phase 10.1 — nodes from recent accepted plans that are still pending completion.
+    // These were planned but not finished, so they should be surfaced again.
+    params.supabase
+      .from("plan_blocks")
+      .select(
+        `
+        node_id,
+        completion_status,
+        plan_sessions!inner(workspace_id, user_id, status, created_at)
+      `,
+      )
+      .not("node_id", "is", null)
+      .eq("completion_status", "pending")
+      .eq("plan_sessions.status", "accepted")
+      .eq("plan_sessions.workspace_id", params.workspaceId)
+      .eq("plan_sessions.user_id", params.userId)
+      .gte("plan_sessions.created_at", recentPlanAfter),
   ]);
 
   type NodeRow = {
@@ -83,7 +106,20 @@ export async function buildPlannerCandidates(params: {
     }
   }
 
-  // Tag and partition
+  // Collect node IDs from recent accepted plans that are still pending (Phase 10.1)
+  const recentPlanNodeIds = new Set<string>();
+  if (recentPlanBlocksResult.data && Array.isArray(recentPlanBlocksResult.data)) {
+    for (const row of recentPlanBlocksResult.data as { node_id: string }[]) {
+      if (row.node_id) {
+        recentPlanNodeIds.add(row.node_id);
+      }
+    }
+  }
+
+  // Tag and partition into three tiers:
+  //   1. Recently unblocked (highest priority)
+  //   2. Carried over from recent plans but not yet done
+  //   3. Everything else by score
   const tagged: PlannerCandidate[] = rawNodes.map((n) => ({
     id: n.id,
     title: n.title,
@@ -93,14 +129,16 @@ export async function buildPlannerCandidates(params: {
     recently_unblocked: recentlyUnblockedIds.has(n.id),
   }));
 
-  // Sort: recently unblocked first (within that group by score), then the rest by score.
-  const unblocked = tagged
-    .filter((c) => c.recently_unblocked)
-    .sort((a, b) => (b.current_importance_score ?? 50) - (a.current_importance_score ?? 50));
+  const byScore = (a: PlannerCandidate, b: PlannerCandidate) =>
+    (b.current_importance_score ?? 50) - (a.current_importance_score ?? 50);
 
+  const unblocked = tagged.filter((c) => c.recently_unblocked).sort(byScore);
+  const carriedOver = tagged
+    .filter((c) => !c.recently_unblocked && recentPlanNodeIds.has(c.id))
+    .sort(byScore);
   const rest = tagged
-    .filter((c) => !c.recently_unblocked)
-    .sort((a, b) => (b.current_importance_score ?? 50) - (a.current_importance_score ?? 50));
+    .filter((c) => !c.recently_unblocked && !recentPlanNodeIds.has(c.id))
+    .sort(byScore);
 
-  return [...unblocked, ...rest].slice(0, MAX_CANDIDATES);
+  return [...unblocked, ...carriedOver, ...rest].slice(0, MAX_CANDIDATES);
 }

@@ -1,10 +1,12 @@
 // POST /api/nodes/embed
-// Backfills embeddings for accepted nodes that are missing them.
+// Queues embedding backfills for accepted nodes that are missing them.
 // Also accepts an optional node_id to re-embed a single specific node.
 
+import { after } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
+import { drainAIJobsWithAdminClient, enqueueAIJob } from "@/lib/ai/jobs";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { generateAndStoreEmbedding, backfillEmbeddings } from "@/lib/ai/embeddings";
+import { generateAndStoreEmbedding } from "@/lib/ai/embeddings";
 import { AI_FLAGS } from "@/lib/ai/config";
 
 export async function POST(req: NextRequest) {
@@ -66,11 +68,39 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const counts = await backfillEmbeddings({
-    workspaceId: body.workspace_id,
-    userId: user.id,
+  // Verify workspace belongs to this user
+  const { data: workspace, error: wsError } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("id", body.workspace_id)
+    .eq("user_id", user.id)
+    .single();
+
+  if (wsError || !workspace) {
+    return NextResponse.json({ error: "Workspace not found or access denied" }, { status: 404 });
+  }
+
+  const job = await enqueueAIJob({
     supabase,
+    userId: user.id,
+    workspaceId: body.workspace_id,
+    jobType: "embedding_backfill",
+    payload: {
+      workspace_id: body.workspace_id,
+    },
   });
 
-  return NextResponse.json(counts);
+  after(async () => {
+    try {
+      await drainAIJobsWithAdminClient();
+    } catch (error) {
+      console.error("[api/nodes/embed] failed to drain AI jobs:", error);
+    }
+  });
+
+  return NextResponse.json({
+    queued: true,
+    job_id: job.id,
+    job_status: job.status,
+  });
 }

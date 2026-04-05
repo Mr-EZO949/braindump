@@ -5,7 +5,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { runExtraction } from "@/lib/ai/extraction";
-import { AI_INGESTION, AI_FLAGS } from "@/lib/ai/config";
+import { AI_INGESTION, AI_FLAGS, AI_RATE_LIMITS } from "@/lib/ai/config";
+import { checkEntryRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
 import type { RawEntrySourceType } from "@/types/ai";
 
 const VALID_SOURCE_TYPES: RawEntrySourceType[] = [
@@ -106,6 +107,14 @@ export async function POST(req: NextRequest) {
       { status: 404 }
     );
   }
+
+  // Rate limit: max N brain dumps per hour
+  const rl = await checkEntryRateLimit({
+    supabase,
+    userId: user.id,
+    maxPerHour: AI_RATE_LIMITS.EXTRACTIONS_PER_HOUR,
+  });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   // ---------------------------------------------------------------------------
   // Save raw_entry

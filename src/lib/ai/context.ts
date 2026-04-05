@@ -3,6 +3,7 @@
 // Never exceeds AI_TOKEN_BUDGETS.ASSISTANT_CHAT by design.
 
 import { AI_TOKEN_BUDGETS, AI_ASSISTANT } from "./config";
+import { matchNodes, type MatchedNode } from "./embeddings";
 
 // ---------------------------------------------------------------------------
 // Token estimator — chars/4 approximation (standard estimate for English prose)
@@ -63,8 +64,20 @@ export async function buildAssistantContext(params: {
     Date.now() - AI_ASSISTANT.COMPLETED_NODE_CONTEXT_WINDOW_HOURS * 60 * 60 * 1000,
   ).toISOString();
 
+  // Semantic retrieval — embed the user's message and find the most relevant nodes.
+  // Runs in parallel with the other queries; failures are silently swallowed so
+  // the assistant always responds even if embeddings are unavailable.
+  const semanticMatchPromise = matchNodes({
+    queryText: params.message,
+    workspaceId: params.workspaceId,
+    userId: params.userId,
+    supabase: params.supabase,
+    limit: 8,
+    includeCompleted: false,
+  }).catch(() => [] as MatchedNode[]);
+
   // Load all workspace data in parallel
-  const [nodesResult, edgesResult, feedbackResult, recentlyCompletedResult] = await Promise.all([
+  const [nodesResult, edgesResult, feedbackResult, recentlyCompletedResult, planResult, semanticMatches] = await Promise.all([
     params.supabase
       .from("nodes")
       .select("id, title, summary, node_type, importance, current_importance_score, status")
@@ -96,7 +109,22 @@ export async function buildAssistantContext(params: {
       .gte("completed_at", completedAfter)
       .order("completed_at", { ascending: false })
       .limit(10),
+
+    // Recent accepted plan session with its pending blocks (deferred 8.3)
+    params.supabase
+      .from("plan_sessions")
+      .select("id, planning_window, plan_blocks(title, block_type, duration_minutes, completion_status, node_id, start_offset)")
+      .eq("workspace_id", params.workspaceId)
+      .eq("user_id", params.userId)
+      .eq("status", "accepted")
+      .order("created_at", { ascending: false })
+      .limit(1),
+
+    semanticMatchPromise,
   ]);
+
+  type PlanBlockRow = { title: string; block_type: string; duration_minutes: number; completion_status: string; node_id: string | null; start_offset: number };
+  type PlanSessionRow = { id: string; planning_window: string; plan_blocks: PlanBlockRow[] };
 
   type NodeRow = {
     id: string;
@@ -121,6 +149,12 @@ export async function buildAssistantContext(params: {
   const edges: EdgeRow[] = edgesResult.data ?? [];
   const feedbackEvents: FeedbackRow[] = feedbackResult.data ?? [];
   const recentlyCompleted: CompletedRow[] = recentlyCompletedResult.data ?? [];
+  const recentPlanSession: PlanSessionRow | null = (planResult.data as PlanSessionRow[] | null)?.[0] ?? null;
+
+  // Map of nodeId → semantic similarity score (0–1) for boosting priority
+  const semanticScoreById = new Map(
+    semanticMatches.map((m) => [m.node_id, m.similarity]),
+  );
 
   const nodeById = new Map(allNodes.map((n) => [n.id, n]));
   const activeNodes = allNodes.filter((n) => n.status !== "completed");
@@ -195,7 +229,11 @@ export async function buildAssistantContext(params: {
       `score: ${Math.round(score)}, status: ${node.status}`,
     ].filter(Boolean);
     const text = parts.join(" — ");
-    const priority = score >= 80 ? 75 : score >= 50 ? 55 : 35;
+    const basePriority = score >= 80 ? 75 : score >= 50 ? 55 : 35;
+    // Semantic boost: up to +20 for highly similar nodes (similarity 0.9+ → +20, 0.7+ → +10)
+    const semanticSim = semanticScoreById.get(node.id) ?? 0;
+    const semanticBoost = semanticSim >= 0.9 ? 20 : semanticSim >= 0.7 ? 10 : 0;
+    const priority = basePriority + semanticBoost;
     items.push({ kind: "node", id: node.id, text, priority, tokens: estimateTokens(text) });
   }
 
@@ -223,6 +261,28 @@ export async function buildAssistantContext(params: {
       priority: 28,
       tokens: estimateTokens(text),
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // 6. Active plan blocks from most recent accepted session (deferred 8.3)
+  // ---------------------------------------------------------------------------
+  if (recentPlanSession) {
+    const pendingBlocks = [...recentPlanSession.plan_blocks]
+      .sort((blockA, blockB) => blockA.start_offset - blockB.start_offset)
+      .filter((b) => b.completion_status === "pending" && b.block_type === "focus");
+    if (pendingBlocks.length > 0) {
+      const blockLines = pendingBlocks
+        .slice(0, 6)
+        .map((b) => `  - ${b.title} (${b.duration_minutes}m)`);
+      const text = `Active plan (${recentPlanSession.planning_window}):\n${blockLines.join("\n")}`;
+      items.push({
+        kind: "event",
+        id: "plan",
+        text,
+        priority: 45,
+        tokens: estimateTokens(text),
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------

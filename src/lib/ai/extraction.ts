@@ -9,13 +9,23 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aiProvider } from "./index";
-import { AI_CONFIDENCE, AI_INGESTION } from "./config";
+import { AI_CONFIDENCE, AI_INGESTION, AI_MODELS } from "./config";
 import type { ExtractionOutput, ProposedNode } from "@/types/ai";
 import { buildWorkspaceProfileContext } from "./workspace-profile";
 import {
   isGenericRootTitle,
   pickExistingParentForNode,
 } from "@/lib/graph/anchor-attachment";
+import { EXTRACT_PROMPT_VERSION } from "./prompts/extract";
+import {
+  executeWithRetry,
+  hashText,
+  logFailedAIRun,
+  logMalformedOutputFailure,
+  normalizeAIError,
+  isMalformedAIResponseError,
+} from "./errors";
+import { persistAIRun } from "./telemetry";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -129,41 +139,88 @@ export async function runExtraction(params: {
       supabase,
     });
 
-    providerResult = await aiProvider().extractNodes({
-      raw_text: rawText,
-      workspace_id: workspaceId,
-      user_id: userId,
-      workspace_context: workspaceProfile.workspaceContext,
-      existing_nodes: workspaceProfile.existingNodes,
+    providerResult = await executeWithRetry({
+      maxRetries: AI_INGESTION.EXTRACTION_MAX_RETRIES,
+      operation: () =>
+        aiProvider().extractNodes({
+          raw_text: rawText,
+          workspace_id: workspaceId,
+          user_id: userId,
+          workspace_context: workspaceProfile.workspaceContext,
+          existing_nodes: workspaceProfile.existingNodes,
+        }),
+      shouldRetry: ({ attempt, error }) => {
+        if (!error.retryable) {
+          return false;
+        }
+
+        if (error.code === "malformed_output") {
+          return attempt < 1;
+        }
+
+        return true;
+      },
+      onRetry: async ({ attempt, error }) => {
+        await logFailedAIRun({
+          supabase,
+          userId,
+          workspaceId,
+          runType: "extract",
+          provider: "claude",
+          modelName: AI_MODELS.CLAUDE_SONNET,
+          promptVersion: EXTRACT_PROMPT_VERSION,
+          inputHash: hashText(rawText),
+          status: "retrying",
+          error: `Attempt ${attempt + 1} failed: ${error.message}`,
+        });
+      },
     });
   } catch (err) {
-    const errorText =
-      err instanceof Error ? err.message : "Unknown extraction error";
+    const normalized = normalizeAIError(err, "Extraction failed");
+    const errorText = normalized.message;
+    if (isMalformedAIResponseError(err)) {
+      await logMalformedOutputFailure({
+        supabase,
+        userId,
+        workspaceId,
+        error: err,
+        linkedEntityIds: [rawEntryId],
+      });
+    } else {
+      await logFailedAIRun({
+        supabase,
+        userId,
+        workspaceId,
+        runType: "extract",
+        provider: "claude",
+        modelName: AI_MODELS.CLAUDE_SONNET,
+        promptVersion: EXTRACT_PROMPT_VERSION,
+        inputHash: hashText(rawText),
+        status: "failed",
+        error: errorText,
+      });
+    }
     await markFailed(supabase, rawEntryId, errorText);
-    return { ok: false, error: errorText };
+    return { ok: false, error: normalized.userMessage };
   }
 
   const { output, run } = providerResult;
   const validExistingParentIds = new Set(workspaceProfile.existingNodes.map((node) => node.id));
 
   // Persist ai_run
-  const { data: aiRunRow, error: aiRunError } = await supabase
-    .from("ai_runs")
-    .insert({
-      ...run,
-      user_id: userId,
-      workspace_id: workspaceId,
-    })
-    .select("id")
-    .single();
+  const aiRunId = await persistAIRun({
+    supabase,
+    userId,
+    workspaceId,
+    source: "extraction",
+    run,
+  });
 
-  if (aiRunError || !aiRunRow) {
-    const errorText = aiRunError?.message ?? "Failed to save ai_run";
+  if (!aiRunId) {
+    const errorText = "Failed to save ai_run";
     await markFailed(supabase, rawEntryId, errorText);
     return { ok: false, error: errorText };
   }
-
-  const aiRunId: string = aiRunRow.id;
 
   // Filter out low-confidence proposals
   const qualifiedNodes = enrichExistingParentAssignments(

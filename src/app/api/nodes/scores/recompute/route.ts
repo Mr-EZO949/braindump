@@ -2,11 +2,12 @@
 // Recomputes importance scores for all active nodes in a workspace.
 // Writes to node_scores table and materializes final_score onto nodes.current_importance_score.
 // Called automatically after node/edge acceptance and status changes.
-// Can also be called manually (e.g., from a settings panel) to force a full rescore.
+// This endpoint queues the full workspace rescore so maintenance work stays off the request path.
 
+import { after } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
+import { drainAIJobsWithAdminClient, enqueueAIJob } from "@/lib/ai/jobs";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { computeWorkspaceScores } from "@/lib/ai/scoring";
 
 export async function POST(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
@@ -33,11 +34,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "workspace_id is required" }, { status: 400 });
   }
 
-  const result = await computeWorkspaceScores({
-    workspaceId: workspace_id,
-    userId: user.id,
+  const job = await enqueueAIJob({
     supabase,
+    userId: user.id,
+    workspaceId: workspace_id,
+    jobType: "score_recompute",
+    payload: {
+      workspace_id,
+    },
   });
 
-  return NextResponse.json(result);
+  after(async () => {
+    try {
+      await drainAIJobsWithAdminClient();
+    } catch (error) {
+      console.error("[api/nodes/scores/recompute] failed to drain AI jobs:", error);
+    }
+  });
+
+  return NextResponse.json({
+    queued: true,
+    job_id: job.id,
+    job_status: job.status,
+  });
 }

@@ -13,10 +13,19 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { aiProvider } from "@/lib/ai";
+import { checkAIRunRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
 import { buildPlannerCandidates } from "@/lib/ai/planner";
 import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
-import { AI_MODELS, AI_COST_PER_1M_TOKENS } from "@/lib/ai/config";
+import { AI_MODELS, AI_COST_PER_1M_TOKENS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { PLAN_PROMPT_VERSION } from "@/lib/ai/prompts/plan";
+import {
+  hashText,
+  logFailedAIRun,
+  logMalformedOutputFailure,
+  normalizeAIError,
+  isMalformedAIResponseError,
+} from "@/lib/ai/errors";
+import { persistAIRun } from "@/lib/ai/telemetry";
 import type { PlanningWindow } from "@/types/ai";
 
 const VALID_WINDOWS: PlanningWindow[] = ["1h", "2h", "day", "custom"];
@@ -68,11 +77,16 @@ export async function POST(req: NextRequest) {
     ? (planning_window as PlanningWindow)
     : "2h";
 
-  if (resolvedWindow === "custom" && (!custom_minutes || custom_minutes < 15)) {
-    return NextResponse.json(
-      { error: "custom_minutes must be at least 15 when planning_window is 'custom'" },
-      { status: 400 },
-    );
+  if (resolvedWindow === "custom") {
+    if (custom_minutes !== null && typeof custom_minutes !== "number") {
+      return NextResponse.json({ error: "custom_minutes must be a number" }, { status: 400 });
+    }
+    if (!custom_minutes || custom_minutes < 15) {
+      return NextResponse.json(
+        { error: "custom_minutes must be at least 15 when planning_window is 'custom'" },
+        { status: 400 },
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -88,6 +102,15 @@ export async function POST(req: NextRequest) {
   if (wsError || !workspace) {
     return NextResponse.json({ error: "Workspace not found or access denied" }, { status: 404 });
   }
+
+  // Rate limit: max N planning sessions per hour
+  const rl = await checkAIRunRateLimit({
+    supabase,
+    userId: user.id,
+    runType: "plan",
+    maxPerHour: AI_RATE_LIMITS.PLANS_PER_HOUR,
+  });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   // -------------------------------------------------------------------------
   // Build candidates + workspace context in parallel
@@ -138,9 +161,37 @@ export async function POST(req: NextRequest) {
       workspace_context: workspaceContext || undefined,
     });
   } catch (err) {
-    console.error("[assistant/plan] buildPlan failed:", err);
+    const normalized = normalizeAIError(err, "Planning failed");
+    console.error("[assistant/plan] buildPlan failed:", normalized.message);
+    if (isMalformedAIResponseError(err)) {
+      await logMalformedOutputFailure({
+        supabase,
+        userId: user.id,
+        workspaceId: workspace_id,
+        error: err,
+        linkedEntityIds: candidates.map((candidate) => candidate.id),
+      });
+    } else {
+      await logFailedAIRun({
+        supabase,
+        userId: user.id,
+        workspaceId: workspace_id,
+        runType: "plan",
+        provider: "claude",
+        modelName: AI_MODELS.CLAUDE_SONNET,
+        promptVersion: PLAN_PROMPT_VERSION,
+        inputHash: hashText(
+          JSON.stringify({
+            planning_window: resolvedWindow,
+            candidate_ids: candidates.map((candidate) => candidate.id),
+            scope,
+          }),
+        ),
+        error: normalized.message,
+      });
+    }
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Planning failed" },
+      { error: normalized.userMessage },
       { status: 502 },
     );
   }
@@ -150,11 +201,12 @@ export async function POST(req: NextRequest) {
   // -------------------------------------------------------------------------
   // Persist ai_run
   // -------------------------------------------------------------------------
-  const { data: aiRunRow } = await supabase
-    .from("ai_runs")
-    .insert({
-      user_id: user.id,
-      workspace_id,
+  const aiRunId = await persistAIRun({
+    supabase,
+    userId: user.id,
+    workspaceId: workspace_id,
+    source: "assistant-plan",
+    run: {
       run_type: "plan",
       provider: "claude",
       model_name: AI_MODELS.CLAUDE_SONNET,
@@ -171,9 +223,8 @@ export async function POST(req: NextRequest) {
           : null,
       status: "success",
       error_text: null,
-    })
-    .select("id")
-    .single();
+    },
+  });
 
   // -------------------------------------------------------------------------
   // Persist plan_session
@@ -181,7 +232,7 @@ export async function POST(req: NextRequest) {
   const sessionInsert: Record<string, unknown> = {
     user_id: user.id,
     workspace_id,
-    ai_run_id: aiRunRow?.id ?? null,
+    ai_run_id: aiRunId,
     planning_window: resolvedWindow,
     scope: scope ?? null,
     status: "draft",

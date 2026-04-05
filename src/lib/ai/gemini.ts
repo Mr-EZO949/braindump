@@ -26,10 +26,13 @@ import {
   AI_TEMPERATURE,
   AI_COST_PER_1M_TOKENS,
 } from "./config";
+import { MalformedAIResponseError } from "./errors";
 import {
   validateExtractionOutput,
   validateEdgeInferenceOutput,
   validatePlanOutput,
+  validateEmbeddingOutput,
+  validateRerankOutput,
 } from "./validation";
 import {
   buildExtractionPrompt,
@@ -86,6 +89,37 @@ function baseRun(
   };
 }
 
+function malformedResponse(params: {
+  message: string;
+  rawOutput: string;
+  runType: AIRun["run_type"];
+  modelName: string;
+  promptVersion: string;
+  inputHash: string | null;
+  outputHash: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  latencyMs: number;
+  estimatedCost: number | null;
+  cause: unknown;
+}): MalformedAIResponseError {
+  return new MalformedAIResponseError({
+    message: params.message,
+    rawOutput: params.rawOutput,
+    runType: params.runType,
+    provider: "gemini",
+    modelName: params.modelName,
+    promptVersion: params.promptVersion,
+    inputHash: params.inputHash,
+    outputHash: params.outputHash,
+    inputTokens: params.inputTokens,
+    outputTokens: params.outputTokens,
+    latencyMs: params.latencyMs,
+    estimatedCost: params.estimatedCost,
+    cause: params.cause,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // GeminiProvider
 // ---------------------------------------------------------------------------
@@ -123,9 +157,30 @@ export class GeminiProvider implements AIProvider {
 
     const inputTokens = usage?.promptTokenCount ?? 0;
     const outputTokens = usage?.candidatesTokenCount ?? 0;
+    const latencyMs = Date.now() - start;
+    const estimatedCost = estimateCost(inputTokens, outputTokens);
 
-    const parsed = JSON.parse(text);
-    const output = validateExtractionOutput(parsed);
+    let output: ExtractionOutput;
+    try {
+      const parsed = JSON.parse(text);
+      output = validateExtractionOutput(parsed);
+    } catch (error) {
+      throw malformedResponse({
+        message:
+          error instanceof Error ? error.message : "Extraction output was malformed",
+        rawOutput: text,
+        runType: "extract",
+        modelName: AI_MODELS.GEMINI_FAST,
+        promptVersion: EXTRACT_PROMPT_VERSION,
+        inputHash: run.input_hash,
+        outputHash: shortHash(text),
+        inputTokens,
+        outputTokens,
+        latencyMs,
+        estimatedCost,
+        cause: error,
+      });
+    }
 
     return {
       output,
@@ -134,8 +189,8 @@ export class GeminiProvider implements AIProvider {
         output_hash: shortHash(text),
         input_tokens: inputTokens,
         output_tokens: outputTokens,
-        latency_ms: Date.now() - start,
-        estimated_cost: estimateCost(inputTokens, outputTokens),
+        latency_ms: latencyMs,
+        estimated_cost: estimatedCost,
       },
     };
   }
@@ -174,13 +229,41 @@ export class GeminiProvider implements AIProvider {
 
     const costPerM = AI_COST_PER_1M_TOKENS.GEMINI_EMBEDDING_INPUT;
     const estimated_cost = costPerM / 1_000_000; // treat as ~1 token unit per call
+    const latencyMs = Date.now() - start;
+
+    let output: EmbeddingOutput;
+    try {
+      output = validateEmbeddingOutput({
+        embedding,
+        token_count: tokenCount,
+      });
+    } catch (error) {
+      throw malformedResponse({
+        message:
+          error instanceof Error ? error.message : "Embedding output was malformed",
+        rawOutput: JSON.stringify({
+          embedding,
+          token_count: tokenCount,
+        }),
+        runType: "embed",
+        modelName: AI_MODELS.GEMINI_EMBEDDING,
+        promptVersion: "embed-v1",
+        inputHash: run.input_hash,
+        outputHash: shortHash(embedding.slice(0, 8).join(",")),
+        inputTokens: null,
+        outputTokens: null,
+        latencyMs,
+        estimatedCost: estimated_cost,
+        cause: error,
+      });
+    }
 
     return {
-      output: { embedding, token_count: tokenCount },
+      output,
       run: {
         ...run,
         output_hash: shortHash(embedding.slice(0, 8).join(",")),
-        latency_ms: Date.now() - start,
+        latency_ms: latencyMs,
         estimated_cost,
       },
     };
@@ -221,13 +304,35 @@ export class GeminiProvider implements AIProvider {
         return { id, score };
       })
       .sort((a, b) => b.score - a.score);
+    const latencyMs = Date.now() - start;
+
+    let output: RerankOutput;
+    try {
+      output = validateRerankOutput({ ranked });
+    } catch (error) {
+      throw malformedResponse({
+        message:
+          error instanceof Error ? error.message : "Rerank output was malformed",
+        rawOutput: JSON.stringify({ ranked }),
+        runType: "rerank",
+        modelName: "lexical",
+        promptVersion: "rerank-fallback-v1",
+        inputHash: run.input_hash,
+        outputHash: shortHash(ranked.map((r) => r.id).join(",")),
+        inputTokens: null,
+        outputTokens: null,
+        latencyMs,
+        estimatedCost: 0,
+        cause: error,
+      });
+    }
 
     return {
-      output: { ranked },
+      output,
       run: {
         ...run,
         output_hash: shortHash(ranked.map((r) => r.id).join(",")),
-        latency_ms: Date.now() - start,
+        latency_ms: latencyMs,
       },
     };
   }
@@ -265,9 +370,30 @@ export class GeminiProvider implements AIProvider {
 
     const inputTokens = usage?.promptTokenCount ?? 0;
     const outputTokens = usage?.candidatesTokenCount ?? 0;
+    const latencyMs = Date.now() - start;
+    const estimatedCost = estimateCost(inputTokens, outputTokens);
 
-    const parsed = JSON.parse(text);
-    const output = validateEdgeInferenceOutput(parsed);
+    let output: EdgeInferenceOutput;
+    try {
+      const parsed = JSON.parse(text);
+      output = validateEdgeInferenceOutput(parsed);
+    } catch (error) {
+      throw malformedResponse({
+        message:
+          error instanceof Error ? error.message : "Edge inference output was malformed",
+        rawOutput: text,
+        runType: "infer_edge",
+        modelName: AI_MODELS.GEMINI_PRO,
+        promptVersion: INFER_EDGE_PROMPT_VERSION,
+        inputHash: run.input_hash,
+        outputHash: shortHash(text),
+        inputTokens,
+        outputTokens,
+        latencyMs,
+        estimatedCost,
+        cause: error,
+      });
+    }
 
     return {
       output,
@@ -276,8 +402,8 @@ export class GeminiProvider implements AIProvider {
         output_hash: shortHash(text),
         input_tokens: inputTokens,
         output_tokens: outputTokens,
-        latency_ms: Date.now() - start,
-        estimated_cost: estimateCost(inputTokens, outputTokens),
+        latency_ms: latencyMs,
+        estimated_cost: estimatedCost,
       },
     };
   }
@@ -363,9 +489,29 @@ export class GeminiProvider implements AIProvider {
 
     const inputTokens = usage?.promptTokenCount ?? 0;
     const outputTokens = usage?.candidatesTokenCount ?? 0;
+    const latencyMs = Date.now() - start;
+    const estimatedCost = estimateCost(inputTokens, outputTokens);
 
-    const parsed = JSON.parse(text);
-    const output = validatePlanOutput(parsed);
+    let output: PlanOutput;
+    try {
+      const parsed = JSON.parse(text);
+      output = validatePlanOutput(parsed);
+    } catch (error) {
+      throw malformedResponse({
+        message: error instanceof Error ? error.message : "Plan output was malformed",
+        rawOutput: text,
+        runType: "plan",
+        modelName: AI_MODELS.GEMINI_FAST,
+        promptVersion: PLAN_PROMPT_VERSION,
+        inputHash: run.input_hash,
+        outputHash: shortHash(text),
+        inputTokens,
+        outputTokens,
+        latencyMs,
+        estimatedCost,
+        cause: error,
+      });
+    }
 
     return {
       output,
@@ -374,9 +520,15 @@ export class GeminiProvider implements AIProvider {
         output_hash: shortHash(text),
         input_tokens: inputTokens,
         output_tokens: outputTokens,
-        latency_ms: Date.now() - start,
-        estimated_cost: estimateCost(inputTokens, outputTokens),
+        latency_ms: latencyMs,
+        estimated_cost: estimatedCost,
       },
     };
+  }
+
+  // checkMerge is a Claude-only task — Gemini provider does not implement it.
+  // In practice the registered hybrid provider always routes this to Claude.
+  async checkMerge(): Promise<never> {
+    throw new Error("checkMerge is not supported by GeminiProvider. Use ClaudeProvider.");
   }
 }

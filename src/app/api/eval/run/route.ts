@@ -8,13 +8,30 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { aiProvider } from "@/lib/ai";
+import { ClaudeProvider } from "@/lib/ai/claude";
+import { AI_MODELS } from "@/lib/ai/config";
 import {
   BRAIN_DUMP_FIXTURES,
   EDGE_FIXTURES,
   ASSISTANT_FIXTURES,
   PLANNER_FIXTURES,
+  MERGE_FIXTURES,
 } from "@/lib/ai/eval/fixtures";
 import { PROMPT_VERSIONS } from "@/lib/ai/prompts";
+import { emitAIRunStructuredLog } from "@/lib/ai/telemetry";
+
+// ---------------------------------------------------------------------------
+// Release gates — minimum pass rates per suite before a prompt/model change
+// can be considered safe to ship. Checked at the end of every eval run.
+// ---------------------------------------------------------------------------
+const RELEASE_GATES = {
+  extraction: 0.65,
+  edges: 0.70,
+  assistant: 0.75,
+  planner: 0.75,
+  merge: 0.70,
+  overall: 0.70,
+} as const;
 
 type ExtractionResult = {
   fixture_id: string;
@@ -61,7 +78,24 @@ type PlannerResult = {
   error?: string;
 };
 
-type Suite = "all" | "extraction" | "edges" | "assistant" | "planner";
+type MergeResult = {
+  fixture_id: string;
+  passed: boolean;
+  expected_same_entity: boolean;
+  actual_same_entity: boolean;
+  confidence: number;
+  reason: string;
+  error?: string;
+};
+
+type GateResult = {
+  suite: string;
+  pass_rate: number;
+  threshold: number;
+  gate_passed: boolean;
+};
+
+type Suite = "all" | "extraction" | "edges" | "assistant" | "planner" | "merge";
 
 export async function POST(req: NextRequest) {
   if (process.env.NODE_ENV === "production") {
@@ -70,23 +104,60 @@ export async function POST(req: NextRequest) {
 
   const suite = (req.nextUrl.searchParams.get("suite") ?? "all") as Suite;
 
+  // Model comparison: ?model=haiku uses Claude Haiku instead of Sonnet.
+  // Run the eval twice (once per model) and compare results manually.
+  // Example: POST /api/eval/run?model=haiku
+  const modelParam = req.nextUrl.searchParams.get("model");
+  const modelName =
+    modelParam === "haiku"
+      ? "claude-haiku-4-5-20251001"
+      : modelParam === "sonnet"
+        ? AI_MODELS.CLAUDE_SONNET
+        : null; // null = use default registered provider
+
+  // Build a provider scoped to the requested model (or fall back to the shared default).
+  const provider = modelName
+    ? (() => {
+        const claudeKey = process.env.ANTHROPIC_API_KEY;
+        if (!claudeKey) throw new Error("ANTHROPIC_API_KEY not set");
+        const claude = new ClaudeProvider(claudeKey, modelName);
+        // Wrap to satisfy AIProvider interface (embedding/rerank fall back to defaults)
+        const base = aiProvider();
+        return {
+          extractNodes: (i: Parameters<typeof claude.extractNodes>[0]) => claude.extractNodes(i),
+          inferEdge: (i: Parameters<typeof claude.inferEdge>[0]) => claude.inferEdge(i),
+          answerAssistant: (i: Parameters<typeof claude.answerAssistant>[0]) => claude.answerAssistant(i),
+          buildPlan: (i: Parameters<typeof claude.buildPlan>[0]) => claude.buildPlan(i),
+          checkMerge: (i: Parameters<typeof claude.checkMerge>[0]) => claude.checkMerge(i),
+          generateEmbedding: base.generateEmbedding.bind(base),
+          rerankCandidates: base.rerankCandidates.bind(base),
+        };
+      })()
+    : aiProvider();
+
   const report: {
+    model: string;
     prompt_versions: typeof PROMPT_VERSIONS;
     extraction: ExtractionResult[];
     edges: EdgeResult[];
     assistant: AssistantResult[];
     planner: PlannerResult[];
+    merge: MergeResult[];
     summary: { total: number; passed: number; failed: number; pass_rate: string };
+    release_gates: GateResult[];
+    gates_passed: boolean;
   } = {
+    model: modelName ?? AI_MODELS.CLAUDE_SONNET,
     prompt_versions: PROMPT_VERSIONS,
     extraction: [],
     edges: [],
     assistant: [],
     planner: [],
+    merge: [],
     summary: { total: 0, passed: 0, failed: 0, pass_rate: "0%" },
+    release_gates: [],
+    gates_passed: false,
   };
-
-  const provider = aiProvider();
 
   // ---------------------------------------------------------------------------
   // Extraction eval
@@ -98,6 +169,16 @@ export async function POST(req: NextRequest) {
           raw_text: fixture.input,
           workspace_id: "eval",
           user_id: "eval",
+        });
+        emitAIRunStructuredLog({
+          source: "eval",
+          userId: null,
+          workspaceId: "eval",
+          run: {
+            ...result.run,
+            status: "success",
+            error_text: null,
+          },
         });
         const extractedNodes = result.output.proposed_nodes;
 
@@ -176,6 +257,19 @@ export async function POST(req: NextRequest) {
           extracted_relations: extractedRelations,
         });
       } catch (error) {
+        emitAIRunStructuredLog({
+          source: "eval",
+          userId: null,
+          workspaceId: "eval",
+          run: {
+            run_type: "extract",
+            provider: "claude",
+            model_name: AI_MODELS.CLAUDE_SONNET,
+            prompt_version: PROMPT_VERSIONS.extract,
+            status: "failed",
+            error_text: error instanceof Error ? error.message : "Unknown extraction error",
+          },
+        });
         report.extraction.push({
           fixture_id: fixture.id,
           input: fixture.input.slice(0, 80),
@@ -208,6 +302,16 @@ export async function POST(req: NextRequest) {
             summary: fixture.target_summary,
           },
         });
+        emitAIRunStructuredLog({
+          source: "eval",
+          userId: null,
+          workspaceId: "eval",
+          run: {
+            ...result.run,
+            status: "success",
+            error_text: null,
+          },
+        });
 
         const output = result.output;
         const relatedMatch = output.related === fixture.expected_related;
@@ -226,6 +330,19 @@ export async function POST(req: NextRequest) {
           explanation: output.explanation,
         });
       } catch (error) {
+        emitAIRunStructuredLog({
+          source: "eval",
+          userId: null,
+          workspaceId: "eval",
+          run: {
+            run_type: "infer_edge",
+            provider: "claude",
+            model_name: AI_MODELS.CLAUDE_SONNET,
+            prompt_version: PROMPT_VERSIONS.infer_edge,
+            status: "failed",
+            error_text: error instanceof Error ? error.message : "Unknown edge inference error",
+          },
+        });
         report.edges.push({
           fixture_id: fixture.id,
           passed: false,
@@ -251,6 +368,17 @@ export async function POST(req: NextRequest) {
           scope: fixture.scope,
           mode: fixture.mode,
         });
+        emitAIRunStructuredLog({
+          source: "eval",
+          userId: null,
+          workspaceId: "eval",
+          run: {
+            ...result.run,
+            prompt_version: `${PROMPT_VERSIONS.assistant}:${fixture.mode}`,
+            status: "success",
+            error_text: null,
+          },
+        });
 
         const answer = result.output.answer.toLowerCase();
 
@@ -273,6 +401,19 @@ export async function POST(req: NextRequest) {
           answer_preview: result.output.answer.slice(0, 200),
         });
       } catch (error) {
+        emitAIRunStructuredLog({
+          source: "eval",
+          userId: null,
+          workspaceId: "eval",
+          run: {
+            run_type: "assistant",
+            provider: "claude",
+            model_name: AI_MODELS.CLAUDE_SONNET,
+            prompt_version: `${PROMPT_VERSIONS.assistant}:${fixture.mode}`,
+            status: "failed",
+            error_text: error instanceof Error ? error.message : "Unknown assistant error",
+          },
+        });
         report.assistant.push({
           fixture_id: fixture.id,
           mode: fixture.mode,
@@ -295,6 +436,16 @@ export async function POST(req: NextRequest) {
         const result = await provider.buildPlan({
           planning_window: fixture.planning_window,
           candidate_nodes: fixture.candidate_nodes,
+        });
+        emitAIRunStructuredLog({
+          source: "eval",
+          userId: null,
+          workspaceId: "eval",
+          run: {
+            ...result.run,
+            status: "success",
+            error_text: null,
+          },
         });
 
         const blocks = result.output.blocks;
@@ -329,6 +480,19 @@ export async function POST(req: NextRequest) {
           block_titles: blocks.map((b) => `${b.title} (${b.block_type}, ${b.duration_minutes}m)`),
         });
       } catch (error) {
+        emitAIRunStructuredLog({
+          source: "eval",
+          userId: null,
+          workspaceId: "eval",
+          run: {
+            run_type: "plan",
+            provider: "claude",
+            model_name: AI_MODELS.CLAUDE_SONNET,
+            prompt_version: PROMPT_VERSIONS.plan,
+            status: "failed",
+            error_text: error instanceof Error ? error.message : "Unknown planner error",
+          },
+        });
         report.planner.push({
           fixture_id: fixture.id,
           passed: false,
@@ -345,6 +509,76 @@ export async function POST(req: NextRequest) {
   }
 
   // ---------------------------------------------------------------------------
+  // Merge suggestion eval
+  // ---------------------------------------------------------------------------
+  if (suite === "all" || suite === "merge") {
+    for (const fixture of MERGE_FIXTURES) {
+      try {
+        const result = await provider.checkMerge({
+          new_node: {
+            title: fixture.node_a_title,
+            summary: fixture.node_a_summary,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            node_type: fixture.node_a_type as any,
+          },
+          existing_node: {
+            title: fixture.node_b_title,
+            summary: fixture.node_b_summary,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            node_type: fixture.node_b_type as any,
+          },
+          similarity: fixture.similarity,
+        });
+        emitAIRunStructuredLog({
+          source: "eval",
+          userId: null,
+          workspaceId: "eval",
+          run: {
+            ...result.run,
+            status: "success",
+            error_text: null,
+          },
+        });
+
+        const output = result.output;
+        const passed = output.same_entity === fixture.expected_same_entity;
+
+        report.merge.push({
+          fixture_id: fixture.id,
+          passed,
+          expected_same_entity: fixture.expected_same_entity,
+          actual_same_entity: output.same_entity,
+          confidence: output.confidence,
+          reason: output.reason,
+        });
+      } catch (error) {
+        emitAIRunStructuredLog({
+          source: "eval",
+          userId: null,
+          workspaceId: "eval",
+          run: {
+            run_type: "merge_check",
+            provider: "claude",
+            model_name: modelName ?? AI_MODELS.CLAUDE_SONNET,
+            prompt_version: PROMPT_VERSIONS.merge_check,
+            status: "failed",
+            error_text: error instanceof Error ? error.message : "Unknown merge check error",
+          },
+        });
+        report.merge.push({
+          fixture_id: fixture.id,
+          passed: false,
+          expected_same_entity: fixture.expected_same_entity,
+          actual_same_entity: false,
+          confidence: 0,
+          reason: "",
+          error: error instanceof Error ? error.message : "Unknown merge check error",
+        });
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Summary
   // ---------------------------------------------------------------------------
   const allResults = [
@@ -352,6 +586,7 @@ export async function POST(req: NextRequest) {
     ...report.edges.map((r) => r.passed),
     ...report.assistant.map((r) => r.passed),
     ...report.planner.map((r) => r.passed),
+    ...report.merge.map((r) => r.passed),
   ];
   report.summary.total = allResults.length;
   report.summary.passed = allResults.filter(Boolean).length;
@@ -360,6 +595,33 @@ export async function POST(req: NextRequest) {
     allResults.length > 0
       ? `${Math.round((report.summary.passed / allResults.length) * 100)}%`
       : "0%";
+
+  // ---------------------------------------------------------------------------
+  // Release gates — evaluate minimum pass-rate thresholds per suite
+  // ---------------------------------------------------------------------------
+  function suiteRate(results: { passed: boolean }[]): number {
+    if (results.length === 0) return 1; // empty suite: skip gate (vacuously passes)
+    return results.filter((r) => r.passed).length / results.length;
+  }
+
+  const suiteRates: Record<keyof typeof RELEASE_GATES, number> = {
+    extraction: suiteRate(report.extraction),
+    edges: suiteRate(report.edges),
+    assistant: suiteRate(report.assistant),
+    planner: suiteRate(report.planner),
+    merge: suiteRate(report.merge),
+    overall: report.summary.total > 0 ? report.summary.passed / report.summary.total : 1,
+  };
+
+  report.release_gates = (Object.keys(RELEASE_GATES) as (keyof typeof RELEASE_GATES)[]).map(
+    (key) => ({
+      suite: key,
+      pass_rate: Math.round(suiteRates[key] * 100) / 100,
+      threshold: RELEASE_GATES[key],
+      gate_passed: suiteRates[key] >= RELEASE_GATES[key],
+    }),
+  );
+  report.gates_passed = report.release_gates.every((g) => g.gate_passed);
 
   return NextResponse.json(report);
 }

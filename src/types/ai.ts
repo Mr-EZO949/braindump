@@ -34,6 +34,24 @@ export type AIRunType =
 
 export type AIRunStatus = "success" | "failed" | "retrying";
 
+export type AIRetryJobType = "embed_node" | "analyze_node";
+
+export type AIRetryJobStatus = "queued" | "processing" | "completed" | "failed";
+
+export type AIJobType =
+  | "embedding_backfill"
+  | "score_recompute"
+  | "lifecycle_cascade"
+  | "connection_batch"
+  | "duplicate_detection";
+
+export type AIJobStatus =
+  | "queued"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "dead_lettered";
+
 export type FeedbackEventType =
   | "accept_node"
   | "reject_node"
@@ -155,6 +173,41 @@ export interface AIArtifact {
   payload: Record<string, unknown>;
   linked_entity_ids: string[] | null;
   created_at: string;
+}
+
+export interface AIRetryJob {
+  id: string;
+  user_id: string;
+  workspace_id: string | null;
+  job_type: AIRetryJobType;
+  dedupe_key: string;
+  payload: Record<string, unknown>;
+  status: AIRetryJobStatus;
+  attempt_count: number;
+  available_at: string;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIJob {
+  id: string;
+  user_id: string;
+  workspace_id: string | null;
+  job_type: AIJobType;
+  idempotency_key: string;
+  payload: Record<string, unknown>;
+  status: AIJobStatus;
+  attempt_count: number;
+  max_attempts: number;
+  available_at: string;
+  locked_at: string | null;
+  completed_at: string | null;
+  last_error: string | null;
+  dead_letter_reason: string | null;
+  result_summary: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -335,4 +388,32 @@ export interface PlanInput {
 export interface PlanOutput {
   blocks: Omit<PlanBlock, "id" | "plan_session_id">[];
   prompt_version: string;
+}
+
+export interface MergeCheckInput {
+  new_node: { title: string; summary: string | null; node_type: NodeType };
+  existing_node: { title: string; summary: string | null; node_type: NodeType };
+  similarity: number;
+}
+
+export interface MergeCheckOutput {
+  same_entity: boolean;
+  confidence: number;
+  reason: string;
+  prompt_version: string;
+}
+
+export type MergeSuggestionStatus = "pending" | "dismissed" | "merged" | "never";
+
+export interface MergeSuggestion {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  new_node_id: string;
+  existing_node_id: string;
+  similarity: number;
+  ai_confidence: number | null;
+  ai_reason: string | null;
+  status: MergeSuggestionStatus;
+  created_at: string;
 }

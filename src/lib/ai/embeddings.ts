@@ -4,7 +4,18 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aiProvider } from "@/lib/ai/index";
-import { AI_FLAGS, AI_MODELS, AI_CANDIDATES } from "@/lib/ai/config";
+import { AI_FLAGS, AI_MODELS, AI_CANDIDATES, AI_INGESTION, AI_RETRY_QUEUE } from "@/lib/ai/config";
+import {
+  executeWithRetry,
+  hashText,
+  logFailedAIRun,
+  logMalformedOutputFailure,
+  normalizeAIError,
+  type AIErrorCode,
+  isMalformedAIResponseError,
+} from "@/lib/ai/errors";
+import { persistAIRun } from "@/lib/ai/telemetry";
+import type { AIRetryJob } from "@/types/ai";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,38 +50,22 @@ export interface MatchedNode {
 
 export type EmbedResult =
   | { ok: true }
-  | { ok: false; error: string };
+  | { ok: false; error: string; errorCode: AIErrorCode; queued?: boolean };
 
-// ---------------------------------------------------------------------------
-// generateAndStoreEmbedding
-// Embeds a node's title + summary and upserts into node_embeddings.
-// Safe to call after node acceptance — catches all errors internally.
-// ---------------------------------------------------------------------------
+const EMBEDDING_RETRY_JOB_TYPE = "embed_node";
 
-export async function generateAndStoreEmbedding(
-  params: EmbedNodeParams
-): Promise<EmbedResult> {
-  if (!AI_FLAGS.EMBEDDING_ENABLED) {
-    return { ok: false, error: "Embedding disabled" };
-  }
+function buildEmbeddingRetryDedupeKey(nodeId: string) {
+  return `${EMBEDDING_RETRY_JOB_TYPE}:${nodeId}`;
+}
 
-  const { nodeId, title, summary, workspaceId, userId, supabase } = params;
-
-  const inputText = [title, summary].filter(Boolean).join("\n").trim();
-  if (!inputText) {
-    return { ok: false, error: "Empty input text" };
-  }
-
-  let embeddingVector: number[];
-  try {
-    const result = await aiProvider().generateEmbedding({ text: inputText });
-    embeddingVector = result.output.embedding;
-  } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : "Embedding generation failed",
-    };
-  }
+async function upsertEmbeddingVector(params: {
+  nodeId: string;
+  workspaceId: string;
+  userId: string;
+  embeddingVector: number[];
+  supabase: SupabaseClient;
+}): Promise<EmbedResult> {
+  const { nodeId, workspaceId, userId, embeddingVector, supabase } = params;
 
   const { error: upsertError } = await supabase
     .from("node_embeddings")
@@ -87,10 +82,186 @@ export async function generateAndStoreEmbedding(
     );
 
   if (upsertError) {
-    return { ok: false, error: upsertError.message };
+    return { ok: false, error: upsertError.message, errorCode: "unknown" };
   }
 
   return { ok: true };
+}
+
+async function enqueueEmbeddingRetry(params: {
+  nodeId: string;
+  title: string;
+  summary: string | null;
+  workspaceId: string;
+  userId: string;
+  supabase: SupabaseClient;
+  error: string;
+}): Promise<boolean> {
+  const { nodeId, title, summary, workspaceId, userId, supabase, error } = params;
+  const now = new Date();
+
+  const { error: queueError } = await supabase.from("ai_retry_queue").upsert(
+    {
+      user_id: userId,
+      workspace_id: workspaceId,
+      job_type: EMBEDDING_RETRY_JOB_TYPE,
+      dedupe_key: buildEmbeddingRetryDedupeKey(nodeId),
+      payload: {
+        node_id: nodeId,
+        title,
+        summary,
+      },
+      status: "queued",
+      available_at: new Date(now.getTime() + AI_RETRY_QUEUE.DELAY_MS).toISOString(),
+      last_error: error.slice(0, 1000),
+      updated_at: now.toISOString(),
+    },
+    { onConflict: "dedupe_key" }
+  );
+
+  if (queueError) {
+    console.error("[ai/embeddings] failed to queue retry:", queueError);
+    return false;
+  }
+
+  return true;
+}
+
+async function requestEmbedding(params: {
+  inputText: string;
+  userId: string;
+  workspaceId: string;
+  supabase: SupabaseClient;
+}) {
+  const { inputText, userId, workspaceId, supabase } = params;
+
+  const result = await executeWithRetry({
+    maxRetries: AI_INGESTION.EMBEDDING_MAX_RETRIES,
+    operation: () => aiProvider().generateEmbedding({ text: inputText }),
+    onRetry: async ({ attempt, error }) => {
+      await logFailedAIRun({
+        supabase,
+        userId,
+        workspaceId,
+        runType: "embed",
+        provider: "gemini",
+        modelName: AI_MODELS.GEMINI_EMBEDDING,
+        promptVersion: "embed-v1",
+        inputHash: hashText(inputText),
+        status: "retrying",
+        error: `Attempt ${attempt + 1} failed: ${error.message}`,
+      });
+    },
+  });
+
+  await persistAIRun({
+    supabase,
+    userId,
+    workspaceId,
+    source: "embeddings",
+    run: result.run,
+  });
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// generateAndStoreEmbedding
+// Embeds a node's title + summary and upserts into node_embeddings.
+// Safe to call after node acceptance — catches all errors internally.
+// ---------------------------------------------------------------------------
+
+export async function generateAndStoreEmbedding(
+  params: EmbedNodeParams,
+  options?: {
+    allowQueue?: boolean;
+  }
+): Promise<EmbedResult> {
+  if (!AI_FLAGS.EMBEDDING_ENABLED) {
+    return { ok: false, error: "Embedding disabled", errorCode: "unknown" };
+  }
+
+  const { nodeId, title, summary, workspaceId, userId, supabase } = params;
+  const allowQueue = options?.allowQueue ?? true;
+
+  const inputText = [title, summary].filter(Boolean).join("\n").trim();
+  if (!inputText) {
+    return { ok: false, error: "Empty input text", errorCode: "unknown" };
+  }
+
+  let embeddingVector: number[];
+  try {
+    const result = await requestEmbedding({
+      inputText,
+      userId,
+      workspaceId,
+      supabase,
+    });
+    embeddingVector = result.output.embedding;
+  } catch (err) {
+    const normalized = normalizeAIError(err, "Embedding generation failed");
+
+    if (isMalformedAIResponseError(err)) {
+      await logMalformedOutputFailure({
+        supabase,
+        userId,
+        workspaceId,
+        error: err,
+        linkedEntityIds: [nodeId],
+      });
+    } else {
+      await logFailedAIRun({
+        supabase,
+        userId,
+        workspaceId,
+        runType: "embed",
+        provider: "gemini",
+        modelName: AI_MODELS.GEMINI_EMBEDDING,
+        promptVersion: "embed-v1",
+        inputHash: hashText(inputText),
+        status: "failed",
+        error: normalized.message,
+      });
+    }
+
+    if (allowQueue && normalized.retryable) {
+      const queued = await enqueueEmbeddingRetry({
+        nodeId,
+        title,
+        summary,
+        workspaceId,
+        userId,
+        supabase,
+        error: normalized.message,
+      });
+
+      if (queued) {
+        return {
+          ok: false,
+          error:
+            normalized.code === "rate_limit"
+              ? "Embedding generation is paused due to provider rate limits. It will resume shortly."
+              : "Embedding generation was deferred and will retry shortly.",
+          errorCode: normalized.code,
+          queued: true,
+        };
+      }
+    }
+
+    return {
+      ok: false,
+      error: normalized.userMessage,
+      errorCode: normalized.code,
+    };
+  }
+
+  return upsertEmbeddingVector({
+    nodeId,
+    workspaceId,
+    userId,
+    embeddingVector,
+    supabase,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +283,38 @@ export async function matchNodes(
     limit = AI_CANDIDATES.RETRIEVAL_K,
   } = params;
 
-  const result = await aiProvider().generateEmbedding({ text: queryText });
+  const result = await requestEmbedding({
+    inputText: queryText,
+    userId,
+    workspaceId,
+    supabase,
+  }).catch(async (err) => {
+    const normalized = normalizeAIError(err, "Embedding generation failed");
+
+    if (isMalformedAIResponseError(err)) {
+      await logMalformedOutputFailure({
+        supabase,
+        userId,
+        workspaceId,
+        error: err,
+      });
+    } else {
+      await logFailedAIRun({
+        supabase,
+        userId,
+        workspaceId,
+        runType: "embed",
+        provider: "gemini",
+        modelName: AI_MODELS.GEMINI_EMBEDDING,
+        promptVersion: "embed-v1",
+        inputHash: hashText(queryText),
+        status: "failed",
+        error: normalized.message,
+      });
+    }
+
+    throw new Error(normalized.userMessage);
+  });
 
   const { data, error } = await supabase.rpc("match_nodes", {
     query_embedding: JSON.stringify(result.output.embedding),
@@ -126,6 +328,144 @@ export async function matchNodes(
   if (error) throw new Error(`match_nodes RPC failed: ${error.message}`);
 
   return (data ?? []) as MatchedNode[];
+}
+
+export async function processQueuedEmbeddingRetries(params: {
+  supabase: SupabaseClient;
+  userId?: string;
+  workspaceId?: string;
+  limit?: number;
+}): Promise<{ processed: number; completed: number; requeued: number; failed: number }> {
+  const { supabase, userId, workspaceId, limit = AI_RETRY_QUEUE.BATCH_SIZE } = params;
+
+  let query = supabase
+    .from("ai_retry_queue")
+    .select("id, user_id, workspace_id, payload, attempt_count, status")
+    .eq("job_type", EMBEDDING_RETRY_JOB_TYPE)
+    .eq("status", "queued")
+    .lte("available_at", new Date().toISOString())
+    .order("available_at", { ascending: true })
+    .limit(limit);
+
+  if (userId) {
+    query = query.eq("user_id", userId);
+  }
+  if (workspaceId) {
+    query = query.eq("workspace_id", workspaceId);
+  }
+
+  const { data: jobs, error } = await query;
+  if (error || !jobs?.length) {
+    if (error) {
+      console.error("[ai/embeddings] failed to fetch retry queue:", error);
+    }
+    return { processed: 0, completed: 0, requeued: 0, failed: 0 };
+  }
+
+  let processed = 0;
+  let completed = 0;
+  let requeued = 0;
+  let failed = 0;
+
+  for (const rawJob of jobs as Pick<
+    AIRetryJob,
+    "id" | "user_id" | "workspace_id" | "payload" | "attempt_count" | "status"
+  >[]) {
+    const jobPayload = rawJob.payload ?? {};
+    const nodeId = typeof jobPayload.node_id === "string" ? jobPayload.node_id : null;
+    const title = typeof jobPayload.title === "string" ? jobPayload.title : null;
+    const summary = typeof jobPayload.summary === "string" ? jobPayload.summary : null;
+    const nextAttempt = (rawJob.attempt_count ?? 0) + 1;
+
+    processed += 1;
+
+    if (!nodeId || !title || !rawJob.workspace_id) {
+      await supabase
+        .from("ai_retry_queue")
+        .update({
+          status: "failed",
+          attempt_count: nextAttempt,
+          last_error: "Retry job payload is missing required embedding fields",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", rawJob.id);
+      failed += 1;
+      continue;
+    }
+
+    const { error: lockError } = await supabase
+      .from("ai_retry_queue")
+      .update({
+        status: "processing",
+        attempt_count: nextAttempt,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", rawJob.id)
+      .eq("status", "queued");
+
+    if (lockError) {
+      console.error("[ai/embeddings] failed to claim retry job:", lockError);
+      continue;
+    }
+
+    const result = await generateAndStoreEmbedding(
+      {
+        nodeId,
+        title,
+        summary,
+        workspaceId: rawJob.workspace_id,
+        userId: rawJob.user_id,
+        supabase,
+      },
+      { allowQueue: false }
+    );
+
+    if (result.ok) {
+      await supabase
+        .from("ai_retry_queue")
+        .update({
+          status: "completed",
+          last_error: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", rawJob.id);
+      completed += 1;
+      continue;
+    }
+
+    const retryableError =
+      result.errorCode === "rate_limit" ||
+      result.errorCode === "timeout" ||
+      result.errorCode === "network" ||
+      result.errorCode === "upstream" ||
+      result.errorCode === "malformed_output";
+
+    if (retryableError && nextAttempt < AI_RETRY_QUEUE.MAX_ATTEMPTS) {
+      await supabase
+        .from("ai_retry_queue")
+        .update({
+          status: "queued",
+          available_at: new Date(Date.now() + AI_RETRY_QUEUE.DELAY_MS).toISOString(),
+          last_error: result.error.slice(0, 1000),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", rawJob.id);
+      requeued += 1;
+      continue;
+    }
+
+    await supabase
+      .from("ai_retry_queue")
+      .update({
+        status: "failed",
+        last_error: result.error.slice(0, 1000),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", rawJob.id);
+    failed += 1;
+  }
+
+  return { processed, completed, requeued, failed };
 }
 
 // ---------------------------------------------------------------------------

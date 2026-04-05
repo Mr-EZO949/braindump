@@ -44,6 +44,7 @@ export const AI_TEMPERATURE = {
   EDGE_INFERENCE: 0.1, // Structured JSON — want consistency
   ASSISTANT: 0.7, // Conversational — allow some creativity
   PLANNER: 0.2, // Structured blocks — mostly deterministic
+  MERGE_CHECK: 0.1, // Binary classification — deterministic
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -152,10 +153,72 @@ export const AI_INGESTION = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// Deferred retry queue
+// Used for non-blocking AI work that should recover after transient failures.
+// ---------------------------------------------------------------------------
+
+export const AI_RETRY_QUEUE = {
+  // Number of queued jobs to process in one opportunistic drain pass
+  BATCH_SIZE: 5,
+  // Delay before a queued retry becomes eligible again
+  DELAY_MS: 15_000,
+  // Hard cap before a queued job is marked failed
+  MAX_ATTEMPTS: 10,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Async jobs
+// Durable queue for non-interactive or large AI workloads.
+// ---------------------------------------------------------------------------
+
+export const AI_JOBS = {
+  // Max jobs to drain in one worker pass
+  BATCH_SIZE: 5,
+  // Default retry budget for durable async jobs
+  MAX_ATTEMPTS: 5,
+  // Large analyze batches can be safely queued instead of blocking the route
+  ANALYZE_ASYNC_THRESHOLD: 6,
+} as const;
+
+// ---------------------------------------------------------------------------
 // Assistant / lifecycle
 // ---------------------------------------------------------------------------
 
 export const AI_ASSISTANT = {
   // Hours to include recently completed nodes in assistant context
   COMPLETED_NODE_CONTEXT_WINDOW_HOURS: 48,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Node retention (auto-deletion)
+// Nodes past these thresholds are permanently deleted by the nightly cron.
+// All FK-cascaded child rows (edges, embeddings, events) are removed too.
+// ---------------------------------------------------------------------------
+
+export const AI_LIFECYCLE = {
+  // Days after completion before a completed node is permanently deleted
+  COMPLETED_DELETE_AFTER_DAYS: 30,
+  // Days after archiving before an archived node is permanently deleted
+  ARCHIVED_DELETE_AFTER_DAYS: 30,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Rate limits
+// Checked against recent ai_runs / raw_entries counts per user.
+// Purpose: prevent runaway scripts; not microsecond-precision enforcement.
+// ---------------------------------------------------------------------------
+
+export const AI_RATE_LIMITS = {
+  // Brain-dump extractions per hour
+  EXTRACTIONS_PER_HOUR: 30,
+  // Assistant chat messages per hour
+  CHAT_PER_HOUR: 120,
+  // AI planning sessions per hour
+  PLANS_PER_HOUR: 20,
+  // Connection-analysis batches per hour
+  ANALYSES_PER_HOUR: 60,
+  // Max characters in a single chat message
+  CHAT_MESSAGE_MAX_CHARS: 4_000,
+  // Max characters in a semantic search query
+  SEARCH_QUERY_MAX_CHARS: 500,
 } as const;

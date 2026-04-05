@@ -4,6 +4,7 @@
 // Call computeWorkspaceScores() after any event that affects node importance.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { recomputeWorkspaceEdgeDecay } from "@/lib/ai/lifecycle";
 import { getImportanceLabel } from "@/lib/graph/importance";
 
 export const SCORE_VERSION = "v4";
@@ -289,7 +290,11 @@ export async function computeWorkspaceScores(params: {
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
-}): Promise<{ recomputed: number; nodeUpdates: NodeScoreUpdate[] }> {
+}): Promise<{
+  edgeDecaySummary: { active: number; decayed: number; recomputed: number; stale: number };
+  recomputed: number;
+  nodeUpdates: NodeScoreUpdate[];
+}> {
   const { workspaceId, userId, supabase } = params;
 
   // 1. Fetch all non-archived nodes
@@ -300,7 +305,13 @@ export async function computeWorkspaceScores(params: {
     .eq("user_id", userId)
     .neq("status", "archived");
 
-  if (!nodes || nodes.length === 0) return { recomputed: 0, nodeUpdates: [] };
+  if (!nodes || nodes.length === 0) {
+    return {
+      edgeDecaySummary: { active: 0, decayed: 0, recomputed: 0, stale: 0 },
+      recomputed: 0,
+      nodeUpdates: [],
+    };
+  }
 
   // 2. Fetch active edges
   const { data: edges } = await supabase
@@ -542,8 +553,14 @@ export async function computeWorkspaceScores(params: {
         })
         .eq("id", update.id)
         .eq("user_id", userId)
-    )
+      )
   );
 
-  return { recomputed: scoreRows.length, nodeUpdates };
+  const edgeDecaySummary = await recomputeWorkspaceEdgeDecay({
+    workspaceId,
+    userId,
+    supabase,
+  });
+
+  return { edgeDecaySummary, recomputed: scoreRows.length, nodeUpdates };
 }

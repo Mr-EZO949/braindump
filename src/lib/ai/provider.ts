@@ -15,6 +15,8 @@ import type {
   AssistantOutput,
   PlanInput,
   PlanOutput,
+  MergeCheckInput,
+  MergeCheckOutput,
   AIRun,
 } from "@/types/ai";
 
@@ -74,6 +76,12 @@ export interface AIProvider {
    * Generate a structured time-block plan from a candidate work set.
    */
   buildPlan(input: PlanInput): Promise<AIProviderResult<PlanOutput>>;
+
+  /**
+   * Verify whether two nodes represent the same entity and should be merged.
+   * Called after embedding similarity filter to reduce false positives.
+   */
+  checkMerge(input: MergeCheckInput): Promise<AIProviderResult<MergeCheckOutput>>;
 }
 
 // ---------------------------------------------------------------------------

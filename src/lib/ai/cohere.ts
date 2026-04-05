@@ -8,6 +8,8 @@ import { createHash } from "crypto";
 import type { RerankProvider, AIProviderResult } from "./provider";
 import type { RerankInput, RerankOutput, AIRun } from "@/types/ai";
 import { AI_MODELS, AI_CANDIDATES, AI_COST_PER_1M_TOKENS } from "./config";
+import { MalformedAIResponseError } from "./errors";
+import { validateRerankOutput } from "./validation";
 
 function shortHash(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
@@ -51,13 +53,35 @@ export class CohereRerankProvider implements RerankProvider {
       id: input.candidates[r.index].id,
       score: r.relevanceScore,
     }));
+    const latencyMs = Date.now() - start;
+
+    let output: RerankOutput;
+    try {
+      output = validateRerankOutput({ ranked });
+    } catch (error) {
+      throw new MalformedAIResponseError({
+        message: error instanceof Error ? error.message : "Rerank output was malformed",
+        rawOutput: JSON.stringify({ ranked }),
+        runType: "rerank",
+        provider: "cohere",
+        modelName: AI_MODELS.COHERE_RERANK,
+        promptVersion: "rerank-v1",
+        inputHash: run.input_hash,
+        outputHash: shortHash(ranked.map((r) => r.id).join(",")),
+        inputTokens: null,
+        outputTokens: null,
+        latencyMs,
+        estimatedCost: AI_COST_PER_1M_TOKENS.COHERE_RERANK_PER_CALL,
+        cause: error,
+      });
+    }
 
     return {
-      output: { ranked },
+      output,
       run: {
         ...run,
         output_hash: shortHash(ranked.map((r) => r.id).join(",")),
-        latency_ms: Date.now() - start,
+        latency_ms: latencyMs,
       },
     };
   }

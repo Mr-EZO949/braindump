@@ -8,6 +8,7 @@ import type {
   PlanOutput,
   EmbeddingOutput,
   RerankOutput,
+  MergeCheckOutput,
 } from "@/types/ai";
 
 // ---------------------------------------------------------------------------
@@ -330,6 +331,30 @@ export function validatePlanOutput(raw: unknown): PlanOutput {
   });
 
   return { blocks, prompt_version: raw.prompt_version as string };
+}
+
+// ---------------------------------------------------------------------------
+// Merge-check output
+// ---------------------------------------------------------------------------
+
+export function validateMergeCheckOutput(raw: unknown): MergeCheckOutput {
+  if (!isObject(raw)) throw new Error("Merge-check output must be an object");
+  if (!isBoolean(raw.same_entity))
+    throw new Error("Merge-check output missing same_entity");
+  if (!isNumber(raw.confidence))
+    throw new Error("Merge-check output missing confidence");
+  if (!isString(raw.reason))
+    throw new Error("Merge-check output missing reason");
+
+  return {
+    same_entity: raw.same_entity,
+    confidence: Math.max(0, Math.min(1, raw.confidence)),
+    reason: raw.reason.trim(),
+    prompt_version:
+      isString(raw.prompt_version) && raw.prompt_version.trim()
+        ? raw.prompt_version
+        : "merge-check-v1",
+  };
 }
 
 // ---------------------------------------------------------------------------
