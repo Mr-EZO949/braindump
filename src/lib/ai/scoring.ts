@@ -7,7 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { recomputeWorkspaceEdgeDecay } from "@/lib/ai/lifecycle";
 import { getImportanceLabel } from "@/lib/graph/importance";
 
-export const SCORE_VERSION = "v4";
+export const SCORE_VERSION = "v5";
 
 // ---------------------------------------------------------------------------
 // Formula weights — must sum to ≤ 1.0 (remainder is blocker bonus headroom)
@@ -28,6 +28,7 @@ const PAUSED_FACTOR = 0.32;
 const CALIBRATED_SCORE_FLOOR = 12;
 const CALIBRATED_SCORE_CEILING = 94;
 const WORKSPACE_CALIBRATION_BLEND = 0.58;
+const PLANNER_FEEDBACK_WINDOW_DAYS = 30;
 
 // ---------------------------------------------------------------------------
 // Internal types (raw DB rows, typed loosely to avoid schema coupling)
@@ -48,10 +49,19 @@ export interface EdgeRow {
   status: string | null;
 }
 
-interface FeedbackRow {
+export interface FeedbackRow {
   event_type: string;
   entity_id: string;
   entity_type: string;
+  created_at?: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface PlannerLearningSignals {
+  acceptedPlanCountByNode: Map<string, number>;
+  planTaskNodeIds: Set<string>;
+  rejectedPlanCountByNode: Map<string, number>;
+  removedPlanCountByNode: Map<string, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,9 +120,69 @@ export function goalAlignment(nodeId: string, goalIds: Set<string>, edgesByNode:
   return 88;
 }
 
-/** planner_score: ever appeared in a plan task. */
-function plannerScore(nodeId: string, planNodeIds: Set<string>): number {
-  return planNodeIds.has(nodeId) ? 78 : 0;
+function parseStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+}
+
+function incrementNodeCounts(map: Map<string, number>, nodeIds: string[]) {
+  for (const nodeId of nodeIds) {
+    map.set(nodeId, (map.get(nodeId) ?? 0) + 1);
+  }
+}
+
+export function buildPlannerLearningSignals(params: {
+  feedbackEvents: FeedbackRow[];
+  planTaskNodeIds: Set<string>;
+  recentAfter?: string;
+}): PlannerLearningSignals {
+  const acceptedPlanCountByNode = new Map<string, number>();
+  const removedPlanCountByNode = new Map<string, number>();
+  const rejectedPlanCountByNode = new Map<string, number>();
+
+  for (const event of params.feedbackEvents) {
+    if (event.entity_type !== "plan_session") {
+      continue;
+    }
+
+    if (params.recentAfter && event.created_at && event.created_at < params.recentAfter) {
+      continue;
+    }
+
+    const metadata = event.metadata ?? {};
+
+    if (event.event_type === "accept_node") {
+      incrementNodeCounts(acceptedPlanCountByNode, parseStringArray(metadata.kept_node_ids));
+      incrementNodeCounts(removedPlanCountByNode, parseStringArray(metadata.removed_node_ids));
+    } else if (event.event_type === "reject_node") {
+      incrementNodeCounts(rejectedPlanCountByNode, parseStringArray(metadata.rejected_node_ids));
+    }
+  }
+
+  return {
+    acceptedPlanCountByNode,
+    planTaskNodeIds: params.planTaskNodeIds,
+    rejectedPlanCountByNode,
+    removedPlanCountByNode,
+  };
+}
+
+/** planner_score: current plan presence plus recent accepted/cut planner feedback. */
+export function plannerScore(nodeId: string, signals: PlannerLearningSignals): number {
+  let score = 0;
+
+  if (signals.planTaskNodeIds.has(nodeId)) {
+    score += 56;
+  }
+
+  score += Math.min(28, (signals.acceptedPlanCountByNode.get(nodeId) ?? 0) * 14);
+  score -= Math.min(18, (signals.removedPlanCountByNode.get(nodeId) ?? 0) * 9);
+  score -= Math.min(12, (signals.rejectedPlanCountByNode.get(nodeId) ?? 0) * 6);
+
+  return clamp(score, 0, 100);
 }
 
 /** recency_score: exponential decay from created_at. */
@@ -296,6 +366,9 @@ export async function computeWorkspaceScores(params: {
   nodeUpdates: NodeScoreUpdate[];
 }> {
   const { workspaceId, userId, supabase } = params;
+  const plannerFeedbackAfter = new Date(
+    Date.now() - PLANNER_FEEDBACK_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
 
   // 1. Fetch all non-archived nodes
   const { data: nodes } = await supabase
@@ -327,13 +400,14 @@ export async function computeWorkspaceScores(params: {
     .select("node_id")
     .eq("workspace_id", workspaceId)
     .eq("user_id", userId)
+    .eq("done", false)
     .not("node_id", "is", null);
 
   // 4. Fetch feedback events for this workspace
   const nodeIds = nodes.map((n) => n.id as string);
   const { data: feedbackEvents } = await supabase
     .from("feedback_events")
-    .select("event_type, entity_id, entity_type")
+    .select("event_type, entity_id, entity_type, metadata, created_at")
     .eq("workspace_id", workspaceId)
     .eq("user_id", userId);
 
@@ -353,6 +427,11 @@ export async function computeWorkspaceScores(params: {
   const nodeRows = nodes as NodeRow[];
   const edgeRows = (edges ?? []) as EdgeRow[];
   const planNodeIds = new Set((planTasks ?? []).map((p) => p.node_id as string).filter(Boolean));
+  const plannerSignals = buildPlannerLearningSignals({
+    feedbackEvents: (feedbackEvents ?? []) as FeedbackRow[],
+    planTaskNodeIds: planNodeIds,
+    recentAfter: plannerFeedbackAfter,
+  });
   const completedIds = new Set(nodeRows.filter((n) => n.status === "completed").map((n) => n.id));
   const goalIds = new Set(nodeRows.filter((n) => n.node_type === "goal").map((n) => n.id));
   // Active = not completed and not archived — these are nodes that still need doing.
@@ -451,7 +530,7 @@ export async function computeWorkspaceScores(params: {
   for (const node of nodeRows) {
     const u = urgency(node);
     const g = goalAlignment(node.id, goalIds, edgesByNode);
-    const p = plannerScore(node.id, planNodeIds);
+    const p = plannerScore(node.id, plannerSignals);
     const r = recency(node);
     const c = centrality(node.id, degreeMap, maxDegree);
     const uc = userConfirmation(node.id, feedbackByNode, edgeConfirmationCountByNode);

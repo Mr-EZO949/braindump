@@ -1,4 +1,4 @@
-// AI-specific types for the Thought Router AI layer.
+// AI-specific types for the BrainDump AI layer.
 // These complement graph.ts types and cover proposals, runs, feedback, and lifecycle.
 
 import type { NodeType, EdgeType, NodeStatus, EdgeStatus } from "./graph";
@@ -381,7 +381,13 @@ export interface AssistantOutput {
 
 export interface PlanInput {
   planning_window: PlanningWindow;
-  candidate_nodes: { id: string; title: string; summary: string | null; node_type: NodeType }[];
+  candidate_nodes: Array<{
+    id: string;
+    title: string;
+    summary: string | null;
+    node_type: NodeType;
+    planning_signals?: string[];
+  }>;
   workspace_context?: string;
 }
 

@@ -21,10 +21,24 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 
 type StoredPlanBlock = {
+  block_type: string;
   duration_minutes: number;
   id: string;
+  node_id: string | null;
   start_offset: number;
+  title: string;
 };
+
+function countBlockTypes(blockTypes: string[]) {
+  return blockTypes.reduce<Record<string, number>>((acc, blockType) => {
+    if (!blockType) {
+      return acc;
+    }
+
+    acc[blockType] = (acc[blockType] ?? 0) + 1;
+    return acc;
+  }, {});
+}
 
 export async function PATCH(
   req: NextRequest,
@@ -100,12 +114,17 @@ export async function PATCH(
   // -------------------------------------------------------------------------
   let edited = false;
   let reordered = false;
+  let keptNodeIds: string[] = [];
+  let removedNodeIds: string[] = [];
+  let removedBlockTypes: Record<string, number> = {};
+  let rejectedNodeIds: string[] = [];
+  let rejectedBlockTypes: Record<string, number> = {};
 
   if (accepted && final_block_ids) {
     // Fetch original blocks to determine removals/reordering and recompute offsets.
     const { data: originalBlocks, error: blocksFetchError } = await supabase
       .from("plan_blocks")
-      .select("id, duration_minutes, start_offset")
+      .select("id, duration_minutes, start_offset, block_type, node_id, title")
       .eq("plan_session_id", sessionId);
 
     if (blocksFetchError) {
@@ -133,6 +152,16 @@ export async function PATCH(
     const reorderedKeptBlocks = keptOriginalIds.some((id, index) => final_block_ids[index] !== id);
     reordered = reorderedKeptBlocks;
     edited = removedIds.length > 0 || reorderedKeptBlocks;
+
+    const removedBlocks = orderedBlocks.filter((block) => removedIds.includes(block.id));
+    const keptBlocks = orderedBlocks.filter((block) => finalSet.has(block.id));
+    keptNodeIds = keptBlocks
+      .map((block) => block.node_id)
+      .filter((nodeId): nodeId is string => Boolean(nodeId));
+    removedNodeIds = removedBlocks
+      .map((block) => block.node_id)
+      .filter((nodeId): nodeId is string => Boolean(nodeId));
+    removedBlockTypes = countBlockTypes(removedBlocks.map((block) => block.block_type));
 
     // Delete removed blocks — these represent consistently-cut work
     if (removedIds.length > 0) {
@@ -162,6 +191,22 @@ export async function PATCH(
         nextOffset += block.duration_minutes;
       }
     }
+  } else if (rejected) {
+    const { data: rejectedBlocks, error: rejectedBlocksError } = await supabase
+      .from("plan_blocks")
+      .select("node_id, block_type")
+      .eq("plan_session_id", sessionId);
+
+    if (rejectedBlocksError) {
+      return NextResponse.json({ error: "Failed to load plan blocks" }, { status: 500 });
+    }
+
+    rejectedNodeIds = (rejectedBlocks ?? [])
+      .map((block) => block.node_id as string | null)
+      .filter((nodeId): nodeId is string => Boolean(nodeId));
+    rejectedBlockTypes = countBlockTypes(
+      (rejectedBlocks ?? []).map((block) => block.block_type as string),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -184,7 +229,7 @@ export async function PATCH(
       accepted: accepted && !rejected,
       edited,
       rejected: rejected && !accepted,
-      completion_status: null,
+      completion_status: accepted ? (edited ? "accepted_edited" : "accepted") : "rejected",
     },
     { onConflict: "plan_session_id" },
   );
@@ -203,11 +248,16 @@ export async function PATCH(
       blocks_kept: final_block_ids?.length ?? null,
       blocks_edited: edited,
       blocks_reordered: accepted ? reordered : false,
+      kept_node_ids: accepted ? keptNodeIds : [],
+      removed_node_ids: accepted ? removedNodeIds : [],
+      removed_block_types: accepted ? removedBlockTypes : {},
+      rejected_node_ids: rejected ? rejectedNodeIds : [],
+      rejected_block_types: rejected ? rejectedBlockTypes : {},
     },
   });
 
-  // Phase 7.2 — recompute scores when a plan is accepted (new signal available)
-  if (accepted) {
+  // Phase 7.2 / 10.4 — recompute scores whenever planner feedback changes.
+  if (accepted || rejected) {
     void computeWorkspaceScores({
       workspaceId: session.workspace_id as string,
       userId: user.id,

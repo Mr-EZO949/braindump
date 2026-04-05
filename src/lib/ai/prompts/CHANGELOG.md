@@ -72,7 +72,12 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Planner (`plan.ts`)
 
-### plan-v1 (current)
+### plan-v2 (current)
+- Added candidate planning signals (due soon, blocked by, unblocks, carry-over, recently unblocked)
+- Added rule for manual planner items from workspace context to be schedulable with `node_id = null`
+- Why: the planner needed richer backend signals and a way to account for standalone manual tasks without flattening everything into generic blocks
+
+### plan-v1
 - Initial planning prompt with time blocks, breaks, buffer
 - Block types: focus, admin, break, buffer
 - Rules: 25-50 min focus blocks, breaks for 90+ min sessions, 10 min end buffer

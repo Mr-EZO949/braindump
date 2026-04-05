@@ -30,6 +30,22 @@ import type { PlanningWindow } from "@/types/ai";
 
 const VALID_WINDOWS: PlanningWindow[] = ["1h", "2h", "day", "custom"];
 
+function formatManualPlannerItem(item: {
+  title: string;
+  scheduled_date: string | null;
+  start_time: string | null;
+}) {
+  if (item.scheduled_date && item.start_time) {
+    return `"${item.title}" (${item.scheduled_date} ${item.start_time})`;
+  }
+
+  if (item.scheduled_date) {
+    return `"${item.title}" (${item.scheduled_date})`;
+  }
+
+  return `"${item.title}"`;
+}
+
 export async function POST(req: NextRequest) {
   // -------------------------------------------------------------------------
   // Auth
@@ -115,10 +131,12 @@ export async function POST(req: NextRequest) {
   // -------------------------------------------------------------------------
   // Build candidates + workspace context in parallel
   // -------------------------------------------------------------------------
-  const [candidates, profileCtx] = await Promise.all([
+  const [candidateBundle, profileCtx] = await Promise.all([
     buildPlannerCandidates({ workspaceId: workspace_id, userId: user.id, supabase }),
     buildWorkspaceProfileContext({ workspaceId: workspace_id, userId: user.id, supabase }),
   ]);
+
+  const { candidates, manual_items, preference_hints } = candidateBundle;
 
   if (candidates.length === 0) {
     return NextResponse.json(
@@ -132,11 +150,18 @@ export async function POST(req: NextRequest) {
     .filter((c) => c.recently_unblocked)
     .map((c) => `"${c.title}"`)
     .join(", ");
+  const manualPlannerItems = manual_items.map(formatManualPlannerItem).join(", ");
 
   const workspaceContext = [
     profileCtx.workspaceContext,
     recentlyUnblockedTitles
       ? `Recently unblocked (depended-on work just completed): ${recentlyUnblockedTitles}`
+      : null,
+    manualPlannerItems
+      ? `Standalone manual planner items to account for: ${manualPlannerItems}`
+      : null,
+    preference_hints.length > 0
+      ? `Planner preferences from recent edits: ${preference_hints.join(" ")}`
       : null,
     scope ? `Planning scope: ${scope}` : null,
   ]
@@ -157,6 +182,7 @@ export async function POST(req: NextRequest) {
         title: c.title,
         summary: c.summary,
         node_type: c.node_type,
+        planning_signals: c.planning_signals,
       })),
       workspace_context: workspaceContext || undefined,
     });

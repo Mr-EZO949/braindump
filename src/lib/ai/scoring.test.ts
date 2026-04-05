@@ -3,10 +3,13 @@ import {
   dependencyPressure,
   blocksPenalty,
   blockerBonus,
+  buildPlannerLearningSignals,
   clamp,
   calibrateWorkspaceScore,
   type EdgeRow,
+  type FeedbackRow,
   type NodeRow,
+  plannerScore,
 } from "./scoring";
 
 // ---------------------------------------------------------------------------
@@ -50,6 +53,19 @@ function buildEdgeMap(edges: EdgeRow[]): Map<string, EdgeRow[]> {
     map.get(e.target_node_id)!.push(e);
   }
   return map;
+}
+
+function makeFeedbackEvent(
+  overrides: Partial<FeedbackRow> = {},
+): FeedbackRow {
+  return {
+    event_type: "accept_node",
+    entity_id: "session-1",
+    entity_type: "plan_session",
+    created_at: new Date().toISOString(),
+    metadata: null,
+    ...overrides,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -463,5 +479,87 @@ describe("calibrateWorkspaceScore", () => {
     // Should have spread — not all the same number
     const uniqueScores = new Set(scores);
     expect(uniqueScores.size).toBeGreaterThan(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Planner learning signals
+// ---------------------------------------------------------------------------
+
+describe("plannerScore", () => {
+  it("boosts nodes that are currently in the plan queue and were kept in accepted plans", () => {
+    const signals = buildPlannerLearningSignals({
+      planTaskNodeIds: new Set(["node-a"]),
+      feedbackEvents: [
+        makeFeedbackEvent({
+          metadata: {
+            kept_node_ids: ["node-a"],
+            removed_node_ids: [],
+          },
+        }),
+      ],
+    });
+
+    expect(plannerScore("node-a", signals)).toBe(70);
+    expect(plannerScore("node-b", signals)).toBe(0);
+  });
+
+  it("penalizes nodes that users keep cutting from accepted plans", () => {
+    const signals = buildPlannerLearningSignals({
+      planTaskNodeIds: new Set(["node-a", "node-b"]),
+      feedbackEvents: [
+        makeFeedbackEvent({
+          metadata: {
+            kept_node_ids: ["node-a"],
+            removed_node_ids: ["node-b"],
+          },
+        }),
+        makeFeedbackEvent({
+          metadata: {
+            kept_node_ids: ["node-a"],
+            removed_node_ids: ["node-b"],
+          },
+        }),
+      ],
+    });
+
+    expect(plannerScore("node-a", signals)).toBeGreaterThan(plannerScore("node-b", signals));
+    expect(plannerScore("node-b", signals)).toBeLessThan(56);
+  });
+
+  it("treats full-plan rejection as a mild negative rather than wiping out the node", () => {
+    const signals = buildPlannerLearningSignals({
+      planTaskNodeIds: new Set(),
+      feedbackEvents: [
+        makeFeedbackEvent({
+          event_type: "reject_node",
+          metadata: {
+            rejected_node_ids: ["node-a", "node-a"],
+          },
+        }),
+      ],
+    });
+
+    expect(plannerScore("node-a", signals)).toBe(0);
+
+    const mixedSignals = buildPlannerLearningSignals({
+      planTaskNodeIds: new Set(["node-a"]),
+      feedbackEvents: [
+        makeFeedbackEvent({
+          metadata: {
+            kept_node_ids: ["node-a"],
+            removed_node_ids: [],
+          },
+        }),
+        makeFeedbackEvent({
+          event_type: "reject_node",
+          metadata: {
+            rejected_node_ids: ["node-a"],
+          },
+        }),
+      ],
+    });
+
+    expect(plannerScore("node-a", mixedSignals)).toBe(64);
   });
 });
