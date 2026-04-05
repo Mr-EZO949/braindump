@@ -1,6 +1,6 @@
 // POST /api/nodes/[id]/merge — Phase 11.4
 // Safe merge: reattach edges from the new/duplicate node to the existing/canonical node,
-// archive the duplicate, then trigger a ranking recompute.
+// preserve merge provenance, archive the duplicate, then trigger a ranking recompute.
 //
 // Body: { target_node_id: string; suggestion_id?: string }
 //   - id (URL param): the node being absorbed (typically the newer duplicate)
@@ -12,13 +12,33 @@
 //   - Skip if an equivalent edge (same type + same other endpoint) already exists on target
 //   - Higher-confidence existing edges are always kept when there is a conflict
 //
-// Returns: { kept_node_id, archived_node_id, edges_moved, edges_skipped }
+// Returns: { kept_node_id, archived_node_id, edges_moved, edges_skipped, provenance_relinked }
 
 import { NextRequest, NextResponse } from "next/server";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { generateAndStoreEmbedding } from "@/lib/ai/embeddings";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
+
+function uniqueIds(values: Array<string | null | undefined>) {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function buildNodeSnapshot(node: {
+  id: string;
+  node_type: string | null;
+  status: string | null;
+  summary: string | null;
+  title: string | null;
+}) {
+  return {
+    id: node.id,
+    node_type: node.node_type,
+    status: node.status,
+    summary: node.summary,
+    title: node.title,
+  };
+}
 
 export async function POST(
   req: NextRequest,
@@ -69,7 +89,7 @@ export async function POST(
   // -------------------------------------------------------------------------
   const { data: nodes, error: nodeError } = await supabase
     .from("nodes")
-    .select("id, workspace_id, title, summary, status")
+    .select("id, workspace_id, title, summary, status, node_type")
     .in("id", [sourceNodeId, target_node_id])
     .eq("user_id", user.id);
 
@@ -89,6 +109,27 @@ export async function POST(
   }
 
   const workspaceId = sourceNode.workspace_id as string;
+
+  const { data: sourceProposalRows, error: sourceProposalError } = await supabase
+    .from("proposed_nodes")
+    .select("id, ai_run_id")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", user.id)
+    .eq("accepted_node_id", sourceNodeId);
+
+  if (sourceProposalError) {
+    return NextResponse.json(
+      { error: "Failed to load merge provenance", detail: sourceProposalError.message },
+      { status: 500 },
+    );
+  }
+
+  const sourceProposedNodeIds = uniqueIds(
+    ((sourceProposalRows ?? []) as Array<{ id: string | null }>).map((row) => row.id),
+  );
+  const sourceAiRunIds = uniqueIds(
+    ((sourceProposalRows ?? []) as Array<{ ai_run_id: string | null }>).map((row) => row.ai_run_id),
+  );
 
   // -------------------------------------------------------------------------
   // Load all edges touching the source node
@@ -189,6 +230,52 @@ export async function POST(
   }
 
   // -------------------------------------------------------------------------
+  // Preserve merge lineage before re-pointing provenance
+  // -------------------------------------------------------------------------
+  const { error: lineageError } = await supabase
+    .from("node_merge_lineage")
+    .upsert(
+      {
+        user_id: user.id,
+        workspace_id: workspaceId,
+        canonical_node_id: target_node_id,
+        merged_node_id: sourceNodeId,
+        merge_suggestion_id: suggestion_id,
+        source_proposed_node_ids: sourceProposedNodeIds,
+        source_ai_run_ids: sourceAiRunIds,
+        source_snapshot: buildNodeSnapshot(sourceNode),
+        canonical_snapshot: buildNodeSnapshot(targetNode),
+      },
+      { onConflict: "canonical_node_id,merged_node_id" },
+    );
+
+  if (lineageError) {
+    return NextResponse.json(
+      { error: "Failed to store merge lineage", detail: lineageError.message },
+      { status: 500 },
+    );
+  }
+
+  if (sourceProposedNodeIds.length > 0) {
+    const { error: provenanceUpdateError } = await supabase
+      .from("proposed_nodes")
+      .update({ accepted_node_id: target_node_id })
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", user.id)
+      .eq("accepted_node_id", sourceNodeId);
+
+    if (provenanceUpdateError) {
+      return NextResponse.json(
+        {
+          error: "Failed to relink accepted proposal provenance",
+          detail: provenanceUpdateError.message,
+        },
+        { status: 500 },
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Archive the source (duplicate) node
   // -------------------------------------------------------------------------
   await supabase
@@ -234,6 +321,7 @@ export async function POST(
     archived_node_id: sourceNodeId,
     edges_moved: edgesMoved,
     edges_skipped: edgesSkipped,
+    provenance_relinked: sourceProposedNodeIds.length,
     recomputed_scores: scoreResult.nodeUpdates,
   });
 }
