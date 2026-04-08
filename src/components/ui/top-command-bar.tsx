@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { useRef, useState } from "react";
 import {
   ChevronDownIcon,
@@ -48,7 +49,7 @@ export function TopCommandBar({
             onClick={onToggleSystemPanel}
             type="button"
           >
-            TR
+            <Image src="/logo_icon.svg" alt="Menu" width={28} height={28} className="logo-trigger-icon" />
           </button>
 
           <div className="relative">

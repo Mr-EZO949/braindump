@@ -52,6 +52,12 @@
   gap: 12px;
 }
 
+.brandLogoImg {
+  height: 40px;
+  width: auto;
+  object-fit: contain;
+}
+
 .brandMark {
   display: inline-flex;
   height: 38px;

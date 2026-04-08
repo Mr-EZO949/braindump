@@ -1,9 +1,9 @@
+import Image from "next/image";
 import { redirect } from "next/navigation";
 
 import styles from "@/components/auth/auth-experience.module.css";
 import { AuthGraphScene } from "@/components/auth/auth-graph-scene";
 import { LoginForm } from "@/components/auth/login-form";
-import { ProductMark } from "@/components/ui/icons";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export default async function LoginPage() {
@@ -23,13 +23,7 @@ export default async function LoginPage() {
         <section className={styles.authColumn}>
           <div className={styles.authInner}>
             <div className={styles.brandRow}>
-              <span className={styles.brandMark}>
-                <ProductMark className="h-[18px] w-[18px]" />
-              </span>
-              <span className={styles.brandText}>
-                <span className={styles.brandName}>BrainDump</span>
-                <span className={styles.brandMeta}>Private workspace</span>
-              </span>
+              <Image src="/logo_withtext.svg" alt="BrainDump" width={170} height={34} className={styles.brandLogoImg} />
             </div>
 
             <div className={styles.authHeader}>

@@ -171,22 +171,14 @@ export function ContextRail({
               </div>
             ) : (
               <div className="mt-5">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                  Inspector
-                </p>
-                <h2 className="mt-3 text-[18px] font-semibold tracking-[-0.04em] text-[var(--color-text-primary)]">
-                  {selectedNode ? selectedNode.title : "No selection"}
-                </h2>
                 {selectedNode ? (
-                  <p className="mt-2 text-[12px] font-medium tracking-[-0.01em] text-[var(--color-text-secondary)]">
-                    {selectedNode.node_type}
-                    {" · "}
-                    {selectedNode.importance}
-                  </p>
+                  <h2 className="text-[17px] font-semibold tracking-[-0.03em] text-[var(--color-text-primary)] leading-snug">
+                    {selectedNode.title}
+                  </h2>
                 ) : (
-                  <p className="mt-2 text-[13px] leading-6 text-[var(--color-text-secondary)]">
-                    Select a node to inspect it.
-                  </p>
+                  <h2 className="text-[15px] font-medium tracking-[-0.02em] text-[var(--color-text-muted)]">
+                    Details
+                  </h2>
                 )}
               </div>
             )}
@@ -328,202 +320,132 @@ export function ContextRail({
             </div>
           ) : (
             /* Details tab */
-            <div className="shell-scrollbar flex-1 overflow-y-auto px-6 py-6">
+            <div className="shell-scrollbar flex-1 overflow-y-auto">
               {selectedNode ? (
-                <div className="space-y-6">
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                      Summary
-                    </p>
-                    <p className="mt-4 text-[13px] leading-6 text-[var(--color-text-secondary)]">
-                      {selectedNode.summary ?? "No summary yet."}
-                    </p>
+                <div className="detail-panel">
+                  {/* Summary */}
+                  <p className="detail-summary">
+                    {selectedNode.summary ?? "No summary yet."}
+                  </p>
+
+                  {/* Meta tags row */}
+                  <div className="detail-meta-row">
+                    <span className="detail-tag">{selectedNode.node_type}</span>
+                    <span className="detail-tag">{selectedNode.importance}</span>
+                    {selectedNode.status && selectedNode.status !== "active" && (
+                      <span className={`detail-tag detail-tag--${selectedNode.status}`}>
+                        {selectedNode.status}
+                      </span>
+                    )}
                   </div>
 
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                      Node
-                    </p>
-                    <div className="mt-4 grid gap-3">
-                      <div className="context-detail-row">
-                        <span className="context-detail-label">Type</span>
-                        <span className="context-detail-value">{selectedNode.node_type}</span>
-                      </div>
-                      <div className="context-detail-row">
-                        <span className="context-detail-label">Importance</span>
-                        <span className="context-detail-value">
-                          {selectedNode.importance} · {selectedNode.importanceIndex}
-                        </span>
-                      </div>
-                      {selectedNode.status && selectedNode.status !== "active" && (
-                        <div className="context-detail-row">
-                          <span className="context-detail-label">Status</span>
-                          <span className={`context-detail-value node-status-badge node-status-badge--${selectedNode.status}`}>
-                            {selectedNode.status}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
+                  {/* Score — compact inline */}
                   {(() => {
                     const displayScore = selectedNode.currentImportanceScore ?? selectedNode.importanceIndex;
-                    const isComputed = selectedNode.currentImportanceScore != null;
                     return (
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                          Why This Matters
-                        </p>
-                        <div className="mt-4 space-y-3">
-                          <div className="score-bar-row">
-                            <div
-                              className="score-bar-fill"
-                              style={{ width: `${Math.round(displayScore)}%` }}
-                            />
-                          </div>
-                          <div className="flex items-baseline justify-between">
-                            <span className="text-[22px] font-semibold tracking-[-0.04em] text-[var(--color-text-primary)]">
-                              {Math.round(displayScore)}
-                            </span>
-                            <span className="text-[11px] font-medium text-[var(--color-text-muted)]">
-                              {getScoreTier(displayScore)} · out of 100
-                            </span>
-                          </div>
-                          <p className="text-[11px] leading-[1.55] text-[var(--color-text-muted)]">
-                            {isComputed
-                              ? "Computed from urgency, goal alignment, graph centrality, recency, and your review actions, then calibrated against the rest of this workspace. Updates after every change."
-                              : "Initial estimate — score updates automatically after the ranking engine runs."}
-                          </p>
+                      <div className="detail-score">
+                        <div className="detail-score-header">
+                          <span className="detail-score-value">{Math.round(displayScore)}</span>
+                          <span className="detail-score-tier">{getScoreTier(displayScore)}</span>
+                        </div>
+                        <div className="detail-score-bar">
+                          <div
+                            className="detail-score-bar-fill"
+                            style={{ width: `${Math.round(displayScore)}%` }}
+                          />
                         </div>
                       </div>
                     );
                   })()}
 
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                      Connections
-                    </p>
+                  {/* Divider */}
+                  <div className="detail-divider" />
+
+                  {/* Connections */}
+                  <div className="detail-connections">
                     {linkedGroups.length > 0 ? (
-                      <div className="mt-4 space-y-5">
-                        {linkedGroups.map(({ category, label, nodes }) => (
-                          <div key={category}>
-                            <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.15em] text-[var(--color-text-muted)]">
-                              {label}
-                            </p>
-                            <div className="space-y-1">
-                              {nodes.map(({ node, labels: nodeLabels }) => (
-                                <button
-                                  className="context-linked-node"
-                                  key={`${selectedNode.id}-${node.id}`}
-                                  onClick={() => onSelectLinkedNode(node.id)}
-                                  type="button"
-                                >
-                                  <span className="context-linked-node-title">{node.title}</span>
-                                  <span className="context-linked-node-meta">
-                                    {nodeLabels.join(" • ")}
-                                  </span>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      linkedGroups.map(({ category, label, nodes }) => (
+                        <div className="detail-connection-group" key={category}>
+                          <span className="detail-connection-group-label">{label}</span>
+                          {nodes.map(({ node }) => (
+                            <button
+                              className="detail-connection-item"
+                              key={`${selectedNode.id}-${node.id}`}
+                              onClick={() => onSelectLinkedNode(node.id)}
+                              type="button"
+                            >
+                              {node.title}
+                            </button>
+                          ))}
+                        </div>
+                      ))
                     ) : (
-                      <p className="mt-4 text-[12px] leading-5 text-[var(--color-text-muted)]">
-                        No connections yet.
-                      </p>
+                      <p className="detail-empty-text">No connections yet.</p>
                     )}
                   </div>
 
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                      Actions
-                    </p>
-                    <div className="mt-4 flex flex-col gap-2">
+                  {/* Actions — compact row */}
+                  <div className="detail-divider" />
+                  <div className="detail-actions">
+                    <button
+                      className="detail-action-pill"
+                      onClick={() => onFindConnections(selectedNode.id)}
+                      type="button"
+                    >
+                      Find links
+                    </button>
+
+                    {(!selectedNode.status || selectedNode.status === "active") && (
                       <button
-                        className="rail-action-btn"
-                        onClick={() => onFindConnections(selectedNode.id)}
+                        className="detail-action-pill detail-action-pill--complete"
+                        onClick={() => onStatusChange(selectedNode.id, "completed")}
                         type="button"
                       >
-                        Find connections
+                        Complete
                       </button>
+                    )}
 
-                      {/* Lifecycle actions — shown based on current status */}
-                      {(!selectedNode.status || selectedNode.status === "active") && (
-                        <button
-                          className="rail-action-btn rail-action-btn--complete"
-                          onClick={() => onStatusChange(selectedNode.id, "completed")}
-                          type="button"
-                        >
-                          Mark complete
-                        </button>
-                      )}
+                    {(selectedNode.status === "completed" || selectedNode.status === "paused") && (
+                      <button
+                        className="detail-action-pill detail-action-pill--reopen"
+                        onClick={() => onStatusChange(selectedNode.id, "active")}
+                        type="button"
+                      >
+                        Reopen
+                      </button>
+                    )}
 
-                      {(selectedNode.status === "completed" || selectedNode.status === "paused") && (
-                        <button
-                          className="rail-action-btn rail-action-btn--reopen"
-                          onClick={() => onStatusChange(selectedNode.id, "active")}
-                          type="button"
-                        >
-                          Reopen
-                        </button>
-                      )}
-
-                      {selectedNode.status !== "archived" && (
-                        <button
-                          className="rail-action-btn rail-action-btn--danger"
-                          onClick={() => onStatusChange(selectedNode.id, "archived")}
-                          type="button"
-                        >
-                          Archive
-                        </button>
-                      )}
-
-                      {selectedNode.status === "archived" && (
-                        <button
-                          className="rail-action-btn rail-action-btn--reopen"
-                          onClick={() => onStatusChange(selectedNode.id, "active")}
-                          type="button"
-                        >
-                          Unarchive
-                        </button>
-                      )}
-                    </div>
+                    {selectedNode.status !== "archived" ? (
+                      <button
+                        className="detail-action-pill detail-action-pill--danger"
+                        onClick={() => onStatusChange(selectedNode.id, "archived")}
+                        type="button"
+                      >
+                        Archive
+                      </button>
+                    ) : (
+                      <button
+                        className="detail-action-pill detail-action-pill--reopen"
+                        onClick={() => onStatusChange(selectedNode.id, "active")}
+                        type="button"
+                      >
+                        Unarchive
+                      </button>
+                    )}
                   </div>
                 </div>
               ) : (
-                <div className="space-y-6">
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                      Node
-                    </p>
-                    <div className="mt-4 space-y-0">
-                      <div className="context-stub-row">
-                        <span className="context-stub-label">Type</span>
-                        <span className="context-stub-line" />
-                      </div>
-                      <div className="context-stub-row">
-                        <span className="context-stub-label">Links</span>
-                        <span className="context-stub-line" />
-                      </div>
-                    </div>
+                <div className="detail-panel detail-panel--empty">
+                  <div className="detail-empty-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M12 8v4M12 16h.01" />
+                    </svg>
                   </div>
-
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
-                      Actions
-                    </p>
-                    <div className="mt-4 space-y-0">
-                      <div className="context-stub-row">
-                        <span className="context-stub-label">Open</span>
-                        <span className="context-stub-line context-stub-line-short" />
-                      </div>
-                      <div className="context-stub-row">
-                        <span className="context-stub-label">Notes</span>
-                        <span className="context-stub-line context-stub-line-short" />
-                      </div>
-                    </div>
-                  </div>
+                  <p className="detail-empty-title">No node selected</p>
+                  <p className="detail-empty-hint">
+                    Click a node on the graph to inspect its details, connections, and actions.
+                  </p>
                 </div>
               )}
             </div>

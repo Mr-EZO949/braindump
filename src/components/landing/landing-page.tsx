@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, useInView, AnimatePresence } from "framer-motion";
+import Image from "next/image";
 import Link from "next/link";
 import styles from "./landing.module.css";
 
@@ -161,6 +162,155 @@ function MarqueeRow({ items, reverse }: { items: typeof MARQUEE_R1; reverse?: bo
   );
 }
 
+// ── Create-from-chat demo ────────────────────────────────
+
+const CREATE_DEMO_PROMPT = "Break my ML paper into tasks with a literature review section";
+
+const CREATE_DEMO_NODES = [
+  { title: "ML Paper", type: "project", delay: 0 },
+  { title: "Literature Review", type: "goal", delay: 0.18 },
+  { title: "Find related papers", type: "task", delay: 0.32 },
+  { title: "Summarize key findings", type: "task", delay: 0.44 },
+  { title: "Write methodology draft", type: "task", delay: 0.56 },
+  { title: "Outline experiments", type: "task", delay: 0.68 },
+];
+
+const CREATE_DEMO_EDGES: [number, number][] = [[0, 1], [1, 2], [1, 3], [0, 4], [0, 5]];
+
+function CreateFromChatDemo() {
+  const ref = useRef<HTMLDivElement>(null);
+  const v = useInView(ref, { once: true, margin: "-60px" });
+  return (
+    <div ref={ref} className={styles.createDemo}>
+      {/* Prompt bubble */}
+      <motion.div className={styles.createPrompt}
+        initial={{ opacity: 0, y: 14 }}
+        animate={v ? { opacity: 1, y: 0 } : {}}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}>
+        <span className={styles.createPromptLabel}>You said</span>
+        <p className={styles.createPromptText}>&ldquo;{CREATE_DEMO_PROMPT}&rdquo;</p>
+      </motion.div>
+
+      {/* Arrow */}
+      <motion.div className={styles.createArrow} aria-hidden="true"
+        initial={{ opacity: 0, scaleY: 0 }}
+        animate={v ? { opacity: 1, scaleY: 1 } : {}}
+        transition={{ delay: 0.3, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
+        <svg width="2" height="40" viewBox="0 0 2 40">
+          <line x1="1" y1="0" x2="1" y2="40" stroke="rgba(213,58,71,0.3)" strokeWidth="2" strokeDasharray="4 4" />
+        </svg>
+        <svg width="12" height="8" viewBox="0 0 12 8" className={styles.createArrowHead}>
+          <path d="M1 1 L6 6 L11 1" stroke="rgba(213,58,71,0.4)" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        </svg>
+      </motion.div>
+
+      {/* Generated graph preview */}
+      <div className={styles.createGraph}>
+        <svg viewBox="0 0 400 220" className={styles.createGraphSvg} aria-hidden="true">
+          {CREATE_DEMO_EDGES.map(([ai, bi], i) => {
+            const positions = [
+              { x: 200, y: 30 },   // ML Paper
+              { x: 100, y: 100 },  // Literature Review
+              { x: 40, y: 180 },   // Find related papers
+              { x: 160, y: 180 },  // Summarize key findings
+              { x: 280, y: 100 },  // Write methodology draft
+              { x: 360, y: 100 },  // Outline experiments
+            ];
+            const pa = positions[ai], pb = positions[bi];
+            return (
+              <motion.path key={`ce${i}`}
+                d={`M ${pa.x} ${pa.y} L ${pb.x} ${pb.y}`}
+                stroke="rgba(213,58,71,0.25)" strokeWidth="1.5" fill="none" strokeLinecap="round"
+                initial={{ pathLength: 0, opacity: 0 }}
+                animate={v ? { pathLength: 1, opacity: 1 } : {}}
+                transition={{ delay: 0.6 + CREATE_DEMO_NODES[bi].delay, duration: 0.35, ease: "easeOut" }} />
+            );
+          })}
+          {CREATE_DEMO_NODES.map((node, i) => {
+            const positions = [
+              { x: 200, y: 30 },
+              { x: 100, y: 100 },
+              { x: 40, y: 180 },
+              { x: 160, y: 180 },
+              { x: 280, y: 100 },
+              { x: 360, y: 100 },
+            ];
+            const pos = positions[i];
+            const c = NC[node.type];
+            return (
+              <motion.g key={`cn${i}`} transform={`translate(${pos.x}, ${pos.y})`}
+                initial={{ scale: 0, opacity: 0 }}
+                animate={v ? { scale: 1, opacity: 1 } : {}}
+                transition={{ delay: 0.5 + node.delay, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                style={{ transformBox: "fill-box", transformOrigin: "center" } as React.CSSProperties}>
+                <circle r={18} fill={`${c}14`} stroke={`${c}30`} strokeWidth="1" />
+                <circle r={11} fill={`${c}22`} stroke={c} strokeWidth="1.5" strokeOpacity="0.7" />
+                <text y={3.5} textAnchor="middle" fill={c} fontSize="6.5" fontWeight="700"
+                  fontFamily="ui-monospace, monospace" opacity="0.9">
+                  {node.type.slice(0, 4).toUpperCase()}
+                </text>
+                <text y={32} textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="8"
+                  fontFamily="ui-sans-serif, system-ui, sans-serif" fontWeight="500">
+                  {node.title}
+                </text>
+              </motion.g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+// ── Planner demo ─────────────────────────────────────────
+
+const PLANNER_BLOCKS = [
+  { label: "Finish proposal draft", type: "focus", duration: "25m", color: "#a35258" },
+  { label: "Review PR feedback", type: "admin", duration: "15m", color: "#677480" },
+  { label: "Break", type: "break", duration: "10m", color: "#5c7a6e" },
+  { label: "Debug auth session bug", type: "focus", duration: "30m", color: "#a35258" },
+  { label: "Buffer", type: "buffer", duration: "10m", color: "#7a6b5c" },
+];
+
+function PlannerDemo() {
+  const ref = useRef<HTMLDivElement>(null);
+  const v = useInView(ref, { once: true, margin: "-60px" });
+  return (
+    <div ref={ref} className={styles.plannerDemo}>
+      <div className={styles.plannerChrome}>
+        <span className={styles.chromeDot} />
+        <span className={styles.chromeDot} />
+        <span className={styles.chromeDot} />
+        <span className={styles.panelLabel}>planner · next 1h 30m</span>
+      </div>
+      <div className={styles.plannerBody}>
+        <div className={styles.plannerTimeline}>
+          {PLANNER_BLOCKS.map((block, i) => (
+            <motion.div key={i} className={styles.plannerBlock}
+              initial={{ opacity: 0, x: -16 }}
+              animate={v ? { opacity: 1, x: 0 } : {}}
+              transition={{ delay: 0.2 + i * 0.12, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}>
+              <div className={styles.plannerBlockDot} style={{ background: block.color }} />
+              <div className={styles.plannerBlockInfo}>
+                <span className={styles.plannerBlockLabel}>{block.label}</span>
+                <span className={styles.plannerBlockMeta}>{block.type} · {block.duration}</span>
+              </div>
+              <span className={styles.plannerBlockDuration}>{block.duration}</span>
+            </motion.div>
+          ))}
+        </div>
+        <motion.div className={styles.plannerActions}
+          initial={{ opacity: 0 }}
+          animate={v ? { opacity: 1 } : {}}
+          transition={{ delay: 0.9, duration: 0.4 }}>
+          <span className={styles.plannerActionBtn} data-variant="accept">Accept plan</span>
+          <span className={styles.plannerActionBtn} data-variant="reject">Regenerate</span>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
+
 // ── Review showcase ───────────────────────────────────────
 
 function ReviewShowcase() {
@@ -273,7 +423,7 @@ function AssistantChat() {
             initial={{ opacity: 0, y: 12, scale: 0.97 }}
             animate={v ? { opacity: 1, y: 0, scale: 1 } : {}}
             transition={{ delay: 0.2 + i * 0.25, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}>
-            {msg.role === "assistant" && <span className={styles.chatIcon}>BD</span>}
+            {msg.role === "assistant" && <Image src="/logo_icon.svg" alt="" width={24} height={24} className={styles.chatIcon} />}
             <span className={styles.chatText}>{msg.text}</span>
           </motion.div>
         ))}
@@ -486,8 +636,7 @@ export default function LandingPage() {
         {/* ── Nav ── */}
         <header className={styles.nav}>
           <Link href="/" className={styles.navLogo}>
-            <div className={styles.logoMark}>BD</div>
-            BrainDump
+            <Image src="/logo_withtext.svg" alt="BrainDump" width={200} height={40} className={styles.navLogoImg} />
           </Link>
           <nav className={styles.navRight}>
             <Link href="/login" className={styles.navLink}>Sign in</Link>
@@ -608,6 +757,64 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* ── Create from chat ── */}
+        <section className={styles.sectionAlt}>
+          <div className={styles.inner}>
+            <div className={styles.createLayout}>
+              <FadeUp delay={0.1} className={styles.createVisualWrap}>
+                <CreateFromChatDemo />
+              </FadeUp>
+
+              <FadeUp className={styles.createInfo}>
+                <span className={styles.label}>Talk, don&apos;t click</span>
+                <h2 className={styles.h2}>
+                  Describe it once.<br />
+                  <span className={styles.gradient}>Get a full structure.</span>
+                </h2>
+                <p className={styles.assistantDesc}>
+                  Tell the assistant what you&apos;re working on and it builds the nodes,
+                  hierarchy, and connections for you — projects, tasks, sub-goals, all
+                  linked to your existing graph.
+                </p>
+                <ul className={styles.assistantList}>
+                  <li>&ldquo;Break this goal into weekly tasks&rdquo;</li>
+                  <li>&ldquo;Add a project for the ML paper with subtasks&rdquo;</li>
+                  <li>&ldquo;Track my job search — applications, prep, interviews&rdquo;</li>
+                </ul>
+              </FadeUp>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Planner ── */}
+        <section className={styles.section}>
+          <div className={styles.inner}>
+            <div className={styles.assistantLayout}>
+              <FadeUp className={styles.assistantInfo}>
+                <span className={styles.label}>AI planner</span>
+                <h2 className={styles.h2}>
+                  Plan the next hour.<br />
+                  <span className={styles.gradient}>From your graph.</span>
+                </h2>
+                <p className={styles.assistantDesc}>
+                  The planner reads your tasks, priorities, dependencies, and due dates,
+                  then builds a realistic time-blocked schedule — focus blocks, admin,
+                  breaks, and buffers. Drag to reorder, accept, or regenerate.
+                </p>
+                <ul className={styles.assistantList}>
+                  <li>1-hour, 2-hour, or full-day windows</li>
+                  <li>Respects blockers and prerequisite chains</li>
+                  <li>Learns from your edits and rejections</li>
+                </ul>
+              </FadeUp>
+
+              <FadeUp delay={0.15} className={styles.assistantChatWrap}>
+                <PlannerDemo />
+              </FadeUp>
+            </div>
+          </div>
+        </section>
+
         {/* ── Graph ── */}
         <section className={styles.graphSection}>
           <div className={styles.inner}>
@@ -633,7 +840,7 @@ export default function LandingPage() {
           <FadeUp className={styles.ctaInner}>
             <h2 className={styles.ctaH2}>
               Your thoughts are already connected.{"\n"}
-              <span className={styles.gradient}>BrainDump shows you how.</span>
+              <span className={styles.gradient}>Let us show you how.</span>
             </h2>
             <p className={styles.ctaSub}>Free to start. No card required.</p>
             <div className={styles.ctaActions}>
@@ -647,7 +854,7 @@ export default function LandingPage() {
         {/* ── Footer ── */}
         <footer className={styles.footer}>
           <div className={styles.footerInner}>
-            <span className={styles.footerBrand}>BrainDump</span>
+            <Image src="/logo_withtext.svg" alt="BrainDump" width={160} height={32} className={styles.footerLogoImg} />
             <div className={styles.footerLinks}>
               <a href="#" className={styles.footerLink}>Privacy</a>
               <a href="#" className={styles.footerLink}>Terms</a>

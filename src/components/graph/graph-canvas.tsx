@@ -1202,51 +1202,51 @@ function getEdgeVisualStyle(
   const structural = link.family === "structural";
   const directional = link.directional;
 
-  let opacity = structural ? 0.26 : 0.045;
-  let strokeWidth = structural ? 1.46 : 0.58;
-  let stroke = structural ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.06)";
+  let opacity = structural ? 0.26 : 0.09;
+  let strokeWidth = structural ? 1.46 : 0.64;
+  let stroke = structural ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.10)";
   let dashArray: string | undefined;
   let markerEnd: string | undefined;
 
   switch (link.edge_type) {
     case "belongs_to":
-      opacity = structural ? 0.34 : 0.08;
-      strokeWidth = structural ? 1.26 + link.strength * 0.82 : 0.6;
-      stroke = structural ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.08)";
+      opacity = structural ? 0.34 : 0.14;
+      strokeWidth = structural ? 1.26 + link.strength * 0.82 : 0.7;
+      stroke = structural ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.14)";
       break;
     case "required_for":
     case "prerequisite_for":
-      opacity = structural ? 0.29 : 0.07;
-      strokeWidth = structural ? 1.44 + link.strength * 0.9 : 0.6;
-      stroke = structural ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.07)";
+      opacity = structural ? 0.29 : 0.12;
+      strokeWidth = structural ? 1.44 + link.strength * 0.9 : 0.66;
+      stroke = structural ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.12)";
       dashArray = "8 7";
       break;
     case "supports":
-      opacity = structural ? 0.34 : 0.06;
-      strokeWidth = structural ? 1.0 + link.strength * 0.44 : 0.5;
-      stroke = structural ? "rgba(224,215,206,0.38)" : "rgba(224,215,206,0.08)";
+      opacity = structural ? 0.34 : 0.10;
+      strokeWidth = structural ? 1.0 + link.strength * 0.44 : 0.58;
+      stroke = structural ? "rgba(224,215,206,0.38)" : "rgba(224,215,206,0.12)";
       break;
     case "related_to":
-      opacity = 0.05;
-      strokeWidth = 0.5;
-      stroke = "rgba(255,255,255,0.06)";
+      opacity = 0.08;
+      strokeWidth = 0.54;
+      stroke = "rgba(255,255,255,0.09)";
       dashArray = "3 6";
       break;
     case "useful_for":
-      opacity = 0.04;
-      strokeWidth = 0.44;
-      stroke = "rgba(255,255,255,0.05)";
+      opacity = 0.07;
+      strokeWidth = 0.5;
+      stroke = "rgba(255,255,255,0.08)";
       break;
     case "blocks":
-      opacity = 0.06;
-      strokeWidth = 0.54;
-      stroke = "rgba(255,255,255,0.07)";
+      opacity = 0.10;
+      strokeWidth = 0.58;
+      stroke = "rgba(255,255,255,0.11)";
       dashArray = "4 6";
       break;
     case "inspired_by":
-      opacity = 0.03;
-      strokeWidth = 0.38;
-      stroke = "rgba(255,255,255,0.04)";
+      opacity = 0.06;
+      strokeWidth = 0.44;
+      stroke = "rgba(255,255,255,0.07)";
       dashArray = "2 8";
       break;
   }
