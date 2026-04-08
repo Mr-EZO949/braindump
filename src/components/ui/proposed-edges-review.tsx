@@ -38,7 +38,7 @@ export function ProposedEdgesReview({ edges, onConfirm, onDismiss }: Props) {
   const selectedCount = selected.size;
 
   return (
-    <div className="per-backdrop" onClick={onDismiss}>
+    <div className="per-backdrop">
       <div className="per-modal" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="per-header">

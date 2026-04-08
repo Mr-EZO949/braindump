@@ -156,7 +156,7 @@ async function runAIJob(params: {
             workspaceId,
             userId: job.user_id,
             supabase,
-          }).catch(() => ({ proposed: 0, skipped: 0, failed: 1, paused: 0 })),
+          }).catch(() => ({ proposed: 0, skipped: 0, failed: 1 })),
         ),
       );
 
@@ -165,10 +165,9 @@ async function runAIJob(params: {
           proposed: acc.proposed + result.proposed,
           skipped: acc.skipped + result.skipped,
           failed: acc.failed + result.failed,
-          paused: acc.paused + result.paused,
           processed_nodes: nodeIds.length,
         }),
-        { proposed: 0, skipped: 0, failed: 0, paused: 0, processed_nodes: nodeIds.length },
+        { proposed: 0, skipped: 0, failed: 0, processed_nodes: nodeIds.length },
       );
     }
 

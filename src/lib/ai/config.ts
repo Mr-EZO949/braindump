@@ -56,8 +56,9 @@ export const AI_CONFIDENCE = {
   // Minimum extraction confidence to include in proposals (0–1)
   EXTRACTION_MIN: 0.6,
   // Minimum edge inference confidence to create a proposed_edge (0–1)
-  // Kept deliberately above "speculative" territory so the graph stays sparse.
-  EDGE_INFERENCE_MIN: 0.55,
+  // Low on purpose — proposals are reviewed by the user, so false positives
+  // are fine. Missing real connections is the worse outcome.
+  EDGE_INFERENCE_MIN: 0.3,
   // Minimum confidence to surface a merge suggestion (0–1)
   MERGE_DETECTION_MIN: 0.75,
 } as const;
@@ -71,9 +72,9 @@ export const AI_CANDIDATES = {
   // Top K results returned from embedding similarity search
   RETRIEVAL_K: 20,
   // Top N kept after Cohere reranking
-  RERANK_N: 6,
+  RERANK_N: 10,
   // Max candidates passed to edge inference per new node
-  INFERENCE_MAX: 4,
+  INFERENCE_MAX: 8,
   // Max duplicate candidates surfaced per node
   MERGE_MAX: 3,
 } as const;
@@ -177,7 +178,7 @@ export const AI_JOBS = {
   // Default retry budget for durable async jobs
   MAX_ATTEMPTS: 5,
   // Large analyze batches can be safely queued instead of blocking the route
-  ANALYZE_ASYNC_THRESHOLD: 6,
+  ANALYZE_ASYNC_THRESHOLD: Infinity,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -210,13 +211,13 @@ export const AI_LIFECYCLE = {
 
 export const AI_RATE_LIMITS = {
   // Brain-dump extractions per hour
-  EXTRACTIONS_PER_HOUR: 30,
+  EXTRACTIONS_PER_HOUR: Infinity,
   // Assistant chat messages per hour
-  CHAT_PER_HOUR: 120,
+  CHAT_PER_HOUR: Infinity,
   // AI planning sessions per hour
-  PLANS_PER_HOUR: 20,
+  PLANS_PER_HOUR: Infinity,
   // Connection-analysis batches per hour
-  ANALYSES_PER_HOUR: 60,
+  ANALYSES_PER_HOUR: Infinity,
   // Max characters in a single chat message
   CHAT_MESSAGE_MAX_CHARS: 4_000,
   // Max characters in a semantic search query

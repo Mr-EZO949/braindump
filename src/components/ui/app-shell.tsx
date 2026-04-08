@@ -67,7 +67,6 @@ type AnalysisResponse = {
   proposed?: number;
   skipped?: number;
   failed?: number;
-  paused?: number;
   warning?: string;
   error?: string;
 };
@@ -173,6 +172,8 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [analyzingConnections, setAnalyzingConnections] = useState(false);
   const [mergeCandidates, setMergeCandidates] = useState<MergeCandidate[]>([]);
   const [aiNotice, setAiNotice] = useState<AINotice | null>(null);
+  const [lastAnalysisNodeIds, setLastAnalysisNodeIds] = useState<string[]>([]);
+  const [lastAnalysisWorkspaceId, setLastAnalysisWorkspaceId] = useState<string | null>(null);
 
   // Panel state
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
@@ -396,7 +397,6 @@ export function AppShell({ initialUser }: AppShellProps) {
         }
 
         return (
-          nextWorkspaces.find((workspace) => workspace.name === "Personal")?.id ??
           nextWorkspaces.find((workspace) => workspace.name === "General")?.id ??
           nextWorkspaces[0]?.id ??
           null
@@ -1462,6 +1462,38 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
+  const closeProposedNodesReview = () => {
+    setProposedReviewOpen(false);
+    setProposedNodes([]);
+  };
+
+  const requestCloseProposedNodesReview = () => {
+    const confirmed = window.confirm(
+      "Close node review? The extracted nodes will stay pending review and your current selections will be lost.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    closeProposedNodesReview();
+  };
+
+  const closeProposedEdgesReview = () => {
+    setEdgeReviewOpen(false);
+    setProposedEdges([]);
+  };
+
+  const requestCloseProposedEdgesReview = () => {
+    const confirmed = window.confirm(
+      "Close connection review? The suggested edges will stay pending review and your current selections will be lost.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    closeProposedEdgesReview();
+  };
+
   const applyAnalysisResult = (result: AnalysisResponse) => {
     if (result.merge_candidates && result.merge_candidates.length > 0) {
       setMergeCandidates(result.merge_candidates);
@@ -1474,11 +1506,18 @@ export function AppShell({ initialUser }: AppShellProps) {
     setAiNotice(buildAnalysisNotice(result));
   };
 
-  const analyzeNodes = async (nodeIds: string[]) => {
-    if (!selectedWorkspaceId) {
+  const analyzeNodes = async (nodeIds: string[], workspaceIdOverride?: string) => {
+    const workspaceId = workspaceIdOverride ?? selectedWorkspaceId;
+    const normalizedNodeIds = Array.from(
+      new Set(nodeIds.filter((nodeId): nodeId is string => typeof nodeId === "string" && nodeId.length > 0)),
+    );
+
+    if (!workspaceId || normalizedNodeIds.length === 0) {
       return;
     }
 
+    setLastAnalysisNodeIds(normalizedNodeIds);
+    setLastAnalysisWorkspaceId(workspaceId);
     setAnalyzingConnections(true);
     setAiNotice(null);
 
@@ -1486,7 +1525,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       const res = await fetch("/api/nodes/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ node_ids: nodeIds, workspace_id: selectedWorkspaceId }),
+        body: JSON.stringify({ node_ids: normalizedNodeIds, workspace_id: workspaceId }),
       });
       const data = await res.json() as AnalysisResponse;
 
@@ -1503,6 +1542,14 @@ export function AppShell({ initialUser }: AppShellProps) {
     } finally {
       setAnalyzingConnections(false);
     }
+  };
+
+  const retryLastConnectionAnalysis = () => {
+    if (!lastAnalysisWorkspaceId || lastAnalysisNodeIds.length === 0) {
+      return;
+    }
+
+    void analyzeNodes(lastAnalysisNodeIds, lastAnalysisWorkspaceId);
   };
 
   const handleEdgeReview = async (
@@ -1644,7 +1691,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-[var(--color-bg-base)] text-[var(--color-text-primary)]">
+    <div className="flex min-h-screen flex-col overflow-hidden bg-(--color-bg-base) text-(--color-text-primary)">
       <TopCommandBar
         onToggleSystemPanel={() => {
           setWorkspaceMenuOpen(false);
@@ -1790,6 +1837,13 @@ export function AppShell({ initialUser }: AppShellProps) {
                 showArchived={showArchived}
                 hideCompleted={hideCompleted}
                 onToggleHideCompleted={() => setHideCompleted((v) => !v)}
+                onFindAllConnections={() => {
+                  if (!selectedWorkspaceId || analyzingConnections) return;
+                  const allNodeIds = graphData.nodes.map((n) => n.id);
+                  if (allNodeIds.length === 0) return;
+                  void analyzeNodes(allNodeIds);
+                }}
+                findingConnections={analyzingConnections}
                 onToggleEditMode={handleToggleEditMode}
                 onRequestDeleteNode={() => setDeleteNodeConfirmOpen(true)}
                 onSelectNode={handleSelectNode}
@@ -1876,21 +1930,12 @@ export function AppShell({ initialUser }: AppShellProps) {
             initial={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             style={{ background: "rgba(0,0,0,0.45)" }}
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                setProposedReviewOpen(false);
-                setProposedNodes([]);
-              }
-            }}
           >
             <ProposedNodesReview
               existingNodeTitles={existingNodeTitleMap}
               proposals={proposedNodes}
               onAccept={handleProposalReview}
-              onClose={() => {
-                setProposedReviewOpen(false);
-                setProposedNodes([]);
-              }}
+              onClose={requestCloseProposedNodesReview}
               submitting={false}
             />
           </motion.div>
@@ -1925,13 +1970,26 @@ export function AppShell({ initialUser }: AppShellProps) {
             transition={{ duration: 0.15 }}
           >
             <span>{aiNotice.message}</span>
-            <button
-              className="ai-notice-dismiss"
-              onClick={() => setAiNotice(null)}
-              type="button"
-            >
-              Dismiss
-            </button>
+            <div className="ai-notice-actions">
+              {lastAnalysisNodeIds.length > 0 &&
+              lastAnalysisWorkspaceId === selectedWorkspaceId &&
+              !analyzingConnections ? (
+                <button
+                  className="ai-notice-action"
+                  onClick={retryLastConnectionAnalysis}
+                  type="button"
+                >
+                  Find connections
+                </button>
+              ) : null}
+              <button
+                className="ai-notice-dismiss"
+                onClick={() => setAiNotice(null)}
+                type="button"
+              >
+                Dismiss
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2012,10 +2070,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         <ProposedEdgesReview
           edges={proposedEdges}
           onConfirm={(actions) => void handleEdgeReview(actions)}
-          onDismiss={() => {
-            setEdgeReviewOpen(false);
-            setProposedEdges([]);
-          }}
+          onDismiss={requestCloseProposedEdgesReview}
         />
       )}
 

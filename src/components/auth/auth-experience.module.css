@@ -240,30 +240,26 @@
   align-items: center;
   justify-content: center;
   height: 48px;
-  border: 1px solid rgba(213, 58, 71, 0.24);
+  border: 1px solid rgba(213, 58, 71, 0.4);
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(35, 15, 19, 0.98), rgba(20, 9, 12, 0.98));
-  color: #f4efe8;
+  background: linear-gradient(180deg, #d53a47 0%, #b83240 100%);
+  color: #fff;
   font-size: 14px;
   font-weight: 560;
   letter-spacing: -0.02em;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.026),
-    inset 0 0 0 1px rgba(213, 58, 71, 0.12);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
   transition:
     transform 180ms ease-out,
-    border-color 180ms ease-out,
+    background 180ms ease-out,
     box-shadow 180ms ease-out,
     opacity 180ms ease-out;
 }
 
 .submitButton:hover {
   transform: translateY(-1px);
-  border-color: rgba(213, 58, 71, 0.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    inset 0 0 0 1px rgba(213, 58, 71, 0.15),
-    0 14px 32px rgba(0, 0, 0, 0.2);
+  background: linear-gradient(180deg, #c33540 0%, #a82d3a 100%);
+  box-shadow: 0 6px 20px rgba(213, 58, 71, 0.25);
 }
 
 .submitButton:disabled {

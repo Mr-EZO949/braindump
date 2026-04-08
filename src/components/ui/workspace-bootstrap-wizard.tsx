@@ -32,16 +32,16 @@ const MAX_GOALS = 4;
 const MAX_AREAS = 6;
 
 const ROOT_SUGGESTIONS = [
-  "Run my semester with clarity",
+  "Personal success",
   "Build a personal operating system",
-  "Finish my thesis with momentum",
-  "Create a career growth engine",
+  "Financial independence",
+  "Finish my degree strong",
 ];
 
 const GOAL_SUGGESTIONS = [
-  "Personal success",
-  "High-performing student",
-  "Turn projects into shipped outcomes",
+  "Academic success",
+  "Money independence",
+  "Ship a side project",
   "Stay consistent without burnout",
 ];
 
@@ -226,11 +226,11 @@ export function WorkspaceBootstrapWizard({
 
         <header className="bootstrap-header">
           <div className="bootstrap-heading-block">
-            <span className="bootstrap-eyebrow">Workspace foundation</span>
+            <span className="bootstrap-eyebrow">New workspace</span>
             <h2 className="bootstrap-heading">
               {step === 0
-                ? "Define the structure this workspace should grow from."
-                : "Review the structure before the graph is created."}
+                ? "What are you working on?"
+                : "Ready to create?"}
             </h2>
           </div>
 
@@ -250,16 +250,16 @@ export function WorkspaceBootstrapWizard({
             <section className="bootstrap-root-section">
               <div className="bootstrap-section-head">
                 <div className="bootstrap-section-copy">
-                  <span className="bootstrap-section-kicker">Root outcome</span>
+                  <span className="bootstrap-section-kicker">Your goal</span>
                   <h3 className="bootstrap-section-title">
-                    What should this workspace make easier to achieve?
+                    What do you want this workspace to help you do?
                   </h3>
                 </div>
               </div>
 
               <div className="bootstrap-field-stack">
                 <label className="bootstrap-field-label" htmlFor="bootstrap-root">
-                  Root outcome
+                  Main goal
                 </label>
                 <div
                   className="bootstrap-root-field"
@@ -301,10 +301,7 @@ export function WorkspaceBootstrapWizard({
             <section className="bootstrap-section">
               <div className="bootstrap-section-head">
                 <div className="bootstrap-section-copy">
-                  <span className="bootstrap-section-kicker">Context</span>
-                  <h3 className="bootstrap-section-title">
-                    Ground the workspace in who you are and what matters next.
-                  </h3>
+                  <span className="bootstrap-section-kicker">About you</span>
                 </div>
               </div>
 
@@ -412,9 +409,9 @@ export function WorkspaceBootstrapWizard({
             <section className="bootstrap-section">
               <div className="bootstrap-section-head">
                 <div className="bootstrap-section-copy">
-                  <span className="bootstrap-section-kicker">Active areas</span>
+                  <span className="bootstrap-section-kicker">Areas</span>
                   <h3 className="bootstrap-section-title">
-                    Define the first lanes this workspace should organize.
+                    What parts of your life does this cover?
                   </h3>
                 </div>
                 <span className="bootstrap-section-count">{areas.length}</span>
@@ -423,7 +420,7 @@ export function WorkspaceBootstrapWizard({
               <div className="bootstrap-field-stack">
                 <div className="bootstrap-field-head">
                   <label className="bootstrap-field-label" htmlFor="bootstrap-area-draft">
-                    Area builder
+                    New area
                   </label>
                   <span className="bootstrap-field-meta">Up to {MAX_AREAS}</span>
                 </div>
@@ -535,7 +532,6 @@ export function WorkspaceBootstrapWizard({
               <div className="bootstrap-section-head">
                 <div className="bootstrap-section-copy">
                   <span className="bootstrap-section-kicker">Goals</span>
-                  <h3 className="bootstrap-section-title">What the workspace will keep in view.</h3>
                 </div>
                 <span className="bootstrap-section-count">{goals.length}</span>
               </div>
@@ -560,9 +556,6 @@ export function WorkspaceBootstrapWizard({
               <div className="bootstrap-section-head">
                 <div className="bootstrap-section-copy">
                   <span className="bootstrap-section-kicker">Areas</span>
-                  <h3 className="bootstrap-section-title">
-                    The first structural lanes the graph will branch into.
-                  </h3>
                 </div>
                 <span className="bootstrap-section-count">{areas.length}</span>
               </div>
@@ -624,7 +617,7 @@ export function WorkspaceBootstrapWizard({
                 Discard this workspace?
               </h3>
               <p className="bootstrap-confirm-copy">
-                Confirming this will remove the new workspace instead of keeping it empty.
+                This workspace won&apos;t be saved.
               </p>
               <div className="bootstrap-confirm-actions">
                 <button className="bootstrap-back" onClick={dismissCancelConfirm} type="button">

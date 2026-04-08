@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import LandingPage from "@/components/landing/landing-page";
 
 export default async function Home() {
   const supabase = await getSupabaseServerClient();
@@ -8,5 +9,7 @@ export default async function Home() {
     data: { user },
   } = supabase ? await supabase.auth.getUser() : { data: { user: null } };
 
-  redirect(user ? "/app" : "/login");
+  if (user) redirect("/app");
+
+  return <LandingPage />;
 }

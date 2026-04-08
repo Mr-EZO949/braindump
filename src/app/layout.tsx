@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "BrainDump",
-  description: "M1 product skeleton",
+  title: "BrainDump — Stop organizing. Start thinking.",
+  description: "Dump your raw thoughts into BrainDump. AI structures them into a living knowledge graph — tasks, goals, ideas, and connections you didn't know existed.",
 };
 
 export default function RootLayout({

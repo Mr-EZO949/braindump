@@ -1,8 +1,9 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import { CreateNodeSheet, EditNodeSheet } from "@/components/graph/create-node-sheet";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
-import { PencilIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
+import { NetworkIcon, PencilIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
 import type { LocalGraphCameraView } from "@/lib/graph/data";
 import type { EdgeRelationOptionId } from "@/lib/graph/relationships";
 import type { CreateNodeInput, GraphData } from "@/types/graph";
@@ -84,6 +85,8 @@ type MainStageProps = {
   onToggleHideCompleted: () => void;
   onToggleShowArchived: () => void;
   onToggleEditMode: () => void;
+  onFindAllConnections: () => void;
+  findingConnections: boolean;
   showArchived: boolean;
   onRequestDeleteNode: () => void;
   onCancelDeleteNode: () => void;
@@ -148,6 +151,8 @@ export function MainStage({
   onToggleHideCompleted,
   onToggleShowArchived,
   onToggleEditMode,
+  onFindAllConnections,
+  findingConnections,
   onRequestDeleteNode,
   onSelectNode,
   onSubmitCreateNode,
@@ -159,6 +164,8 @@ export function MainStage({
   suppressInitialFocusAnimation,
 }: MainStageProps) {
   const filtersActive = graphTypeFilter !== "all" || graphImportanceFilter !== "all";
+  const [layoutKey, setLayoutKey] = useState(0);
+  const resetLayout = useCallback(() => setLayoutKey((k) => k + 1), []);
 
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-bg-base)]">
@@ -186,6 +193,7 @@ export function MainStage({
         graphData={graphData}
         editMode={editMode}
         initialView={cameraView}
+        layoutKey={layoutKey}
         loading={graphLoading}
         onCommitNodePosition={onCommitNodePosition}
         onSelectNode={onSelectNode}
@@ -213,6 +221,36 @@ export function MainStage({
         >
           <PlusIcon className="h-[14px] w-[14px]" />
           <span>New node</span>
+        </button>
+
+        <button
+          aria-label="Reset layout"
+          className="graph-edit-toggle"
+          onClick={resetLayout}
+          title="Reset layout"
+          type="button"
+        >
+          <svg className="h-[14px] w-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+            <path d="M21 3v5h-5" />
+            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+            <path d="M3 21v-5h5" />
+          </svg>
+        </button>
+
+        <button
+          aria-label="Find connections across workspace"
+          className={`graph-edit-toggle ${findingConnections ? "graph-edit-toggle-active" : ""}`}
+          disabled={findingConnections}
+          onClick={onFindAllConnections}
+          title="Find connections across workspace"
+          type="button"
+        >
+          {findingConnections ? (
+            <span className="graph-find-spinner" />
+          ) : (
+            <NetworkIcon className="h-[14px] w-[14px]" />
+          )}
         </button>
 
         <button

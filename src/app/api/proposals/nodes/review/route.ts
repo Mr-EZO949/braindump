@@ -334,6 +334,17 @@ export async function POST(req: NextRequest) {
         workspace_id: string;
       }> = [];
       const seenEdgeKeys = new Set<string>();
+      // Track which nodes already have a belongs_to edge (as source).
+      // Each node can have at most one parent — first one wins.
+      const nodesWithParent = new Set<string>();
+
+      // Seed direct edges (existing_parent_node_id) already created above
+      for (const row of directAcceptedEdgeRows) {
+        seenEdgeKeys.add(`${row.source_node_id}:${row.target_node_id}`);
+        if (row.edge_type === "belongs_to") {
+          nodesWithParent.add(row.source_node_id);
+        }
+      }
 
       const queueEdge = (row: {
         ai_run_id: string | null;
@@ -347,8 +358,14 @@ export async function POST(req: NextRequest) {
       }) => {
         if (row.source_node_id === row.target_node_id) return;
         const key = `${row.source_node_id}:${row.target_node_id}`;
-        if (seenEdgeKeys.has(key)) return;
+        const revKey = `${row.target_node_id}:${row.source_node_id}`;
+        if (seenEdgeKeys.has(key) || seenEdgeKeys.has(revKey)) return;
+        // Enforce single parent: skip if this node already has a belongs_to edge
+        if (row.edge_type === "belongs_to" && nodesWithParent.has(row.source_node_id)) return;
         seenEdgeKeys.add(key);
+        if (row.edge_type === "belongs_to") {
+          nodesWithParent.add(row.source_node_id);
+        }
         structuralEdgeRows.push(row);
       };
 
@@ -413,15 +430,46 @@ export async function POST(req: NextRequest) {
         }
       });
 
-      await Promise.all(
-        structuralEdgeRows.map(async (row) => {
-          const { error } = await supabase.from("proposed_edges").insert({
-            ...row,
-            proposal_status: "pending_review",
-          });
-          if (!error) structuralEdgeProposalCount += 1;
-        })
-      );
+      // Split: belongs_to edges are auto-accepted (tree backbone the user
+      // implicitly approved), everything else goes to proposed_edges for review.
+      const autoAcceptRows = structuralEdgeRows.filter((r) => r.edge_type === "belongs_to");
+      const proposalRows = structuralEdgeRows.filter((r) => r.edge_type !== "belongs_to");
+
+      if (autoAcceptRows.length > 0) {
+        const edgeInsertRows = autoAcceptRows.map((row) => ({
+          user_id: row.user_id,
+          workspace_id: row.workspace_id,
+          source_node_id: row.source_node_id,
+          target_node_id: row.target_node_id,
+          edge_type: row.edge_type,
+          confidence: row.confidence,
+          explanation: row.explanation,
+          status: "active",
+          user_confirmed: true,
+        }));
+
+        const { data: insertedEdges, error: edgeError } = await supabase
+          .from("edges")
+          .insert(edgeInsertRows)
+          .select("*");
+
+        if (!edgeError && insertedEdges) {
+          acceptedEdges.push(...insertedEdges);
+          structuralEdgeProposalCount += insertedEdges.length;
+        }
+      }
+
+      if (proposalRows.length > 0) {
+        await Promise.all(
+          proposalRows.map(async (row) => {
+            const { error } = await supabase.from("proposed_edges").insert({
+              ...row,
+              proposal_status: "pending_review",
+            });
+            if (!error) structuralEdgeProposalCount += 1;
+          })
+        );
+      }
     }
 
     // Record accept feedback events

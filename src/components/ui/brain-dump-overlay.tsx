@@ -316,18 +316,23 @@ export function BrainDumpOverlay({
           >
             <ImageIcon className="h-[15px] w-[15px]" />
           </button>
-          {speechSupported ? (
-            <button
-              aria-label={recording ? "Stop voice input" : "Start voice input"}
-              className={`brain-dump-action-btn${recording ? " brain-dump-action-btn-active" : ""}`}
-              onClick={toggleRecording}
-              title={recording ? "Stop voice input" : "Dictate"}
-              type="button"
-            >
-              <MicIcon className="h-[15px] w-[15px]" />
-              {recording ? <span className="brain-dump-rec-dot" /> : null}
-            </button>
-          ) : null}
+          <button
+            aria-label={recording ? "Stop voice input" : "Start voice input"}
+            className={`brain-dump-action-btn${recording ? " brain-dump-action-btn-active" : ""}`}
+            data-supported={speechSupported ? "true" : "false"}
+            onClick={toggleRecording}
+            title={
+              speechSupported
+                ? recording
+                  ? "Stop voice input"
+                  : "Dictate"
+                : "Voice input not supported in this browser"
+            }
+            type="button"
+          >
+            <MicIcon className="h-[15px] w-[15px]" />
+            {recording ? <span className="brain-dump-rec-dot" /> : null}
+          </button>
         </div>
 
         <button

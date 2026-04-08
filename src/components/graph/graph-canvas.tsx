@@ -30,6 +30,7 @@ type GraphCanvasProps = {
   focusRequestKey: number;
   graphData: GraphData;
   initialView: ViewState | null;
+  layoutKey: number;
   loading: boolean;
   onCommitNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   onSelectNode: (nodeId: string | null) => void;
@@ -458,12 +459,12 @@ function getComponentCenterOffset(
   const columns = 3;
   const column = compactIndex % columns;
   const row = Math.floor(compactIndex / columns);
-  const xSpacing = 480 + Math.min(componentWidth * 0.18, 90);
-  const ySpacing = 300 + Math.min(componentHeight * 0.15, 80);
+  const xSpacing = 720 + Math.min(componentWidth * 0.24, 140);
+  const ySpacing = 520 + Math.min(componentHeight * 0.2, 120);
 
   return {
     x: (column - (columns - 1) / 2) * xSpacing,
-    y: 280 + row * ySpacing,
+    y: 480 + row * ySpacing,
   };
 }
 
@@ -1201,83 +1202,83 @@ function getEdgeVisualStyle(
   const structural = link.family === "structural";
   const directional = link.directional;
 
-  let opacity = structural ? 0.26 : 0.08;
-  let strokeWidth = structural ? 1.46 : 0.78;
-  let stroke = structural ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.10)";
+  let opacity = structural ? 0.26 : 0.045;
+  let strokeWidth = structural ? 1.46 : 0.58;
+  let stroke = structural ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.06)";
   let dashArray: string | undefined;
   let markerEnd: string | undefined;
 
   switch (link.edge_type) {
     case "belongs_to":
-      opacity = structural ? 0.34 : 0.14;
-      strokeWidth = 1.26 + link.strength * 0.82;
-      stroke = structural ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.14)";
+      opacity = structural ? 0.34 : 0.08;
+      strokeWidth = structural ? 1.26 + link.strength * 0.82 : 0.6;
+      stroke = structural ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.08)";
       break;
     case "required_for":
     case "prerequisite_for":
-      opacity = structural ? 0.29 : 0.13;
-      strokeWidth = 1.44 + link.strength * 0.9;
-      stroke = structural ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.13)";
+      opacity = structural ? 0.29 : 0.07;
+      strokeWidth = structural ? 1.44 + link.strength * 0.9 : 0.6;
+      stroke = structural ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.07)";
       dashArray = "8 7";
       break;
     case "supports":
-      opacity = structural ? 0.34 : 0.24;
-      strokeWidth = 1.0 + link.strength * 0.44;
-      stroke = structural ? "rgba(224,215,206,0.38)" : "rgba(224,215,206,0.28)";
+      opacity = structural ? 0.34 : 0.06;
+      strokeWidth = structural ? 1.0 + link.strength * 0.44 : 0.5;
+      stroke = structural ? "rgba(224,215,206,0.38)" : "rgba(224,215,206,0.08)";
       break;
     case "related_to":
-      opacity = structural ? 0.28 : 0.20;
-      strokeWidth = 0.88 + link.strength * 0.28;
-      stroke = structural ? "rgba(255,255,255,0.32)" : "rgba(255,255,255,0.22)";
+      opacity = 0.05;
+      strokeWidth = 0.5;
+      stroke = "rgba(255,255,255,0.06)";
       dashArray = "3 6";
       break;
     case "useful_for":
-      opacity = 0.082;
-      strokeWidth = 0.58 + link.strength * 0.26;
-      stroke = "rgba(255,255,255,0.098)";
+      opacity = 0.04;
+      strokeWidth = 0.44;
+      stroke = "rgba(255,255,255,0.05)";
       break;
     case "blocks":
-      opacity = 0.14;
-      strokeWidth = 0.74 + link.strength * 0.34;
-      stroke = "rgba(255,255,255,0.145)";
+      opacity = 0.06;
+      strokeWidth = 0.54;
+      stroke = "rgba(255,255,255,0.07)";
       dashArray = "4 6";
       break;
     case "inspired_by":
-      opacity = 0.058;
-      strokeWidth = 0.48 + link.strength * 0.16;
-      stroke = "rgba(255,255,255,0.084)";
+      opacity = 0.03;
+      strokeWidth = 0.38;
+      stroke = "rgba(255,255,255,0.04)";
       dashArray = "2 8";
       break;
   }
 
   if (emphasized) {
     if (link.edge_type === "belongs_to") {
-      opacity = clamp(opacity * 1.82 + 0.08, 0, 0.8);
-      strokeWidth += 0.34;
+      opacity = 0.42;
+      strokeWidth = 2.0;
       stroke = "rgba(198,76,88,0.62)";
     } else if (link.edge_type === "supports") {
-      opacity = clamp(opacity * 1.8 + 0.07, 0, 0.64);
-      strokeWidth += 0.18;
+      opacity = 0.36;
+      strokeWidth = 1.4;
       stroke = "rgba(205,140,150,0.52)";
     } else if (link.edge_type === "required_for" || link.edge_type === "prerequisite_for") {
-      opacity = clamp(opacity * 1.76 + 0.07, 0, 0.7);
-      strokeWidth += 0.22;
+      opacity = 0.38;
+      strokeWidth = 1.6;
       stroke = "rgba(198,118,128,0.48)";
     } else if (link.edge_type === "related_to") {
-      opacity = clamp(opacity * 1.7 + 0.06, 0, 0.56);
-      strokeWidth += 0.12;
+      opacity = 0.30;
+      strokeWidth = 1.1;
       stroke = "rgba(200,160,168,0.44)";
     } else {
-      opacity = clamp(opacity * 1.7 + 0.07, 0, 0.72);
-      strokeWidth += structural ? 0.32 : 0.18;
-      stroke = structural ? "rgba(198,76,88,0.56)" : "rgba(198,76,88,0.32)";
+      opacity = 0.28;
+      strokeWidth = 1.0;
+      stroke = structural ? "rgba(198,76,88,0.56)" : "rgba(198,76,88,0.40)";
     }
   }
 
   if (dimmed) {
-    opacity *= structural ? 0.28 : 0.2;
-    strokeWidth *= structural ? 0.86 : 0.8;
-    stroke = structural ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.05)";
+    opacity *= structural ? 0.28 : 0.1;
+    strokeWidth *= structural ? 0.86 : 0.6;
+    stroke = structural ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.02)";
   }
 
   if (directional) {
@@ -1461,6 +1462,7 @@ export function GraphCanvas({
   focusRequestKey,
   graphData,
   initialView,
+  layoutKey,
   loading,
   onCommitNodePosition,
   onSelectNode,
@@ -1482,6 +1484,7 @@ export function GraphCanvas({
   const suppressInitialFocusAnimationRef = useRef(suppressInitialFocusAnimation);
   const lastHandledFocusRequestRef = useRef(focusRequestKey);
   const nodesRef = useRef<GraphNode[]>([]);
+  const lastLayoutKeyRef = useRef(layoutKey);
   const dragStateRef = useRef<DragState | null>(null);
   const panStateRef = useRef<PanState | null>(null);
   const viewRef = useRef<ViewState>(defaultView);
@@ -1528,6 +1531,40 @@ export function GraphCanvas({
   }, []);
   const scene = useMemo(() => {
     const nextLayout = buildGraphLayout(graphData);
+
+    // When layoutKey changes, skip position restore — recompute from scratch.
+    // eslint-disable-next-line react-hooks/refs
+    const freshLayout = layoutKey !== lastLayoutKeyRef.current;
+    lastLayoutKeyRef.current = layoutKey;
+
+    if (!freshLayout) {
+      // Restore settled positions from the previous simulation BEFORE React
+      // renders. This must happen here (in useMemo) rather than in useEffect,
+      // because useEffect runs after the browser has already painted — causing
+      // a visible one-frame jump to the new layout positions.
+      //
+      // We also restore restX/restY so the forceX/forceY forces continue
+      // pulling nodes toward where they already are, preventing the sim from
+      // animating existing nodes to new layout positions every time graphData
+      // changes (archive, mark done, toggle filters, etc.).
+      //
+      // Reading nodesRef (a ref, not a dep) is intentional: we want the
+      // previous sim's settled positions without adding a reactive dependency.
+      // eslint-disable-next-line react-hooks/refs
+      const prevById = new Map(nodesRef.current.map((n) => [n.id, n]));
+      nextLayout.nodes.forEach((node) => {
+        if (node.manual_position) return; // fx/fy already pinned
+        const prev = prevById.get(node.id);
+        if (prev?.x != null && prev?.y != null) {
+          node.x = prev.x;
+          node.y = prev.y;
+          // Preserve rest positions so forces don't pull to new layout
+          node.restX = prev.restX;
+          node.restY = prev.restY;
+        }
+      });
+    }
+
     const nodeMap = new Map(nextLayout.nodes.map((node) => [node.id, node]));
 
     return {
@@ -1538,7 +1575,7 @@ export function GraphCanvas({
       })),
       nodes: nextLayout.nodes,
     };
-  }, [graphData]);
+  }, [graphData, layoutKey]); // nodesRef, lastLayoutKeyRef intentionally omitted — refs
 
   const searchMatches = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -1683,6 +1720,8 @@ export function GraphCanvas({
   }, [suppressInitialFocusAnimation]);
 
   useEffect(() => {
+    // scene.nodes already have correct positions from the useMemo above.
+    // Just update the ref so getFocusView and other imperative reads are current.
     nodesRef.current = scene.nodes;
 
     const linkForce = forceLink<GraphNode, GraphLink>(scene.links)
@@ -1725,19 +1764,19 @@ export function GraphCanvas({
       .force("link", linkForce)
       .force(
         "charge",
-        forceManyBody<GraphNode>().strength((node) => -120 - node.width * 0.7),
+        forceManyBody<GraphNode>().strength((node) => -60 - node.width * 0.35),
       )
       .force(
         "collide",
         forceCollide<GraphNode>().radius(
-          (node) => Math.max(node.width, node.height) * 0.56 + 28,
+          (node) => Math.max(node.width, node.height) * 0.52 + 18,
         ),
       )
-      .force("restX", forceX<GraphNode>((node) => node.restX).strength(0.32))
-      .force("restY", forceY<GraphNode>((node) => node.restY).strength(0.64))
-      .velocityDecay(0.64)
-      .alphaDecay(0.072)
-      .alphaMin(0.014)
+      .force("restX", forceX<GraphNode>((node) => node.restX).strength(0.82))
+      .force("restY", forceY<GraphNode>((node) => node.restY).strength(0.92))
+      .velocityDecay(0.72)
+      .alphaDecay(0.12)
+      .alphaMin(0.02)
       .alphaTarget(0);
 
     simulation.on("tick", () => {

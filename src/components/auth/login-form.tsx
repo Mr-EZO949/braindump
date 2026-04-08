@@ -172,7 +172,7 @@ export function LoginForm() {
 
         <p className={styles.helperLine}>
           {isSignUp
-            ? "Create a private workspace."
+            ? "Start with a lightweight General workspace."
             : "Use your workspace account."}
         </p>
       </form>

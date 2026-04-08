@@ -59,7 +59,7 @@ body {
     "calt" 1;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow: hidden;
+  overflow-x: hidden;
   text-rendering: optimizeLegibility;
 }
 
@@ -1629,6 +1629,25 @@ input[type="search"]::-webkit-search-results-decoration {
     inset 0 1px 0 rgba(255, 255, 255, 0.02),
     inset 0 0 0 1px rgba(213, 58, 71, 0.11),
     0 18px 36px rgba(0, 0, 0, 0.3);
+}
+
+.graph-edit-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.graph-find-spinner {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--color-accent-primary);
+  border-radius: 50%;
+  animation: graph-spin 0.6s linear infinite;
+}
+
+@keyframes graph-spin {
+  to { transform: rotate(360deg); }
 }
 
 .graph-create-trigger {
@@ -3537,6 +3556,13 @@ input[type="search"]::-webkit-search-results-decoration {
   color: var(--color-text-secondary);
 }
 
+.ai-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
 .ai-notice--warning {
   border-color: rgba(206, 158, 92, 0.32);
 }
@@ -3557,6 +3583,29 @@ input[type="search"]::-webkit-search-results-decoration {
   cursor: pointer;
   opacity: 0.84;
   transition: opacity 120ms ease;
+}
+
+.ai-notice-action {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text-primary);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.ai-notice-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .ai-notice-dismiss:hover {
