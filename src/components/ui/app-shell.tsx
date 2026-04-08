@@ -580,6 +580,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
 
     const nextScope = chatMessages.length === 0 ? defaultChatScope : chatScope;
+    const targetWorkspaceId = selectedWorkspaceId;
 
     setRightPanelOpen(true);
     setActiveRailTab("chat");
@@ -602,13 +603,14 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     setChatLoading(true);
 
+    let fullText = "";
     try {
       const res = await fetch("/api/assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: trimmedMessage,
-          workspace_id: selectedWorkspaceId,
+          workspace_id: targetWorkspaceId,
           selected_node_id: nextScope.kind === "node" ? nextScope.node.id : null,
         }),
       });
@@ -624,11 +626,47 @@ export function AppShell({ initialUser }: AppShellProps) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
+        fullText += chunk;
         setChatMessages((prev) =>
           prev.map((m) =>
             m.id === assistantMsgId ? { ...m, body: m.body + chunk } : m,
           ),
         );
+      }
+
+      // Detect <nodes> block — extract content and feed into extraction pipeline
+      const nodesMatch = fullText.match(/<nodes>\s*([\s\S]*?)\s*<\/nodes>/);
+      if (nodesMatch && nodesMatch[1]?.trim() && targetWorkspaceId) {
+        const nodesContent = nodesMatch[1].trim();
+        // Strip the <nodes> block from the displayed message
+        const cleanBody = fullText.replace(/<nodes>[\s\S]*?<\/nodes>/, "").trimEnd();
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, body: cleanBody } : m,
+          ),
+        );
+
+        // Submit to extraction pipeline
+        try {
+          const entryRes = await fetch("/api/entries", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              raw_text: nodesContent,
+              workspace_id: targetWorkspaceId,
+              source_type: "assistant_save",
+            }),
+          });
+          const entryData = await entryRes.json() as {
+            proposed_nodes?: ProposedNode[];
+          };
+          if (entryRes.ok && entryData.proposed_nodes && entryData.proposed_nodes.length > 0) {
+            setProposedNodes(entryData.proposed_nodes);
+            setProposedReviewOpen(true);
+          }
+        } catch {
+          // Extraction failed silently — the assistant response is still shown
+        }
       }
     } catch {
       setChatMessages((prev) =>
