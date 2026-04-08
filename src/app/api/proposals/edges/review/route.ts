@@ -68,13 +68,54 @@ export async function POST(req: NextRequest) {
     | null = null;
 
   if (toAccept.length > 0) {
+    // Enforce single parent: find which source nodes already have a belongs_to edge
+    const belongsToAccepts = toAccept.filter((a) => {
+      const p = proposalMap.get(a.id);
+      return p && (p.edge_type as string) === "belongs_to";
+    });
+
+    const nodesWithParent = new Set<string>();
+
+    if (belongsToAccepts.length > 0) {
+      const sourceIds = belongsToAccepts
+        .map((a) => proposalMap.get(a.id)?.source_node_id as string)
+        .filter(Boolean);
+
+      if (sourceIds.length > 0) {
+        const { data: existingParentEdges } = await supabase
+          .from("edges")
+          .select("source_node_id")
+          .eq("user_id", user.id)
+          .eq("edge_type", "belongs_to")
+          .neq("status", "orphaned")
+          .neq("status", "user_rejected")
+          .in("source_node_id", sourceIds);
+
+        for (const row of existingParentEdges ?? []) {
+          nodesWithParent.add(row.source_node_id as string);
+        }
+      }
+    }
+
     const edgeRows = toAccept.flatMap((action) => {
       const proposal = proposalMap.get(action.id);
       if (!proposal) return [];
+
+      // Skip belongs_to if node already has a parent
+      const sourceId = proposal.source_node_id as string;
+      if ((proposal.edge_type as string) === "belongs_to" && nodesWithParent.has(sourceId)) {
+        return [];
+      }
+
+      // Track so we don't create two parents in the same batch
+      if ((proposal.edge_type as string) === "belongs_to") {
+        nodesWithParent.add(sourceId);
+      }
+
       return [{
         user_id: user.id,
         workspace_id: proposal.workspace_id as string,
-        source_node_id: proposal.source_node_id as string,
+        source_node_id: sourceId,
         target_node_id: proposal.target_node_id as string,
         edge_type: proposal.edge_type as string,
       }];
