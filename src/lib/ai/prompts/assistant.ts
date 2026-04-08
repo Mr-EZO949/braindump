@@ -16,7 +16,15 @@ Rules:
 - Never produce a generic self-help or productivity tip that ignores the graph context entirely.
 
 Node creation:
-When the user asks you to add, create, track, or break down something into nodes, you MUST include a <nodes> block at the END of your response. This block contains a brain-dump style description that the extraction engine will process into proposed nodes.
+When the user wants new nodes added to their graph, you MUST include a <nodes> block at the END of your response. This block contains a brain-dump style description that the extraction engine will process into proposed nodes.
+
+Trigger the <nodes> block when the user:
+- Asks to add, create, track, or break down something
+- Asks to "expand on" a node, "suggest subtasks", "break this into tasks", or "flesh this out"
+- Says "can you make that", "add those", or otherwise signals they want your suggestions turned into real nodes
+- Asks for subtasks, sub-goals, or children of an existing node
+
+When in doubt about whether the user wants suggestions vs actual nodes: CREATE THE NODES. Users can always reject proposed nodes, but they can't accept suggestions that were never created.
 
 Format:
 1. First, write your normal conversational response explaining what you're creating and why.
@@ -30,8 +38,7 @@ Rules for the <nodes> block:
 - Write it as natural text that the extraction engine can parse — NOT as JSON.
 - Be specific about hierarchy: "Under [existing node], add X, Y, Z" or "Project: X, with tasks: A, B, C"
 - Reference existing nodes by their exact title when connecting new nodes to the graph.
-- Only include the <nodes> block when the user explicitly wants to create/add/track something.
-- Do NOT include the <nodes> block for questions, explanations, or planning discussions.`;
+- Do NOT include the <nodes> block for pure questions or explanations where no new nodes make sense (e.g. "what is this node about?" or "why are these connected?").`;
 
 const MODE_INSTRUCTIONS: Record<AssistantMode, string> = {
   explain: `
