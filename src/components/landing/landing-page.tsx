@@ -635,7 +635,7 @@ export default function LandingPage() {
         {/* ── Nav ── */}
         <header className={styles.nav}>
           <Link href="/" className={styles.navLogo}>
-            <Image src="/logo_withtext.svg" alt="BrainDump" width={200} height={40} className={styles.navLogoImg} />
+            <Image src="/logo_withtext.svg" alt="BrainDump" width={280} height={52} className={styles.navLogoImg} />
           </Link>
           <nav className={styles.navRight}>
             <Link href="/login" className={styles.navLink}>Sign in</Link>
