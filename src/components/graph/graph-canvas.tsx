@@ -117,6 +117,15 @@ type PanState = {
   startPointerY: number;
 };
 
+type PinchState = {
+  initialDistance: number;
+  initialZoom: number;
+  initialPanX: number;
+  initialPanY: number;
+  midX: number;
+  midY: number;
+};
+
 type EdgeVisualStyle = {
   dashArray?: string;
   markerEnd?: string;
@@ -970,10 +979,11 @@ function createFittedView(nodes: GraphNode[], width: number, height: number): Vi
   const bounds = getGraphBounds(pinnedNodes.length > 0 ? pinnedNodes : nodes);
   const usableWidth = Math.max(width - 100, 360);
   const usableHeight = Math.max(height - 120, 340);
+  const isMobile = width <= 768;
   const zoom = clamp(
     Math.min(usableWidth / Math.max(bounds.width, 1), usableHeight / Math.max(bounds.height, 1)),
-    0.68,
-    1.06,
+    isMobile ? 0.35 : 0.68,
+    isMobile ? 0.7 : 1.06,
   );
   const targetX = width * 0.5;
   const targetY = height * 0.42;
@@ -1487,6 +1497,7 @@ export function GraphCanvas({
   const lastLayoutKeyRef = useRef(layoutKey);
   const dragStateRef = useRef<DragState | null>(null);
   const panStateRef = useRef<PanState | null>(null);
+  const pinchStateRef = useRef<PinchState | null>(null);
   const viewRef = useRef<ViewState>(defaultView);
   const viewportRef = useRef({ height: 0, width: 0 });
   const movedDuringPointerRef = useRef(false);
@@ -1893,6 +1904,79 @@ export function GraphCanvas({
     };
   }, []);
 
+  // Pinch-to-zoom for touch devices
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    function getTouchDistance(t1: Touch, t2: Touch) {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function getTouchMidpoint(t1: Touch, t2: Touch, rect: DOMRect) {
+      return {
+        x: (t1.clientX + t2.clientX) / 2 - rect.left,
+        y: (t1.clientY + t2.clientY) / 2 - rect.top,
+      };
+    }
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const rect = container.getBoundingClientRect();
+        const mid = getTouchMidpoint(e.touches[0], e.touches[1], rect);
+        pinchStateRef.current = {
+          initialDistance: getTouchDistance(e.touches[0], e.touches[1]),
+          initialZoom: viewRef.current.zoom,
+          initialPanX: viewRef.current.panX,
+          initialPanY: viewRef.current.panY,
+          midX: mid.x,
+          midY: mid.y,
+        };
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && pinchStateRef.current) {
+        e.preventDefault();
+        const ps = pinchStateRef.current;
+        const dist = getTouchDistance(e.touches[0], e.touches[1]);
+        const scale = dist / ps.initialDistance;
+        const nextZoom = clamp(ps.initialZoom * scale, 0.25, 2.2);
+
+        const vp = viewportRef.current;
+        const worldX = (ps.midX - vp.width / 2 - ps.initialPanX) / ps.initialZoom;
+        const worldY = (ps.midY - vp.height / 2 - ps.initialPanY) / ps.initialZoom;
+
+        setView({
+          panX: ps.midX - vp.width / 2 - worldX * nextZoom,
+          panY: ps.midY - vp.height / 2 - worldY * nextZoom,
+          zoom: nextZoom,
+        });
+      }
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        pinchStateRef.current = null;
+      }
+    };
+
+    container.addEventListener("touchstart", handleTouchStart, { passive: false });
+    container.addEventListener("touchmove", handleTouchMove, { passive: false });
+    container.addEventListener("touchend", handleTouchEnd);
+    container.addEventListener("touchcancel", handleTouchEnd);
+
+    return () => {
+      container.removeEventListener("touchstart", handleTouchStart);
+      container.removeEventListener("touchmove", handleTouchMove);
+      container.removeEventListener("touchend", handleTouchEnd);
+      container.removeEventListener("touchcancel", handleTouchEnd);
+    };
+  }, []);
+
   useEffect(() => {
     if (didFitInitialViewRef.current) return;
     if (viewport.width === 0 || viewport.height === 0) return;
@@ -2147,10 +2231,9 @@ export function GraphCanvas({
     onSelectNode(null);
   };
 
-  const handleNodeDoubleClick = useCallback(
+  const handleCollapseToggle = useCallback(
     (event: React.MouseEvent, nodeId: string) => {
       event.stopPropagation();
-      if ((childrenByParent.get(nodeId) ?? []).length === 0) return;
       setCollapsedNodeIds((prev) => {
         const next = new Set(prev);
         if (next.has(nodeId)) {
@@ -2161,7 +2244,7 @@ export function GraphCanvas({
         return next;
       });
     },
-    [childrenByParent],
+    [],
   );
 
   const handleNodePointerDown = (event: ReactPointerEvent<SVGGElement>, nodeId: string) => {
@@ -2237,7 +2320,7 @@ export function GraphCanvas({
       y: event.clientY - rect.top,
     };
     const worldBeforeZoom = getWorldPoint(pointer, currentViewport, currentView);
-    const nextZoom = clamp(currentView.zoom * Math.exp(-event.deltaY * 0.00112), 0.56, 1.42);
+    const nextZoom = clamp(currentView.zoom * Math.exp(-event.deltaY * 0.00112), 0.25, 2.2);
 
     setView({
       panX: pointer.x - currentViewport.width / 2 - worldBeforeZoom.x * nextZoom,
@@ -2416,7 +2499,6 @@ export function GraphCanvas({
 
                   onSelectNode(node.id);
                 }}
-                onDoubleClick={(event) => handleNodeDoubleClick(event, node.id)}
                 onMouseEnter={() => setHoveredNodeId(node.id)}
                 onMouseLeave={() =>
                   setHoveredNodeId((currentNodeId) =>
@@ -2595,15 +2677,31 @@ export function GraphCanvas({
                   </g>
                 )}
 
-                {/* Subtle collapse-available dot — shown on nodes with children that are not collapsed */}
-                {!isCollapsed && nodeChildCount > 0 && (
-                  <circle
-                    cx={0}
-                    cy={node.height / 2 + 5}
-                    fill="rgba(255,255,255,0.18)"
-                    r={2.5}
-                    style={{ pointerEvents: "none" }}
-                  />
+                {/* Collapse/expand toggle — clickable on nodes with children */}
+                {nodeChildCount > 0 && (
+                  <g
+                    className="graph-collapse-toggle"
+                    onClick={(e) => handleCollapseToggle(e, node.id)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <circle
+                      cx={0}
+                      cy={node.height / 2 + 10}
+                      fill="rgba(255,255,255,0.06)"
+                      r={9}
+                    />
+                    <text
+                      x={0}
+                      y={node.height / 2 + 13.5}
+                      textAnchor="middle"
+                      fill="rgba(255,255,255,0.45)"
+                      fontSize="10"
+                      fontFamily="ui-sans-serif, system-ui, sans-serif"
+                      fontWeight="600"
+                    >
+                      {isCollapsed ? "▸" : "▾"}
+                    </text>
+                  </g>
                 )}
               </g>
             );
