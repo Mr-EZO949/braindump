@@ -169,6 +169,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [brainDumpFailedEntryId, setBrainDumpFailedEntryId] = useState<string | null>(null);
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
+  const [proposedNodesSubmitting, setProposedNodesSubmitting] = useState(false);
   const [graphEditOps, setGraphEditOps] = useState<GraphEditOperation[]>([]);
   const [graphEditReviewOpen, setGraphEditReviewOpen] = useState(false);
   const [proposedEdges, setProposedEdges] = useState<ProposedEdgeWithNodes[]>([]);
@@ -208,7 +209,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [cameraView, setCameraView] = useState<LocalGraphCameraView | null>(null);
-  const [initialCameraView, setInitialCameraView] = useState<LocalGraphCameraView | null>(null);
+  // initialCameraView removed — graph-canvas now always computes a fresh fitted view
   const [pendingRestoredSelectionId, setPendingRestoredSelectionId] = useState<
     string | null | undefined
   >(undefined);
@@ -540,7 +541,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     const localViewState = readLocalGraphViewState(authUser?.id ?? null, selectedWorkspaceId);
 
     setViewStateHydrated(false);
-    setInitialCameraView(localViewState.cameraView);
     setPendingRestoredSelectionId(localViewState.selectedNodeId);
     setSuppressInitialFocusAnimation(Boolean(localViewState.selectedNodeId));
   }, [authUser?.id, selectedWorkspaceId]);
@@ -695,6 +695,34 @@ export function AppShell({ initialUser }: AppShellProps) {
         } catch {
           // Extraction failed silently — the assistant response is still shown
         }
+      }
+
+      // Detect <recompute_scores/> tag — trigger workspace score recomputation
+      if (/<recompute_scores\s*\/?>/.test(fullText) && targetWorkspaceId) {
+        const cleanBody = fullText.replace(/<recompute_scores\s*\/?>/g, "").trimEnd();
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, body: cleanBody } : m,
+          ),
+        );
+
+        fetch("/api/nodes/scores/recompute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workspace_id: targetWorkspaceId }),
+        }).then(async (res) => {
+          if (res.ok) {
+            // Reload graph data to reflect updated scores
+            const nextGraphData = await loadWorkspaceGraphData(
+              authUser?.id ?? null,
+              targetWorkspaceId,
+              selectedWorkspace?.name ?? null,
+            );
+            setGraphData(nextGraphData);
+          }
+        }).catch(() => {
+          // Score recompute failed silently
+        });
       }
 
       // Detect <graph_edit> block — parse JSON operations for graph mutations
@@ -1480,6 +1508,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       edits?: { proposed_title: string; proposed_summary: string | null; proposed_node_type: string };
     }>
   ) => {
+    setProposedNodesSubmitting(true);
     const res = await fetch("/api/proposals/nodes/review", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1542,6 +1571,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         edges: [...prev.edges, ...acceptedEdges],
       }));
     }
+    setProposedNodesSubmitting(false);
     setProposedReviewOpen(false);
     setProposedNodes([]);
 
@@ -1893,7 +1923,6 @@ export function AppShell({ initialUser }: AppShellProps) {
             >
               <MainStage
                 key={selectedWorkspaceId ?? "workspace-none"}
-                cameraView={initialCameraView}
                 createNodeDraft={createNodeDraft}
                 createNodeError={createNodeError}
                 createNodeSubmitting={createNodeSubmitting}
@@ -2056,7 +2085,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               proposals={proposedNodes}
               onAccept={handleProposalReview}
               onClose={requestCloseProposedNodesReview}
-              submitting={false}
+              submitting={proposedNodesSubmitting}
             />
           </motion.div>
         )}
@@ -2076,7 +2105,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           >
             <GraphEditReview
               operations={graphEditOps}
-              onConfirm={(ops) => void handleGraphEditConfirm(ops)}
+              onConfirm={(ops) => handleGraphEditConfirm(ops)}
               onDismiss={() => { setGraphEditReviewOpen(false); setGraphEditOps([]); }}
             />
           </motion.div>
@@ -2210,7 +2239,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       {edgeReviewOpen && proposedEdges.length > 0 && (
         <ProposedEdgesReview
           edges={proposedEdges}
-          onConfirm={(actions) => void handleEdgeReview(actions)}
+          onConfirm={(actions) => handleEdgeReview(actions)}
           onDismiss={requestCloseProposedEdgesReview}
         />
       )}

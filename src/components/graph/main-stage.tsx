@@ -9,7 +9,6 @@ import type { EdgeRelationOptionId } from "@/lib/graph/relationships";
 import type { CreateNodeInput, GraphData } from "@/types/graph";
 
 type MainStageProps = {
-  cameraView: LocalGraphCameraView | null;
   createNodeDraft: CreateNodeInput | null;
   createNodeError: string | null;
   createNodeSubmitting: boolean;
@@ -100,7 +99,6 @@ type MainStageProps = {
 };
 
 export function MainStage({
-  cameraView,
   createNodeDraft,
   createNodeError,
   createNodeSubmitting,
@@ -192,7 +190,6 @@ export function MainStage({
         focusRequestKey={focusRequestKey}
         graphData={graphData}
         editMode={editMode}
-        initialView={cameraView}
         layoutKey={layoutKey}
         loading={graphLoading}
         onCommitNodePosition={onCommitNodePosition}

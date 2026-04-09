@@ -5,7 +5,7 @@ import type { GraphEditOperation } from "@/types/graph";
 
 interface Props {
   operations: GraphEditOperation[];
-  onConfirm: (ops: GraphEditOperation[]) => void;
+  onConfirm: (ops: GraphEditOperation[]) => void | Promise<void>;
   onDismiss: () => void;
 }
 
@@ -47,11 +47,15 @@ export function GraphEditReview({ operations, onConfirm, onDismiss }: Props) {
     });
   }
 
-  function handleConfirm() {
+  async function handleConfirm() {
     if (submitting) return;
     setSubmitting(true);
     const ops = operations.filter((_, i) => selected.has(i));
-    onConfirm(ops);
+    try {
+      await onConfirm(ops);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (

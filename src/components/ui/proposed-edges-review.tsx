@@ -7,7 +7,7 @@ import type { NodeType } from "@/types/graph";
 
 interface Props {
   edges: ProposedEdgeWithNodes[];
-  onConfirm: (actions: { id: string; action: "accept" | "reject" }[]) => void;
+  onConfirm: (actions: { id: string; action: "accept" | "reject" }[]) => void | Promise<void>;
   onDismiss: () => void;
 }
 
@@ -29,14 +29,18 @@ export function ProposedEdgesReview({ edges, onConfirm, onDismiss }: Props) {
     });
   }
 
-  function handleConfirm() {
+  async function handleConfirm() {
     if (submitting) return;
     setSubmitting(true);
     const actions = edges.map((e) => ({
       id: e.id,
       action: selected.has(e.id) ? ("accept" as const) : ("reject" as const),
     }));
-    onConfirm(actions);
+    try {
+      await onConfirm(actions);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   const selectedCount = selected.size;

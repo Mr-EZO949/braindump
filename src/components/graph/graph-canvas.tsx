@@ -29,7 +29,6 @@ type GraphCanvasProps = {
   focusNodeId: string | null;
   focusRequestKey: number;
   graphData: GraphData;
-  initialView: ViewState | null;
   layoutKey: number;
   loading: boolean;
   onCommitNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
@@ -1471,7 +1470,6 @@ export function GraphCanvas({
   focusNodeId,
   focusRequestKey,
   graphData,
-  initialView,
   layoutKey,
   loading,
   onCommitNodePosition,
@@ -1491,6 +1489,7 @@ export function GraphCanvas({
   const returningNodeRef = useRef<GraphNode | null>(null);
   const viewAnimationRef = useRef<number | null>(null);
   const focusFollowUpTimeoutRef = useRef<number | null>(null);
+  const focusNodeIdRef = useRef(focusNodeId);
   const suppressInitialFocusAnimationRef = useRef(suppressInitialFocusAnimation);
   const lastHandledFocusRequestRef = useRef(focusRequestKey);
   const nodesRef = useRef<GraphNode[]>([]);
@@ -1731,6 +1730,10 @@ export function GraphCanvas({
   }, [suppressInitialFocusAnimation]);
 
   useEffect(() => {
+    focusNodeIdRef.current = focusNodeId;
+  }, [focusNodeId]);
+
+  useEffect(() => {
     // scene.nodes already have correct positions from the useMemo above.
     // Just update the ref so getFocusView and other imperative reads are current.
     nodesRef.current = scene.nodes;
@@ -1790,6 +1793,8 @@ export function GraphCanvas({
       .alphaMin(0.02)
       .alphaTarget(0);
 
+    let didSettleRefit = false;
+
     simulation.on("tick", () => {
       scene.nodes.forEach((node) => {
         if (node.fx === null || node.fx === undefined) {
@@ -1808,6 +1813,25 @@ export function GraphCanvas({
       });
 
       requestRender();
+
+      // Once the simulation is mostly settled, re-fit the view so the graph
+      // is properly centered.  This is more reliable than simulation.on("end")
+      // which can be missed if the sim is stopped externally.
+      if (!didSettleRefit && simulation.alpha() < 0.06) {
+        const vp = viewportRef.current;
+        if (vp.width === 0 || vp.height === 0) return; // retry next tick
+        didSettleRefit = true;
+
+        const currentFocusId = focusNodeIdRef.current;
+        if (currentFocusId) {
+          const retryView = getFocusView(currentFocusId);
+          if (retryView) {
+            animateToView(retryView, false);
+          }
+        } else {
+          animateToView(createFittedView(scene.nodes, vp.width, vp.height), false);
+        }
+      }
     });
 
     simulationRef.current = simulation;
@@ -1984,13 +2008,17 @@ export function GraphCanvas({
 
     didFitInitialViewRef.current = true;
     const frame = window.requestAnimationFrame(() => {
-      setView(initialView ?? createFittedView(scene.nodes, viewport.width, viewport.height));
+      // Always compute a fresh fitted view from current node positions.
+      // The saved initialView from localStorage may be stale if nodes changed
+      // since the last session. The simulation settle handler will re-fit
+      // again after positions stabilize.
+      setView(createFittedView(scene.nodes, viewport.width, viewport.height));
     });
 
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [scene, initialView, viewport.width, viewport.height]);
+  }, [scene, viewport.width, viewport.height]);
 
   useEffect(() => {
     if (!focusNodeId || viewport.width === 0 || viewport.height === 0) {
