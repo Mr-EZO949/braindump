@@ -25,7 +25,7 @@ export function SystemPanel({
       <div className="flex h-full flex-col">
         {/* Header with logo */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4">
-          <Image src="/logo_withtext.svg" alt="BrainDump" width={140} height={28} style={{ height: 24, width: "auto" }} />
+          <Image src="/logo_withtext.svg" alt="BrainDump" width={180} height={36} style={{ height: 32, width: "auto" }} />
           <button
             aria-label="Close"
             className="sp-close"

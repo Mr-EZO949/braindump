@@ -2,23 +2,11 @@
 
 import { useState } from "react";
 
-import {
-  ChevronDownIcon,
-  CloseIcon,
-  GripVerticalIcon,
-  PlusIcon,
-} from "@/components/ui/icons";
-import type { WorkspaceProfileAreaType } from "@/types/graph";
+import { CloseIcon, PlusIcon } from "@/components/ui/icons";
 
 interface GoalRow {
   id: string;
   title: string;
-}
-
-interface AreaRow {
-  id: string;
-  title: string;
-  area_type: WorkspaceProfileAreaType;
 }
 
 interface Props {
@@ -30,51 +18,23 @@ interface Props {
 }
 
 const MAX_GOALS = 4;
-const MAX_AREAS = 6;
 
-const ROOT_SUGGESTIONS = [
+const FOCUS_SUGGESTIONS = [
   "Personal success",
-  "Build a personal operating system",
-  "Financial independence",
   "Finish my degree strong",
+  "Financial independence",
+  "Ship a side project",
 ];
 
 const GOAL_SUGGESTIONS = [
   "Academic success",
   "Money independence",
-  "Ship a side project",
-  "Stay consistent without burnout",
-];
-
-const AREA_TYPE_OPTIONS: Array<{
-  description: string;
-  label: string;
-  value: WorkspaceProfileAreaType;
-}> = [
-  { value: "academic", label: "Academic", description: "Courses, studying, research" },
-  { value: "project", label: "Project", description: "Builds, launches, execution" },
-  { value: "career", label: "Career", description: "Jobs, portfolio, networking" },
-  { value: "health", label: "Health", description: "Energy, fitness, recovery" },
-  { value: "life_admin", label: "Life admin", description: "Logistics, planning, upkeep" },
-  { value: "personal", label: "Personal", description: "Identity, habits, relationships" },
+  "Stay consistent",
+  "Build good habits",
 ];
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function getAreaTypeLabel(areaType: WorkspaceProfileAreaType) {
-  return AREA_TYPE_OPTIONS.find((option) => option.value === areaType)?.label ?? areaType;
-}
-
-function formatSummary(rootCount: number, goalCount: number, areaCount: number) {
-  const parts = [
-    `${rootCount} root`,
-    `${goalCount} goal${goalCount === 1 ? "" : "s"}`,
-    `${areaCount} area${areaCount === 1 ? "" : "s"}`,
-  ];
-
-  return parts.join(" · ");
 }
 
 export function WorkspaceBootstrapWizard({
@@ -85,113 +45,42 @@ export function WorkspaceBootstrapWizard({
   isOnboarding = false,
 }: Props) {
   const [step, setStep] = useState(0);
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [role, setRole] = useState("");
   const [successTitle, setSuccessTitle] = useState("");
+  const [role, setRole] = useState("");
   const [goalDraft, setGoalDraft] = useState("");
   const [goals, setGoals] = useState<GoalRow[]>([]);
-  const [areaDraftTitle, setAreaDraftTitle] = useState("");
-  const [areaDraftType, setAreaDraftType] = useState<WorkspaceProfileAreaType>("project");
-  const [areas, setAreas] = useState<AreaRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  const trimmedSuccessTitle = successTitle.trim();
+  const trimmed = successTitle.trim();
   const trimmedRole = role.trim();
   const trimmedGoalDraft = goalDraft.trim();
-  const trimmedAreaDraftTitle = areaDraftTitle.trim();
-  const canProceed = Boolean(trimmedSuccessTitle);
+  const canProceed = Boolean(trimmed);
   const canAddGoal =
     Boolean(trimmedGoalDraft) &&
     goals.length < MAX_GOALS &&
-    !goals.some((goal) => goal.title.toLowerCase() === trimmedGoalDraft.toLowerCase());
-  const canAddArea =
-    Boolean(trimmedAreaDraftTitle) &&
-    areas.length < MAX_AREAS &&
-    !areas.some((area) => area.title.toLowerCase() === trimmedAreaDraftTitle.toLowerCase());
-  const totalNodeCount = 1 + goals.length + areas.length;
-  const progressWidth = `${step === 0 ? 50 : 100}%`;
-  const creationSummary = formatSummary(1, goals.length, areas.length);
+    !goals.some((g) => g.title.toLowerCase() === trimmedGoalDraft.toLowerCase());
+  const totalNodes = 1 + goals.length;
 
   function addGoalFromValue(value: string) {
-    const trimmedValue = value.trim();
-    if (
-      !trimmedValue ||
-      goals.length >= MAX_GOALS ||
-      goals.some((goal) => goal.title.toLowerCase() === trimmedValue.toLowerCase())
-    ) {
-      return;
-    }
-
-    setGoals((currentGoals) => [
-      ...currentGoals,
-      { id: createId("goal"), title: trimmedValue },
-    ]);
+    const v = value.trim();
+    if (!v || goals.length >= MAX_GOALS || goals.some((g) => g.title.toLowerCase() === v.toLowerCase())) return;
+    setGoals((prev) => [...prev, { id: createId("goal"), title: v }]);
   }
 
   function addGoal() {
-    if (!canAddGoal) {
-      return;
-    }
-
+    if (!canAddGoal) return;
     addGoalFromValue(trimmedGoalDraft);
     setGoalDraft("");
   }
 
-  function removeGoal(goalId: string) {
-    setGoals((currentGoals) => currentGoals.filter((goal) => goal.id !== goalId));
-  }
-
-  function addArea() {
-    if (!canAddArea) {
-      return;
-    }
-
-    setAreas((currentAreas) => [
-      ...currentAreas,
-      {
-        id: createId("area"),
-        title: trimmedAreaDraftTitle,
-        area_type: areaDraftType,
-      },
-    ]);
-    setAreaDraftTitle("");
-  }
-
-  function removeArea(areaId: string) {
-    setAreas((currentAreas) => currentAreas.filter((area) => area.id !== areaId));
-  }
-
-  function requestCancel() {
-    if (submitting) {
-      return;
-    }
-
-    setShowCancelConfirm(true);
-  }
-
-  function dismissCancelConfirm() {
-    if (submitting) {
-      return;
-    }
-
-    setShowCancelConfirm(false);
-  }
-
-  function confirmCancel() {
-    if (submitting) {
-      return;
-    }
-
-    setShowCancelConfirm(false);
-    onSkip();
+  function removeGoal(id: string) {
+    setGoals((prev) => prev.filter((g) => g.id !== id));
   }
 
   async function handleSubmit() {
-    if (!trimmedSuccessTitle || submitting) {
-      return;
-    }
-
+    if (!trimmed || submitting) return;
     setSubmitting(true);
     setError(null);
 
@@ -202,9 +91,9 @@ export function WorkspaceBootstrapWizard({
         body: JSON.stringify({
           role: trimmedRole || null,
           current_focus: null,
-          success_title: trimmedSuccessTitle,
-          goals: goals.map((goal) => ({ title: goal.title })),
-          areas: areas.map((area) => ({ title: area.title, area_type: area.area_type })),
+          success_title: trimmed,
+          goals: goals.map((g) => ({ title: g.title })),
+          areas: [],
         }),
       });
 
@@ -223,17 +112,22 @@ export function WorkspaceBootstrapWizard({
 
   return (
     <div className="bootstrap-overlay">
-      <div className="bootstrap-modal">
+      <div className="bootstrap-modal bootstrap-modal--compact">
         <div className="bootstrap-atmosphere" aria-hidden="true" />
 
         <header className="bootstrap-header">
           <div className="bootstrap-heading-block">
-            <span className="bootstrap-eyebrow">{isOnboarding ? "Set up your workspace" : "New workspace"}</span>
+            <span className="bootstrap-eyebrow">
+              {isOnboarding ? "Set up your workspace" : "New workspace"}
+            </span>
             <h2 className="bootstrap-heading">
-              {step === 0
-                ? "What are you working on?"
-                : "Ready to create?"}
+              {step === 0 ? "What\u0027s your main focus?" : "Looking good"}
             </h2>
+            {step === 0 && (
+              <p className="bootstrap-subheading">
+                This becomes the root of your knowledge graph. You can always change it later.
+              </p>
+            )}
           </div>
 
           <div className="bootstrap-progress">
@@ -242,358 +136,211 @@ export function WorkspaceBootstrapWizard({
               <span className="bootstrap-progress-workspace">{workspaceName}</span>
             </div>
             <div className="bootstrap-progress-track">
-              <span className="bootstrap-progress-fill" style={{ width: progressWidth }} />
+              <span className="bootstrap-progress-fill" style={{ width: step === 0 ? "50%" : "100%" }} />
             </div>
           </div>
         </header>
 
         {step === 0 ? (
-          <div className="bootstrap-body">
-            <section className="bootstrap-root-section">
-              <div className="bootstrap-section-head">
-                <div className="bootstrap-section-copy">
-                  <span className="bootstrap-section-kicker">Your goal</span>
-                  <h3 className="bootstrap-section-title">
-                    What do you want this workspace to help you do?
-                  </h3>
+          <div className="bootstrap-body bootstrap-body--padded">
+            {/* Main focus input */}
+            <div className="bootstrap-field-stack">
+              <label className="bootstrap-field-label" htmlFor="bootstrap-root">
+                Main focus
+              </label>
+              <div
+                className="bootstrap-root-field"
+                data-filled={trimmed ? "true" : "false"}
+              >
+                <input
+                  id="bootstrap-root"
+                  className="bootstrap-root-input"
+                  type="text"
+                  placeholder="e.g. Run my semester with clarity"
+                  value={successTitle}
+                  onChange={(e) => setSuccessTitle(e.target.value)}
+                  maxLength={80}
+                  autoComplete="off"
+                  autoFocus
+                />
+              </div>
+
+              <div className="bootstrap-suggestion-list" role="list">
+                {FOCUS_SUGGESTIONS.map((s) => (
+                  <button
+                    className="bootstrap-suggestion-chip"
+                    data-active={s.toLowerCase() === trimmed.toLowerCase() ? "true" : "false"}
+                    key={s}
+                    onClick={() => setSuccessTitle(s)}
+                    type="button"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Role field */}
+            <div className="bootstrap-field-stack" style={{ marginTop: 28 }}>
+              <div className="bootstrap-field-head">
+                <label className="bootstrap-field-label" htmlFor="bootstrap-role">
+                  Describe yourself
+                </label>
+                <span className="bootstrap-optional-badge">Optional</span>
+              </div>
+              <div
+                className="bootstrap-field"
+                data-filled={trimmedRole ? "true" : "false"}
+              >
+                <input
+                  id="bootstrap-role"
+                  className="bootstrap-field-input"
+                  type="text"
+                  placeholder="e.g. CS student balancing coursework and side projects"
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  maxLength={140}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+
+            {/* Goals section */}
+            <div className="bootstrap-field-stack" style={{ marginTop: 28 }}>
+              <div className="bootstrap-field-head">
+                <label className="bootstrap-field-label" htmlFor="bootstrap-goal-draft">
+                  Goals
+                </label>
+                <div className="bootstrap-field-head-right">
+                  <span className="bootstrap-optional-badge">Optional</span>
+                  <span className="bootstrap-field-count">{goals.length}/{MAX_GOALS}</span>
                 </div>
               </div>
 
-              <div className="bootstrap-field-stack">
-                <label className="bootstrap-field-label" htmlFor="bootstrap-root">
-                  Main goal
-                </label>
+              <div className="bootstrap-tool-row bootstrap-tool-row--goal">
                 <div
-                  className="bootstrap-root-field"
-                  data-filled={trimmedSuccessTitle ? "true" : "false"}
+                  className="bootstrap-tool-input"
+                  data-filled={trimmedGoalDraft ? "true" : "false"}
                 >
                   <input
-                    id="bootstrap-root"
-                    className="bootstrap-root-input"
+                    id="bootstrap-goal-draft"
+                    className="bootstrap-tool-input-field"
                     type="text"
-                    placeholder="e.g. Run my semester with clarity"
-                    value={successTitle}
-                    onChange={(e) => setSuccessTitle(e.target.value)}
+                    placeholder="Type a goal and press Enter"
+                    value={goalDraft}
+                    onChange={(e) => setGoalDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addGoal();
+                      }
+                    }}
                     maxLength={80}
                     autoComplete="off"
-                    autoFocus
                   />
                 </div>
+                <button
+                  className="bootstrap-tool-action"
+                  disabled={!canAddGoal}
+                  onClick={addGoal}
+                  type="button"
+                >
+                  <PlusIcon className="h-[13px] w-[13px]" />
+                </button>
               </div>
 
-              <div className="bootstrap-suggestion-list" role="list" aria-label="Root outcome examples">
-                {ROOT_SUGGESTIONS.map((suggestion) => {
-                  const active = suggestion.toLowerCase() === trimmedSuccessTitle.toLowerCase();
-
-                  return (
-                    <button
-                      className="bootstrap-suggestion-chip"
-                      data-active={active ? "true" : "false"}
-                      key={suggestion}
-                      onClick={() => setSuccessTitle(suggestion)}
-                      type="button"
-                    >
-                      {suggestion}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-
-            <section className="bootstrap-section">
-              <div className="bootstrap-section-head">
-                <div className="bootstrap-section-copy">
-                  <span className="bootstrap-section-kicker">About you</span>
-                </div>
-              </div>
-
-              <div className="bootstrap-field-stack">
-                <div className="bootstrap-field-head">
-                  <label className="bootstrap-field-label" htmlFor="bootstrap-role">
-                    Who are you?
-                  </label>
-                  <span className="bootstrap-field-meta">Optional</span>
-                </div>
-                <div className="bootstrap-field" data-filled={trimmedRole ? "true" : "false"}>
-                  <input
-                    id="bootstrap-role"
-                    className="bootstrap-field-input"
-                    type="text"
-                    placeholder="e.g. CS student balancing coursework and side projects"
-                    value={role}
-                    onChange={(e) => setRole(e.target.value)}
-                    maxLength={140}
-                    autoComplete="off"
-                  />
-                </div>
-              </div>
-
-              <div className="bootstrap-field-stack">
-                <div className="bootstrap-field-head">
-                  <div className="bootstrap-field-head-copy">
-                    <label className="bootstrap-field-label" htmlFor="bootstrap-goal-draft">
-                      Big goals
-                    </label>
-                  </div>
-                  <span className="bootstrap-field-count">
-                    {goals.length}/{MAX_GOALS}
-                  </span>
-                </div>
-
-                <div className="bootstrap-tool-row bootstrap-tool-row--goal">
-                  <div
-                    className="bootstrap-tool-input"
-                    data-filled={trimmedGoalDraft ? "true" : "false"}
-                  >
-                    <input
-                      id="bootstrap-goal-draft"
-                      className="bootstrap-tool-input-field"
-                      type="text"
-                      placeholder="Add a goal"
-                      value={goalDraft}
-                      onChange={(e) => setGoalDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addGoal();
-                        }
-                      }}
-                      maxLength={80}
-                      autoComplete="off"
-                    />
-                  </div>
-                  <button
-                    className="bootstrap-tool-action"
-                    disabled={!canAddGoal}
-                    onClick={addGoal}
-                    type="button"
-                  >
-                    <PlusIcon className="h-[13px] w-[13px]" />
-                    <span>Add goal</span>
-                  </button>
-                </div>
-
+              {goals.length > 0 && (
                 <div className="bootstrap-goal-chip-list">
-                  {goals.length > 0 ? (
-                    goals.map((goal) => (
-                      <div className="bootstrap-goal-chip" key={goal.id}>
-                        <span className="bootstrap-goal-chip-text">{goal.title}</span>
-                        <button
-                          aria-label={`Remove ${goal.title}`}
-                          className="bootstrap-goal-chip-remove"
-                          onClick={() => removeGoal(goal.id)}
-                          type="button"
-                        >
-                          <CloseIcon className="h-[10px] w-[10px]" />
-                        </button>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="bootstrap-empty-copy">No goals added yet.</p>
-                  )}
-                </div>
-
-                <div className="bootstrap-inline-suggestions">
-                  {GOAL_SUGGESTIONS.map((suggestion) => (
-                    <button
-                      className="bootstrap-inline-chip"
-                      key={suggestion}
-                      onClick={() => addGoalFromValue(suggestion)}
-                      type="button"
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            <section className="bootstrap-section">
-              <div className="bootstrap-section-head">
-                <div className="bootstrap-section-copy">
-                  <span className="bootstrap-section-kicker">Areas</span>
-                  <h3 className="bootstrap-section-title">
-                    What parts of your life does this cover?
-                  </h3>
-                </div>
-                <span className="bootstrap-section-count">{areas.length}</span>
-              </div>
-
-              <div className="bootstrap-field-stack">
-                <div className="bootstrap-field-head">
-                  <label className="bootstrap-field-label" htmlFor="bootstrap-area-draft">
-                    New area
-                  </label>
-                  <span className="bootstrap-field-meta">Up to {MAX_AREAS}</span>
-                </div>
-
-                <div className="bootstrap-tool-row bootstrap-tool-row--area">
-                  <div
-                    className="bootstrap-tool-input"
-                    data-filled={trimmedAreaDraftTitle ? "true" : "false"}
-                  >
-                    <input
-                      id="bootstrap-area-draft"
-                      className="bootstrap-tool-input-field"
-                      type="text"
-                      placeholder="Area name"
-                      value={areaDraftTitle}
-                      onChange={(e) => setAreaDraftTitle(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addArea();
-                        }
-                      }}
-                      maxLength={80}
-                      autoComplete="off"
-                    />
-                  </div>
-
-                  <div className="bootstrap-select-shell">
-                    <select
-                      className="bootstrap-select"
-                      value={areaDraftType}
-                      onChange={(e) =>
-                        setAreaDraftType(e.target.value as WorkspaceProfileAreaType)
-                      }
-                    >
-                      {AREA_TYPE_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDownIcon className="bootstrap-select-icon h-[13px] w-[13px]" />
-                  </div>
-
-                  <button
-                    className="bootstrap-tool-action bootstrap-tool-action--primary"
-                    disabled={!canAddArea}
-                    onClick={addArea}
-                    type="button"
-                  >
-                    <PlusIcon className="h-[13px] w-[13px]" />
-                    <span>Add area</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="bootstrap-area-list">
-                {areas.length > 0 ? (
-                  areas.map((area) => (
-                    <div className="bootstrap-area-row" key={area.id}>
-                      <span className="bootstrap-area-handle" aria-hidden="true">
-                        <GripVerticalIcon className="h-[13px] w-[13px]" />
-                      </span>
-                      <div className="bootstrap-area-row-copy">
-                        <span className="bootstrap-area-name">{area.title}</span>
-                        <span className="bootstrap-area-description">
-                          {
-                            AREA_TYPE_OPTIONS.find((option) => option.value === area.area_type)
-                              ?.description
-                          }
-                        </span>
-                      </div>
-                      <span className="bootstrap-area-badge">{getAreaTypeLabel(area.area_type)}</span>
+                  {goals.map((goal) => (
+                    <div className="bootstrap-goal-chip" key={goal.id}>
+                      <span className="bootstrap-goal-chip-text">{goal.title}</span>
                       <button
-                        aria-label={`Remove ${area.title}`}
-                        className="bootstrap-area-remove"
-                        onClick={() => removeArea(area.id)}
+                        aria-label={`Remove ${goal.title}`}
+                        className="bootstrap-goal-chip-remove"
+                        onClick={() => removeGoal(goal.id)}
                         type="button"
                       >
-                        <CloseIcon className="h-[11px] w-[11px]" />
+                        <CloseIcon className="h-[10px] w-[10px]" />
                       </button>
                     </div>
-                  ))
-                ) : (
-                  <div className="bootstrap-empty-state">
-                    <p className="bootstrap-empty-copy">No areas added yet.</p>
-                  </div>
-                )}
-              </div>
-            </section>
+                  ))}
+                </div>
+              )}
+
+              {goals.length < MAX_GOALS && (
+                <div className="bootstrap-inline-suggestions">
+                  {GOAL_SUGGESTIONS
+                    .filter((s) => !goals.some((g) => g.title.toLowerCase() === s.toLowerCase()))
+                    .map((s) => (
+                      <button
+                        className="bootstrap-inline-chip"
+                        key={s}
+                        onClick={() => addGoalFromValue(s)}
+                        type="button"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
 
             {error ? <p className="bootstrap-error">{error}</p> : null}
           </div>
         ) : (
-          <div className="bootstrap-body">
+          /* ── Confirmation step ── */
+          <div className="bootstrap-body bootstrap-body--padded">
             <section className="bootstrap-review-hero">
-              <span className="bootstrap-section-kicker">Workspace preview</span>
-              <h3 className="bootstrap-review-title">{trimmedSuccessTitle}</h3>
+              <span className="bootstrap-section-kicker">Your workspace</span>
+              <h3 className="bootstrap-review-title">{trimmed}</h3>
               <div className="bootstrap-review-meta">
-                {trimmedRole ? (
+                {trimmedRole && (
                   <span className="bootstrap-review-meta-item">{trimmedRole}</span>
-                ) : null}
-                <span className="bootstrap-review-meta-item">{creationSummary}</span>
-                <span className="bootstrap-review-meta-item">{totalNodeCount} nodes total</span>
+                )}
+                <span className="bootstrap-review-meta-item">
+                  {totalNodes} node{totalNodes !== 1 ? "s" : ""} will be created
+                </span>
               </div>
             </section>
 
-            <section className="bootstrap-review-section">
-              <div className="bootstrap-section-head">
-                <div className="bootstrap-section-copy">
-                  <span className="bootstrap-section-kicker">Goals</span>
+            {goals.length > 0 && (
+              <section className="bootstrap-review-section">
+                <div className="bootstrap-section-head">
+                  <div className="bootstrap-section-copy">
+                    <span className="bootstrap-section-kicker">Goals</span>
+                  </div>
+                  <span className="bootstrap-section-count">{goals.length}</span>
                 </div>
-                <span className="bootstrap-section-count">{goals.length}</span>
-              </div>
-
-              <div className="bootstrap-review-list">
-                {goals.length > 0 ? (
-                  goals.map((goal) => (
+                <div className="bootstrap-review-list">
+                  {goals.map((goal) => (
                     <div className="bootstrap-review-row" key={goal.id}>
                       <span className="bootstrap-review-row-index" aria-hidden="true" />
                       <span className="bootstrap-review-row-title">{goal.title}</span>
                     </div>
-                  ))
-                ) : (
-                  <div className="bootstrap-empty-state">
-                    <p className="bootstrap-empty-copy">No goals added to this setup.</p>
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section className="bootstrap-review-section">
-              <div className="bootstrap-section-head">
-                <div className="bootstrap-section-copy">
-                  <span className="bootstrap-section-kicker">Areas</span>
+                  ))}
                 </div>
-                <span className="bootstrap-section-count">{areas.length}</span>
-              </div>
-
-              <div className="bootstrap-review-list">
-                {areas.length > 0 ? (
-                  areas.map((area) => (
-                    <div className="bootstrap-review-row" key={area.id}>
-                      <span className="bootstrap-review-row-index" aria-hidden="true" />
-                      <span className="bootstrap-review-row-title">{area.title}</span>
-                      <span className="bootstrap-area-badge">{getAreaTypeLabel(area.area_type)}</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="bootstrap-empty-state">
-                    <p className="bootstrap-empty-copy">No areas added to this setup.</p>
-                  </div>
-                )}
-              </div>
-            </section>
+              </section>
+            )}
 
             {error ? <p className="bootstrap-error">{error}</p> : null}
           </div>
         )}
 
         <footer className="bootstrap-footer">
-          <button className="bootstrap-cancel" onClick={requestCancel} type="button">
-            Cancel
+          <button
+            className="bootstrap-cancel"
+            onClick={() => setShowCancelConfirm(true)}
+            type="button"
+          >
+            {isOnboarding ? "Skip" : "Cancel"}
           </button>
 
           <div className="bootstrap-footer-actions">
-            {step === 1 ? (
+            {step === 1 && (
               <button className="bootstrap-back" onClick={() => setStep(0)} type="button">
                 Back
               </button>
-            ) : null}
+            )}
 
             <button
               className="bootstrap-submit"
@@ -601,12 +348,16 @@ export function WorkspaceBootstrapWizard({
               onClick={step === 0 ? () => setStep(1) : handleSubmit}
               type="button"
             >
-              {step === 0 ? "Review structure" : submitting ? "Creating…" : "Create workspace"}
+              {step === 0
+                ? "Review"
+                : submitting
+                  ? "Creating..."
+                  : "Create workspace"}
             </button>
           </div>
         </footer>
 
-        {showCancelConfirm ? (
+        {showCancelConfirm && (
           <div className="bootstrap-confirm-overlay">
             <div
               aria-labelledby="bootstrap-cancel-title"
@@ -624,12 +375,19 @@ export function WorkspaceBootstrapWizard({
                   : "This workspace won\u0027t be saved."}
               </p>
               <div className="bootstrap-confirm-actions">
-                <button className="bootstrap-back" onClick={dismissCancelConfirm} type="button">
+                <button
+                  className="bootstrap-back"
+                  onClick={() => setShowCancelConfirm(false)}
+                  type="button"
+                >
                   Keep editing
                 </button>
                 <button
                   className="bootstrap-confirm-submit"
-                  onClick={confirmCancel}
+                  onClick={() => {
+                    setShowCancelConfirm(false);
+                    onSkip();
+                  }}
                   type="button"
                 >
                   {isOnboarding ? "Skip for now" : "Discard workspace"}
@@ -637,7 +395,7 @@ export function WorkspaceBootstrapWizard({
               </div>
             </div>
           </div>
-        ) : null}
+        )}
       </div>
     </div>
   );
