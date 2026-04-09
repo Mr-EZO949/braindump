@@ -3695,6 +3695,62 @@ input[type="search"]::-webkit-search-results-decoration {
   color: var(--color-text-muted);
 }
 
+/* Step suggestion modal — shown after accepting goals/projects */
+.step-suggest-modal {
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 24px;
+  max-width: 400px;
+  width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.step-suggest-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(213, 58, 71, 0.10);
+  color: var(--color-accent-primary);
+}
+
+.step-suggest-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.step-suggest-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.step-suggest-desc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.step-suggest-desc strong {
+  color: var(--color-text-primary);
+  font-weight: 550;
+}
+
+.step-suggest-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .prn-body-bottom {
   display: flex;
   align-items: center;

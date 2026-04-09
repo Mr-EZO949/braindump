@@ -170,6 +170,9 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
   const [proposedNodesSubmitting, setProposedNodesSubmitting] = useState(false);
+  const [stepSuggestionNodes, setStepSuggestionNodes] = useState<Array<{ id: string; title: string; summary: string | null; node_type: string }>>([]);
+  const [stepSuggestionOpen, setStepSuggestionOpen] = useState(false);
+  const [stepSuggestionLoading, setStepSuggestionLoading] = useState(false);
   const [graphEditOps, setGraphEditOps] = useState<GraphEditOperation[]>([]);
   const [graphEditReviewOpen, setGraphEditReviewOpen] = useState(false);
   const [proposedEdges, setProposedEdges] = useState<ProposedEdgeWithNodes[]>([]);
@@ -1582,7 +1585,66 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (data.accepted_nodes && data.accepted_nodes.length > 0 && selectedWorkspaceId) {
       const nodeIds = (data.accepted_nodes as Node[]).map((n) => n.id);
       void analyzeNodes(nodeIds);
+
+      // Check if any accepted nodes are goals/projects — offer step suggestions
+      const goalOrProjectNodes = (data.accepted_nodes as Node[]).filter(
+        (n) => n.node_type === "goal" || n.node_type === "project",
+      );
+      if (goalOrProjectNodes.length > 0) {
+        setStepSuggestionNodes(
+          goalOrProjectNodes.map((n) => ({
+            id: n.id,
+            title: n.title,
+            summary: n.summary,
+            node_type: n.node_type,
+          })),
+        );
+        setStepSuggestionOpen(true);
+      }
     }
+  };
+
+  const handleGenerateSteps = async () => {
+    if (!selectedWorkspaceId || stepSuggestionNodes.length === 0) return;
+    setStepSuggestionLoading(true);
+    setStepSuggestionOpen(false);
+
+    try {
+      // Generate steps for each goal/project node, then extract them all
+      const allStepsTexts: string[] = [];
+      for (const node of stepSuggestionNodes) {
+        const res = await fetch("/api/nodes/suggest-steps", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: node.title,
+            summary: node.summary,
+            node_type: node.node_type,
+            workspace_id: selectedWorkspaceId,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json() as { steps_text?: string };
+          if (data.steps_text) {
+            allStepsTexts.push(data.steps_text);
+          }
+        }
+      }
+
+      if (allStepsTexts.length > 0) {
+        await handleExtractNodes(allStepsTexts.join("\n\n"), selectedWorkspaceId);
+      }
+    } catch {
+      // Step generation failed silently
+    } finally {
+      setStepSuggestionLoading(false);
+      setStepSuggestionNodes([]);
+    }
+  };
+
+  const dismissStepSuggestion = () => {
+    setStepSuggestionOpen(false);
+    setStepSuggestionNodes([]);
   };
 
   const closeProposedNodesReview = () => {
@@ -2112,6 +2174,83 @@ export function AppShell({ initialUser }: AppShellProps) {
               onConfirm={(ops) => handleGraphEditConfirm(ops)}
               onDismiss={() => { setGraphEditReviewOpen(false); setGraphEditOps([]); }}
             />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Step suggestion prompt — shown after accepting goals/projects */}
+      <AnimatePresence>
+        {stepSuggestionOpen && stepSuggestionNodes.length > 0 && (
+          <motion.div
+            key="step-suggest-backdrop"
+            className="fixed inset-0 z-60 flex items-center justify-center"
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            style={{ background: "rgba(0,0,0,0.45)" }}
+          >
+            <motion.div
+              className="step-suggest-modal"
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.99 }}
+              initial={{ opacity: 0, y: 16, scale: 0.99 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <div className="step-suggest-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18l6-6-6-6" />
+                </svg>
+              </div>
+              <div className="step-suggest-body">
+                <p className="step-suggest-title">Suggested steps</p>
+                <p className="step-suggest-desc">
+                  Want me to break down{" "}
+                  {stepSuggestionNodes.map((n, i) => (
+                    <span key={n.id}>
+                      {i > 0 && (i === stepSuggestionNodes.length - 1 ? " and " : ", ")}
+                      <strong>{n.title}</strong>
+                    </span>
+                  ))}{" "}
+                  into actionable steps?
+                </p>
+              </div>
+              <div className="step-suggest-actions">
+                <button
+                  className="per-btn-ghost"
+                  onClick={dismissStepSuggestion}
+                  type="button"
+                >
+                  Skip
+                </button>
+                <button
+                  className="per-btn-primary"
+                  onClick={() => void handleGenerateSteps()}
+                  type="button"
+                >
+                  Generate steps
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Step generation loading indicator */}
+      <AnimatePresence>
+        {stepSuggestionLoading && (
+          <motion.div
+            key="step-loading"
+            className="fixed bottom-20 left-1/2 z-50 -translate-x-1/2"
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.15 }}
+          >
+            <div className="ai-status-chip">
+              <span className="ai-status-spinner" />
+              Generating steps…
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
