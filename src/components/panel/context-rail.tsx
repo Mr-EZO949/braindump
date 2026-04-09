@@ -102,6 +102,7 @@ export function ContextRail({
         open ? "w-[396px]" : "w-[28px]"
       }`}
       data-open={open ? "true" : "false"}
+      data-tour="context-rail"
     >
       <button
         aria-label={open ? "Close context panel" : "Open context panel"}

@@ -26,6 +26,7 @@ interface Props {
   workspaceName: string;
   onComplete: () => void;
   onSkip: () => void;
+  isOnboarding?: boolean;
 }
 
 const MAX_GOALS = 4;
@@ -81,6 +82,7 @@ export function WorkspaceBootstrapWizard({
   workspaceName,
   onComplete,
   onSkip,
+  isOnboarding = false,
 }: Props) {
   const [step, setStep] = useState(0);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
@@ -226,7 +228,7 @@ export function WorkspaceBootstrapWizard({
 
         <header className="bootstrap-header">
           <div className="bootstrap-heading-block">
-            <span className="bootstrap-eyebrow">New workspace</span>
+            <span className="bootstrap-eyebrow">{isOnboarding ? "Set up your workspace" : "New workspace"}</span>
             <h2 className="bootstrap-heading">
               {step === 0
                 ? "What are you working on?"
@@ -614,10 +616,12 @@ export function WorkspaceBootstrapWizard({
             >
               <span className="bootstrap-confirm-kicker">Cancel setup</span>
               <h3 className="bootstrap-confirm-heading" id="bootstrap-cancel-title">
-                Discard this workspace?
+                {isOnboarding ? "Skip workspace setup?" : "Discard this workspace?"}
               </h3>
               <p className="bootstrap-confirm-copy">
-                This workspace won&apos;t be saved.
+                {isOnboarding
+                  ? "You can always set up your workspace later."
+                  : "This workspace won\u0027t be saved."}
               </p>
               <div className="bootstrap-confirm-actions">
                 <button className="bootstrap-back" onClick={dismissCancelConfirm} type="button">
@@ -628,7 +632,7 @@ export function WorkspaceBootstrapWizard({
                   onClick={confirmCancel}
                   type="button"
                 >
-                  Discard workspace
+                  {isOnboarding ? "Skip for now" : "Discard workspace"}
                 </button>
               </div>
             </div>

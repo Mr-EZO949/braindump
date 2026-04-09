@@ -13,7 +13,8 @@ import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
 import { GraphEditReview } from "@/components/ui/graph-edit-review";
 import { MergeAlert } from "@/components/ui/merge-alert";
 import { WorkspaceBootstrapWizard } from "@/components/ui/workspace-bootstrap-wizard";
-import { OnboardingTutorial, shouldShowTutorial } from "@/components/ui/onboarding-tutorial";
+import { WelcomeScreen, shouldShowWelcome, markWelcomeDone } from "@/components/ui/onboarding-tutorial";
+import { GuidedTour } from "@/components/ui/guided-tour";
 import type { ProposedEdgeWithNodes } from "@/lib/ai/connection";
 import type { MergeCandidate } from "@/lib/ai/merge";
 import {
@@ -230,9 +231,10 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [edgeUpdateSubmittingId, setEdgeUpdateSubmittingId] = useState<string | null>(null);
   // Bootstrap wizard — shown when a new empty workspace is created OR loaded empty
   const [bootstrapWorkspaceId, setBootstrapWorkspaceId] = useState<string | null>(null);
-  // Onboarding tutorial — shown once per user (persisted via localStorage)
-  const [showTutorial, setShowTutorial] = useState(false);
-  const tutorialShownRef = useRef(false);
+  // Welcome screen — shown once per user on first login
+  const [showWelcome, setShowWelcome] = useState(false);
+  // Guided tour — shown after workspace wizard during onboarding
+  const [showTour, setShowTour] = useState(false);
   const workspaceCreationFlowRef = useRef<{
     previousWorkspaceId: string | null;
     workspaceId: string;
@@ -431,14 +433,18 @@ export function AppShell({ initialUser }: AppShellProps) {
       setGraphData(nextGraphData);
       setGraphLoading(false);
 
-      // Show bootstrap wizard for empty workspaces that haven't been bootstrapped yet
-      // (e.g. the auto-created General workspace on first sign-up)
+      // For empty workspaces: show welcome for brand-new users,
+      // or go straight to the wizard if welcome was already seen
       if (
         nextGraphData.nodes.length === 0 &&
         selectedWorkspaceId &&
-        !selectedWorkspace?.bootstrap_completed_at
+        authUser
       ) {
-        setBootstrapWorkspaceId(selectedWorkspaceId);
+        if (shouldShowWelcome(authUser.id)) {
+          setShowWelcome(true);
+        } else if (!selectedWorkspace?.bootstrap_completed_at) {
+          setBootstrapWorkspaceId(selectedWorkspaceId);
+        }
       }
     });
 
@@ -471,7 +477,13 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || event === "TOKEN_REFRESHED" && !session) {
+        // Redirect to login when session is lost (e.g. invalid refresh token)
+        router.push("/login");
+        return;
+      }
+
       setAuthUser(
         session?.user
           ? {
@@ -2260,22 +2272,23 @@ export function AppShell({ initialUser }: AppShellProps) {
         <WorkspaceBootstrapWizard
           workspaceId={selectedWorkspaceId}
           workspaceName={workspaceName}
+          isOnboarding={!workspaceCreationFlowRef.current}
           onComplete={() => {
+            const wasOnboarding = !workspaceCreationFlowRef.current;
             if (workspaceCreationFlowRef.current?.workspaceId === selectedWorkspaceId) {
               workspaceCreationFlowRef.current = null;
             }
             setBootstrapWorkspaceId(null);
-            // Show tutorial after bootstrap for new users
-            if (!tutorialShownRef.current && authUser && shouldShowTutorial(authUser.id)) {
-              tutorialShownRef.current = true;
-              setShowTutorial(true);
-            }
             void loadWorkspaceGraphData(
               authUser?.id ?? null,
               selectedWorkspaceId,
               selectedWorkspace?.name ?? null,
             ).then((nextGraphData) => {
               setGraphData(nextGraphData);
+              // After onboarding wizard, start the guided tour
+              if (wasOnboarding) {
+                setShowTour(true);
+              }
             });
           }}
           onSkip={() => {
@@ -2284,9 +2297,26 @@ export function AppShell({ initialUser }: AppShellProps) {
         />
       )}
 
-      {/* Onboarding tutorial — shown once per user */}
-      {showTutorial && authUser && (
-        <OnboardingTutorial userId={authUser.id} onDone={() => setShowTutorial(false)} />
+      {/* Welcome screen — guides new users into workspace setup */}
+      {showWelcome && authUser && (
+        <WelcomeScreen
+          onGetStarted={() => {
+            markWelcomeDone(authUser.id);
+            setShowWelcome(false);
+            if (selectedWorkspaceId) {
+              setBootstrapWorkspaceId(selectedWorkspaceId);
+            }
+          }}
+          onSkip={() => {
+            markWelcomeDone(authUser.id);
+            setShowWelcome(false);
+          }}
+        />
+      )}
+
+      {/* Guided tour — walks user through UI features after onboarding */}
+      {showTour && (
+        <GuidedTour onDone={() => setShowTour(false)} />
       )}
     </div>
   );

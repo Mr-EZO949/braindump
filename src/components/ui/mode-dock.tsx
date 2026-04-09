@@ -12,11 +12,12 @@ type ModeDockProps = {
 
 export function ModeDock({ mode, onSetMode, onOpenBrainDump }: ModeDockProps) {
   return (
-    <div className="mode-dock" role="toolbar" aria-label="App mode">
+    <div className="mode-dock" data-tour="dock" role="toolbar" aria-label="App mode">
       <button
         aria-pressed={mode === "graph"}
         className="mode-dock-btn"
         data-active={mode === "graph"}
+        data-tour="graph-btn"
         onClick={() => onSetMode("graph")}
         type="button"
       >
@@ -28,6 +29,7 @@ export function ModeDock({ mode, onSetMode, onOpenBrainDump }: ModeDockProps) {
         aria-pressed={mode === "assistant"}
         className="mode-dock-btn"
         data-active={mode === "assistant"}
+        data-tour="assistant-btn"
         onClick={() => onSetMode("assistant")}
         type="button"
       >
@@ -39,6 +41,7 @@ export function ModeDock({ mode, onSetMode, onOpenBrainDump }: ModeDockProps) {
 
       <button
         className="mode-dock-action"
+        data-tour="braindump-btn"
         onClick={onOpenBrainDump}
         type="button"
       >

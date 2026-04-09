@@ -168,7 +168,7 @@ export function MainStage({
   const resetLayout = useCallback(() => setLayoutKey((k) => k + 1), []);
 
   return (
-    <main className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-bg-base)]">
+    <main className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-bg-base)]" data-tour="graph-area">
       <div className="main-stage-material pointer-events-none absolute inset-0" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,transparent_62%,rgba(0,0,0,0.16)_100%)]" />
       <div
