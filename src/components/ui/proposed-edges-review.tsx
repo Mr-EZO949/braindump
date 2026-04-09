@@ -17,8 +17,10 @@ function nodeColor(type: string): string {
 
 export function ProposedEdgesReview({ edges, onConfirm, onDismiss }: Props) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set(edges.map((e) => e.id)));
+  const [submitting, setSubmitting] = useState(false);
 
   function toggle(id: string) {
+    if (submitting) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -28,6 +30,8 @@ export function ProposedEdgesReview({ edges, onConfirm, onDismiss }: Props) {
   }
 
   function handleConfirm() {
+    if (submitting) return;
+    setSubmitting(true);
     const actions = edges.map((e) => ({
       id: e.id,
       action: selected.has(e.id) ? ("accept" as const) : ("reject" as const),
@@ -112,11 +116,11 @@ export function ProposedEdgesReview({ edges, onConfirm, onDismiss }: Props) {
             {selectedCount} of {edges.length} selected
           </span>
           <div className="per-footer-actions">
-            <button className="per-btn-ghost" onClick={onDismiss}>
+            <button className="per-btn-ghost" onClick={onDismiss} disabled={submitting}>
               Dismiss
             </button>
-            <button className="per-btn-primary" onClick={handleConfirm}>
-              Add {selectedCount} connection{selectedCount !== 1 ? "s" : ""}
+            <button className="per-btn-primary" onClick={handleConfirm} disabled={submitting}>
+              {submitting ? "Adding..." : `Add ${selectedCount} connection${selectedCount !== 1 ? "s" : ""}`}
             </button>
           </div>
         </div>

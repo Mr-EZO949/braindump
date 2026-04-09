@@ -500,11 +500,12 @@ export function AppShell({ initialUser }: AppShellProps) {
     };
   }, [supabase]);
 
+  // Keep chat scope in sync with node selection — when the user selects a
+  // different node (or deselects), update the scope so the assistant always
+  // has the right context.  This also covers the empty-messages case.
   useEffect(() => {
-    if (chatMessages.length === 0) {
-      setChatScope(defaultChatScope);
-    }
-  }, [chatMessages.length, defaultChatScope]);
+    setChatScope(defaultChatScope);
+  }, [defaultChatScope]);
 
   useEffect(() => {
     if (workspaces.length === 0) {

@@ -328,31 +328,3 @@ async function markFailed(
     })
     .eq("id", rawEntryId);
 }
-
-// ---------------------------------------------------------------------------
-// Chunk large inputs
-// ---------------------------------------------------------------------------
-
-export function chunkText(
-  text: string,
-  maxChars = AI_INGESTION.MAX_CHARS
-): string[] {
-  if (text.length <= maxChars) return [text];
-
-  const chunks: string[] = [];
-  // Split on paragraph boundaries where possible
-  const paragraphs = text.split(/\n\n+/);
-  let current = "";
-
-  for (const para of paragraphs) {
-    if (current.length + para.length + 2 > maxChars) {
-      if (current) chunks.push(current.trim());
-      current = para;
-    } else {
-      current = current ? `${current}\n\n${para}` : para;
-    }
-  }
-  if (current.trim()) chunks.push(current.trim());
-
-  return chunks;
-}

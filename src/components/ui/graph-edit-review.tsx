@@ -35,8 +35,10 @@ export function GraphEditReview({ operations, onConfirm, onDismiss }: Props) {
   const [selected, setSelected] = useState<Set<number>>(
     () => new Set(operations.map((_, i) => i))
   );
+  const [submitting, setSubmitting] = useState(false);
 
   function toggle(idx: number) {
+    if (submitting) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(idx)) next.delete(idx);
@@ -46,6 +48,8 @@ export function GraphEditReview({ operations, onConfirm, onDismiss }: Props) {
   }
 
   function handleConfirm() {
+    if (submitting) return;
+    setSubmitting(true);
     const ops = operations.filter((_, i) => selected.has(i));
     onConfirm(ops);
   }
@@ -74,16 +78,16 @@ export function GraphEditReview({ operations, onConfirm, onDismiss }: Props) {
         </div>
 
         <div className="per-footer">
-          <button className="per-btn-ghost" onClick={onDismiss} type="button">
+          <button className="per-btn-ghost" onClick={onDismiss} disabled={submitting} type="button">
             Cancel
           </button>
           <button
             className="per-btn-primary"
-            disabled={selected.size === 0}
+            disabled={selected.size === 0 || submitting}
             onClick={handleConfirm}
             type="button"
           >
-            Apply {selected.size} edit{selected.size === 1 ? "" : "s"}
+            {submitting ? "Applying..." : `Apply ${selected.size} edit${selected.size === 1 ? "" : "s"}`}
           </button>
         </div>
       </div>
