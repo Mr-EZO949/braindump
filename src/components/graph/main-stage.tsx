@@ -202,7 +202,7 @@ export function MainStage({
         suppressInitialFocusAnimation={suppressInitialFocusAnimation}
       />
 
-      <div className="absolute right-6 top-6 z-20 flex items-center gap-2">
+      <div className="graph-toolbar-responsive absolute right-6 top-6 z-20 flex items-center gap-2">
         <div
           className={`graph-edit-mode-chip ${editMode ? "graph-edit-mode-chip-active" : ""}`}
         >
@@ -304,7 +304,7 @@ export function MainStage({
         submitting={editNodeSubmitting}
       />
 
-      <div className="absolute left-6 top-6 z-10">
+      <div className="graph-controls-responsive absolute left-6 top-6 z-10">
         <div className="graph-stage-controls">
           <label className="graph-search-control">
             <SearchIcon className="h-[13px] w-[13px] shrink-0 text-[var(--color-text-muted)]" />

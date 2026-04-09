@@ -10,6 +10,7 @@ import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
 import { ProposedNodesReview } from "@/components/ui/proposed-nodes-review";
 import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
+import { GraphEditReview } from "@/components/ui/graph-edit-review";
 import { MergeAlert } from "@/components/ui/merge-alert";
 import { WorkspaceBootstrapWizard } from "@/components/ui/workspace-bootstrap-wizard";
 import { OnboardingTutorial, shouldShowTutorial } from "@/components/ui/onboarding-tutorial";
@@ -49,7 +50,7 @@ import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
 import type { RailTab, ChatMessage, ChatScope } from "@/types/chat";
-import type { CreateNodeInput, Edge, GraphData, Node, Workspace } from "@/types/graph";
+import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, Workspace } from "@/types/graph";
 import type { ProposedNode } from "@/types/ai";
 
 type AuthUserState = {
@@ -167,6 +168,8 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [brainDumpFailedEntryId, setBrainDumpFailedEntryId] = useState<string | null>(null);
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
+  const [graphEditOps, setGraphEditOps] = useState<GraphEditOperation[]>([]);
+  const [graphEditReviewOpen, setGraphEditReviewOpen] = useState(false);
   const [proposedEdges, setProposedEdges] = useState<ProposedEdgeWithNodes[]>([]);
   const [edgeReviewOpen, setEdgeReviewOpen] = useState(false);
   const [analyzingConnections, setAnalyzingConnections] = useState(false);
@@ -176,7 +179,9 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [lastAnalysisWorkspaceId, setLastAnalysisWorkspaceId] = useState<string | null>(null);
 
   // Panel state
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(() =>
+    typeof window !== "undefined" ? !window.matchMedia("(max-width: 768px)").matches : true,
+  );
   const [systemPanelOpen, setSystemPanelOpen] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [activeRailTab, setActiveRailTab] = useState<RailTab>("details");
@@ -666,6 +671,30 @@ export function AppShell({ initialUser }: AppShellProps) {
           }
         } catch {
           // Extraction failed silently — the assistant response is still shown
+        }
+      }
+
+      // Detect <graph_edit> block — parse JSON operations for graph mutations
+      const editMatch = fullText.match(/<graph_edit>\s*([\s\S]*?)\s*<\/graph_edit>/);
+      if (editMatch && editMatch[1]?.trim() && targetWorkspaceId) {
+        // Strip the <graph_edit> block from the displayed message
+        const cleanBody = (nodesMatch ? fullText.replace(/<nodes>[\s\S]*?<\/nodes>/, "") : fullText)
+          .replace(/<graph_edit>[\s\S]*?<\/graph_edit>/, "")
+          .trimEnd();
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, body: cleanBody } : m,
+          ),
+        );
+
+        try {
+          const parsed = JSON.parse(editMatch[1].trim()) as GraphEditOperation[];
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setGraphEditOps(parsed);
+            setGraphEditReviewOpen(true);
+          }
+        } catch {
+          // Invalid JSON — ignore silently
         }
       }
     } catch {
@@ -1532,6 +1561,35 @@ export function AppShell({ initialUser }: AppShellProps) {
     closeProposedEdgesReview();
   };
 
+  const handleGraphEditConfirm = async (ops: GraphEditOperation[]) => {
+    if (!selectedWorkspaceId) return;
+    setGraphEditReviewOpen(false);
+    setGraphEditOps([]);
+
+    try {
+      const res = await fetch("/api/graph-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_id: selectedWorkspaceId, operations: ops }),
+      });
+      const data = await res.json() as {
+        updated_nodes?: Node[];
+        updated_edges?: Edge[];
+      };
+
+      if (res.ok && data.updated_nodes && data.updated_edges) {
+        setGraphData({
+          nodes: data.updated_nodes as Node[],
+          edges: (data.updated_edges as Edge[]).filter(
+            (e) => e.status !== "orphaned" && e.status !== "user_rejected",
+          ),
+        });
+      }
+    } catch {
+      // Failed silently
+    }
+  };
+
   const applyAnalysisResult = (result: AnalysisResponse) => {
     if (result.merge_candidates && result.merge_candidates.length > 0) {
       setMergeCandidates(result.merge_candidates);
@@ -1735,6 +1793,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           setWorkspaceMenuOpen(false);
           setSystemPanelOpen((open) => !open);
         }}
+        onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
         onToggleWorkspaceMenu={() => {
           setSystemPanelOpen(false);
           setWorkspaceMenuOpen((open) => !open);
@@ -1770,7 +1829,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         workspaceName={workspaceName}
       />
 
-      <div className="relative flex h-[calc(100vh-64px)] min-h-0">
+      <div className="app-main-area relative flex min-h-0">
         <button
           aria-hidden={!systemPanelOpen && !workspaceMenuOpen}
           aria-label="Close panel"
@@ -1975,6 +2034,27 @@ export function AppShell({ initialUser }: AppShellProps) {
               onAccept={handleProposalReview}
               onClose={requestCloseProposedNodesReview}
               submitting={false}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Graph edit review — centered modal */}
+      <AnimatePresence>
+        {graphEditReviewOpen && graphEditOps.length > 0 && (
+          <motion.div
+            key="ger-backdrop"
+            className="fixed inset-0 z-60 flex items-center justify-center"
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            style={{ background: "rgba(0,0,0,0.45)" }}
+          >
+            <GraphEditReview
+              operations={graphEditOps}
+              onConfirm={(ops) => void handleGraphEditConfirm(ops)}
+              onDismiss={() => { setGraphEditReviewOpen(false); setGraphEditOps([]); }}
             />
           </motion.div>
         )}

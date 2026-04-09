@@ -98,9 +98,10 @@ export function ContextRail({
 
   return (
     <div
-      className={`relative shrink-0 overflow-visible border-l border-[color:var(--color-border-faint)] bg-[var(--color-bg-surface-elevated)] transition-[width] duration-200 ease-out ${
+      className={`context-rail-responsive relative shrink-0 overflow-visible border-l border-[color:var(--color-border-faint)] bg-[var(--color-bg-surface-elevated)] transition-[width] duration-200 ease-out ${
         open ? "w-[396px]" : "w-[28px]"
       }`}
+      data-open={open ? "true" : "false"}
     >
       <button
         aria-label={open ? "Close context panel" : "Open context panel"}
@@ -124,6 +125,17 @@ export function ContextRail({
         <div className="flex h-full flex-col">
           {/* Tab strip + header */}
           <div className="border-b border-[color:var(--color-border-faint)] px-5 py-5">
+            <div className="mb-3 flex items-center justify-between md-up-hidden">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Panel</span>
+              <button
+                aria-label="Close panel"
+                className="sp-close"
+                onClick={onToggle}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
             <div aria-label="Context rail mode" className="rail-tab-strip" role="tablist">
               <button
                 aria-selected={activeTab === "details"}

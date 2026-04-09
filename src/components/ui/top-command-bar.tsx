@@ -9,6 +9,7 @@ import type { Workspace } from "@/types/graph";
 
 type TopCommandBarProps = {
   onToggleSystemPanel: () => void;
+  onToggleRightPanel: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
   onToggleWorkspaceMenu: () => void;
   onCreateWorkspace: (name: string) => Promise<void>;
@@ -22,6 +23,7 @@ type TopCommandBarProps = {
 
 export function TopCommandBar({
   onToggleSystemPanel,
+  onToggleRightPanel,
   onSelectWorkspace,
   onToggleWorkspaceMenu,
   onCreateWorkspace,
@@ -40,7 +42,7 @@ export function TopCommandBar({
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <header className="h-16 bg-[var(--color-bg-shell)] shadow-[inset_0_-1px_0_var(--color-border-faint)]">
-      <div className="flex h-full items-center justify-between gap-6 px-6">
+      <div className="top-bar-responsive flex h-full items-center justify-between gap-6 px-6">
         <div className="flex min-w-0 items-center gap-3">
           <button
             aria-expanded={systemPanelOpen}
@@ -201,6 +203,19 @@ export function TopCommandBar({
         </div>
 
         <div className="flex-1" />
+
+        {/* Mobile-only panel toggle */}
+        <button
+          aria-label="Toggle panel"
+          className="mobile-panel-toggle"
+          onClick={onToggleRightPanel}
+          type="button"
+        >
+          <svg className="h-[16px] w-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M15 3v18" />
+          </svg>
+        </button>
       </div>
     </header>
   );
