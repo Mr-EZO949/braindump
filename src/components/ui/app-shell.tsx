@@ -35,7 +35,7 @@ import {
   removeLocalNodePosition,
   type LocalGraphCameraView,
 } from "@/lib/graph/data";
-import { demoGraphData } from "@/lib/graph/demo-data";
+
 import { getImportanceIndex, getImportanceLabel } from "@/lib/graph/importance";
 import {
   buildEdgePayloadFromSelection,
@@ -193,7 +193,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [chatLoading, setChatLoading] = useState(false);
 
   // Graph state
-  const [graphData, setGraphData] = useState<GraphData>(demoGraphData);
+  const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
   const [graphLoading, setGraphLoading] = useState(true);
   const [graphSearchValue, setGraphSearchValue] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -430,12 +430,22 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       setGraphData(nextGraphData);
       setGraphLoading(false);
+
+      // Show bootstrap wizard for empty workspaces that haven't been bootstrapped yet
+      // (e.g. the auto-created General workspace on first sign-up)
+      if (
+        nextGraphData.nodes.length === 0 &&
+        selectedWorkspaceId &&
+        !selectedWorkspace?.bootstrap_completed_at
+      ) {
+        setBootstrapWorkspaceId(selectedWorkspaceId);
+      }
     });
 
     return () => {
       active = false;
     };
-  }, [authUser?.id, selectedWorkspace?.name, selectedWorkspaceId]);
+  }, [authUser?.id, selectedWorkspace?.name, selectedWorkspaceId, selectedWorkspace?.bootstrap_completed_at]);
 
   useEffect(() => {
     if (!supabase) {
