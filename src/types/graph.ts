@@ -81,6 +81,12 @@ export interface GraphData {
   edges: Edge[];
 }
 
+export type GraphEditOperation =
+  | { op: "move"; node: string; new_parent: string }
+  | { op: "remove_edge"; source: string; target: string; edge_type?: string }
+  | { op: "rename"; node: string; new_title: string }
+  | { op: "archive"; node: string };
+
 export interface CreateNodeInput {
   custom_type: string;
   importance_index: number;

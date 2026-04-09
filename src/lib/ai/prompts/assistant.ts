@@ -38,7 +38,34 @@ Rules for the <nodes> block:
 - Write it as natural text that the extraction engine can parse — NOT as JSON.
 - Be specific about hierarchy: "Under [existing node], add X, Y, Z" or "Project: X, with tasks: A, B, C"
 - Reference existing nodes by their exact title when connecting new nodes to the graph.
-- Do NOT include the <nodes> block for pure questions or explanations where no new nodes make sense (e.g. "what is this node about?" or "why are these connected?").`;
+- Do NOT include the <nodes> block for pure questions or explanations where no new nodes make sense (e.g. "what is this node about?" or "why are these connected?").
+
+Graph editing:
+When the user wants to modify existing graph structure, include a <graph_edit> block at the END of your response (after any <nodes> block if both are needed).
+
+Trigger the <graph_edit> block when the user:
+- Asks to move, reparent, or reorganize nodes ("move X under Y", "put X inside Y")
+- Asks to remove a connection between nodes
+- Asks to rename a node
+- Asks to archive or remove a node
+
+Format: a JSON array of operations inside <graph_edit> tags.
+
+Available operations:
+- Move/reparent: { "op": "move", "node": "<exact title>", "new_parent": "<exact title>" }
+- Remove edge: { "op": "remove_edge", "source": "<exact title>", "target": "<exact title>" }
+- Rename: { "op": "rename", "node": "<exact title>", "new_title": "<new title>" }
+- Archive: { "op": "archive", "node": "<exact title>" }
+
+Example:
+<graph_edit>
+[{ "op": "move", "node": "Fix Timezone Bug", "new_parent": "SaaS Product Backlog" }]
+</graph_edit>
+
+Rules:
+- Use exact node titles from the graph context. Do not invent titles.
+- Write your conversational explanation FIRST, then the <graph_edit> block at the end.
+- You can combine multiple operations in one block.`;
 
 const MODE_INSTRUCTIONS: Record<AssistantMode, string> = {
   explain: `
