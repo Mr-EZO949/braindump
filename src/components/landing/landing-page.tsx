@@ -238,18 +238,17 @@ function CreateFromChatDemo() {
             const pos = positions[i];
             const c = NC[node.type];
             return (
-              <motion.g key={`cn${i}`} transform={`translate(${pos.x}, ${pos.y})`}
-                initial={{ scale: 0, opacity: 0 }}
-                animate={v ? { scale: 1, opacity: 1 } : {}}
-                transition={{ delay: 0.5 + node.delay, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-                style={{ transformBox: "fill-box", transformOrigin: "center" } as React.CSSProperties}>
-                <circle r={18} fill={`${c}14`} stroke={`${c}30`} strokeWidth="1" />
-                <circle r={11} fill={`${c}22`} stroke={c} strokeWidth="1.5" strokeOpacity="0.7" />
-                <text y={3.5} textAnchor="middle" fill={c} fontSize="6.5" fontWeight="700"
-                  fontFamily="ui-monospace, monospace" opacity="0.9">
+              <motion.g key={`cn${i}`}
+                initial={{ opacity: 0 }}
+                animate={v ? { opacity: 1 } : {}}
+                transition={{ delay: 0.5 + node.delay, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
+                <circle cx={pos.x} cy={pos.y} r={18} fill={`${c}20`} stroke={`${c}40`} strokeWidth="1" />
+                <circle cx={pos.x} cy={pos.y} r={11} fill={`${c}30`} stroke={c} strokeWidth="1.5" strokeOpacity="0.8" />
+                <text x={pos.x} y={pos.y + 3.5} textAnchor="middle" fill={c} fontSize="6.5" fontWeight="700"
+                  fontFamily="ui-monospace, monospace" opacity="0.95">
                   {node.type.slice(0, 4).toUpperCase()}
                 </text>
-                <text y={32} textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="8"
+                <text x={pos.x} y={pos.y + 32} textAnchor="middle" fill="rgba(255,255,255,0.5)" fontSize="8"
                   fontFamily="ui-sans-serif, system-ui, sans-serif" fontWeight="500">
                   {node.title}
                 </text>
@@ -696,10 +695,6 @@ export default function LandingPage() {
                 AI extracts.<br />
                 <span className={styles.gradient}>You decide what stays.</span>
               </h2>
-              <p className={styles.sub}>
-                Every thought you dump gets analyzed. But your graph only grows
-                with your explicit approval — node by node.
-              </p>
             </FadeUp>
 
             <FadeUp delay={0.1}>
@@ -716,10 +711,6 @@ export default function LandingPage() {
               <h2 className={styles.h2}>
                 Not everything is a to-do
               </h2>
-              <p className={styles.sub}>
-                BrainDump understands the difference between a task and a goal,
-                an idea and a question. Each type carries its own weight.
-              </p>
             </FadeUp>
 
             <FadeUp delay={0.1}>
@@ -771,11 +762,6 @@ export default function LandingPage() {
                   Describe it once.<br />
                   <span className={styles.gradient}>Get a full structure.</span>
                 </h2>
-                <p className={styles.assistantDesc}>
-                  Tell the assistant what you&apos;re working on and it builds the nodes,
-                  hierarchy, and connections for you — projects, tasks, sub-goals, all
-                  linked to your existing graph.
-                </p>
                 <ul className={styles.assistantList}>
                   <li>&ldquo;Break this goal into weekly tasks&rdquo;</li>
                   <li>&ldquo;Add a project for the ML paper with subtasks&rdquo;</li>
@@ -812,25 +798,6 @@ export default function LandingPage() {
                 <PlannerDemo />
               </FadeUp>
             </div>
-          </div>
-        </section>
-
-        {/* ── Graph ── */}
-        <section className={styles.graphSection}>
-          <div className={styles.inner}>
-            <FadeUp className={styles.centered}>
-              <span className={styles.label}>The graph</span>
-              <h2 className={styles.h2}>See how everything connects</h2>
-              <p className={styles.sub}>
-                A SaaS project, two Stanford and MIT classes, and a launch deadline — all
-                linked. Your graph surfaces patterns you wouldn&apos;t see in a notes app.
-              </p>
-            </FadeUp>
-            <FadeUp delay={0.12}>
-              <div className={styles.graphWrap}>
-                <GraphPreview />
-              </div>
-            </FadeUp>
           </div>
         </section>
 
