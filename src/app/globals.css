@@ -3588,6 +3588,113 @@ input[type="search"]::-webkit-search-results-decoration {
   color: var(--color-text-tertiary);
 }
 
+/* Duplicate detection — banner at top of review modal */
+.prn-dup-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(234, 179, 8, 0.08);
+  border-bottom: 1px solid rgba(234, 179, 8, 0.18);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+.prn-dup-banner-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(234, 179, 8, 0.22);
+  color: rgb(180, 130, 0);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Node row highlight for high-confidence duplicates */
+.prn-node--dup {
+  background: rgba(234, 179, 8, 0.04);
+}
+
+/* Duplicate match box — shown per proposal */
+.prn-dup-box {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(234, 179, 8, 0.06);
+  border: 1px solid rgba(234, 179, 8, 0.15);
+}
+
+.prn-dup-box--high {
+  background: rgba(234, 179, 8, 0.10);
+  border-color: rgba(234, 179, 8, 0.30);
+}
+
+.prn-dup-box-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.prn-dup-box-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: rgba(234, 179, 8, 0.22);
+  color: rgb(180, 130, 0);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.prn-dup-box-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgb(180, 130, 0);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.prn-dup-box-matches {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.prn-dup-match {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.prn-dup-match-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.prn-dup-match-score {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
 .prn-body-bottom {
   display: flex;
   align-items: center;

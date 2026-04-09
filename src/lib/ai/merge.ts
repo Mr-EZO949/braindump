@@ -83,7 +83,7 @@ export async function detectDuplicates(params: {
       supabase,
       excludeNodeId: node.id,
       includeCompleted: false,
-      limit: 3,
+      limit: 5,
     }).catch(() => []);
 
     const topMatch = matches.find(

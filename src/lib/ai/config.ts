@@ -135,9 +135,10 @@ export const AI_DECAY = {
 // ---------------------------------------------------------------------------
 
 export const AI_DEDUP = {
-  // Cosine similarity threshold above which two nodes are considered merge candidates
-  // Start at 0.92 and tune based on false-positive rate.
-  SIMILARITY_THRESHOLD: 0.92,
+  // Cosine similarity threshold above which two nodes are considered merge candidates.
+  // 0.85 catches semantically identical nodes with different wording (e.g. "Learn Rust"
+  // vs "Study Rust programming"). The AI merge-check LLM filters false positives.
+  SIMILARITY_THRESHOLD: 0.85,
 } as const;
 
 // ---------------------------------------------------------------------------
