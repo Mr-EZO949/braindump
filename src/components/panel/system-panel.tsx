@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 type SystemPanelProps = {
   onSignOut: () => void;
   onClose: () => void;
@@ -16,75 +18,66 @@ export function SystemPanel({
   return (
     <aside
       aria-hidden={!open}
-      className={`system-panel absolute left-0 top-0 z-20 h-full w-[320px] ${
+      className={`system-panel absolute left-0 top-0 z-20 h-full w-[300px] ${
         open ? "translate-x-0 opacity-100" : "-translate-x-full opacity-0"
       }`}
     >
-      <div className="flex h-full flex-col px-6 py-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--color-text-muted)]">
-              System
-            </p>
-            <h2 className="mt-3 text-[18px] font-semibold tracking-[-0.04em] text-[var(--color-text-primary)]">
-              Account
-            </h2>
-          </div>
-
+      <div className="flex h-full flex-col">
+        {/* Header with logo */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-4">
+          <Image src="/logo_withtext.svg" alt="BrainDump" width={140} height={28} style={{ height: 24, width: "auto" }} />
           <button
-            aria-label="Close system panel"
-            className="shell-button shell-icon-button"
+            aria-label="Close"
+            className="sp-close"
             onClick={onClose}
             type="button"
           >
-            <span className="text-[16px] leading-none text-[var(--color-text-secondary)]">×</span>
+            ×
           </button>
         </div>
 
-        <div className="mt-8 h-px w-full bg-[var(--color-border-faint)]" />
+        <div className="sp-divider" />
 
-        <div className="mt-8 space-y-7">
-          <section>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              Account
-            </p>
-            <div className="system-row system-row-active mt-3">
-              <span>{userEmail ?? "Not signed in"}</span>
-              <span className="text-[11px] tracking-[0.02em] text-[var(--color-text-muted)]">
-                {userEmail ? "Active" : "Guest"}
-              </span>
-            </div>
-            <button className="system-row mt-2" disabled={!userEmail || signingOut} onClick={onSignOut} type="button">
-              <span>{signingOut ? "Signing out..." : "Sign out"}</span>
-            </button>
-          </section>
+        {/* Account */}
+        <div className="px-5 py-4">
+          <p className="sp-section-label">Account</p>
+          <p className="sp-email">{userEmail ?? "Not signed in"}</p>
+        </div>
 
-          <section>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              Settings
-            </p>
-            <button className="system-row mt-3" type="button">
-              <span>Preferences</span>
-            </button>
-            <button className="system-row mt-2" type="button">
-              <span>Appearance</span>
-            </button>
-          </section>
+        <div className="sp-divider" />
 
-          <section>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              System
-            </p>
-            <button className="system-row mt-3" type="button">
-              <span>Keyboard shortcuts</span>
-            </button>
-            <button className="system-row mt-2" type="button">
-              <span>Billing</span>
-            </button>
-            <button className="system-row mt-2" type="button">
-              <span>Support</span>
-            </button>
-          </section>
+        {/* Account actions */}
+        <div className="px-5 py-4 flex flex-col gap-1">
+          <button className="sp-menu-btn" type="button" disabled>
+            Manage subscription
+          </button>
+          <button className="sp-menu-btn sp-menu-btn--danger" type="button" disabled>
+            Delete account
+          </button>
+        </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Sign out + footer */}
+        <div className="px-5 pb-5">
+          <button
+            className="sp-signout-btn"
+            disabled={!userEmail || signingOut}
+            onClick={onSignOut}
+            type="button"
+          >
+            {signingOut ? "Signing out..." : "Sign out"}
+          </button>
+
+          <div className="sp-divider mt-4" />
+          <div className="sp-footer">
+            <a href="mailto:support@braindump.app" className="sp-footer-link">Support</a>
+            <span className="sp-footer-dot">·</span>
+            <a href="#" className="sp-footer-link">Terms</a>
+            <span className="sp-footer-dot">·</span>
+            <a href="#" className="sp-footer-link">Privacy</a>
+          </div>
         </div>
       </div>
     </aside>

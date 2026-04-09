@@ -1569,40 +1569,121 @@ input[type="search"]::-webkit-search-results-decoration {
     opacity var(--motion-panel);
 }
 
-.system-row {
+/* Redesigned system panel */
+.sp-close {
+  width: 28px;
+  height: 28px;
   display: flex;
-  width: 100%;
   align-items: center;
-  justify-content: space-between;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.012), rgba(255, 255, 255, 0.008));
-  padding: 14px 14px;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.sp-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-primary);
+}
+
+.sp-divider {
+  height: 1px;
+  background: var(--color-border-faint);
+  margin: 0;
+}
+
+.sp-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: 10px;
+}
+
+.sp-email {
+  font-size: 12px;
   color: var(--color-text-secondary);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.012),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.14);
-  font-size: 14px;
+  word-break: break-all;
+}
+
+.sp-menu-btn {
+  background: none;
+  border: none;
+  padding: 8px 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
   font-weight: 500;
-  letter-spacing: -0.01em;
-  transition:
-    background-color var(--motion-fast),
-    border-color var(--motion-fast),
-    color var(--motion-fast);
+  cursor: pointer;
+  text-align: left;
+  transition: color var(--motion-fast);
 }
 
-.system-row:hover {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.012));
+.sp-menu-btn:hover {
   color: var(--color-text-primary);
 }
 
-.system-row-active {
-  border-color: rgba(213, 58, 71, 0.16);
+.sp-menu-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.sp-menu-btn--danger {
+  color: var(--color-text-muted);
+}
+
+.sp-menu-btn--danger:hover:not(:disabled) {
+  color: #e05a5a;
+}
+
+.sp-signout-btn {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 0;
+  width: 100%;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--motion-fast), border-color var(--motion-fast);
+}
+
+.sp-signout-btn:hover {
   color: var(--color-text-primary);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.016),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.16),
-    inset 0 0 0 1px rgba(213, 58, 71, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.sp-signout-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.sp-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.sp-footer-link {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  transition: color var(--motion-fast);
+}
+
+.sp-footer-link:hover {
+  color: var(--color-text-secondary);
+}
+
+.sp-footer-dot {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.12);
 }
 
 .panel-edge-handle {
@@ -4077,6 +4158,62 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .per-btn-primary:disabled {
   opacity: 0.38;
+}
+
+/* Graph edit review rows */
+.ger-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
+}
+
+.ger-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ger-row--selected {
+  border-color: rgba(213, 58, 71, 0.18);
+  background: rgba(213, 58, 71, 0.04);
+}
+
+.ger-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--color-accent-primary);
+  flex-shrink: 0;
+}
+
+.ger-row--selected .ger-check {
+  border-color: rgba(213, 58, 71, 0.4);
+  background: rgba(213, 58, 71, 0.12);
+}
+
+.ger-icon {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.ger-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  letter-spacing: -0.01em;
   cursor: default;
 }
 
@@ -7520,4 +7657,276 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .tut-btn-next:hover {
   background: var(--color-accent-primary-hover);
+}
+
+/* ─── App main area (dvh-aware) ─────────────────────────── */
+
+.app-main-area {
+  height: calc(100vh - 64px);
+  height: calc(100dvh - 64px);
+}
+
+/* ─── Responsive helpers ────────────────────────────────── */
+
+.md-up-hidden {
+  display: none;
+}
+
+.mobile-panel-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color var(--motion-fast), border-color var(--motion-fast);
+}
+
+.mobile-panel-toggle:hover {
+  color: var(--color-text-secondary);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+@media (max-width: 768px) {
+  .md-up-hidden {
+    display: flex;
+  }
+
+  .mobile-panel-toggle {
+    display: inline-flex;
+  }
+}
+
+/* ─── Responsive: Tablet (≤ 768px) ──────────────────────── */
+
+@media (max-width: 768px) {
+  /* Context rail becomes a full-screen overlay */
+  .context-rail-responsive {
+    position: fixed !important;
+    inset: 0 !important;
+    top: 64px !important;
+    z-index: 30 !important;
+    width: 100% !important;
+    border-left: none !important;
+    background: var(--color-bg-surface-elevated);
+    transition: transform 0.2s ease-out, opacity 0.2s ease-out !important;
+  }
+
+  .context-rail-responsive[data-open="false"] {
+    pointer-events: none;
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  .context-rail-responsive[data-open="true"] {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  .context-rail-responsive .panel-edge-handle {
+    display: none;
+  }
+
+  .context-rail-responsive aside {
+    width: 100% !important;
+    position: relative !important;
+  }
+
+  /* System panel becomes full-width on tablet */
+  .system-panel {
+    width: 100% !important;
+  }
+
+  /* Top bar tighter padding */
+  .top-bar-responsive {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    gap: 12px !important;
+  }
+
+  /* Graph controls — stack vertically, fit screen */
+  .graph-stage-controls {
+    max-width: calc(100vw - 90px);
+  }
+
+  .graph-search-control {
+    width: 180px;
+  }
+
+  .graph-filter-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* Graph right toolbar — tighter positioning */
+  .graph-toolbar-responsive {
+    right: 12px !important;
+    top: 12px !important;
+  }
+
+  .graph-controls-responsive {
+    left: 12px !important;
+    top: 12px !important;
+  }
+
+  /* Mode dock — slightly smaller */
+  .mode-dock-btn {
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+
+  .mode-dock-action {
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+
+  /* Brain dump — wider on tablet */
+  .brain-dump-card {
+    width: min(580px, 94vw);
+  }
+
+  /* Assistant layout — stack on tablet */
+  .assistant-workspace {
+    flex-direction: column;
+  }
+
+  .assistant-planner {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border-faint);
+    padding: 20px 20px 80px;
+  }
+
+  .assistant-chat-col {
+    width: 100%;
+    height: 320px;
+    flex-shrink: 0;
+  }
+}
+
+/* ─── Responsive: Mobile (≤ 480px) ──────────────────────── */
+
+@media (max-width: 480px) {
+  /* Top bar even tighter */
+  .top-bar-responsive {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    gap: 8px !important;
+  }
+
+  /* Workspace trigger — smaller */
+  .workspace-trigger {
+    max-width: 140px;
+  }
+
+  .workspace-trigger-name {
+    font-size: 13px;
+  }
+
+  /* Graph search — smaller */
+  .graph-search-control {
+    width: 140px;
+    padding: 8px 10px;
+  }
+
+  .graph-filter-row {
+    gap: 4px;
+  }
+
+  .graph-filter-shell {
+    height: 30px;
+    padding: 0 8px;
+  }
+
+  .graph-filter-select {
+    font-size: 11px;
+  }
+
+  .graph-filter-reset {
+    height: 30px;
+    padding: 0 8px;
+    font-size: 10px;
+  }
+
+  /* Graph toolbar buttons — smaller touch targets but still usable */
+  .graph-edit-toggle {
+    width: 32px;
+    height: 32px;
+  }
+
+  .graph-create-trigger {
+    padding: 0 10px;
+    height: 32px;
+    font-size: 12px;
+  }
+
+  /* Mode dock — compact for mobile */
+  .mode-dock {
+    border-radius: 12px;
+    padding: 2px;
+  }
+
+  .mode-dock-btn {
+    padding: 6px 10px;
+    font-size: 11.5px;
+    gap: 4px;
+  }
+
+  .mode-dock-action {
+    padding: 6px 10px;
+    font-size: 11.5px;
+    gap: 4px;
+  }
+
+  /* Floating elements — bottom safe area */
+  .fixed.bottom-6 {
+    bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Brain dump — full width minus small margins */
+  .brain-dump-card {
+    width: calc(100vw - 24px);
+    border-radius: 14px;
+  }
+
+  /* Review modals — fill screen on mobile */
+  .per-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 48px);
+    border-radius: 12px;
+  }
+
+  .per-header {
+    padding: 16px 18px 12px;
+  }
+
+  /* System panel full width (already set at 768px) */
+
+  /* Assistant planner tighter padding */
+  .assistant-planner {
+    padding: 16px 16px 72px;
+  }
+
+  .assistant-chat-col {
+    height: 280px;
+  }
+
+  /* Context rail header tighter */
+  .context-rail-responsive aside .border-b {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  /* AI status chip — wider */
+  .ai-status-chip {
+    max-width: calc(100vw - 32px);
+  }
+
+  /* AI notice — wider */
+  .ai-notice {
+    max-width: calc(100vw - 32px);
+  }
 }
