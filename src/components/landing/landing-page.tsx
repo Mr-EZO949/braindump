@@ -719,6 +719,30 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* ── Graph structure ── */}
+        <section className={styles.graphSection}>
+          <div className={styles.inner}>
+            <FadeUp className={styles.centered}>
+              <span className={styles.label}>Your knowledge, connected</span>
+              <h2 className={styles.h2}>
+                See how it all<br />
+                <span className={styles.gradient}>fits together.</span>
+              </h2>
+              <p className={styles.sectionDesc}>
+                Every thought you dump becomes a node. BrainDump automatically discovers
+                relationships between your tasks, goals, ideas, and concepts — building a
+                living graph you can explore and query.
+              </p>
+            </FadeUp>
+
+            <FadeUp delay={0.15}>
+              <div className={styles.graphWrap}>
+                <GraphPreview />
+              </div>
+            </FadeUp>
+          </div>
+        </section>
+
         {/* ── Assistant ── */}
         <section className={styles.section}>
           <div className={styles.inner}>

@@ -14,7 +14,7 @@ import {
   INITIAL_PLANNER_STATE,
   type PlannerState,
 } from "@/components/panel/planner-panel";
-import type { PlanBlock, PlanSession, PlanningWindow } from "@/types/ai";
+import type { PlanBlock, PlanBlockType, PlanSession, PlanningWindow } from "@/types/ai";
 import type { GraphData } from "@/types/graph";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -1434,8 +1434,15 @@ export function AssistantMode({
   const [taskError, setTaskError] = useState<string | null>(null);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
 
-  // Assistant mode
-  const [assistantMode, setAssistantMode] = useState<"explain" | "plan" | "transform">("plan");
+  // Auto-detect assistant mode from message content
+  function detectMode(text: string): "explain" | "plan" | "transform" {
+    const lower = text.toLowerCase();
+    const planKeywords = /\b(plan|schedule|block|time.?box|next\s+\d+\s*(h|hour|min)|my\s+(morning|afternoon|evening|day))\b/;
+    const transformKeywords = /\b(move|merge|split|rename|restructure|reorganize|reparent|archive)\b/;
+    if (planKeywords.test(lower)) return "plan";
+    if (transformKeywords.test(lower)) return "transform";
+    return "plan"; // default to plan mode which is the most capable
+  }
 
   // Context chip
   const [contextDismissed, setContextDismissed] = useState(false);
@@ -1952,7 +1959,7 @@ export function AssistantMode({
           message: trimmed,
           workspace_id: workspaceId,
           selected_node_id: selectedNodeId,
-          mode: assistantMode,
+          mode: detectMode(trimmed),
         }),
       });
 
@@ -1971,10 +1978,63 @@ export function AssistantMode({
         setStreamingBody(fullText);
       }
 
+      // Detect <plan> block — parse JSON plan and feed into planner
+      let displayText = fullText;
+      const planMatch = fullText.match(/<plan>\s*([\s\S]*?)\s*<\/plan>/);
+      if (planMatch && planMatch[1]?.trim()) {
+        displayText = fullText.replace(/<plan>[\s\S]*?<\/plan>/, "").trimEnd();
+        try {
+          const planData = JSON.parse(planMatch[1].trim()) as {
+            planning_window?: PlanningWindow;
+            total_minutes?: number;
+            blocks?: Array<{
+              title: string;
+              node_id: string | null;
+              duration_minutes: number;
+              start_offset: number;
+              block_type: PlanBlockType;
+              reason: string | null;
+            }>;
+          };
+          if (Array.isArray(planData.blocks) && planData.blocks.length > 0) {
+            const sessionId = `chat-plan-${Date.now()}`;
+            const planBlocks: PlanBlock[] = planData.blocks.map((b, i) => ({
+              id: `chat-block-${Date.now()}-${i}`,
+              plan_session_id: sessionId,
+              node_id: b.node_id ?? null,
+              title: b.title,
+              start_offset: b.start_offset,
+              duration_minutes: b.duration_minutes,
+              reason: b.reason ?? null,
+              block_type: b.block_type ?? "focus",
+              completion_status: "pending" as const,
+            }));
+            setPlannerState({
+              session: {
+                id: sessionId,
+                workspace_id: workspaceId ?? "",
+                user_id: "",
+                planning_window: planData.planning_window ?? "custom",
+                scope: null,
+                status: "draft",
+                created_at: new Date().toISOString(),
+              },
+              blocks: sortPlanBlocks(planBlocks),
+              recentlyUnblockedNodeIds: new Set(),
+              loading: false,
+              error: null,
+              finalised: false,
+            });
+          }
+        } catch {
+          // Invalid JSON — ignore silently
+        }
+      }
+
       const aMsg: AssistantMessage = {
         id: `a-${Date.now()}`,
         role: "assistant",
-        body: fullText,
+        body: displayText,
       };
       const finalConv: Conversation = { ...withUser, messages: [...withUser.messages, aMsg] };
       const finalConvs = nextConvs.map((c) => (c.id === finalConv.id ? finalConv : c));
@@ -2054,12 +2114,16 @@ export function AssistantMode({
     if (!sessionId) return;
 
     try {
-      const res = await fetch(`/api/assistant/plan/${sessionId}/feedback`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accepted: true, final_block_ids: finalBlockIds }),
-      });
-      if (!res.ok) throw new Error("Accept failed");
+      // Chat-generated plans have local IDs — skip the server feedback call
+      const isChatPlan = sessionId.startsWith("chat-plan-");
+      if (!isChatPlan) {
+        const res = await fetch(`/api/assistant/plan/${sessionId}/feedback`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accepted: true, final_block_ids: finalBlockIds }),
+        });
+        if (!res.ok) throw new Error("Accept failed");
+      }
 
       // Convert accepted blocks into scheduled tasks, preserving kept breaks/buffers as time gaps.
       const keptBlocks = finalBlockIds
@@ -2136,12 +2200,15 @@ export function AssistantMode({
     const sessionId = plannerState.session?.id;
     if (!sessionId) return;
     try {
-      const res = await fetch(`/api/assistant/plan/${sessionId}/feedback`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rejected: true }),
-      });
-      if (!res.ok) throw new Error("Reject failed");
+      // Chat-generated plans have local IDs — just clear state
+      if (!sessionId.startsWith("chat-plan-")) {
+        const res = await fetch(`/api/assistant/plan/${sessionId}/feedback`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rejected: true }),
+        });
+        if (!res.ok) throw new Error("Reject failed");
+      }
       setPlannerState(INITIAL_PLANNER_STATE);
     } catch {
       setPlannerState((prev) => ({ ...prev, error: "Could not reject the plan. Try again." }));
@@ -2470,20 +2537,6 @@ export function AssistantMode({
             >
               <PlusIcon className="h-[13px] w-[13px]" />
             </button>
-          </div>
-
-          {/* Mode strip */}
-          <div className="assistant-mode-strip">
-            {(["explain", "plan", "transform"] as const).map((m) => (
-              <button
-                key={m}
-                className={`assistant-mode-btn${assistantMode === m ? " assistant-mode-btn-active" : ""}`}
-                onClick={() => setAssistantMode(m)}
-                type="button"
-              >
-                {m.charAt(0).toUpperCase() + m.slice(1)}
-              </button>
-            ))}
           </div>
 
           {/* Thread or starter */}

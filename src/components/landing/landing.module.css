@@ -590,6 +590,15 @@
   margin-bottom: 72px;
 }
 
+.sectionDesc {
+  max-width: 540px;
+  margin: 16px auto 0;
+  font-size: 15.5px;
+  line-height: 1.7;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
 .label {
   display: inline-block;
   font-size: 11px;

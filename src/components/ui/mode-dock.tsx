@@ -34,7 +34,7 @@ export function ModeDock({ mode, onSetMode, onOpenBrainDump }: ModeDockProps) {
         type="button"
       >
         <SparklesIcon className="h-[13px] w-[13px]" />
-        Assistant
+        Planner
       </button>
 
       <div className="mode-dock-sep" aria-hidden="true" />
