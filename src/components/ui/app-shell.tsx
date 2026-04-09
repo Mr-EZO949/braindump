@@ -243,6 +243,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     previousWorkspaceId: string | null;
     workspaceId: string;
   } | null>(null);
+  const pendingAnalysisRef = useRef<{ nodeIds: string[]; workspaceId: string } | null>(null);
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -1581,16 +1582,19 @@ export function AppShell({ initialUser }: AppShellProps) {
     setProposedReviewOpen(false);
     setProposedNodes([]);
 
-    // Phase 5 — trigger connection analysis for newly accepted nodes
+    // Check if any accepted nodes are goals/projects — offer step suggestions
+    // Steps are shown first; connection analysis is deferred until after the
+    // step flow completes (or is skipped) to avoid overlapping modals.
     if (data.accepted_nodes && data.accepted_nodes.length > 0 && selectedWorkspaceId) {
-      const nodeIds = (data.accepted_nodes as Node[]).map((n) => n.id);
-      void analyzeNodes(nodeIds);
-
-      // Check if any accepted nodes are goals/projects — offer step suggestions
-      const goalOrProjectNodes = (data.accepted_nodes as Node[]).filter(
+      const acceptedNodes = data.accepted_nodes as Node[];
+      const nodeIds = acceptedNodes.map((n) => n.id);
+      const goalOrProjectNodes = acceptedNodes.filter(
         (n) => n.node_type === "goal" || n.node_type === "project",
       );
+
       if (goalOrProjectNodes.length > 0) {
+        // Store node IDs so connection analysis can run after step flow
+        pendingAnalysisRef.current = { nodeIds, workspaceId: selectedWorkspaceId };
         setStepSuggestionNodes(
           goalOrProjectNodes.map((n) => ({
             id: n.id,
@@ -1600,6 +1604,9 @@ export function AppShell({ initialUser }: AppShellProps) {
           })),
         );
         setStepSuggestionOpen(true);
+      } else {
+        // No goals/projects — run connection analysis immediately
+        void analyzeNodes(nodeIds);
       }
     }
   };
@@ -1639,12 +1646,24 @@ export function AppShell({ initialUser }: AppShellProps) {
     } finally {
       setStepSuggestionLoading(false);
       setStepSuggestionNodes([]);
+      // Now run deferred connection analysis
+      const pending = pendingAnalysisRef.current;
+      if (pending) {
+        pendingAnalysisRef.current = null;
+        void analyzeNodes(pending.nodeIds);
+      }
     }
   };
 
   const dismissStepSuggestion = () => {
     setStepSuggestionOpen(false);
     setStepSuggestionNodes([]);
+    // Run deferred connection analysis
+    const pending = pendingAnalysisRef.current;
+    if (pending) {
+      pendingAnalysisRef.current = null;
+      void analyzeNodes(pending.nodeIds);
+    }
   };
 
   const closeProposedNodesReview = () => {
