@@ -600,6 +600,29 @@ export function AppShell({ initialUser }: AppShellProps) {
     setRightPanelOpen(false);
   }, [filteredGraphData.nodes, selectedNodeId]);
 
+  const handleExtractNodes = async (nodesContent: string, wsId: string) => {
+    try {
+      const entryRes = await fetch("/api/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          raw_text: nodesContent,
+          workspace_id: wsId,
+          source_type: "assistant_save",
+        }),
+      });
+      const entryData = await entryRes.json() as {
+        proposed_nodes?: ProposedNode[];
+      };
+      if (entryRes.ok && entryData.proposed_nodes && entryData.proposed_nodes.length > 0) {
+        setProposedNodes(entryData.proposed_nodes);
+        setProposedReviewOpen(true);
+      }
+    } catch {
+      // Extraction failed silently
+    }
+  };
+
   const submitMessage = async (message: string, duplicateUserMessage = true) => {
     const trimmedMessage = message.trim();
 
@@ -674,27 +697,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           ),
         );
 
-        // Submit to extraction pipeline
-        try {
-          const entryRes = await fetch("/api/entries", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              raw_text: nodesContent,
-              workspace_id: targetWorkspaceId,
-              source_type: "assistant_save",
-            }),
-          });
-          const entryData = await entryRes.json() as {
-            proposed_nodes?: ProposedNode[];
-          };
-          if (entryRes.ok && entryData.proposed_nodes && entryData.proposed_nodes.length > 0) {
-            setProposedNodes(entryData.proposed_nodes);
-            setProposedReviewOpen(true);
-          }
-        } catch {
-          // Extraction failed silently — the assistant response is still shown
-        }
+        void handleExtractNodes(nodesContent, targetWorkspaceId);
       }
 
       // Detect <recompute_scores/> tag — trigger workspace score recomputation
@@ -2062,6 +2065,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 graphData={graphData}
                 selectedNodeId={selectedNodeId}
                 workspaceId={selectedWorkspaceId}
+                onExtractNodes={handleExtractNodes}
               />
             </motion.div>
           )}

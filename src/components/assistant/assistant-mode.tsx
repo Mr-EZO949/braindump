@@ -1401,12 +1401,14 @@ type AssistantModeProps = {
   graphData: GraphData;
   selectedNodeId: string | null;
   workspaceId: string | null;
+  onExtractNodes?: (nodesContent: string, workspaceId: string) => void;
 };
 
 export function AssistantMode({
   graphData,
   selectedNodeId,
   workspaceId,
+  onExtractNodes,
 }: AssistantModeProps) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const planTaskSelectClause =
@@ -2029,6 +2031,13 @@ export function AssistantMode({
         } catch {
           // Invalid JSON — ignore silently
         }
+      }
+
+      // Detect <nodes> block — extract and send to parent for extraction pipeline
+      const nodesMatch = displayText.match(/<nodes>\s*([\s\S]*?)\s*<\/nodes>/);
+      if (nodesMatch && nodesMatch[1]?.trim() && workspaceId && onExtractNodes) {
+        displayText = displayText.replace(/<nodes>[\s\S]*?<\/nodes>/, "").trimEnd();
+        onExtractNodes(nodesMatch[1].trim(), workspaceId);
       }
 
       const aMsg: AssistantMessage = {
