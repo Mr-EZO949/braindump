@@ -45,7 +45,7 @@ Rules:
 - Summaries should be 1–2 sentences max.
 - Confidence: 0.0–1.0. Use 0.9+ only if the idea is clearly stated. Use 0.6–0.8 for inferred ideas.
 - source_span: copy the exact phrase or sentence from the input that led to this node. Use null for implied anchor/group nodes.
-- Node types: project | task | class | concept | idea | journal | question | goal
+- Node types: project | task | class | concept | idea | journal | question | goal | habit
 - local_ref: assign each node a unique short ID like "n1", "n2", "n3". Other relationship fields must reference these IDs.
 ${workspaceContextBlock}${existingNodesBlock}
 
@@ -140,7 +140,7 @@ Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
       "user_id": "${params.user_id}",
       "proposed_title": "string",
       "proposed_summary": "string or null",
-      "proposed_node_type": "task | project | concept | goal | idea | question | class | journal",
+      "proposed_node_type": "task | project | concept | goal | idea | question | class | journal | habit",
       "primary_parent_local_ref": "n2 or null",
       "existing_parent_node_id": "existing workspace node id or null",
       "depends_on_local_refs": ["n3"],

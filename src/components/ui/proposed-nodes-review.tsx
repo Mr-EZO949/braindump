@@ -8,7 +8,7 @@ import type { NodeType } from "@/types/graph";
 import type { ProposedNode } from "@/types/ai";
 
 const NODE_TYPES: NodeType[] = [
-  "task", "project", "goal", "concept", "idea", "class", "journal", "question",
+  "task", "project", "goal", "habit", "concept", "idea", "class", "journal", "question",
 ];
 
 // ---------------------------------------------------------------------------

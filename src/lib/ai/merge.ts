@@ -36,6 +36,7 @@ const COMPATIBLE_TYPES: Record<string, Set<string>> = {
   idea:    new Set(["idea", "concept", "task"]),
   journal: new Set(["journal"]),
   question: new Set(["question", "concept", "idea"]),
+  habit:   new Set(["habit", "task", "goal"]),
 };
 
 function typesAreCompatible(a: string, b: string): boolean {

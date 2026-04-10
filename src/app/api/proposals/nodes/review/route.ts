@@ -25,7 +25,7 @@ interface ReviewAction {
 }
 
 const VALID_NODE_TYPES = new Set<NodeType>([
-  "project", "task", "class", "concept", "idea", "journal", "question", "goal",
+  "project", "task", "class", "concept", "idea", "journal", "question", "goal", "habit",
 ]);
 
 type AcceptedPair = {

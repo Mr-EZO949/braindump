@@ -15,6 +15,7 @@ const fallbackTypeOffset: Record<Node["node_type"], number> = {
   journal: -5,
   question: -5,
   task: -9,
+  habit: 6,
 };
 
 const authoredImportanceIndex: Record<Importance, number> = {

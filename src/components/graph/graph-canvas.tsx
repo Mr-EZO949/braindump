@@ -133,7 +133,7 @@ type EdgeVisualStyle = {
   strokeWidth: number;
 };
 
-type VisualNodeType = "goal" | "project" | "task" | "concept" | "class";
+type VisualNodeType = "goal" | "project" | "task" | "concept" | "class" | "habit";
 
 const nodeTypeCueMap: Record<VisualNodeType, string> = {
   goal: "#d8d0c4",
@@ -141,6 +141,7 @@ const nodeTypeCueMap: Record<VisualNodeType, string> = {
   task: "#a35258",
   class: "#96784d",
   concept: "#677480",
+  habit: "#4a7c6b",
 };
 
 const nodeTypeBranchOrder: Record<NodeType, number> = {
@@ -152,6 +153,7 @@ const nodeTypeBranchOrder: Record<NodeType, number> = {
   journal: 5,
   question: 6,
   task: 7,
+  habit: 3,
 };
 
 const edgeStrengthMap: Record<EdgeType, number> = {

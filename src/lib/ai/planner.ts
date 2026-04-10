@@ -24,6 +24,7 @@ const PRIMARY_NODE_TYPE_PRIORITY: Record<NodeType, number> = {
   idea: 36,
   question: 32,
   journal: 20,
+  habit: 98,
 };
 
 const PREREQUISITE_EDGE_TYPES = new Set(["prerequisite_for", "required_for"]);

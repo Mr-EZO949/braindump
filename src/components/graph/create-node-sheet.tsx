@@ -144,6 +144,11 @@ const presetTypes = [
     value: "class",
   },
   {
+    description: "A recurring routine, practice, or daily commitment.",
+    label: "Habit",
+    value: "habit",
+  },
+  {
     description: "Use a custom label when the presets do not fit.",
     label: "Custom type",
     value: "custom",
@@ -154,6 +159,7 @@ const typeAccentByPreset: Record<Exclude<CreateNodeInput["node_type"], "custom">
   class: "#9c7a49",
   concept: "#70808d",
   goal: "#ddd6cc",
+  habit: "#4a7c6b",
   project: "#955460",
   task: "#bb4b58",
 };

@@ -10,4 +10,5 @@ export const NODE_COLOR_BY_TYPE: Record<NodeType, string> = {
   idea: "#5c7a6e",
   journal: "#6b6b8a",
   question: "#7a6b5c",
+  habit: "#4a7c6b",
 };

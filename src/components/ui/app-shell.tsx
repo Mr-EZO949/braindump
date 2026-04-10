@@ -91,6 +91,7 @@ const nodeColorByType: Record<Exclude<CreateNodeInput["node_type"], "custom">, s
   class: "#96784d",
   concept: "#677480",
   goal: "#d8d0c4",
+  habit: "#4a7c6b",
   project: "#8c4a57",
   task: "#a35258",
 };
@@ -1588,8 +1589,20 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (data.accepted_nodes && data.accepted_nodes.length > 0 && selectedWorkspaceId) {
       const acceptedNodes = data.accepted_nodes as Node[];
       const nodeIds = acceptedNodes.map((n) => n.id);
+
+      // Only suggest steps for leaf nodes — anything that's already a parent
+      // already has structure beneath it.
+      const acceptedEdges = (data.accepted_edges as Edge[]) ?? [];
+      const parentIds = new Set<string>();
+      for (const edge of [...graphData.edges, ...acceptedEdges]) {
+        if (edge.edge_type === "belongs_to") {
+          parentIds.add(edge.target_node_id);
+        }
+      }
       const goalOrProjectNodes = acceptedNodes.filter(
-        (n) => n.node_type === "goal" || n.node_type === "project",
+        (n) =>
+          (n.node_type === "goal" || n.node_type === "project" || n.node_type === "habit") &&
+          !parentIds.has(n.id),
       );
 
       if (goalOrProjectNodes.length > 0) {

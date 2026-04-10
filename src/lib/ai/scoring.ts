@@ -100,6 +100,7 @@ export function urgency(node: NodeRow): number {
     idea: 20,
     question: 22,
     journal: 16,
+    habit: 48,
   };
   const base = typeBase[node.node_type] ?? 40;
   const daysSince = (Date.now() - new Date(node.created_at).getTime()) / 86_400_000;

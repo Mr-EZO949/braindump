@@ -216,7 +216,7 @@ function upsertFocusItem(grouped: Map<string, FocusItem>, item: FocusItem) {
 }
 
 function allowsFocusPlan(node: ChatNodeContext) {
-  return ["goal", "project", "concept", "class"].includes(node.node_type);
+  return ["goal", "project", "concept", "class", "habit"].includes(node.node_type);
 }
 
 function createChildActionTitle(node: Node) {
@@ -229,6 +229,8 @@ function createChildActionTitle(node: Node) {
       return `Review ${node.title}`;
     case "goal":
       return `Clarify ${node.title}`;
+    case "habit":
+      return `Practice ${node.title}`;
     default:
       return `Develop ${node.title}`;
   }

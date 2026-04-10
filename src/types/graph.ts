@@ -6,7 +6,8 @@ export type NodeType =
   | "idea"
   | "journal"
   | "question"
-  | "goal";
+  | "goal"
+  | "habit";
 
 // Added in AI Phase 1A — lifecycle status for nodes and edges.
 export type NodeStatus = "active" | "completed" | "paused" | "archived";
@@ -90,7 +91,7 @@ export type GraphEditOperation =
 export interface CreateNodeInput {
   custom_type: string;
   importance_index: number;
-  node_type: "goal" | "task" | "project" | "concept" | "class" | "custom";
+  node_type: "goal" | "task" | "project" | "concept" | "class" | "habit" | "custom";
   raw_text: string;
   summary: string;
   title: string;

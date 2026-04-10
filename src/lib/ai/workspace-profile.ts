@@ -22,6 +22,7 @@ const ANCHOR_TYPE_PRIORITY: Record<NodeType, number> = {
   idea: 1,
   journal: 1,
   question: 1,
+  habit: 3,
 };
 
 function truncate(value: string, maxChars: number) {
