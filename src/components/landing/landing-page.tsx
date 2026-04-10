@@ -355,8 +355,7 @@ function ReviewShowcase() {
         <div className={styles.reviewAccentLine} />
         <h3 className={styles.reviewH3}>You approve every node.</h3>
         <p className={styles.reviewP}>
-          AI extracts structure from your dumps — but nothing enters the graph
-          until you say so. Accept what&apos;s useful, reject what&apos;s noise, edit what&apos;s close.
+          Nothing enters your graph until you say so.
         </p>
         <div className={styles.reviewStats}>
           <div className={styles.statItem}>
@@ -605,6 +604,51 @@ function GraphPreview() {
   );
 }
 
+// ── FloatingThoughts (problem section ambient) ───────────
+
+const FLOATING_THOUGHTS = [
+  "stats homework due Friday",
+  "ML project proposal",
+  "talk to Prof Martinez",
+  "honors program deadline",
+  "climate data idea",
+  "writing seminar revision",
+  "finish thesis outline",
+  "rent due next week",
+  "gym tomorrow morning",
+  "call mom",
+  "fix the auth bug",
+  "RAFT reading",
+  "ship v2 sprint",
+  "follow up with Sarah",
+];
+
+function FloatingThoughts() {
+  return (
+    <div className={styles.floatField} aria-hidden="true">
+      {FLOATING_THOUGHTS.map((t, i) => {
+        const seed = (i * 9301 + 49297) % 233280;
+        const left = (seed / 233280) * 100;
+        const top = (seed * 7) % 100;
+        const delay = (i % 7) * 0.6;
+        const dur = 11 + ((i * 3) % 8);
+        return (
+          <motion.span
+            key={t}
+            className={styles.floatThought}
+            style={{ left: `${left}%`, top: `${top}%` }}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: [0, 0.28, 0.28, 0], y: [8, -4, -4, -16] }}
+            transition={{ duration: dur, delay, repeat: Infinity, ease: "easeInOut" }}
+          >
+            {t}
+          </motion.span>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── FadeUp ────────────────────────────────────────────────
 
 function FadeUp({ children, delay = 0, className }: {
@@ -653,21 +697,20 @@ export default function LandingPage() {
               transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}>
               <div className={styles.badge}>
                 <span className={styles.badgeDot} />
-                AI-powered knowledge graph
+                For chronically overloaded minds
               </div>
               <h1 className={styles.heroH1}>
-                Stop organizing.<br />
-                <span className={styles.gradient}>Start thinking.</span>
+                Your brain is full.<br />
+                <span className={styles.gradient}>Your tools aren&apos;t helping.</span>
               </h1>
               <p className={styles.heroSub}>
-                Dump your raw thoughts into BrainDump. AI structures them into a living
-                knowledge graph — tasks, goals, ideas, and connections you didn&apos;t know existed.
+                Dump everything on your mind. Find what actually matters.
               </p>
               <div className={styles.heroActions}>
                 <Link href="/login" className={styles.btnPrimary}>
                   Start for free <span className={styles.btnArrow}>→</span>
                 </Link>
-                <a href="#how" className={styles.btnGhost}>How it works</a>
+                <a href="#problem" className={styles.btnGhost}>See why</a>
               </div>
             </motion.div>
 
@@ -686,14 +729,47 @@ export default function LandingPage() {
           <MarqueeRow items={MARQUEE_R2} reverse />
         </div>
 
+        {/* ── Problem ── */}
+        <section className={styles.problem} id="problem">
+          <FloatingThoughts />
+          <div className={styles.problemInner}>
+            <FadeUp className={styles.centered}>
+              <span className={styles.label}>The problem</span>
+              <h2 className={styles.h2}>
+                Lists flatten reality.
+              </h2>
+            </FadeUp>
+
+            <div className={styles.problemSnippets}>
+              <FadeUp delay={0.05} className={styles.problemSnippet}>
+                <span className={styles.problemSnippetNum}>01</span>
+                <p>Your stats homework blocks the ML project. Your list doesn&apos;t know.</p>
+              </FadeUp>
+              <FadeUp delay={0.12} className={styles.problemSnippet}>
+                <span className={styles.problemSnippetNum}>02</span>
+                <p>Four tasks serve the same goal. Three of them don&apos;t matter.</p>
+              </FadeUp>
+              <FadeUp delay={0.19} className={styles.problemSnippet}>
+                <span className={styles.problemSnippetNum}>03</span>
+                <p>You spend an hour on the wrong thing — again.</p>
+              </FadeUp>
+            </div>
+
+            <FadeUp delay={0.28}>
+              <p className={styles.problemPunch}>
+                The problem isn&apos;t you. Your tools flatten reality.
+              </p>
+            </FadeUp>
+          </div>
+        </section>
+
         {/* ── Review ── */}
         <section className={styles.section} id="how">
           <div className={styles.inner}>
             <FadeUp className={styles.centered}>
               <span className={styles.label}>Human in the loop</span>
               <h2 className={styles.h2}>
-                AI extracts.<br />
-                <span className={styles.gradient}>You decide what stays.</span>
+                You stay in control.
               </h2>
             </FadeUp>
 
@@ -725,13 +801,10 @@ export default function LandingPage() {
             <FadeUp className={styles.centered}>
               <span className={styles.label}>Your knowledge, connected</span>
               <h2 className={styles.h2}>
-                See how it all<br />
-                <span className={styles.gradient}>fits together.</span>
+                It all fits together.
               </h2>
               <p className={styles.sectionDesc}>
-                Every thought you dump becomes a node. BrainDump automatically discovers
-                relationships between your tasks, goals, ideas, and concepts — building a
-                living graph you can explore and query.
+                Tasks, goals, ideas — linked automatically.
               </p>
             </FadeUp>
 
@@ -754,9 +827,7 @@ export default function LandingPage() {
                   not the internet
                 </h2>
                 <p className={styles.assistantDesc}>
-                  A conversational assistant grounded in your actual knowledge graph.
-                  It doesn&apos;t hallucinate from training data — it reads your nodes,
-                  traces connections, and answers from what you&apos;ve actually dumped.
+                  Grounded in your nodes. No hallucinations from training data.
                 </p>
                 <ul className={styles.assistantList}>
                   <li>&ldquo;What&apos;s blocking my project?&rdquo;</li>
@@ -783,8 +854,7 @@ export default function LandingPage() {
               <FadeUp className={styles.createInfo}>
                 <span className={styles.label}>Talk, don&apos;t click</span>
                 <h2 className={styles.h2}>
-                  Describe it once.<br />
-                  <span className={styles.gradient}>Get a full structure.</span>
+                  Describe it once.
                 </h2>
                 <ul className={styles.assistantList}>
                   <li>&ldquo;Break this goal into weekly tasks&rdquo;</li>
@@ -803,18 +873,15 @@ export default function LandingPage() {
               <FadeUp className={styles.assistantInfo}>
                 <span className={styles.label}>AI planner</span>
                 <h2 className={styles.h2}>
-                  Plan the next hour.<br />
-                  <span className={styles.gradient}>From your graph.</span>
+                  Plan the next hour.
                 </h2>
                 <p className={styles.assistantDesc}>
-                  The planner reads your tasks, priorities, dependencies, and due dates,
-                  then builds a realistic time-blocked schedule — focus blocks, admin,
-                  breaks, and buffers. Drag to reorder, accept, or regenerate.
+                  Respects priorities, blockers, and prerequisite chains.
                 </p>
                 <ul className={styles.assistantList}>
                   <li>1-hour, 2-hour, or full-day windows</li>
-                  <li>Respects blockers and prerequisite chains</li>
-                  <li>Learns from your edits and rejections</li>
+                  <li>Focus, admin, break, buffer</li>
+                  <li>Learns from your edits</li>
                 </ul>
               </FadeUp>
 
@@ -822,6 +889,39 @@ export default function LandingPage() {
                 <PlannerDemo />
               </FadeUp>
             </div>
+          </div>
+        </section>
+
+        {/* ── Differentiator ── */}
+        <section className={styles.diff}>
+          <div className={styles.inner}>
+            <FadeUp className={styles.centered}>
+              <span className={styles.label}>Why not just…</span>
+              <h2 className={styles.h2}>
+                Any other tool?
+              </h2>
+            </FadeUp>
+
+            <FadeUp delay={0.1}>
+              <div className={styles.diffList}>
+                <div className={styles.diffRow}>
+                  <span className={styles.diffWhat}>To-do lists</span>
+                  <span className={styles.diffSays}>tell you what. Not what <em>first</em>, not <em>why</em>.</span>
+                </div>
+                <div className={styles.diffRow}>
+                  <span className={styles.diffWhat}>Note apps</span>
+                  <span className={styles.diffSays}>store. They don&apos;t connect.</span>
+                </div>
+                <div className={styles.diffRow}>
+                  <span className={styles.diffWhat}>AI chatbots</span>
+                  <span className={styles.diffSays}>answer once, then forget your goals.</span>
+                </div>
+                <div className={`${styles.diffRow} ${styles.diffRowUs}`}>
+                  <span className={styles.diffWhat}>BrainDump</span>
+                  <span className={styles.diffSays}>remembers, connects, prioritizes — and gets sharper as you dump.</span>
+                </div>
+              </div>
+            </FadeUp>
           </div>
         </section>
 
@@ -833,7 +933,7 @@ export default function LandingPage() {
               Your thoughts are already connected.{"\n"}
               <span className={styles.gradient}>Let us show you how.</span>
             </h2>
-            <p className={styles.ctaSub}>Free to start. No card required.</p>
+            <p className={styles.ctaSub}>Free to start. No card.</p>
             <div className={styles.ctaActions}>
               <Link href="/login" className={styles.btnPrimary}>
                 Start for free <span className={styles.btnArrow}>→</span>
