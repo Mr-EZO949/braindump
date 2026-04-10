@@ -185,6 +185,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [lastAnalysisNodeIds, setLastAnalysisNodeIds] = useState<string[]>([]);
   const [lastAnalysisFailedNodeIds, setLastAnalysisFailedNodeIds] = useState<string[]>([]);
   const [lastAnalysisWorkspaceId, setLastAnalysisWorkspaceId] = useState<string | null>(null);
+  const [findAllConfirmOpen, setFindAllConfirmOpen] = useState(false);
 
   // Panel state
   const [rightPanelOpen, setRightPanelOpen] = useState(() =>
@@ -2106,9 +2107,8 @@ export function AppShell({ initialUser }: AppShellProps) {
                 onToggleHideCompleted={() => setHideCompleted((v) => !v)}
                 onFindAllConnections={() => {
                   if (!selectedWorkspaceId || analyzingConnections) return;
-                  const allNodeIds = graphData.nodes.map((n) => n.id);
-                  if (allNodeIds.length === 0) return;
-                  void analyzeNodes(allNodeIds);
+                  if (graphData.nodes.length === 0) return;
+                  setFindAllConfirmOpen(true);
                 }}
                 findingConnections={analyzingConnections}
                 onToggleEditMode={handleToggleEditMode}
@@ -2282,6 +2282,70 @@ export function AppShell({ initialUser }: AppShellProps) {
                   type="button"
                 >
                   Generate steps
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Full-graph reconnect confirmation */}
+      <AnimatePresence>
+        {findAllConfirmOpen && (
+          <motion.div
+            key="find-all-backdrop"
+            className="fixed inset-0 z-60 flex items-center justify-center"
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            style={{ background: "rgba(0,0,0,0.45)" }}
+            onClick={() => setFindAllConfirmOpen(false)}
+          >
+            <motion.div
+              className="step-suggest-modal"
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.99 }}
+              initial={{ opacity: 0, y: 16, scale: 0.99 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="step-suggest-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 9v4" />
+                  <path d="M12 17h.01" />
+                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                </svg>
+              </div>
+              <div className="step-suggest-body">
+                <p className="step-suggest-title">Reanalyze the entire graph?</p>
+                <p className="step-suggest-desc">
+                  This will run connection analysis across all{" "}
+                  <strong>{graphData.nodes.length}</strong> nodes in this
+                  workspace. It can take a while and uses AI credits. New
+                  connections will be proposed for you to review.
+                </p>
+              </div>
+              <div className="step-suggest-actions">
+                <button
+                  className="per-btn-ghost"
+                  onClick={() => setFindAllConfirmOpen(false)}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="per-btn-primary"
+                  onClick={() => {
+                    setFindAllConfirmOpen(false);
+                    if (!selectedWorkspaceId) return;
+                    const allNodeIds = graphData.nodes.map((n) => n.id);
+                    if (allNodeIds.length === 0) return;
+                    void analyzeNodes(allNodeIds);
+                  }}
+                  type="button"
+                >
+                  Reanalyze all
                 </button>
               </div>
             </motion.div>
