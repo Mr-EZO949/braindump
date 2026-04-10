@@ -44,6 +44,7 @@ const VALID_NODE_TYPES = new Set([
   "journal",
   "question",
   "goal",
+  "habit",
 ]);
 
 const VALID_EXTRACTION_SOFT_LINK_TYPES = new Set([
@@ -124,45 +125,38 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
       throw new Error(`proposed_nodes[${i}] cannot depend on itself`);
     }
 
-    const softLinks = Array.isArray(n.soft_links)
-      ? n.soft_links
-          .filter(isObject)
-          .map((link, linkIndex) => {
-            if (
-              !isString(link.target_local_ref) ||
-              !link.target_local_ref.trim()
-            ) {
-              throw new Error(
-                `proposed_nodes[${i}].soft_links[${linkIndex}] missing target_local_ref`
-              );
-            }
-            if (
-              !isString(link.edge_type) ||
-              !VALID_EXTRACTION_SOFT_LINK_TYPES.has(link.edge_type)
-            ) {
-              throw new Error(
-                `proposed_nodes[${i}].soft_links[${linkIndex}] invalid edge_type: ${String(link.edge_type)}`
-              );
-            }
+    // Soft links are best-effort: drop malformed entries silently rather than
+    // failing the whole extraction. A single broken cross-link must not
+    // discard the valid proposed nodes around it.
+    const softLinks: Array<{
+      target_local_ref: string;
+      edge_type: ExtractionOutput["proposed_nodes"][number]["soft_links"][number]["edge_type"];
+      rationale: string | null;
+    }> = [];
+    if (Array.isArray(n.soft_links)) {
+      for (const rawLink of n.soft_links) {
+        if (!isObject(rawLink)) continue;
+        if (!isString(rawLink.target_local_ref) || !rawLink.target_local_ref.trim()) continue;
+        if (
+          !isString(rawLink.edge_type) ||
+          !VALID_EXTRACTION_SOFT_LINK_TYPES.has(rawLink.edge_type)
+        ) {
+          continue;
+        }
+        const targetLocalRef = rawLink.target_local_ref.trim();
+        if (targetLocalRef === localRef) continue;
 
-            const targetLocalRef = link.target_local_ref.trim();
-            if (targetLocalRef === localRef) {
-              throw new Error(
-                `proposed_nodes[${i}].soft_links[${linkIndex}] cannot point to self`
-              );
-            }
-
-            return {
-              target_local_ref: targetLocalRef,
-              edge_type:
-                link.edge_type as ExtractionOutput["proposed_nodes"][number]["soft_links"][number]["edge_type"],
-              rationale:
-                isString(link.rationale) && link.rationale.trim()
-                  ? link.rationale.trim()
-                  : null,
-            };
-          })
-      : [];
+        softLinks.push({
+          target_local_ref: targetLocalRef,
+          edge_type:
+            rawLink.edge_type as ExtractionOutput["proposed_nodes"][number]["soft_links"][number]["edge_type"],
+          rationale:
+            isString(rawLink.rationale) && rawLink.rationale.trim()
+              ? rawLink.rationale.trim()
+              : null,
+        });
+      }
+    }
 
     const dedupedSoftLinks = Array.from(
       softLinks.reduce((map, link) => {
