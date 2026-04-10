@@ -166,17 +166,23 @@ export async function POST(req: NextRequest) {
   }
 
   // Step 2: Run connection analysis for each node in parallel — failures are per-node.
+  // Track which specific node IDs failed so the client can retry only those rather
+  // than re-running the whole batch.
   const results = await Promise.all(
-    normalizedNodeIds.map((nodeId) =>
-      runConnectionAnalysis({
-        nodeId,
-        excludeNodeIds: getPriorBatchNodeIds(normalizedNodeIds, nodeId),
-        workspaceId: workspace_id,
-        userId: user.id,
-        supabase,
-      })
-        .catch(() => ({ proposed: 0, skipped: 0, failed: 1 }))
-    )
+    normalizedNodeIds.map(async (nodeId) => {
+      try {
+        const result = await runConnectionAnalysis({
+          nodeId,
+          excludeNodeIds: getPriorBatchNodeIds(normalizedNodeIds, nodeId),
+          workspaceId: workspace_id,
+          userId: user.id,
+          supabase,
+        });
+        return { nodeId, ...result };
+      } catch {
+        return { nodeId, proposed: 0, skipped: 0, failed: 1 };
+      }
+    })
   );
 
   const totals = results.reduce(
@@ -187,6 +193,8 @@ export async function POST(req: NextRequest) {
     }),
     { proposed: 0, skipped: 0, failed: 0 }
   );
+
+  const failed_node_ids = results.filter((r) => r.failed > 0).map((r) => r.nodeId);
 
   const proposed_edges = await fetchPendingEdges({
     workspaceId: workspace_id,
@@ -231,6 +239,7 @@ export async function POST(req: NextRequest) {
     proposed_edges,
     merge_candidates,
     warning: warnings.join(" "),
+    failed_node_ids,
     ...totals,
   });
 }

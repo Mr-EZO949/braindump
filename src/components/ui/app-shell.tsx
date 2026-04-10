@@ -69,6 +69,7 @@ type AnalysisResponse = {
   proposed?: number;
   skipped?: number;
   failed?: number;
+  failed_node_ids?: string[];
   warning?: string;
   error?: string;
 };
@@ -182,6 +183,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [mergeCandidates, setMergeCandidates] = useState<MergeCandidate[]>([]);
   const [aiNotice, setAiNotice] = useState<AINotice | null>(null);
   const [lastAnalysisNodeIds, setLastAnalysisNodeIds] = useState<string[]>([]);
+  const [lastAnalysisFailedNodeIds, setLastAnalysisFailedNodeIds] = useState<string[]>([]);
   const [lastAnalysisWorkspaceId, setLastAnalysisWorkspaceId] = useState<string | null>(null);
 
   // Panel state
@@ -1749,6 +1751,12 @@ export function AppShell({ initialUser }: AppShellProps) {
       setEdgeReviewOpen(true);
     }
 
+    // Track which nodes specifically failed so retry can target only those
+    // instead of replaying the whole batch.
+    setLastAnalysisFailedNodeIds(
+      Array.isArray(result.failed_node_ids) ? result.failed_node_ids : [],
+    );
+
     setAiNotice(buildAnalysisNotice(result));
   };
 
@@ -1763,6 +1771,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
 
     setLastAnalysisNodeIds(normalizedNodeIds);
+    setLastAnalysisFailedNodeIds([]);
     setLastAnalysisWorkspaceId(workspaceId);
     setAnalyzingConnections(true);
     setAiNotice(null);
@@ -1791,11 +1800,23 @@ export function AppShell({ initialUser }: AppShellProps) {
   };
 
   const retryLastConnectionAnalysis = () => {
-    if (!lastAnalysisWorkspaceId || lastAnalysisNodeIds.length === 0) {
+    if (!lastAnalysisWorkspaceId) {
       return;
     }
 
-    void analyzeNodes(lastAnalysisNodeIds, lastAnalysisWorkspaceId);
+    // Prefer retrying only the nodes that actually failed. Fall back to the full
+    // batch if the API didn't report specific failures (e.g. transport-level error
+    // before the response was parsed).
+    const nodesToRetry =
+      lastAnalysisFailedNodeIds.length > 0
+        ? lastAnalysisFailedNodeIds
+        : lastAnalysisNodeIds;
+
+    if (nodesToRetry.length === 0) {
+      return;
+    }
+
+    void analyzeNodes(nodesToRetry, lastAnalysisWorkspaceId);
   };
 
   const handleEdgeReview = async (
