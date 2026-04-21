@@ -1,10 +1,84 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { motion, useInView, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
 import styles from "./landing.module.css";
+
+// ── Waitlist form ─────────────────────────────────────────
+
+type WaitlistFormProps = {
+  source: string;
+  variant?: "hero" | "cta";
+};
+
+function WaitlistForm({ source, variant = "hero" }: WaitlistFormProps) {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (status === "submitting") return;
+    setStatus("submitting");
+    setError(null);
+    try {
+      const res = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, source }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? "Something went wrong. Try again.");
+        setStatus("error");
+        return;
+      }
+      setStatus("success");
+    } catch {
+      setError("Network error. Try again.");
+      setStatus("error");
+    }
+  };
+
+  const formClass = variant === "cta" ? styles.waitlistFormCta : styles.waitlistForm;
+
+  if (status === "success") {
+    return (
+      <div className={`${formClass} ${styles.waitlistSuccess}`}>
+        <span className={styles.waitlistSuccessDot} />
+        You&apos;re on the list. We&apos;ll be in touch.
+      </div>
+    );
+  }
+
+  return (
+    <form className={formClass} onSubmit={onSubmit} noValidate>
+      <input
+        className={styles.waitlistInput}
+        type="email"
+        inputMode="email"
+        autoComplete="email"
+        required
+        placeholder="you@example.com"
+        aria-label="Email address"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        disabled={status === "submitting"}
+      />
+      <button
+        className={styles.waitlistButton}
+        type="submit"
+        disabled={status === "submitting" || email.trim().length === 0}
+      >
+        {status === "submitting" ? "Joining…" : "Join waitlist"}
+        <span className={styles.btnArrow}>→</span>
+      </button>
+      {error ? <p className={styles.waitlistError}>{error}</p> : null}
+    </form>
+  );
+}
 
 // ── Palette ───────────────────────────────────────────────
 
@@ -682,8 +756,7 @@ export default function LandingPage() {
             <Image src="/logo_withtext.svg" alt="BrainDump" width={280} height={52} className={styles.navLogoImg} />
           </Link>
           <nav className={styles.navRight}>
-            <Link href="/login" className={styles.navLink}>Sign in</Link>
-            <Link href="/login" className={styles.navCta}>Get started</Link>
+            <a href="#waitlist" className={styles.navCta}>Join waitlist</a>
           </nav>
         </header>
 
@@ -707,9 +780,7 @@ export default function LandingPage() {
                 Dump everything on your mind. Find what actually matters.
               </p>
               <div className={styles.heroActions}>
-                <Link href="/login" className={styles.btnPrimary}>
-                  Start for free <span className={styles.btnArrow}>→</span>
-                </Link>
+                <WaitlistForm source="hero" />
                 <a href="#problem" className={styles.btnGhost}>See why</a>
               </div>
             </motion.div>
@@ -926,18 +997,16 @@ export default function LandingPage() {
         </section>
 
         {/* ── CTA ── */}
-        <section className={styles.cta}>
+        <section className={styles.cta} id="waitlist">
           <div className={styles.ctaGlow} aria-hidden="true" />
           <FadeUp className={styles.ctaInner}>
             <h2 className={styles.ctaH2}>
               Your thoughts are already connected.{"\n"}
               <span className={styles.gradient}>Let us show you how.</span>
             </h2>
-            <p className={styles.ctaSub}>Free to start. No card.</p>
+            <p className={styles.ctaSub}>Join the waitlist — we&apos;ll let you in as soon as we open up.</p>
             <div className={styles.ctaActions}>
-              <Link href="/login" className={styles.btnPrimary}>
-                Start for free <span className={styles.btnArrow}>→</span>
-              </Link>
+              <WaitlistForm source="cta" variant="cta" />
             </div>
           </FadeUp>
         </section>
