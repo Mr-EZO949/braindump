@@ -17,6 +17,8 @@ import type {
   PlanOutput,
   MergeCheckInput,
   MergeCheckOutput,
+  IntentInput,
+  IntentOutput,
   AIRun,
 } from "@/types/ai";
 
@@ -82,6 +84,15 @@ export interface AIProvider {
    * Called after embedding similarity filter to reduce false positives.
    */
   checkMerge(input: MergeCheckInput): Promise<AIProviderResult<MergeCheckOutput>>;
+
+  /**
+   * Classify a free-form user message from the unified command bar into one
+   * of a small set of intents (braindump, question, plan, edit, status,
+   * unclear) so the UI can dispatch to the correct surface.
+   */
+  classifyIntent(
+    input: IntentInput,
+  ): Promise<AIProviderResult<IntentOutput>>;
 }
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,8 @@ import type {
   EmbeddingOutput,
   RerankOutput,
   MergeCheckOutput,
+  IntentOutput,
+  IntentType,
 } from "@/types/ai";
 
 // ---------------------------------------------------------------------------
@@ -365,6 +367,46 @@ export function validateEmbeddingOutput(raw: unknown): EmbeddingOutput {
   return {
     embedding: raw.embedding as number[],
     token_count: isNumber(raw.token_count) ? (raw.token_count as number) : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Intent router output
+// ---------------------------------------------------------------------------
+
+const VALID_INTENTS: ReadonlySet<IntentType> = new Set<IntentType>([
+  "braindump",
+  "question",
+  "plan",
+  "edit",
+  "status",
+  "unclear",
+]);
+
+export function validateIntentOutput(raw: unknown): IntentOutput {
+  if (!isObject(raw)) throw new Error("Intent output must be an object");
+  if (!isString(raw.intent) || !VALID_INTENTS.has(raw.intent as IntentType))
+    throw new Error(`Intent output has invalid intent: ${String(raw.intent)}`);
+  if (!isNumber(raw.confidence))
+    throw new Error("Intent output missing confidence");
+  if (!isString(raw.rationale))
+    throw new Error("Intent output missing rationale");
+
+  const intent = raw.intent as IntentType;
+  const clarifying =
+    isString(raw.clarifying_question) && raw.clarifying_question.trim()
+      ? raw.clarifying_question.trim()
+      : null;
+
+  return {
+    intent,
+    confidence: Math.min(1, Math.max(0, raw.confidence)),
+    rationale: raw.rationale.trim(),
+    clarifying_question: clarifying,
+    prompt_version:
+      isString(raw.prompt_version) && raw.prompt_version.trim()
+        ? raw.prompt_version
+        : "intent-v1",
   };
 }
 

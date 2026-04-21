@@ -30,7 +30,8 @@ export type AIRunType =
   | "assistant"
   | "plan"
   | "merge_check"
-  | "lifecycle_cascade";
+  | "lifecycle_cascade"
+  | "intent";
 
 export type AIRunStatus = "success" | "failed" | "retrying";
 
@@ -406,6 +407,32 @@ export interface MergeCheckOutput {
   same_entity: boolean;
   confidence: number;
   reason: string;
+  prompt_version: string;
+}
+
+// ---------------------------------------------------------------------------
+// Intent router (unified command bar)
+// ---------------------------------------------------------------------------
+
+export type IntentType =
+  | "braindump"
+  | "question"
+  | "plan"
+  | "edit"
+  | "status"
+  | "unclear";
+
+export interface IntentInput {
+  message: string;
+  workspace_context?: string;
+  has_graph: boolean;
+}
+
+export interface IntentOutput {
+  intent: IntentType;
+  confidence: number;
+  rationale: string;
+  clarifying_question: string | null;
   prompt_version: string;
 }
 

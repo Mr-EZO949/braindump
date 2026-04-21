@@ -8,6 +8,7 @@ import { MainStage } from "@/components/graph/main-stage";
 import { AssistantMode as AssistantModeView } from "@/components/assistant/assistant-mode";
 import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
+import { CommandBar } from "@/components/ui/command-bar";
 import { ProposedNodesReview } from "@/components/ui/proposed-nodes-review";
 import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
 import { GraphEditReview } from "@/components/ui/graph-edit-review";
@@ -52,7 +53,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
 import type { RailTab, ChatMessage, ChatScope } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, Workspace } from "@/types/graph";
-import type { ProposedNode } from "@/types/ai";
+import type { IntentType, ProposedNode } from "@/types/ai";
 
 type AuthUserState = {
   email: string | null;
@@ -161,6 +162,7 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   // App-level mode state
   const [appMode, setAppMode] = useState<AppMode>("graph");
+  const [commandBarOpen, setCommandBarOpen] = useState(false);
   const [brainDumpOpen, setBrainDumpOpen] = useState(false);
   // Workspace captured at open time — stays fixed even if the user switches workspace mid-dump.
   const [brainDumpWorkspaceId, setBrainDumpWorkspaceId] = useState<string | null>(null);
@@ -1470,6 +1472,55 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
+  // Command-bar dispatch: map an intent from the router to the right surface.
+  // For now `edit` flows through the same ingestion pipeline as `braindump` —
+  // the extractor is the source of truth for graph shape until we have a
+  // structural-edit API. `question`, `plan`, and `status` all route to the
+  // assistant chat; the planner/status variants just seed the chat with a
+  // leading prompt so the response is shaped correctly.
+  const handleCommand = async (intent: IntentType, text: string) => {
+    const workspaceTarget = selectedWorkspaceId;
+    if (!workspaceTarget) return;
+
+    switch (intent) {
+      case "braindump":
+      case "edit": {
+        setBrainDumpError(null);
+        setBrainDumpFailedEntryId(null);
+        setBrainDumpWorkspaceId(workspaceTarget);
+        setBrainDumpValue(text);
+        setBrainDumpOpen(true);
+        return;
+      }
+      case "question":
+      case "status": {
+        setAppMode("assistant");
+        await submitMessage(text);
+        return;
+      }
+      case "plan": {
+        setAppMode("assistant");
+        const seeded = text.toLowerCase().includes("plan")
+          ? text
+          : `Plan the next hour of work based on this: ${text}`;
+        await submitMessage(seeded);
+        return;
+      }
+      case "unclear":
+      default: {
+        // The command bar should have asked the user to pick an intent before
+        // reaching this branch; treat stray unclear dispatches as a brain dump
+        // so nothing is ever lost.
+        setBrainDumpError(null);
+        setBrainDumpFailedEntryId(null);
+        setBrainDumpWorkspaceId(workspaceTarget);
+        setBrainDumpValue(text);
+        setBrainDumpOpen(true);
+        return;
+      }
+    }
+  };
+
   const handleBrainDumpRetry = async () => {
     if (!brainDumpFailedEntryId || brainDumpRetrying) {
       return;
@@ -2552,10 +2603,18 @@ export function AppShell({ initialUser }: AppShellProps) {
                 setBrainDumpWorkspaceId(selectedWorkspaceId);
                 setBrainDumpOpen(true);
               }}
+              onOpenCommandBar={() => setCommandBarOpen(true)}
             />
           </motion.div>
         )}
       </AnimatePresence>
+
+      <CommandBar
+        open={commandBarOpen}
+        onOpenChange={setCommandBarOpen}
+        workspaceId={selectedWorkspaceId}
+        onDispatch={(intent, text) => handleCommand(intent, text)}
+      />
 
       {/* Workspace bootstrap wizard — only shown for an in-progress creation flow */}
       {bootstrapWorkspaceId && bootstrapWorkspaceId === selectedWorkspaceId && (

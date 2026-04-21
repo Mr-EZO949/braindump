@@ -21,6 +21,8 @@ import type {
   PlanOutput,
   MergeCheckInput,
   MergeCheckOutput,
+  IntentInput,
+  IntentOutput,
   AIRun,
 } from "@/types/ai";
 import {
@@ -36,6 +38,7 @@ import {
   validateEmbeddingOutput,
   validateRerankOutput,
   validateMergeCheckOutput,
+  validateIntentOutput,
 } from "./validation";
 import {
   buildExtractionPrompt,
@@ -58,6 +61,10 @@ import {
   buildMergeCheckPrompt,
   MERGE_CHECK_PROMPT_VERSION,
 } from "./prompts/merge-check";
+import {
+  buildIntentPrompt,
+  INTENT_PROMPT_VERSION,
+} from "./prompts/intent";
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -510,6 +517,70 @@ export class GeminiProvider implements AIProvider {
         runType: "plan",
         modelName: AI_MODELS.GEMINI_PRO,
         promptVersion: PLAN_PROMPT_VERSION,
+        inputHash: run.input_hash,
+        outputHash: shortHash(text),
+        inputTokens,
+        outputTokens,
+        latencyMs,
+        estimatedCost,
+        cause: error,
+      });
+    }
+
+    return {
+      output,
+      run: {
+        ...run,
+        output_hash: shortHash(text),
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        latency_ms: latencyMs,
+        estimated_cost: estimatedCost,
+      },
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // classifyIntent
+  // -------------------------------------------------------------------------
+
+  async classifyIntent(
+    input: IntentInput,
+  ): Promise<AIProviderResult<IntentOutput>> {
+    const prompt = buildIntentPrompt(input);
+    const run = baseRun("intent", INTENT_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_PRO);
+    const start = Date.now();
+
+    const model = this.genAI.getGenerativeModel({
+      model: AI_MODELS.GEMINI_PRO,
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: "application/json",
+      },
+    });
+
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const text = response.text();
+    const usage = response.usageMetadata;
+
+    const inputTokens = usage?.promptTokenCount ?? 0;
+    const outputTokens = usage?.candidatesTokenCount ?? 0;
+    const latencyMs = Date.now() - start;
+    const estimatedCost = estimateProCost(inputTokens, outputTokens);
+
+    let output: IntentOutput;
+    try {
+      const parsed = JSON.parse(text);
+      output = validateIntentOutput(parsed);
+    } catch (error) {
+      throw malformedResponse({
+        message:
+          error instanceof Error ? error.message : "Intent output was malformed",
+        rawOutput: text,
+        runType: "intent",
+        modelName: AI_MODELS.GEMINI_PRO,
+        promptVersion: INTENT_PROMPT_VERSION,
         inputHash: run.input_hash,
         outputHash: shortHash(text),
         inputTokens,

@@ -18,6 +18,8 @@ import type {
   PlanOutput,
   MergeCheckInput,
   MergeCheckOutput,
+  IntentInput,
+  IntentOutput,
   AIRun,
 } from "@/types/ai";
 import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS } from "./config";
@@ -27,6 +29,7 @@ import {
   validateEdgeInferenceOutput,
   validatePlanOutput,
   validateMergeCheckOutput,
+  validateIntentOutput,
 } from "./validation";
 import { buildExtractionPrompt, EXTRACT_PROMPT_VERSION } from "./prompts/extract";
 import { buildEdgeInferencePrompt, INFER_EDGE_PROMPT_VERSION } from "./prompts/infer-edge";
@@ -37,6 +40,7 @@ import {
 } from "./prompts/assistant";
 import { buildPlanPrompt, PLAN_PROMPT_VERSION } from "./prompts/plan";
 import { buildMergeCheckPrompt, MERGE_CHECK_PROMPT_VERSION } from "./prompts/merge-check";
+import { buildIntentPrompt, INTENT_PROMPT_VERSION } from "./prompts/intent";
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -371,6 +375,66 @@ export class ClaudeProvider {
   // -------------------------------------------------------------------------
   // checkMerge
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // classifyIntent
+  // -------------------------------------------------------------------------
+
+  async classifyIntent(
+    input: IntentInput,
+  ): Promise<AIProviderResult<IntentOutput>> {
+    const prompt = buildIntentPrompt(input);
+    const run = baseRun("intent", INTENT_PROMPT_VERSION, prompt, this.modelName);
+    const start = Date.now();
+
+    const response = await this.client.messages.create({
+      model: this.modelName,
+      max_tokens: 256,
+      temperature: 0.1,
+      system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = response.content[0].type === "text" ? response.content[0].text : "{}";
+    const inputTokens = response.usage.input_tokens;
+    const outputTokens = response.usage.output_tokens;
+    const latencyMs = Date.now() - start;
+    const estimatedCost = estimateCost(inputTokens, outputTokens);
+
+    let output: IntentOutput;
+    try {
+      const parsed = JSON.parse(extractJson(text));
+      output = validateIntentOutput(parsed);
+    } catch (error) {
+      throw malformedResponse({
+        message:
+          error instanceof Error ? error.message : "Intent output was malformed",
+        rawOutput: text,
+        runType: "intent",
+        promptVersion: INTENT_PROMPT_VERSION,
+        modelName: this.modelName,
+        inputHash: run.input_hash,
+        outputHash: shortHash(text),
+        inputTokens,
+        outputTokens,
+        latencyMs,
+        estimatedCost,
+        cause: error,
+      });
+    }
+
+    return {
+      output,
+      run: {
+        ...run,
+        output_hash: shortHash(text),
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        latency_ms: latencyMs,
+        estimated_cost: estimatedCost,
+      },
+    };
+  }
 
   async checkMerge(input: MergeCheckInput): Promise<AIProviderResult<MergeCheckOutput>> {
     const prompt = buildMergeCheckPrompt({
