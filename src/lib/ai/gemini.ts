@@ -19,6 +19,8 @@ import type {
   AssistantOutput,
   PlanInput,
   PlanOutput,
+  MergeCheckInput,
+  MergeCheckOutput,
   AIRun,
 } from "@/types/ai";
 import {
@@ -33,6 +35,7 @@ import {
   validatePlanOutput,
   validateEmbeddingOutput,
   validateRerankOutput,
+  validateMergeCheckOutput,
 } from "./validation";
 import {
   buildExtractionPrompt,
@@ -51,6 +54,10 @@ import {
   buildPlanPrompt,
   PLAN_PROMPT_VERSION,
 } from "./prompts/plan";
+import {
+  buildMergeCheckPrompt,
+  MERGE_CHECK_PROMPT_VERSION,
+} from "./prompts/merge-check";
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -60,10 +67,10 @@ function shortHash(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
 }
 
-function estimateCost(inputTokens: number, outputTokens: number): number {
+function estimateProCost(inputTokens: number, outputTokens: number): number {
   return (
-    (inputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.GEMINI_FLASH_INPUT +
-    (outputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.GEMINI_FLASH_OUTPUT
+    (inputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.GEMINI_PRO_INPUT +
+    (outputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.GEMINI_PRO_OUTPUT
   );
 }
 
@@ -139,11 +146,11 @@ export class GeminiProvider implements AIProvider {
     input: ExtractionInput
   ): Promise<AIProviderResult<ExtractionOutput>> {
     const prompt = buildExtractionPrompt(input);
-    const run = baseRun("extract", EXTRACT_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_FAST);
+    const run = baseRun("extract", EXTRACT_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_PRO);
     const start = Date.now();
 
     const model = this.genAI.getGenerativeModel({
-      model: AI_MODELS.GEMINI_FAST,
+      model: AI_MODELS.GEMINI_PRO,
       generationConfig: {
         temperature: AI_TEMPERATURE.EXTRACTION,
         responseMimeType: "application/json",
@@ -158,7 +165,7 @@ export class GeminiProvider implements AIProvider {
     const inputTokens = usage?.promptTokenCount ?? 0;
     const outputTokens = usage?.candidatesTokenCount ?? 0;
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateCost(inputTokens, outputTokens);
+    const estimatedCost = estimateProCost(inputTokens, outputTokens);
 
     let output: ExtractionOutput;
     try {
@@ -170,7 +177,7 @@ export class GeminiProvider implements AIProvider {
           error instanceof Error ? error.message : "Extraction output was malformed",
         rawOutput: text,
         runType: "extract",
-        modelName: AI_MODELS.GEMINI_FAST,
+        modelName: AI_MODELS.GEMINI_PRO,
         promptVersion: EXTRACT_PROMPT_VERSION,
         inputHash: run.input_hash,
         outputHash: shortHash(text),
@@ -371,7 +378,7 @@ export class GeminiProvider implements AIProvider {
     const inputTokens = usage?.promptTokenCount ?? 0;
     const outputTokens = usage?.candidatesTokenCount ?? 0;
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateCost(inputTokens, outputTokens);
+    const estimatedCost = estimateProCost(inputTokens, outputTokens);
 
     let output: EdgeInferenceOutput;
     try {
@@ -419,11 +426,11 @@ export class GeminiProvider implements AIProvider {
     const userPrompt = buildAssistantUserPrompt(input);
     const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
 
-    const run = baseRun("assistant", ASSISTANT_PROMPT_VERSION, fullPrompt, AI_MODELS.GEMINI_FAST);
+    const run = baseRun("assistant", ASSISTANT_PROMPT_VERSION, fullPrompt, AI_MODELS.GEMINI_PRO);
     const start = Date.now();
 
     const model = this.genAI.getGenerativeModel({
-      model: AI_MODELS.GEMINI_FAST,
+      model: AI_MODELS.GEMINI_PRO,
       generationConfig: {
         temperature: AI_TEMPERATURE.ASSISTANT,
       },
@@ -446,7 +453,7 @@ export class GeminiProvider implements AIProvider {
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         latency_ms: Date.now() - start,
-        estimated_cost: estimateCost(inputTokens, outputTokens),
+        estimated_cost: estimateProCost(inputTokens, outputTokens),
       },
     };
   }
@@ -471,11 +478,11 @@ export class GeminiProvider implements AIProvider {
       workspace_context: input.workspace_context,
     });
 
-    const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_FAST);
+    const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_PRO);
     const start = Date.now();
 
     const model = this.genAI.getGenerativeModel({
-      model: AI_MODELS.GEMINI_FAST,
+      model: AI_MODELS.GEMINI_PRO,
       generationConfig: {
         temperature: AI_TEMPERATURE.PLANNER,
         responseMimeType: "application/json",
@@ -490,7 +497,7 @@ export class GeminiProvider implements AIProvider {
     const inputTokens = usage?.promptTokenCount ?? 0;
     const outputTokens = usage?.candidatesTokenCount ?? 0;
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateCost(inputTokens, outputTokens);
+    const estimatedCost = estimateProCost(inputTokens, outputTokens);
 
     let output: PlanOutput;
     try {
@@ -501,7 +508,7 @@ export class GeminiProvider implements AIProvider {
         message: error instanceof Error ? error.message : "Plan output was malformed",
         rawOutput: text,
         runType: "plan",
-        modelName: AI_MODELS.GEMINI_FAST,
+        modelName: AI_MODELS.GEMINI_PRO,
         promptVersion: PLAN_PROMPT_VERSION,
         inputHash: run.input_hash,
         outputHash: shortHash(text),
@@ -526,9 +533,77 @@ export class GeminiProvider implements AIProvider {
     };
   }
 
-  // checkMerge is a Claude-only task — Gemini provider does not implement it.
-  // In practice the registered hybrid provider always routes this to Claude.
-  async checkMerge(): Promise<never> {
-    throw new Error("checkMerge is not supported by GeminiProvider. Use ClaudeProvider.");
+  async checkMerge(
+    input: MergeCheckInput,
+  ): Promise<AIProviderResult<MergeCheckOutput>> {
+    const prompt = buildMergeCheckPrompt({
+      new_title: input.new_node.title,
+      new_summary: input.new_node.summary,
+      new_type: input.new_node.node_type,
+      existing_title: input.existing_node.title,
+      existing_summary: input.existing_node.summary,
+      existing_type: input.existing_node.node_type,
+      similarity: input.similarity,
+    });
+
+    const run = baseRun(
+      "merge_check",
+      MERGE_CHECK_PROMPT_VERSION,
+      prompt,
+      AI_MODELS.GEMINI_PRO,
+    );
+    const start = Date.now();
+
+    const model = this.genAI.getGenerativeModel({
+      model: AI_MODELS.GEMINI_PRO,
+      generationConfig: {
+        temperature: AI_TEMPERATURE.MERGE_CHECK,
+        responseMimeType: "application/json",
+      },
+    });
+
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const text = response.text();
+    const usage = response.usageMetadata;
+
+    const inputTokens = usage?.promptTokenCount ?? 0;
+    const outputTokens = usage?.candidatesTokenCount ?? 0;
+    const latencyMs = Date.now() - start;
+    const estimatedCost = estimateProCost(inputTokens, outputTokens);
+
+    let output: MergeCheckOutput;
+    try {
+      const parsed = JSON.parse(text);
+      output = validateMergeCheckOutput(parsed);
+    } catch (error) {
+      throw malformedResponse({
+        message:
+          error instanceof Error ? error.message : "Merge check output was malformed",
+        rawOutput: text,
+        runType: "merge_check",
+        modelName: AI_MODELS.GEMINI_PRO,
+        promptVersion: MERGE_CHECK_PROMPT_VERSION,
+        inputHash: run.input_hash,
+        outputHash: shortHash(text),
+        inputTokens,
+        outputTokens,
+        latencyMs,
+        estimatedCost,
+        cause: error,
+      });
+    }
+
+    return {
+      output,
+      run: {
+        ...run,
+        output_hash: shortHash(text),
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        latency_ms: latencyMs,
+        estimated_cost: estimatedCost,
+      },
+    };
   }
 }

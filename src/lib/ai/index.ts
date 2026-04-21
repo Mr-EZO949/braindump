@@ -3,13 +3,15 @@
 // Providers are initialised lazily on first access (safe for Next.js serverless).
 //
 // Architecture:
-//   LLM tasks (extract, infer_edge, assistant, plan) → Claude Sonnet 4.6
+//   LLM tasks (extract, infer_edge, assistant, plan, merge_check) → Claude Sonnet 4.6
+//     (or Gemini 2.5 Pro when AI_PRIMARY_PROVIDER=gemini, for dev on the free tier)
 //   Embeddings → Gemini (Claude has no embedding API)
-//   Reranking   → Cohere
+//   Reranking  → Cohere
 
 import { GeminiProvider } from "./gemini";
 import { ClaudeProvider } from "./claude";
 import { CohereRerankProvider } from "./cohere";
+import { AI_PRIMARY_PROVIDER } from "./config";
 import {
   registerProvider,
   registerRerankProvider,
@@ -27,14 +29,9 @@ function init() {
   const geminiKey = process.env.GEMINI_API_KEY;
   const cohereKey = process.env.COHERE_API_KEY;
 
-  if (!claudeKey) {
-    throw new Error(
-      "ANTHROPIC_API_KEY is not set. Add it to .env.local before using AI features.",
-    );
-  }
   if (!geminiKey) {
     throw new Error(
-      "GEMINI_API_KEY is not set. It is still required for embeddings — add it to .env.local.",
+      "GEMINI_API_KEY is not set. It is required for embeddings — add it to .env.local.",
     );
   }
   if (!cohereKey) {
@@ -42,17 +39,21 @@ function init() {
       "COHERE_API_KEY is not set. Add it to .env.local before using AI features.",
     );
   }
+  if (AI_PRIMARY_PROVIDER === "claude" && !claudeKey) {
+    throw new Error(
+      "ANTHROPIC_API_KEY is not set. Add it to .env.local or set AI_PRIMARY_PROVIDER=gemini to run the dev tier.",
+    );
+  }
 
-  const claude = new ClaudeProvider(claudeKey);
   const gemini = new GeminiProvider(geminiKey);
+  const llm = AI_PRIMARY_PROVIDER === "gemini" ? gemini : new ClaudeProvider(claudeKey!);
 
-  // Hybrid provider: Claude handles all LLM tasks, Gemini handles embeddings/rerank fallback.
   registerProvider({
-    extractNodes: (input) => claude.extractNodes(input),
-    inferEdge: (input) => claude.inferEdge(input),
-    answerAssistant: (input) => claude.answerAssistant(input),
-    buildPlan: (input) => claude.buildPlan(input),
-    checkMerge: (input) => claude.checkMerge(input),
+    extractNodes: (input) => llm.extractNodes(input),
+    inferEdge: (input) => llm.inferEdge(input),
+    answerAssistant: (input) => llm.answerAssistant(input),
+    buildPlan: (input) => llm.buildPlan(input),
+    checkMerge: (input) => llm.checkMerge(input),
     generateEmbedding: (input) => gemini.generateEmbedding(input),
     rerankCandidates: (input) => gemini.rerankCandidates(input),
   });

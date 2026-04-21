@@ -24,15 +24,21 @@ export const AI_FLAGS = {
 // ---------------------------------------------------------------------------
 
 export const AI_MODELS = {
-  // Claude — all LLM tasks (extraction, edge inference, assistant, planning)
+  // Claude — production LLM
   CLAUDE_SONNET: "claude-sonnet-4-6",
-  // Gemini — embeddings only (Claude has no embedding API)
+  // Gemini — embeddings always; also the dev-tier LLM when AI_PRIMARY_PROVIDER=gemini
   GEMINI_FAST: "gemini-2.5-flash",
-  GEMINI_PRO: "gemini-2.5-flash",
+  GEMINI_PRO: "gemini-2.5-pro",
   GEMINI_EMBEDDING: "gemini-embedding-001",
   // Cohere reranking
   COHERE_RERANK: "rerank-v3.5",
 } as const;
+
+// Primary LLM provider for extraction/edge/assistant/plan/merge.
+// "gemini" routes everything through GeminiProvider (useful in dev on the free tier).
+// Default "claude" keeps production behaviour.
+export const AI_PRIMARY_PROVIDER: "claude" | "gemini" =
+  process.env.AI_PRIMARY_PROVIDER === "gemini" ? "gemini" : "claude";
 
 // ---------------------------------------------------------------------------
 // Temperature defaults
@@ -107,9 +113,12 @@ export const AI_COST_PER_1M_TOKENS = {
   // Claude Sonnet 4.6 (input / output)
   CLAUDE_SONNET_INPUT: 3.0,
   CLAUDE_SONNET_OUTPUT: 15.0,
-  // Gemini 2.5 Flash — kept for embeddings only
+  // Gemini 2.5 Flash
   GEMINI_FLASH_INPUT: 0.075,
   GEMINI_FLASH_OUTPUT: 0.3,
+  // Gemini 2.5 Pro (≤200k context tier; free-tier calls price at 0 regardless)
+  GEMINI_PRO_INPUT: 1.25,
+  GEMINI_PRO_OUTPUT: 10.0,
   // Gemini embedding (input only)
   GEMINI_EMBEDDING_INPUT: 0.0001,
   // Cohere Rerank v3.5 (per 1K search units)
