@@ -10,8 +10,9 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getImportanceLabel } from "@/lib/graph/importance";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { generateAndStoreEmbedding } from "@/lib/ai/embeddings";
+import { scoreNodesJudgment } from "@/lib/ai/judgment";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
-import type { NodeType } from "@/types/graph";
+import type { NodeType, WorkspaceProfile } from "@/types/graph";
 import type { ExtractionSoftLink } from "@/types/ai";
 
 interface ReviewAction {
@@ -25,7 +26,7 @@ interface ReviewAction {
 }
 
 const VALID_NODE_TYPES = new Set<NodeType>([
-  "project", "task", "class", "concept", "idea", "journal", "question", "goal", "habit",
+  "project", "task", "class", "concept", "idea", "goal", "habit",
 ]);
 
 type AcceptedPair = {
@@ -526,6 +527,53 @@ export async function POST(req: NextRequest) {
   // Phase 7 — recompute scores for the affected workspace and return fresh node rows.
   if (acceptedPairs.length > 0) {
     const workspaceId = acceptedPairs[0].created.workspace_id;
+
+    // Per-node AI judgment for newly accepted nodes. Best-effort: if Haiku
+    // fails or is unconfigured, the heuristic scorer will still run and just
+    // redistribute the judgment weight. Writes to ai_node_judgments BEFORE
+    // computeWorkspaceScores so the fresh judgment feeds into the rescore.
+    try {
+      const { data: workspaceRow } = await supabase
+        .from("workspaces")
+        .select("profile_payload")
+        .eq("id", workspaceId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      const workspaceProfile =
+        workspaceRow && typeof workspaceRow === "object"
+          ? ((workspaceRow as { profile_payload?: WorkspaceProfile | null }).profile_payload ?? null)
+          : null;
+
+      // Skip judgment on low-leverage types (ideas) — they rarely drive the
+      // graph's focus ranking, and a Haiku call per extraction-accept adds up
+      // fast when a brain dump creates 10+ ideas. Ideas fall back to heuristic
+      // scoring only; actionable types (task/goal/project/class/habit) still
+      // get judged.
+      const judgmentCandidates = acceptedPairs.filter(
+        (pair) => pair.created.node_type !== "idea",
+      );
+      if (judgmentCandidates.length > 0) {
+        await scoreNodesJudgment({
+          nodes: judgmentCandidates.map((pair) => ({
+            id: pair.created.id,
+            title: pair.created.title,
+            summary: pair.created.summary,
+            node_type: pair.created.node_type,
+          })),
+          workspaceProfile,
+          runType: "node_judgment",
+          supabase,
+          userId: user.id,
+          workspaceId,
+        });
+      }
+    } catch (err) {
+      console.warn(
+        "[proposals/review] node judgment failed (non-fatal):",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
     await computeWorkspaceScores({ workspaceId, userId: user.id, supabase });
 
     const acceptedNodeIds = acceptedPairs.map((pair) => pair.created.id);

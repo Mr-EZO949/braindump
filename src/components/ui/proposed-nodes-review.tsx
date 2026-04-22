@@ -8,7 +8,7 @@ import type { NodeType } from "@/types/graph";
 import type { ProposedNode } from "@/types/ai";
 
 const NODE_TYPES: NodeType[] = [
-  "task", "project", "goal", "habit", "concept", "idea", "class", "journal", "question",
+  "task", "project", "goal", "habit", "concept", "idea", "class",
 ];
 
 // ---------------------------------------------------------------------------
@@ -98,6 +98,10 @@ interface ProposedNodesReviewProps {
   ) => Promise<void>;
   onClose: () => void;
   submitting: boolean;
+  // Questions the extractor raised about vague or ambiguous fragments — shown
+  // above the node list. Clicking one opens chat seeded with the question.
+  clarifyingQuestions?: string[];
+  onAnswerQuestion?: (question: string) => void;
 }
 
 export function ProposedNodesReview({
@@ -106,7 +110,11 @@ export function ProposedNodesReview({
   onAccept,
   onClose,
   submitting,
+  clarifyingQuestions = [],
+  onAnswerQuestion,
 }: ProposedNodesReviewProps) {
+  const hasQuestions = clarifyingQuestions.length > 0;
+  const hasProposals = proposals.length > 0;
   // Build list of existing nodes for duplicate checking
   const existingNodeList = useMemo(
     () => Object.entries(existingNodeTitles).map(([id, title]) => ({ id, title })),
@@ -212,24 +220,63 @@ export function ProposedNodesReview({
         <div className="prn-modal-header-left">
           <span className="prn-modal-label">From your brain dump</span>
           <span className="prn-modal-sub">
-            {proposals.length} node{proposals.length !== 1 ? "s" : ""} extracted
+            {hasProposals
+              ? `${proposals.length} node${proposals.length !== 1 ? "s" : ""} extracted`
+              : hasQuestions
+                ? `${clarifyingQuestions.length} question${clarifyingQuestions.length !== 1 ? "s" : ""} to clarify`
+                : "Nothing to review"}
+            {hasProposals && hasQuestions
+              ? ` · ${clarifyingQuestions.length} question${clarifyingQuestions.length !== 1 ? "s" : ""}`
+              : ""}
           </span>
         </div>
         <div className="prn-modal-header-right">
-          <button
-            className="prn-modal-toggle"
-            onClick={() =>
-              setChecked(allChecked ? new Set() : new Set(proposals.map((p) => p.id)))
-            }
-            type="button"
-          >
-            {allChecked ? "Deselect all" : "Select all"}
-          </button>
+          {hasProposals && (
+            <button
+              className="prn-modal-toggle"
+              onClick={() =>
+                setChecked(allChecked ? new Set() : new Set(proposals.map((p) => p.id)))
+              }
+              type="button"
+            >
+              {allChecked ? "Deselect all" : "Select all"}
+            </button>
+          )}
           <button aria-label="Close" className="prn-modal-close" onClick={onClose} type="button">
             <CloseIcon className="h-3 w-3" />
           </button>
         </div>
       </div>
+
+      {/* Clarifying questions — the extractor asks back for vague bits */}
+      {hasQuestions && (
+        <div className="prn-questions">
+          <div className="prn-questions-header">
+            <span className="prn-questions-icon">?</span>
+            <span className="prn-questions-label">
+              {hasProposals
+                ? "A few bits were too vague to capture cleanly:"
+                : "Nothing here was specific enough to capture yet:"}
+            </span>
+          </div>
+          <ul className="prn-questions-list">
+            {clarifyingQuestions.map((q, i) => (
+              <li key={i} className="prn-question">
+                <span className="prn-question-text">{q}</span>
+                {onAnswerQuestion && (
+                  <button
+                    className="prn-question-reply"
+                    onClick={() => onAnswerQuestion(q)}
+                    type="button"
+                  >
+                    Answer in chat
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Duplicate warning banner */}
       {dupCount > 0 && (
@@ -364,27 +411,44 @@ export function ProposedNodesReview({
       {/* Footer */}
       <div className="prn-modal-footer">
         <div className="prn-selected-hint">
-          {acceptCount === 0
-            ? "None selected"
-            : `${acceptCount} of ${proposals.length} selected`}
+          {hasProposals
+            ? acceptCount === 0
+              ? "None selected"
+              : `${acceptCount} of ${proposals.length} selected`
+            : hasQuestions
+              ? "Answer a question above to continue"
+              : ""}
         </div>
         <div className="prn-modal-actions">
-          <button
-            className="prn-btn-ghost"
-            disabled={submitting}
-            onClick={() => void handleSubmit("reject-all")}
-            type="button"
-          >
-            Reject all
-          </button>
-          <button
-            className="prn-btn-primary"
-            disabled={submitting || acceptCount === 0}
-            onClick={() => void handleSubmit("accept-checked")}
-            type="button"
-          >
-            {submitting ? "Saving…" : `Add ${acceptCount} node${acceptCount !== 1 ? "s" : ""}`}
-          </button>
+          {hasProposals ? (
+            <>
+              <button
+                className="prn-btn-ghost"
+                disabled={submitting}
+                onClick={() => void handleSubmit("reject-all")}
+                type="button"
+              >
+                Reject all
+              </button>
+              <button
+                className="prn-btn-primary"
+                disabled={submitting || acceptCount === 0}
+                onClick={() => void handleSubmit("accept-checked")}
+                type="button"
+              >
+                {submitting ? "Saving…" : `Add ${acceptCount} node${acceptCount !== 1 ? "s" : ""}`}
+              </button>
+            </>
+          ) : (
+            <button
+              className="prn-btn-ghost"
+              disabled={submitting}
+              onClick={onClose}
+              type="button"
+            >
+              Close
+            </button>
+          )}
         </div>
       </div>
     </motion.div>
