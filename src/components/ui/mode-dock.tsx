@@ -1,6 +1,6 @@
 "use client";
 
-import { NetworkIcon, SparklesIcon, BoltIcon } from "@/components/ui/icons";
+import { NetworkIcon, SparklesIcon, BoltIcon, TargetIcon, SunIcon } from "@/components/ui/icons";
 
 export type AppMode = "graph" | "assistant";
 
@@ -8,14 +8,16 @@ type ModeDockProps = {
   mode: AppMode;
   onSetMode: (mode: AppMode) => void;
   onOpenBrainDump: () => void;
-  onOpenCommandBar: () => void;
+  onOpenWhatNow: () => void;
+  onOpenDailyBrief: () => void;
 };
 
 export function ModeDock({
   mode,
   onSetMode,
   onOpenBrainDump,
-  onOpenCommandBar,
+  onOpenWhatNow,
+  onOpenDailyBrief,
 }: ModeDockProps) {
   return (
     <div className="mode-dock" data-tour="dock" role="toolbar" aria-label="App mode">
@@ -46,16 +48,23 @@ export function ModeDock({
       <div className="mode-dock-sep" aria-hidden="true" />
 
       <button
-        aria-label="Open command bar"
         className="mode-dock-action"
-        data-tour="command-btn"
-        onClick={onOpenCommandBar}
+        data-tour="dailybrief-btn"
+        onClick={onOpenDailyBrief}
         type="button"
-        title="Ask / Dump / Do · ⌘K"
       >
-        <SparklesIcon className="h-[12px] w-[12px]" />
-        Ask
-        <span className="ml-1 rounded border border-current/30 px-1 text-[10px] opacity-70">⌘K</span>
+        <SunIcon className="h-[12px] w-[12px]" />
+        Daily Brief
+      </button>
+
+      <button
+        className="mode-dock-action"
+        data-tour="whatnow-btn"
+        onClick={onOpenWhatNow}
+        type="button"
+      >
+        <TargetIcon className="h-[12px] w-[12px]" />
+        What Now
       </button>
 
       <button

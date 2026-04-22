@@ -7,8 +7,10 @@ import {
 import { getLinkedNodePerspectives, type LinkedNodePerspective } from "@/lib/graph/insights";
 import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { ChatRichText } from "@/components/ui/chat-rich-text";
-import type { ChatMessage, ChatNodeContext, ChatScope, RailTab } from "@/types/chat";
+import { PendingActionCard } from "@/components/panel/pending-action-card";
+import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/types/chat";
 import type { GraphData, NodeStatus } from "@/types/graph";
+import type { ChatSessionMeta } from "@/lib/chat/sessions";
 
 type LinkCategory = "parent" | "children" | "dependencies" | "supports" | "related";
 
@@ -52,9 +54,13 @@ type ContextRailProps = {
   onChatInputChange: (value: string) => void;
   onClearChatScope: () => void;
   onRetryChat: () => void;
+  onResolvePendingAction: (messageId: string, decision: "accept" | "reject") => void;
+  onCancelChat: () => void;
+  pendingActionBusy: boolean;
+  nudges: Nudge[];
+  onSelectNudge: (nudge: Nudge) => void;
   onSelectPrompt: (prompt: string) => void;
   onFindConnections: (nodeId: string) => void;
-  onSaveAnswerAsNode: (text: string) => void;
   onStatusChange: (nodeId: string, status: NodeStatus) => void;
   onSelectLinkedNode: (nodeId: string) => void;
   onSetActiveTab: (tab: RailTab) => void;
@@ -62,6 +68,13 @@ type ContextRailProps = {
   onToggle: () => void;
   open: boolean;
   selectedNode: ChatNodeContext | null;
+  chatSessions: ChatSessionMeta[];
+  activeChatSessionId: string | null;
+  chatHistoryOpen: boolean;
+  onToggleChatHistory: () => void;
+  onStartNewChat: () => void;
+  onSelectChatSession: (sessionId: string) => void;
+  onDeleteChatSession: (sessionId: string) => void;
 };
 
 function getScoreTier(score: number): string {
@@ -81,9 +94,13 @@ export function ContextRail({
   onChatInputChange,
   onClearChatScope,
   onFindConnections,
-  onSaveAnswerAsNode,
   onStatusChange,
   onRetryChat,
+  onResolvePendingAction,
+  onCancelChat,
+  pendingActionBusy,
+  nudges,
+  onSelectNudge,
   onSelectPrompt,
   onSelectLinkedNode,
   onSetActiveTab,
@@ -91,6 +108,13 @@ export function ContextRail({
   onToggle,
   open,
   selectedNode,
+  chatSessions,
+  activeChatSessionId,
+  chatHistoryOpen,
+  onToggleChatHistory,
+  onStartNewChat,
+  onSelectChatSession,
+  onDeleteChatSession,
 }: ContextRailProps) {
   const promptSuggestions = getSuggestedPrompts(chatScope);
   const linkedNodes = getLinkedNodePerspectives(graphData, selectedNode?.id ?? null);
@@ -162,6 +186,64 @@ export function ContextRail({
 
             {activeTab === "chat" ? (
               <div className="mt-5 space-y-3">
+                <div className="chat-history-bar">
+                  <button
+                    className="chat-history-bar-btn"
+                    onClick={onStartNewChat}
+                    type="button"
+                  >
+                    New chat
+                  </button>
+                  <button
+                    className="chat-history-bar-btn"
+                    data-active={chatHistoryOpen}
+                    disabled={chatSessions.length === 0}
+                    onClick={onToggleChatHistory}
+                    type="button"
+                  >
+                    History
+                    {chatSessions.length > 0 ? (
+                      <span className="chat-history-bar-count">{chatSessions.length}</span>
+                    ) : null}
+                  </button>
+                </div>
+
+                {chatHistoryOpen && chatSessions.length > 0 ? (
+                  <ul className="chat-history-list">
+                    {chatSessions.map((session) => (
+                      <li
+                        key={session.id}
+                        className="chat-history-row"
+                        data-active={session.id === activeChatSessionId}
+                      >
+                        <button
+                          className="chat-history-select"
+                          onClick={() => onSelectChatSession(session.id)}
+                          type="button"
+                        >
+                          <span className="chat-history-title">
+                            {session.title || "New conversation"}
+                          </span>
+                          <span className="chat-history-meta">
+                            {session.message_count} msg
+                            {session.last_message_at
+                              ? ` · ${new Date(session.last_message_at).toLocaleDateString()}`
+                              : ""}
+                          </span>
+                        </button>
+                        <button
+                          aria-label="Delete conversation"
+                          className="chat-history-delete"
+                          onClick={() => onDeleteChatSession(session.id)}
+                          type="button"
+                        >
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">
@@ -210,6 +292,26 @@ export function ContextRail({
                       </p>
                     ) : null}
 
+                    {nudges.length > 0 ? (
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                          Worth a look
+                        </p>
+                        <div className="chat-nudge-list">
+                          {nudges.map((nudge) => (
+                            <button
+                              className="chat-nudge-chip"
+                              key={nudge.id}
+                              onClick={() => onSelectNudge(nudge)}
+                              type="button"
+                            >
+                              {nudge.title}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
                     <div className="space-y-1">
                       <p className="text-[12px] font-medium tracking-[-0.01em] text-[var(--color-text-secondary)]">
                         Start with a scoped question.
@@ -239,10 +341,22 @@ export function ContextRail({
                         <div className="chat-msg-user" key={message.id}>
                           <p>{message.body}</p>
                         </div>
-                      ) : message.body.trim().length === 0 && message.status !== "error" ? null : (
+                      ) : message.body.trim().length === 0 &&
+                        message.status !== "error" &&
+                        !message.pendingAction ? null : (
                         <div className="chat-msg-assistant" key={message.id}>
                           <div className="chat-msg-assistant-card">
-                            <ChatRichText body={message.body} />
+                            {message.body.length > 0 ? <ChatRichText body={message.body} /> : null}
+
+                            {message.pendingAction ? (
+                              <PendingActionCard
+                                action={message.pendingAction}
+                                disabled={pendingActionBusy}
+                                onResolve={(decision) =>
+                                  onResolvePendingAction(message.id, decision)
+                                }
+                              />
+                            ) : null}
 
                             {message.sections && message.sections.length > 0 ? (
                               <div className="chat-section-list">
@@ -266,17 +380,6 @@ export function ContextRail({
                                   type="button"
                                 >
                                   Retry
-                                </button>
-                              </div>
-                            ) : message.body.length > 0 ? (
-                              <div className="chat-answer-actions">
-                                <button
-                                  className="chat-answer-action-btn"
-                                  onClick={() => onSaveAnswerAsNode(message.body)}
-                                  type="button"
-                                  title="Save as node"
-                                >
-                                  Save as node
                                 </button>
                               </div>
                             ) : null}
@@ -319,15 +422,26 @@ export function ContextRail({
                     rows={1}
                     value={chatInputValue}
                   />
-                  <button
-                    aria-label="Send"
-                    className="composer-send-button"
-                    disabled={chatLoading || chatInputValue.trim().length === 0}
-                    onClick={() => onSubmitChatInput(chatInputValue)}
-                    type="button"
-                  >
-                    <ArrowUpIcon className="h-[15px] w-[15px]" />
-                  </button>
+                  {chatLoading ? (
+                    <button
+                      aria-label="Stop"
+                      className="composer-send-button composer-send-button--stop"
+                      onClick={onCancelChat}
+                      type="button"
+                    >
+                      <span className="composer-stop-square" aria-hidden="true" />
+                    </button>
+                  ) : (
+                    <button
+                      aria-label="Send"
+                      className="composer-send-button"
+                      disabled={chatInputValue.trim().length === 0}
+                      onClick={() => onSubmitChatInput(chatInputValue)}
+                      type="button"
+                    >
+                      <ArrowUpIcon className="h-[15px] w-[15px]" />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

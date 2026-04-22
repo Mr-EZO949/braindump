@@ -216,6 +216,25 @@ export function GripVerticalIcon(props: IconProps) {
   );
 }
 
+export function TargetIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="5" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    </BaseIcon>
+  );
+}
+
+export function SunIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4l1.4-1.4M17 7l1.4-1.4" />
+    </BaseIcon>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>

@@ -8,7 +8,15 @@ import { MainStage } from "@/components/graph/main-stage";
 import { AssistantMode as AssistantModeView } from "@/components/assistant/assistant-mode";
 import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
-import { CommandBar } from "@/components/ui/command-bar";
+import { WhatNowDialog } from "@/components/ui/what-now-dialog";
+import { DailyBriefOverlay } from "@/components/ui/daily-brief-overlay";
+import {
+  listChatSessions,
+  loadChatSession,
+  upsertChatSession,
+  deleteChatSession,
+  type ChatSessionMeta,
+} from "@/lib/chat/sessions";
 import { ProposedNodesReview } from "@/components/ui/proposed-nodes-review";
 import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
 import { GraphEditReview } from "@/components/ui/graph-edit-review";
@@ -51,9 +59,10 @@ import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
-import type { RailTab, ChatMessage, ChatScope } from "@/types/chat";
-import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, Workspace } from "@/types/graph";
-import type { IntentType, ProposedNode } from "@/types/ai";
+import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
+import type { RailTab, ChatMessage, ChatScope, Nudge, PendingAction } from "@/types/chat";
+import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, NodeType, Workspace } from "@/types/graph";
+import type { ProposedNode } from "@/types/ai";
 
 type AuthUserState = {
   email: string | null;
@@ -83,6 +92,7 @@ type AINotice = {
 const defaultCreateNodeDraft: CreateNodeInput = {
   custom_type: "",
   importance_index: 58,
+  manual_weight: null,
   node_type: "concept",
   raw_text: "",
   summary: "",
@@ -128,11 +138,114 @@ function createDraftFromNode(node: Node): CreateNodeInput {
   return {
     custom_type: nodeType === "custom" ? node.node_type : "",
     importance_index: getImportanceIndex(node),
+    manual_weight: typeof node.manual_weight === "number" ? node.manual_weight : null,
     node_type: nodeType,
     raw_text: node.raw_text ?? "",
     summary: node.summary ?? "",
     title: node.title,
   };
+}
+
+const CHAT_HISTORY_MAX = 200;
+
+function getChatHistoryKey(userId: string | null, workspaceId: string | null): string | null {
+  if (!userId || !workspaceId) return null;
+  return `brain-dump:chat-history:${userId}:${workspaceId}`;
+}
+
+function readChatHistory(
+  userId: string | null,
+  workspaceId: string | null,
+): ChatMessage[] {
+  if (typeof window === "undefined") return [];
+  const key = getChatHistoryKey(userId, workspaceId);
+  if (!key) return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeChatHistory(
+  userId: string | null,
+  workspaceId: string | null,
+  messages: ChatMessage[],
+): void {
+  if (typeof window === "undefined") return;
+  const key = getChatHistoryKey(userId, workspaceId);
+  if (!key) return;
+  try {
+    const trimmed = messages.slice(-CHAT_HISTORY_MAX);
+    window.localStorage.setItem(key, JSON.stringify(trimmed));
+  } catch {
+    // Ignore storage failures — chat still works in memory.
+  }
+}
+
+function getDailyBriefKey(userId: string | null): string | null {
+  if (!userId) return null;
+  return `brain-dump:daily-brief-shown:${userId}`;
+}
+
+function shouldShowDailyBrief(userId: string | null): boolean {
+  if (typeof window === "undefined") return false;
+  const key = getDailyBriefKey(userId);
+  if (!key) return false;
+  try {
+    const last = window.localStorage.getItem(key);
+    const today = new Date().toISOString().slice(0, 10);
+    return last !== today;
+  } catch {
+    return false;
+  }
+}
+
+function markDailyBriefShown(userId: string | null): void {
+  if (typeof window === "undefined") return;
+  const key = getDailyBriefKey(userId);
+  if (!key) return;
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    window.localStorage.setItem(key, today);
+  } catch {
+    // Ignore.
+  }
+}
+
+function getChatSessionIdKey(userId: string | null, workspaceId: string | null): string | null {
+  if (!userId || !workspaceId) return null;
+  return `brain-dump:chat-session-id:${userId}:${workspaceId}`;
+}
+
+function readChatSessionId(userId: string | null, workspaceId: string | null): string | null {
+  if (typeof window === "undefined") return null;
+  const key = getChatSessionIdKey(userId, workspaceId);
+  if (!key) return null;
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeChatSessionId(
+  userId: string | null,
+  workspaceId: string | null,
+  sessionId: string | null,
+): void {
+  if (typeof window === "undefined") return;
+  const key = getChatSessionIdKey(userId, workspaceId);
+  if (!key) return;
+  try {
+    if (sessionId) window.localStorage.setItem(key, sessionId);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Ignore storage failures.
+  }
 }
 
 function buildAnalysisNotice(result: AnalysisResponse): AINotice | null {
@@ -162,7 +275,6 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   // App-level mode state
   const [appMode, setAppMode] = useState<AppMode>("graph");
-  const [commandBarOpen, setCommandBarOpen] = useState(false);
   const [brainDumpOpen, setBrainDumpOpen] = useState(false);
   // Workspace captured at open time — stays fixed even if the user switches workspace mid-dump.
   const [brainDumpWorkspaceId, setBrainDumpWorkspaceId] = useState<string | null>(null);
@@ -171,9 +283,16 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [brainDumpRetrying, setBrainDumpRetrying] = useState(false);
   const [brainDumpError, setBrainDumpError] = useState<string | null>(null);
   const [brainDumpFailedEntryId, setBrainDumpFailedEntryId] = useState<string | null>(null);
+  const [whatNowOpen, setWhatNowOpen] = useState(false);
+  const [dailyBriefOpen, setDailyBriefOpen] = useState(false);
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
   const [proposedNodesSubmitting, setProposedNodesSubmitting] = useState(false);
+  // Clarifying questions returned alongside (or instead of) proposals — the
+  // extractor asks back when the dump is vague. Paired with the raw dump
+  // text so the chat seed can echo the full context.
+  const [clarifyingQuestions, setClarifyingQuestions] = useState<string[]>([]);
+  const [lastDumpRawText, setLastDumpRawText] = useState<string>("");
   const [stepSuggestionNodes, setStepSuggestionNodes] = useState<Array<{ id: string; title: string; summary: string | null; node_type: string }>>([]);
   const [stepSuggestionOpen, setStepSuggestionOpen] = useState(false);
   const [stepSuggestionLoading, setStepSuggestionLoading] = useState(false);
@@ -202,6 +321,16 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatScope, setChatScope] = useState<ChatScope>(createWorkspaceScope("General"));
   const [chatLoading, setChatLoading] = useState(false);
+  const [pendingActionBusy, setPendingActionBusy] = useState(false);
+  const [nudges, setNudges] = useState<Nudge[]>([]);
+  const chatAbortRef = useRef<AbortController | null>(null);
+
+  // Chat history (persistent sessions)
+  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
+  const [chatSessions, setChatSessions] = useState<ChatSessionMeta[]>([]);
+  const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
+  const chatSessionIdRef = useRef<string | null>(null);
+  const chatSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Graph state
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
@@ -263,22 +392,33 @@ export function AppShell({ initialUser }: AppShellProps) {
     [graphData, selectedNodeId],
   );
 
-  const nodeTypeFilterOptions = useMemo(() => {
-    const values = Array.from(new Set(graphData.nodes.map((node) => node.node_type))).sort(
-      (typeA, typeB) => formatNodeTypeLabel(typeA).localeCompare(formatNodeTypeLabel(typeB)),
-    );
-
-    return [
-      { label: "All types", value: "all" },
-      ...values.map((value) => ({
-        label: formatNodeTypeLabel(value),
-        value,
-      })),
-    ];
+  const nodeTypeCounts = useMemo(() => {
+    const bucket = new Map<string, number>();
+    for (const node of graphData.nodes) {
+      if (node.status === "archived" || node.status === "completed") continue;
+      bucket.set(node.node_type, (bucket.get(node.node_type) ?? 0) + 1);
+    }
+    return Array.from(bucket.entries())
+      .map(([type, count]) => ({
+        type: type as NodeType,
+        label: formatNodeTypeLabel(type),
+        count,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
   }, [graphData.nodes]);
+
+  const nodeTypeTotalCount = useMemo(
+    () => nodeTypeCounts.reduce((sum, item) => sum + item.count, 0),
+    [nodeTypeCounts],
+  );
 
   // Completed nodes are hidden by default; user can reveal them via the filter bar.
   const [hideCompleted, setHideCompleted] = useState(true);
+
+  const completedNodes = useMemo(
+    () => graphData.nodes.filter((node) => node.status === "completed"),
+    [graphData.nodes],
+  );
 
   const filteredGraphData = useMemo(() => {
     const minimumImportance =
@@ -530,7 +670,10 @@ export function AppShell({ initialUser }: AppShellProps) {
     setSelectedNodeId(null);
     setGraphSearchValue("");
     setRailChatInput("");
-    setChatMessages([]);
+    setChatMessages(readChatHistory(authUser?.id ?? null, selectedWorkspaceId));
+    const storedSessionId = readChatSessionId(authUser?.id ?? null, selectedWorkspaceId);
+    setChatSessionId(storedSessionId);
+    chatSessionIdRef.current = storedSessionId;
     setCreateNodeDraft(null);
     setCreateNodeError(null);
     setEditNodeDraft(null);
@@ -545,7 +688,149 @@ export function AppShell({ initialUser }: AppShellProps) {
     setEdgeError(null);
     setEdgeUpdateSubmittingId(null);
     setChatScope(createWorkspaceScope(workspaceName));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceName]);
+
+  useEffect(() => {
+    writeChatHistory(authUser?.id ?? null, selectedWorkspaceId, chatMessages);
+  }, [authUser?.id, selectedWorkspaceId, chatMessages]);
+
+  // Keep the ref + localStorage in sync so the debounced save reads the current
+  // session id and reloads restore it across page refreshes.
+  useEffect(() => {
+    chatSessionIdRef.current = chatSessionId;
+    writeChatSessionId(authUser?.id ?? null, selectedWorkspaceId, chatSessionId);
+  }, [chatSessionId, authUser?.id, selectedWorkspaceId]);
+
+  // Debounced persistence to Supabase — fires 800ms after the last change.
+  useEffect(() => {
+    if (!authUser?.id || !selectedWorkspaceId) return;
+    if (chatMessages.length === 0) return;
+
+    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    chatSaveTimerRef.current = setTimeout(() => {
+      void (async () => {
+        const saved = await upsertChatSession({
+          id: chatSessionIdRef.current,
+          workspaceId: selectedWorkspaceId,
+          scope: chatScope,
+          messages: chatMessages,
+        });
+        if (saved) {
+          if (!chatSessionIdRef.current) {
+            chatSessionIdRef.current = saved.id;
+            setChatSessionId(saved.id);
+          }
+          setChatSessions((prev) => {
+            const filtered = prev.filter((s) => s.id !== saved.id);
+            return [
+              { ...(prev.find((s) => s.id === saved.id) ?? {} as ChatSessionMeta), ...saved },
+              ...filtered,
+            ];
+          });
+        }
+      })();
+    }, 800);
+
+    return () => {
+      if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    };
+  }, [authUser?.id, selectedWorkspaceId, chatMessages, chatScope]);
+
+  // Daily brief — show once per day on first app open, after auth + workspace
+  // are loaded. Skipped while onboarding (welcome screen or bootstrap wizard).
+  useEffect(() => {
+    if (!authUser?.id || !selectedWorkspaceId) return;
+    if (showWelcome || bootstrapWorkspaceId || showTour) return;
+    if (!shouldShowDailyBrief(authUser.id)) return;
+    setDailyBriefOpen(true);
+    markDailyBriefShown(authUser.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.id, selectedWorkspaceId, showWelcome, bootstrapWorkspaceId, showTour]);
+
+  // Load the list of past sessions when workspace changes. The workspace-switch
+  // effect above already sets chatSessionId from localStorage, so we only
+  // refresh the list here.
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setChatSessions([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const list = await listChatSessions(selectedWorkspaceId);
+      if (!cancelled) setChatSessions(list);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspaceId]);
+
+  const handleStartNewChat = () => {
+    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    setChatMessages([]);
+    setChatSessionId(null);
+    chatSessionIdRef.current = null;
+    setChatScope(createWorkspaceScope(workspaceName));
+    setChatHistoryOpen(false);
+  };
+
+  const handleLoadChatSession = async (sessionId: string) => {
+    const detail = await loadChatSession(sessionId);
+    if (!detail) return;
+    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    setChatSessionId(detail.id);
+    chatSessionIdRef.current = detail.id;
+    setChatMessages(detail.messages ?? []);
+    if (detail.scope_kind === "node" && detail.scope_node_id) {
+      const node = buildChatNodeContext(graphData, detail.scope_node_id);
+      if (node) {
+        setChatScope(createNodeScope(workspaceName, node));
+      } else {
+        setChatScope(createWorkspaceScope(workspaceName));
+      }
+    } else {
+      setChatScope(createWorkspaceScope(workspaceName));
+    }
+    setActiveRailTab("chat");
+    setRightPanelOpen(true);
+    setChatHistoryOpen(false);
+  };
+
+  const handleDeleteChatSession = async (sessionId: string) => {
+    const ok = await deleteChatSession(sessionId);
+    if (!ok) return;
+    setChatSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    if (sessionId === chatSessionIdRef.current) {
+      setChatMessages([]);
+      setChatSessionId(null);
+      chatSessionIdRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setNudges([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/assistant/nudges?workspace_id=${encodeURIComponent(selectedWorkspaceId)}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as { nudges?: Nudge[] };
+        if (!cancelled) setNudges(data.nudges ?? []);
+      } catch {
+        // Nudges are optional — failing silently keeps the empty-state clean.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     const localViewState = readLocalGraphViewState(authUser?.id ?? null, selectedWorkspaceId);
@@ -623,13 +908,135 @@ export function AppShell({ initialUser }: AppShellProps) {
       });
       const entryData = await entryRes.json() as {
         proposed_nodes?: ProposedNode[];
+        clarifying_questions?: string[];
       };
-      if (entryRes.ok && entryData.proposed_nodes && entryData.proposed_nodes.length > 0) {
-        setProposedNodes(entryData.proposed_nodes);
+      const nodes = entryData.proposed_nodes ?? [];
+      const questions = entryData.clarifying_questions ?? [];
+      if (entryRes.ok && (nodes.length > 0 || questions.length > 0)) {
+        setProposedNodes(nodes);
+        setClarifyingQuestions(questions);
+        setLastDumpRawText(nodesContent);
         setProposedReviewOpen(true);
       }
     } catch {
       // Extraction failed silently
+    }
+  };
+
+  // Streams /api/assistant/chat (or /resume) into the assistant bubble.
+  // Handles the <<BRAINDUMP_PAUSE>> marker: when seen, attaches a pending
+  // action to the bubble so the user gets an inline Accept/Reject card.
+  // Also runs the legacy <nodes> / <graph_edit> / <recompute_scores/> post-
+  // processing on the marker-stripped final text.
+  const consumeAssistantStream = async (
+    res: Response,
+    assistantMsgId: string,
+    targetWorkspaceId: string | null,
+    appendToExistingBody = false,
+  ) => {
+    if (!res.ok || !res.body) {
+      throw new Error("Chat request failed");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    const parser = createPauseMarkerParser();
+    let cleanText = "";
+    let sawPause = false;
+
+    // Snapshot the pre-stream body once so appends don't accumulate on top
+    // of their own prior output. Each write then sets body = base + stream.
+    const baseBody = appendToExistingBody
+      ? (chatMessages.find((m) => m.id === assistantMsgId)?.body.trimEnd() ?? "")
+      : "";
+
+    const writeBody = (nextCleanText: string) => {
+      setChatMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantMsgId) return m;
+          if (appendToExistingBody) {
+            const joiner = baseBody.length > 0 && nextCleanText.length > 0 ? "\n\n" : "";
+            return { ...m, body: baseBody + joiner + nextCleanText };
+          }
+          return { ...m, body: nextCleanText };
+        }),
+      );
+    };
+
+    const attachPending = (action: PendingAction) => {
+      setChatMessages((prev) =>
+        prev.map((m) => (m.id === assistantMsgId ? { ...m, pendingAction: action } : m)),
+      );
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      const parsed = parser.push(chunk);
+      if (parsed.text.length > 0) {
+        cleanText += parsed.text;
+        writeBody(cleanText);
+      }
+      if (parsed.pause && !sawPause) {
+        sawPause = true;
+        attachPending({ ...parsed.pause, status: "awaiting" });
+      }
+    }
+    const tail = parser.flush();
+    if (tail.text.length > 0) {
+      cleanText += tail.text;
+      writeBody(cleanText);
+    }
+
+    if (sawPause) return;
+
+    // Legacy tag post-processing — only when we reached end_turn (no pause).
+    const nodesMatch = cleanText.match(/<nodes>\s*([\s\S]*?)\s*<\/nodes>/);
+    if (nodesMatch && nodesMatch[1]?.trim() && targetWorkspaceId) {
+      const nodesContent = nodesMatch[1].trim();
+      cleanText = cleanText.replace(/<nodes>[\s\S]*?<\/nodes>/, "").trimEnd();
+      writeBody(cleanText);
+      void handleExtractNodes(nodesContent, targetWorkspaceId);
+    }
+
+    if (/<recompute_scores\s*\/?>/.test(cleanText) && targetWorkspaceId) {
+      cleanText = cleanText.replace(/<recompute_scores\s*\/?>/g, "").trimEnd();
+      writeBody(cleanText);
+
+      fetch("/api/nodes/scores/recompute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_id: targetWorkspaceId }),
+      })
+        .then(async (scoreRes) => {
+          if (scoreRes.ok) {
+            const nextGraphData = await loadWorkspaceGraphData(
+              authUser?.id ?? null,
+              targetWorkspaceId,
+              selectedWorkspace?.name ?? null,
+            );
+            setGraphData(nextGraphData);
+          }
+        })
+        .catch(() => {
+          // Score recompute failed silently
+        });
+    }
+
+    const editMatch = cleanText.match(/<graph_edit>\s*([\s\S]*?)\s*<\/graph_edit>/);
+    if (editMatch && editMatch[1]?.trim() && targetWorkspaceId) {
+      cleanText = cleanText.replace(/<graph_edit>[\s\S]*?<\/graph_edit>/, "").trimEnd();
+      writeBody(cleanText);
+      try {
+        const parsedOps = JSON.parse(editMatch[1].trim()) as GraphEditOperation[];
+        if (Array.isArray(parsedOps) && parsedOps.length > 0) {
+          setGraphEditOps(parsedOps);
+          setGraphEditReviewOpen(true);
+        }
+      } catch {
+        // Invalid JSON — ignore silently
+      }
     }
   };
 
@@ -664,7 +1071,15 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     setChatLoading(true);
 
-    let fullText = "";
+    // Prior turns in this thread — send as plain {role, body} so the server
+    // can compress old ones if the history gets long.
+    const history = chatMessages
+      .filter((m) => (m.body ?? "").trim().length > 0 && m.status !== "error")
+      .map((m) => ({ role: m.role, body: m.body }));
+
+    const abortCtrl = new AbortController();
+    chatAbortRef.current = abortCtrl;
+
     try {
       const res = await fetch("/api/assistant/chat", {
         method: "POST",
@@ -673,103 +1088,113 @@ export function AppShell({ initialUser }: AppShellProps) {
           message: trimmedMessage,
           workspace_id: targetWorkspaceId,
           selected_node_id: nextScope.kind === "node" ? nextScope.node.id : null,
+          history,
         }),
+        signal: abortCtrl.signal,
       });
 
-      if (!res.ok || !res.body) {
-        throw new Error("Chat request failed");
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        fullText += chunk;
+      await consumeAssistantStream(res, assistantMsgId, targetWorkspaceId);
+    } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") {
+        setChatMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== assistantMsgId) return m;
+            const body = m.body.trim().length > 0 ? m.body : "Stopped.";
+            return { ...m, body, status: "ready" as const };
+          }),
+        );
+      } else {
         setChatMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, body: m.body + chunk } : m,
+            m.id === assistantMsgId
+              ? { ...m, body: "Response unavailable. Try again.", status: "error" as const }
+              : m,
           ),
         );
       }
-
-      // Detect <nodes> block — extract content and feed into extraction pipeline
-      const nodesMatch = fullText.match(/<nodes>\s*([\s\S]*?)\s*<\/nodes>/);
-      if (nodesMatch && nodesMatch[1]?.trim() && targetWorkspaceId) {
-        const nodesContent = nodesMatch[1].trim();
-        // Strip the <nodes> block from the displayed message
-        const cleanBody = fullText.replace(/<nodes>[\s\S]*?<\/nodes>/, "").trimEnd();
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, body: cleanBody } : m,
-          ),
-        );
-
-        void handleExtractNodes(nodesContent, targetWorkspaceId);
-      }
-
-      // Detect <recompute_scores/> tag — trigger workspace score recomputation
-      if (/<recompute_scores\s*\/?>/.test(fullText) && targetWorkspaceId) {
-        const cleanBody = fullText.replace(/<recompute_scores\s*\/?>/g, "").trimEnd();
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, body: cleanBody } : m,
-          ),
-        );
-
-        fetch("/api/nodes/scores/recompute", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ workspace_id: targetWorkspaceId }),
-        }).then(async (res) => {
-          if (res.ok) {
-            // Reload graph data to reflect updated scores
-            const nextGraphData = await loadWorkspaceGraphData(
-              authUser?.id ?? null,
-              targetWorkspaceId,
-              selectedWorkspace?.name ?? null,
-            );
-            setGraphData(nextGraphData);
-          }
-        }).catch(() => {
-          // Score recompute failed silently
-        });
-      }
-
-      // Detect <graph_edit> block — parse JSON operations for graph mutations
-      const editMatch = fullText.match(/<graph_edit>\s*([\s\S]*?)\s*<\/graph_edit>/);
-      if (editMatch && editMatch[1]?.trim() && targetWorkspaceId) {
-        // Strip the <graph_edit> block from the displayed message
-        const cleanBody = (nodesMatch ? fullText.replace(/<nodes>[\s\S]*?<\/nodes>/, "") : fullText)
-          .replace(/<graph_edit>[\s\S]*?<\/graph_edit>/, "")
-          .trimEnd();
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, body: cleanBody } : m,
-          ),
-        );
-
-        try {
-          const parsed = JSON.parse(editMatch[1].trim()) as GraphEditOperation[];
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setGraphEditOps(parsed);
-            setGraphEditReviewOpen(true);
-          }
-        } catch {
-          // Invalid JSON — ignore silently
-        }
-      }
-    } catch {
-      setChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId
-            ? { ...m, body: "Response unavailable. Try again.", status: "error" as const }
-            : m,
-        ),
-      );
     } finally {
+      if (chatAbortRef.current === abortCtrl) chatAbortRef.current = null;
+      setChatLoading(false);
+    }
+  };
+
+  const cancelChat = () => {
+    chatAbortRef.current?.abort();
+  };
+
+  const resolvePendingAction = async (
+    messageId: string,
+    decision: "accept" | "reject",
+  ) => {
+    if (pendingActionBusy) return;
+
+    const target = chatMessages.find((m) => m.id === messageId);
+    const action = target?.pendingAction;
+    if (!action || action.status !== "awaiting") return;
+
+    const targetWorkspaceId = selectedWorkspaceId;
+
+    setPendingActionBusy(true);
+    setChatLoading(true);
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId && m.pendingAction
+          ? {
+              ...m,
+              pendingAction: {
+                ...m.pendingAction,
+                status: decision === "accept" ? "accepted" : "rejected",
+              },
+            }
+          : m,
+      ),
+    );
+
+    const abortCtrl = new AbortController();
+    chatAbortRef.current = abortCtrl;
+
+    try {
+      const res = await fetch("/api/assistant/chat/resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_id: action.runId, decision }),
+        signal: abortCtrl.signal,
+      });
+
+      await consumeAssistantStream(res, messageId, targetWorkspaceId, true);
+
+      // If the user accepted a graph-changing tool, refresh the graph.
+      if (decision === "accept" && targetWorkspaceId && authUser?.id) {
+        const nextGraphData = await loadWorkspaceGraphData(
+          authUser.id,
+          targetWorkspaceId,
+          selectedWorkspace?.name ?? null,
+        );
+        setGraphData(nextGraphData);
+      }
+    } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") {
+        // Abort mid-resume — leave the card state as-is (already accepted/rejected)
+        // and just stop the follow-up text.
+      } else {
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId && m.pendingAction
+              ? {
+                  ...m,
+                  pendingAction: {
+                    ...m.pendingAction,
+                    status: "error",
+                    errorMessage: "Could not complete the action. Try again.",
+                  },
+                }
+              : m,
+          ),
+        );
+      }
+    } finally {
+      if (chatAbortRef.current === abortCtrl) chatAbortRef.current = null;
+      setPendingActionBusy(false);
       setChatLoading(false);
     }
   };
@@ -890,10 +1315,23 @@ export function AppShell({ initialUser }: AppShellProps) {
     field: Field,
     value: CreateNodeInput[Field],
   ) => {
-    setEditNodeDraft((currentDraft) => ({
-      ...(currentDraft ?? defaultCreateNodeDraft),
-      [field]: value,
-    }));
+    setEditNodeDraft((currentDraft) => {
+      const base = currentDraft ?? defaultCreateNodeDraft;
+      const next = { ...base, [field]: value };
+      // In edit mode, dragging the importance slider sets a manual override so
+      // the scorer won't overwrite it on the next rescore.
+      if (field === "importance_index") {
+        next.manual_weight = Math.max(0, Math.min(100, Number(value)));
+      }
+      return next;
+    });
+  };
+
+  const handleResetManualWeight = () => {
+    setEditNodeDraft((currentDraft) => {
+      if (!currentDraft) return currentDraft;
+      return { ...currentDraft, manual_weight: null };
+    });
   };
 
   const handleCloseEditNode = () => {
@@ -1043,6 +1481,9 @@ export function AppShell({ initialUser }: AppShellProps) {
           : nodeColorByType[editNodeDraft.node_type],
       importance: getImportanceLabel(editNodeDraft.importance_index),
       importance_index: editNodeDraft.importance_index,
+      manual_weight: editNodeDraft.manual_weight,
+      manual_weight_set_at:
+        editNodeDraft.manual_weight == null ? null : new Date().toISOString(),
       node_type: resolvedNodeType as Node["node_type"],
       summary: editNodeDraft.summary.trim() || null,
       title,
@@ -1440,6 +1881,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       });
       const data = await res.json() as {
         proposed_nodes?: ProposedNode[];
+        clarifying_questions?: string[];
         raw_entry_id?: string;
         error?: string;
         message?: string;
@@ -1459,8 +1901,12 @@ export function AppShell({ initialUser }: AppShellProps) {
       setBrainDumpOpen(false);
       setBrainDumpError(null);
       setBrainDumpFailedEntryId(null);
-      if (data.proposed_nodes && data.proposed_nodes.length > 0) {
-        setProposedNodes(data.proposed_nodes);
+      const nodes = data.proposed_nodes ?? [];
+      const questions = data.clarifying_questions ?? [];
+      if (nodes.length > 0 || questions.length > 0) {
+        setProposedNodes(nodes);
+        setClarifyingQuestions(questions);
+        setLastDumpRawText(trimmed);
         setProposedReviewOpen(true);
       }
     } catch (err) {
@@ -1469,55 +1915,6 @@ export function AppShell({ initialUser }: AppShellProps) {
       );
     } finally {
       setBrainDumpSubmitting(false);
-    }
-  };
-
-  // Command-bar dispatch: map an intent from the router to the right surface.
-  // For now `edit` flows through the same ingestion pipeline as `braindump` —
-  // the extractor is the source of truth for graph shape until we have a
-  // structural-edit API. `question`, `plan`, and `status` all route to the
-  // assistant chat; the planner/status variants just seed the chat with a
-  // leading prompt so the response is shaped correctly.
-  const handleCommand = async (intent: IntentType, text: string) => {
-    const workspaceTarget = selectedWorkspaceId;
-    if (!workspaceTarget) return;
-
-    switch (intent) {
-      case "braindump":
-      case "edit": {
-        setBrainDumpError(null);
-        setBrainDumpFailedEntryId(null);
-        setBrainDumpWorkspaceId(workspaceTarget);
-        setBrainDumpValue(text);
-        setBrainDumpOpen(true);
-        return;
-      }
-      case "question":
-      case "status": {
-        setAppMode("assistant");
-        await submitMessage(text);
-        return;
-      }
-      case "plan": {
-        setAppMode("assistant");
-        const seeded = text.toLowerCase().includes("plan")
-          ? text
-          : `Plan the next hour of work based on this: ${text}`;
-        await submitMessage(seeded);
-        return;
-      }
-      case "unclear":
-      default: {
-        // The command bar should have asked the user to pick an intent before
-        // reaching this branch; treat stray unclear dispatches as a brain dump
-        // so nothing is ever lost.
-        setBrainDumpError(null);
-        setBrainDumpFailedEntryId(null);
-        setBrainDumpWorkspaceId(workspaceTarget);
-        setBrainDumpValue(text);
-        setBrainDumpOpen(true);
-        return;
-      }
     }
   };
 
@@ -1534,6 +1931,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       });
       const data = await res.json() as {
         proposed_nodes?: ProposedNode[];
+        clarifying_questions?: string[];
         raw_entry_id?: string;
         error?: string;
       };
@@ -1548,12 +1946,17 @@ export function AppShell({ initialUser }: AppShellProps) {
         return;
       }
 
+      const retriedDumpText = brainDumpValue.trim();
       setBrainDumpValue("");
       setBrainDumpOpen(false);
       setBrainDumpError(null);
       setBrainDumpFailedEntryId(null);
-      if (data.proposed_nodes && data.proposed_nodes.length > 0) {
-        setProposedNodes(data.proposed_nodes);
+      const nodes = data.proposed_nodes ?? [];
+      const questions = data.clarifying_questions ?? [];
+      if (nodes.length > 0 || questions.length > 0) {
+        setProposedNodes(nodes);
+        setClarifyingQuestions(questions);
+        setLastDumpRawText(retriedDumpText);
         setProposedReviewOpen(true);
       }
     } catch (err) {
@@ -1736,17 +2139,55 @@ export function AppShell({ initialUser }: AppShellProps) {
   const closeProposedNodesReview = () => {
     setProposedReviewOpen(false);
     setProposedNodes([]);
+    setClarifyingQuestions([]);
+    setLastDumpRawText("");
   };
 
   const requestCloseProposedNodesReview = () => {
-    const confirmed = window.confirm(
-      "Close node review? The extracted nodes will stay pending review and your current selections will be lost.",
-    );
-    if (!confirmed) {
-      return;
+    // Only confirm if there are nodes worth losing — a questions-only review
+    // closing is cheap.
+    if (proposedNodes.length > 0) {
+      const confirmed = window.confirm(
+        "Close node review? The extracted nodes will stay pending review and your current selections will be lost.",
+      );
+      if (!confirmed) {
+        return;
+      }
     }
 
     closeProposedNodesReview();
+  };
+
+  // Clicking a clarifying question sends the user into chat with the dump and
+  // question pre-populated as context, letting them answer conversationally
+  // instead of re-dumping from scratch.
+  const handleAnswerClarifyingQuestion = (question: string) => {
+    const dumpText = lastDumpRawText;
+
+    closeProposedNodesReview();
+    setAppMode("assistant");
+    setRightPanelOpen(true);
+    setActiveRailTab("chat");
+
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
+        role: "user" as const,
+        body: dumpText.length > 0 ? dumpText : "(previous brain dump)",
+        createdAt: new Date().toISOString(),
+        status: "ready" as const,
+      },
+      {
+        id: `chat-q-${Math.random().toString(36).slice(2, 10)}`,
+        role: "assistant" as const,
+        body: question,
+        createdAt: new Date().toISOString(),
+        status: "ready" as const,
+      },
+    ]);
+
+    setRailChatInput("");
   };
 
   const closeProposedEdgesReview = () => {
@@ -2119,7 +2560,8 @@ export function AppShell({ initialUser }: AppShellProps) {
                 graphImportanceFilter={importanceFilter}
                 graphSearchValue={graphSearchValue}
                 graphTypeFilter={nodeTypeFilter}
-                graphTypeFilterOptions={nodeTypeFilterOptions}
+                graphTypeCounts={nodeTypeCounts}
+                graphTypeTotalCount={nodeTypeTotalCount}
                 graphImportanceFilterOptions={importanceFilterOptions.map((option) => ({
                   label: option.label,
                   value: option.value,
@@ -2151,10 +2593,16 @@ export function AppShell({ initialUser }: AppShellProps) {
                 onGraphSearchSubmit={handleGraphSearchSubmit}
                 onChangeGraphTypeFilter={setNodeTypeFilter}
                 onOpenCreateNode={handleOpenCreateNode}
+                onResetEditManualWeight={handleResetManualWeight}
                 onResetGraphFilters={handleResetFilters}
                 onToggleShowArchived={() => setShowArchived((v) => !v)}
                 showArchived={showArchived}
                 hideCompleted={hideCompleted}
+                completedNodes={completedNodes}
+                onSelectCompletedNode={(nodeId) => {
+                  setHideCompleted(false);
+                  handleSelectNode(nodeId);
+                }}
                 onToggleHideCompleted={() => setHideCompleted((v) => !v)}
                 onFindAllConnections={() => {
                   if (!selectedWorkspaceId || analyzingConnections) return;
@@ -2178,45 +2626,6 @@ export function AppShell({ initialUser }: AppShellProps) {
                 selectedNodeId={selectedNodeId}
                 suppressInitialFocusAnimation={suppressInitialFocusAnimation}
               />
-              <ContextRail
-                activeTab={activeRailTab}
-                chatInputValue={railChatInput}
-                chatLoading={chatLoading}
-                chatMessages={chatMessages}
-                chatScope={chatScope}
-                graphData={graphData}
-                onChatInputChange={setRailChatInput}
-                onClearChatScope={() => setChatScope(createWorkspaceScope(workspaceName))}
-                onRetryChat={retryLastMessage}
-                onSelectPrompt={(prompt) => {
-                  void submitMessage(prompt);
-                }}
-                onSetActiveTab={setActiveRailTab}
-                onStatusChange={(nodeId, status) => {
-                  void handleStatusChange(nodeId, status);
-                }}
-                onFindConnections={(nodeId) => {
-                  if (!selectedWorkspaceId) return;
-                  void analyzeNodes([nodeId]);
-                }}
-                onSelectLinkedNode={handleSelectNode}
-                onSubmitChatInput={(message) => {
-                  void submitMessage(message);
-                }}
-                onSaveAnswerAsNode={(text) => {
-                  if (!selectedWorkspaceId) return;
-                  // Pre-fill create node form with the assistant's answer text
-                  setCreateNodeDraft({
-                    ...defaultCreateNodeDraft,
-                    node_type: "concept",
-                    raw_text: text.slice(0, 800),
-                    title: text.split(/[.!?]/)[0]?.slice(0, 80).trim() ?? "Assistant note",
-                  });
-                }}
-                onToggle={() => setRightPanelOpen((open) => !open)}
-                open={rightPanelOpen}
-                selectedNode={selectedNode}
-              />
             </motion.div>
           ) : (
             <motion.div
@@ -2231,16 +2640,68 @@ export function AppShell({ initialUser }: AppShellProps) {
                 graphData={graphData}
                 selectedNodeId={selectedNodeId}
                 workspaceId={selectedWorkspaceId}
-                onExtractNodes={handleExtractNodes}
+                onAskInChat={(message) => {
+                  void submitMessage(message);
+                }}
               />
             </motion.div>
           )}
         </AnimatePresence>
+
+        <ContextRail
+          activeTab={activeRailTab}
+          chatInputValue={railChatInput}
+          chatLoading={chatLoading}
+          chatMessages={chatMessages}
+          chatScope={chatScope}
+          graphData={graphData}
+          onChatInputChange={setRailChatInput}
+          onClearChatScope={() => setChatScope(createWorkspaceScope(workspaceName))}
+          onRetryChat={retryLastMessage}
+          onResolvePendingAction={(messageId, decision) => {
+            void resolvePendingAction(messageId, decision);
+          }}
+          onCancelChat={cancelChat}
+          pendingActionBusy={pendingActionBusy}
+          nudges={nudges}
+          onSelectNudge={(nudge) => {
+            void submitMessage(nudge.starter);
+          }}
+          onSelectPrompt={(prompt) => {
+            void submitMessage(prompt);
+          }}
+          onSetActiveTab={setActiveRailTab}
+          onStatusChange={(nodeId, status) => {
+            void handleStatusChange(nodeId, status);
+          }}
+          onFindConnections={(nodeId) => {
+            if (!selectedWorkspaceId) return;
+            void analyzeNodes([nodeId]);
+          }}
+          onSelectLinkedNode={handleSelectNode}
+          onSubmitChatInput={(message) => {
+            void submitMessage(message);
+          }}
+          onToggle={() => setRightPanelOpen((open) => !open)}
+          open={rightPanelOpen}
+          selectedNode={selectedNode}
+          chatSessions={chatSessions}
+          activeChatSessionId={chatSessionId}
+          chatHistoryOpen={chatHistoryOpen}
+          onToggleChatHistory={() => setChatHistoryOpen((v) => !v)}
+          onStartNewChat={handleStartNewChat}
+          onSelectChatSession={(id) => {
+            void handleLoadChatSession(id);
+          }}
+          onDeleteChatSession={(id) => {
+            void handleDeleteChatSession(id);
+          }}
+        />
       </div>
 
       {/* Proposed nodes review — centered modal */}
       <AnimatePresence>
-        {proposedReviewOpen && proposedNodes.length > 0 && (
+        {proposedReviewOpen && (proposedNodes.length > 0 || clarifyingQuestions.length > 0) && (
           <motion.div
             key="prn-backdrop"
             className="fixed inset-0 z-60 flex items-center justify-center"
@@ -2256,6 +2717,8 @@ export function AppShell({ initialUser }: AppShellProps) {
               onAccept={handleProposalReview}
               onClose={requestCloseProposedNodesReview}
               submitting={proposedNodesSubmitting}
+              clarifyingQuestions={clarifyingQuestions}
+              onAnswerQuestion={handleAnswerClarifyingQuestion}
             />
           </motion.div>
         )}
@@ -2603,18 +3066,58 @@ export function AppShell({ initialUser }: AppShellProps) {
                 setBrainDumpWorkspaceId(selectedWorkspaceId);
                 setBrainDumpOpen(true);
               }}
-              onOpenCommandBar={() => setCommandBarOpen(true)}
+              onOpenWhatNow={() => setWhatNowOpen(true)}
+              onOpenDailyBrief={() => setDailyBriefOpen(true)}
             />
           </motion.div>
         )}
       </AnimatePresence>
 
-      <CommandBar
-        open={commandBarOpen}
-        onOpenChange={setCommandBarOpen}
-        workspaceId={selectedWorkspaceId}
-        onDispatch={(intent, text) => handleCommand(intent, text)}
-      />
+      <AnimatePresence>
+        {dailyBriefOpen && selectedWorkspaceId ? (
+          <DailyBriefOverlay
+            key="daily-brief"
+            workspaceId={selectedWorkspaceId}
+            workspaceName={workspaceName}
+            onClose={() => setDailyBriefOpen(false)}
+            onFocusNode={(nodeId) => {
+              setDailyBriefOpen(false);
+              setAppMode("graph");
+              handleSelectNode(nodeId);
+            }}
+            onSelectNudge={(nudge) => {
+              setDailyBriefOpen(false);
+              setAppMode("assistant");
+              setActiveRailTab("chat");
+              setRightPanelOpen(true);
+              void submitMessage(nudge.starter);
+            }}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {whatNowOpen ? (
+          <motion.div
+            key="what-now"
+            className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2"
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            transition={{ duration: 0.12 }}
+          >
+            <WhatNowDialog
+              workspaceId={selectedWorkspaceId}
+              onClose={() => setWhatNowOpen(false)}
+              onFocusNode={(nodeId) => {
+                setAppMode("graph");
+                setWhatNowOpen(false);
+                handleSelectNode(nodeId);
+              }}
+            />
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       {/* Workspace bootstrap wizard — only shown for an in-progress creation flow */}
       {bootstrapWorkspaceId && bootstrapWorkspaceId === selectedWorkspaceId && (

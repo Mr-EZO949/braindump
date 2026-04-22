@@ -2,6 +2,8 @@
 
 import { useState, useCallback } from "react";
 import { CreateNodeSheet, EditNodeSheet } from "@/components/graph/create-node-sheet";
+import { CompletedShelf } from "@/components/graph/completed-shelf";
+import { TypeExplorer } from "@/components/graph/type-explorer";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import { NetworkIcon, PencilIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
 import type { LocalGraphCameraView } from "@/lib/graph/data";
@@ -53,10 +55,8 @@ type MainStageProps = {
   graphLoading: boolean;
   graphSearchValue: string;
   graphTypeFilter: string;
-  graphTypeFilterOptions: Array<{
-    label: string;
-    value: string;
-  }>;
+  graphTypeCounts: Array<{ type: import("@/types/graph").NodeType; label: string; count: number }>;
+  graphTypeTotalCount: number;
   onChangeCreateNodeField: <Field extends keyof CreateNodeInput>(
     field: Field,
     value: CreateNodeInput[Field],
@@ -80,6 +80,9 @@ type MainStageProps = {
   onCloseEditNode: () => void;
   onOpenCreateNode: () => void;
   hideCompleted: boolean;
+  completedNodes: import("@/types/graph").Node[];
+  onSelectCompletedNode: (nodeId: string) => void;
+  onResetEditManualWeight: () => void;
   onResetGraphFilters: () => void;
   onToggleHideCompleted: () => void;
   onToggleShowArchived: () => void;
@@ -126,8 +129,11 @@ export function MainStage({
   graphLoading,
   graphSearchValue,
   graphTypeFilter,
-  graphTypeFilterOptions,
+  graphTypeCounts,
+  graphTypeTotalCount,
   hideCompleted,
+  completedNodes,
+  onSelectCompletedNode,
   onCancelDeleteNode,
   onCameraViewChange,
   onChangeCreateNodeField,
@@ -145,6 +151,7 @@ export function MainStage({
   onGraphSearchChange,
   onGraphSearchSubmit,
   onOpenCreateNode,
+  onResetEditManualWeight,
   onResetGraphFilters,
   onToggleHideCompleted,
   onToggleShowArchived,
@@ -198,6 +205,12 @@ export function MainStage({
         searchQuery={graphSearchValue}
         suppressInitialFocusAnimation={suppressInitialFocusAnimation}
       />
+
+      <div className="pointer-events-none absolute bottom-6 left-6 z-20">
+        <div className="pointer-events-auto">
+          <CompletedShelf nodes={completedNodes} onSelect={onSelectCompletedNode} />
+        </div>
+      </div>
 
       <div className="graph-toolbar-responsive absolute right-6 top-6 z-20 flex items-center gap-2">
         <div
@@ -296,6 +309,7 @@ export function MainStage({
         onCreateConnection={onCreateEdgeConnection}
         onDeleteConnection={onDeleteEdgeConnection}
         onRequestDelete={onRequestDeleteNode}
+        onResetManualWeight={onResetEditManualWeight}
         onSubmit={onSubmitEditNode}
         onUpdateConnection={onUpdateEdgeConnection}
         submitting={editNodeSubmitting}
@@ -321,22 +335,14 @@ export function MainStage({
             />
           </label>
 
-          <div className="graph-filter-row">
-            <label className="graph-filter-shell">
-              <span className="sr-only">Filter by node type</span>
-              <select
-                className="graph-filter-select"
-                onChange={(event) => onChangeGraphTypeFilter(event.target.value)}
-                value={graphTypeFilter}
-              >
-                {graphTypeFilterOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <TypeExplorer
+            counts={graphTypeCounts}
+            total={graphTypeTotalCount}
+            activeType={graphTypeFilter}
+            onSelect={onChangeGraphTypeFilter}
+          />
 
+          <div className="graph-filter-row">
             <label className="graph-filter-shell">
               <span className="sr-only">Filter by importance</span>
               <select
