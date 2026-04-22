@@ -136,12 +136,12 @@ type EdgeVisualStyle = {
 type VisualNodeType = "goal" | "project" | "task" | "concept" | "class" | "habit";
 
 const nodeTypeCueMap: Record<VisualNodeType, string> = {
-  goal: "#d8d0c4",
-  project: "#8c4a57",
-  task: "#a35258",
-  class: "#96784d",
-  concept: "#677480",
-  habit: "#4a7c6b",
+  goal: "#f0a755",
+  project: "#6b8cef",
+  task: "#ef6b7a",
+  class: "#a07fd8",
+  concept: "#5cc7b8",
+  habit: "#7fc987",
 };
 
 const nodeTypeBranchOrder: Record<NodeType, number> = {
@@ -150,8 +150,6 @@ const nodeTypeBranchOrder: Record<NodeType, number> = {
   project: 2,
   idea: 3,
   class: 4,
-  journal: 5,
-  question: 6,
   task: 7,
   habit: 3,
 };
@@ -169,14 +167,14 @@ const edgeStrengthMap: Record<EdgeType, number> = {
 };
 
 const importanceVisualBounds = {
-  maxFontSize: 21.4,
-  maxHeight: 136,
-  maxScore: 97,
-  maxWidth: 232,
-  minFontSize: 10.1,
-  minHeight: 34,
-  minScore: 22,
-  minWidth: 64,
+  maxFontSize: 22.8,
+  maxHeight: 148,
+  maxScore: 85,
+  maxWidth: 260,
+  minFontSize: 9.4,
+  minHeight: 30,
+  minScore: 12,
+  minWidth: 54,
 };
 
 const defaultView: ViewState = {
@@ -249,8 +247,6 @@ function getVisualNodeType(nodeType: NodeType): VisualNodeType {
     case "concept":
       return nodeType;
     case "idea":
-    case "journal":
-    case "question":
     default:
       return "concept";
   }
@@ -395,7 +391,7 @@ function getAnchorScore(node: Node, childCount: number, depth: number, hasParent
 
 function createNodeLayout(node: Node, importanceScore: number) {
   const normalizedScore = normalizeImportanceScore(importanceScore);
-  const sizeScale = Math.pow(normalizedScore, 1.08);
+  const sizeScale = normalizedScore;
   const visualTier = getVisualTierFromScore(importanceScore);
   const fontSize = lerp(
     importanceVisualBounds.minFontSize,
@@ -2496,13 +2492,13 @@ export function GraphCanvas({
             const actionable = node.node_type === "task";
             const topBandOpacity = actionable
               ? selected
-                ? 0.4
+                ? 0.28
                 : hovered
-                  ? 0.34
+                  ? 0.24
                   : searchHit
-                    ? 0.3
-                    : 0.24
-              : visual.surfaceTintOpacity * 2.15;
+                    ? 0.2
+                    : 0.16
+              : visual.surfaceTintOpacity * 1.25;
             const actionWashOpacity = actionable
               ? selected
                 ? 0.28
@@ -2555,15 +2551,15 @@ export function GraphCanvas({
                     />
                     <stop
                       offset="18%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.72)}
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.5)}
                     />
                     <stop
                       offset="50%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 1.56)}
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 1.05)}
                     />
                     <stop
                       offset="82%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.72)}
+                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.5)}
                     />
                     <stop offset="100%" stopColor={rgba(node.categoryColor, 0)} />
                   </linearGradient>
