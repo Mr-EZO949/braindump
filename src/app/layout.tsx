@@ -30,6 +30,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <script
+          // Apply saved theme before first paint to avoid a flash of the
+          // wrong palette. Defaults to dark if nothing stored.
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('braindump-theme');if(t==='light'){document.documentElement.setAttribute('data-theme','light');}}catch(e){}",
+          }}
+        />
+      </head>
       <body className={`${inter.variable} ${geistMono.variable} antialiased`}>
         {children}
       </body>

@@ -1,10 +1,7 @@
 "use client";
 
 import React, { useEffect, useCallback, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import {
-  ArrowUpIcon,
-  ChevronDownIcon,
   CloseIcon,
   PencilIcon,
   PlusIcon,
@@ -14,7 +11,7 @@ import {
   INITIAL_PLANNER_STATE,
   type PlannerState,
 } from "@/components/panel/planner-panel";
-import type { PlanBlock, PlanBlockType, PlanSession, PlanningWindow } from "@/types/ai";
+import type { PlanBlock, PlanSession, PlanningWindow } from "@/types/ai";
 import type { GraphData } from "@/types/graph";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -67,25 +64,6 @@ type TaskEditorState =
       taskId: string;
       draft: TaskDraft;
     };
-
-type AssistantMessage = {
-  id: string;
-  role: "user" | "assistant";
-  body: string;
-};
-
-type Conversation = {
-  id: string;
-  title: string;
-  messages: AssistantMessage[];
-  createdAt: string;
-};
-
-type AssistantTextBlock =
-  | { type: "paragraph"; text: string }
-  | { type: "ordered-list"; items: string[] }
-  | { type: "unordered-list"; items: string[] }
-  | { type: "heading"; level: 1 | 2 | 3; text: string };
 
 // ── Module-level helpers (defined outside the component to keep stable identity) ─
 
@@ -184,251 +162,6 @@ function sanitizeTaskTime(value: unknown): string | null {
 
 function sanitizeTaskDate(value: unknown): string | null {
   return typeof value === "string" && isValidDateString(value) ? value : null;
-}
-
-function normalizeAssistantMessageBody(text: string): string {
-  return text
-    .replace(/\r\n?/g, "\n")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/([:!?])\s+(\d+\.\s+)/g, "$1\n$2")
-    .replace(/([.])\s+(\d+\.\s+(?:\*\*|[A-Z(]))/g, "$1\n$2")
-    .replace(/([:!?])\s+([-*]\s+)/g, "$1\n$2")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function isOrderedListLine(line: string): boolean {
-  return /^\d+\.\s+/.test(line);
-}
-
-function isUnorderedListLine(line: string): boolean {
-  return /^[-*]\s+/.test(line);
-}
-
-function isHeadingLine(line: string): boolean {
-  return /^(#{1,3})\s+/.test(line);
-}
-
-function parseAssistantTextBlocks(body: string): AssistantTextBlock[] {
-  const normalized = normalizeAssistantMessageBody(body);
-  if (!normalized) return [];
-
-  const lines = normalized.split("\n");
-  const blocks: AssistantTextBlock[] = [];
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index].trim();
-
-    if (!line) {
-      index += 1;
-      continue;
-    }
-
-    const headingMatch = /^(#{1,3})\s+(.*)$/.exec(line);
-    if (headingMatch) {
-      blocks.push({
-        type: "heading",
-        level: Math.min(3, headingMatch[1].length) as 1 | 2 | 3,
-        text: headingMatch[2].trim(),
-      });
-      index += 1;
-      continue;
-    }
-
-    if (isOrderedListLine(line)) {
-      const items: string[] = [];
-      while (index < lines.length) {
-        const currentLine = lines[index].trim();
-        const listMatch = /^\d+\.\s+(.*)$/.exec(currentLine);
-        if (!listMatch) break;
-
-        let itemText = listMatch[1].trim();
-        index += 1;
-
-        while (index < lines.length) {
-          const continuationLine = lines[index].trim();
-          if (
-            !continuationLine ||
-            isOrderedListLine(continuationLine) ||
-            isUnorderedListLine(continuationLine) ||
-            isHeadingLine(continuationLine)
-          ) {
-            break;
-          }
-
-          itemText = `${itemText} ${continuationLine}`;
-          index += 1;
-        }
-
-        items.push(itemText);
-
-        if (index < lines.length && !lines[index].trim()) {
-          index += 1;
-          break;
-        }
-      }
-
-      blocks.push({ type: "ordered-list", items });
-      continue;
-    }
-
-    if (isUnorderedListLine(line)) {
-      const items: string[] = [];
-      while (index < lines.length) {
-        const currentLine = lines[index].trim();
-        const listMatch = /^[-*]\s+(.*)$/.exec(currentLine);
-        if (!listMatch) break;
-
-        let itemText = listMatch[1].trim();
-        index += 1;
-
-        while (index < lines.length) {
-          const continuationLine = lines[index].trim();
-          if (
-            !continuationLine ||
-            isOrderedListLine(continuationLine) ||
-            isUnorderedListLine(continuationLine) ||
-            isHeadingLine(continuationLine)
-          ) {
-            break;
-          }
-
-          itemText = `${itemText} ${continuationLine}`;
-          index += 1;
-        }
-
-        items.push(itemText);
-
-        if (index < lines.length && !lines[index].trim()) {
-          index += 1;
-          break;
-        }
-      }
-
-      blocks.push({ type: "unordered-list", items });
-      continue;
-    }
-
-    const paragraphLines = [line];
-    index += 1;
-
-    while (index < lines.length) {
-      const nextLine = lines[index].trim();
-      if (!nextLine) {
-        index += 1;
-        break;
-      }
-      if (
-        isOrderedListLine(nextLine) ||
-        isUnorderedListLine(nextLine) ||
-        isHeadingLine(nextLine)
-      ) {
-        break;
-      }
-
-      paragraphLines.push(nextLine);
-      index += 1;
-    }
-
-    blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
-  }
-
-  return blocks;
-}
-
-function renderAssistantInlineText(text: string, keyPrefix: string): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  const tokenPattern = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g;
-  let lastIndex = 0;
-
-  for (const match of text.matchAll(tokenPattern)) {
-    const rawMatch = match[0];
-    const matchIndex = match.index ?? 0;
-
-    if (matchIndex > lastIndex) {
-      parts.push(text.slice(lastIndex, matchIndex));
-    }
-
-    if (rawMatch.startsWith("**") && rawMatch.endsWith("**")) {
-      parts.push(
-        <strong key={`${keyPrefix}-strong-${matchIndex}`}>
-          {rawMatch.slice(2, -2)}
-        </strong>,
-      );
-    } else if (rawMatch.startsWith("`") && rawMatch.endsWith("`")) {
-      parts.push(
-        <code key={`${keyPrefix}-code-${matchIndex}`}>
-          {rawMatch.slice(1, -1)}
-        </code>,
-      );
-    } else if (rawMatch.startsWith("*") && rawMatch.endsWith("*")) {
-      parts.push(
-        <em key={`${keyPrefix}-em-${matchIndex}`}>
-          {rawMatch.slice(1, -1)}
-        </em>,
-      );
-    }
-
-    lastIndex = matchIndex + rawMatch.length;
-  }
-
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-
-  return parts.length > 0 ? parts : [text];
-}
-
-function AssistantRichText({ body }: { body: string }) {
-  const blocks = parseAssistantTextBlocks(body);
-
-  if (blocks.length === 0) {
-    return <p>{body}</p>;
-  }
-
-  return (
-    <div className="chat-rich-text">
-      {blocks.map((block, index) => {
-        if (block.type === "heading") {
-          const content = renderAssistantInlineText(block.text, `heading-${index}`);
-          if (block.level === 1) return <h1 key={`heading-${index}`}>{content}</h1>;
-          if (block.level === 2) return <h2 key={`heading-${index}`}>{content}</h2>;
-          return <h3 key={`heading-${index}`}>{content}</h3>;
-        }
-
-        if (block.type === "ordered-list") {
-          return (
-            <ol key={`ol-${index}`}>
-              {block.items.map((item, itemIndex) => (
-                <li key={`ol-${index}-${itemIndex}`}>
-                  {renderAssistantInlineText(item, `ol-${index}-${itemIndex}`)}
-                </li>
-              ))}
-            </ol>
-          );
-        }
-
-        if (block.type === "unordered-list") {
-          return (
-            <ul key={`ul-${index}`}>
-              {block.items.map((item, itemIndex) => (
-                <li key={`ul-${index}-${itemIndex}`}>
-                  {renderAssistantInlineText(item, `ul-${index}-${itemIndex}`)}
-                </li>
-              ))}
-            </ul>
-          );
-        }
-
-        return (
-          <p key={`p-${index}`}>
-            {renderAssistantInlineText(block.text, `p-${index}`)}
-          </p>
-        );
-      })}
-    </div>
-  );
 }
 
 function inferCreatedAt(id: string): string {
@@ -901,32 +634,6 @@ function clearSavedTasks(workspaceId: string | null) {
   localStorage.removeItem(sk("tasks", workspaceId));
 }
 
-function loadConversations(workspaceId: string | null): Conversation[] {
-  try {
-    return JSON.parse(
-      localStorage.getItem(sk("convs", workspaceId)) ?? "[]",
-    ) as Conversation[];
-  } catch {
-    return [];
-  }
-}
-
-function saveConversations(workspaceId: string | null, convs: Conversation[]) {
-  localStorage.setItem(sk("convs", workspaceId), JSON.stringify(convs));
-}
-
-function loadCurrentConvId(workspaceId: string | null): string | null {
-  return localStorage.getItem(sk("cur_conv", workspaceId));
-}
-
-function saveCurrentConvId(workspaceId: string | null, id: string | null) {
-  if (id) {
-    localStorage.setItem(sk("cur_conv", workspaceId), id);
-  } else {
-    localStorage.removeItem(sk("cur_conv", workspaceId));
-  }
-}
-
 // ── Planner helpers ────────────────────────────────────────────────────────────
 
 function sortPlanBlocks(blocks: PlanBlock[]): PlanBlock[] {
@@ -1388,27 +1095,20 @@ function DayTimeline({
   );
 }
 
-const STARTER_PROMPTS = [
-  "Suggest a 1-hour focus plan",
-  "What should I work on next?",
-  "Break down my most important project",
-  "Plan my day",
-];
-
 // ── Component ──────────────────────────────────────────────────────────────────
 
 type AssistantModeProps = {
   graphData: GraphData;
   selectedNodeId: string | null;
   workspaceId: string | null;
-  onExtractNodes?: (nodesContent: string, workspaceId: string) => void;
+  onAskInChat?: (message: string) => void;
 };
 
 export function AssistantMode({
   graphData,
   selectedNodeId,
   workspaceId,
-  onExtractNodes,
+  onAskInChat,
 }: AssistantModeProps) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const planTaskSelectClause =
@@ -1424,32 +1124,12 @@ export function AssistantMode({
   // AI plan state
   const [plannerState, setPlannerState] = useState<PlannerState>(INITIAL_PLANNER_STATE);
 
-  // Conversation state
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [currentConvId, setCurrentConvId] = useState<string | null>(null);
-  const [chatInput, setChatInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [streamingBody, setStreamingBody] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
-  const [lastChatAttempt, setLastChatAttempt] = useState<string | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
-
-  // Auto-detect assistant mode from message content
-  function detectMode(text: string): "explain" | "plan" | "transform" {
-    const lower = text.toLowerCase();
-    const planKeywords = /\b(plan|schedule|block|time.?box|next\s+\d+\s*(h|hour|min)|my\s+(morning|afternoon|evening|day))\b/;
-    const transformKeywords = /\b(move|merge|split|rename|restructure|reorganize|reparent|archive)\b/;
-    if (planKeywords.test(lower)) return "plan";
-    if (transformKeywords.test(lower)) return "transform";
-    return "plan"; // default to plan mode which is the most capable
-  }
 
   // Context chip
   const [contextDismissed, setContextDismissed] = useState(false);
 
-  const threadEndRef = useRef<HTMLDivElement>(null);
   const plannerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1526,14 +1206,6 @@ export function AssistantMode({
       setTaskError("Could not load saved tasks.");
     });
 
-    const convs = loadConversations(workspaceId);
-    setConversations(convs);
-    const savedId = loadCurrentConvId(workspaceId);
-    setCurrentConvId(
-      savedId && convs.some((c) => c.id === savedId)
-        ? savedId
-        : convs[0]?.id ?? null,
-    );
     setContextDismissed(false);
     setSelectedDate(today);
     setTaskEditor(null);
@@ -1546,8 +1218,6 @@ export function AssistantMode({
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
-  const currentConv = conversations.find((c) => c.id === currentConvId) ?? null;
-  const messages = currentConv?.messages ?? [];
   const selectedNode = graphData.nodes.find((n) => n.id === selectedNodeId) ?? null;
   const showContext = Boolean(selectedNode && !contextDismissed);
 
@@ -1574,38 +1244,6 @@ export function AssistantMode({
     },
     [workspaceId],
   );
-
-  const persistConvs = useCallback(
-    (next: Conversation[], nextId?: string | null) => {
-      setConversations(next);
-      saveConversations(workspaceId, next);
-      if (nextId !== undefined) {
-        setCurrentConvId(nextId);
-        saveCurrentConvId(workspaceId, nextId);
-      }
-    },
-    [workspaceId],
-  );
-
-  // ── Auto-scroll ────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, loading, streamingBody]);
-
-  // ── Close history popover on outside click ─────────────────────────────────
-
-  useEffect(() => {
-    if (!historyOpen) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Element;
-      if (!target.closest(".conv-history-popover") && !target.closest(".conv-switcher")) {
-        setHistoryOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [historyOpen]);
 
   // ── Task operations ────────────────────────────────────────────────────────
 
@@ -1900,162 +1538,6 @@ export function AssistantMode({
     [persistTasks, planTaskSelectClause, supabase, tasks, workspaceId],
   );
 
-  // ── Conversation operations ────────────────────────────────────────────────
-
-  const newConversation = () => {
-    const conv: Conversation = {
-      id: `conv-${Date.now()}`,
-      title: "New conversation",
-      messages: [],
-      createdAt: new Date().toISOString(),
-    };
-    persistConvs([conv, ...conversations], conv.id);
-    setHistoryOpen(false);
-  };
-
-  // ── Chat (real streaming) ──────────────────────────────────────────────────
-
-  const sendMessage = async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed || loading) return;
-    if (!workspaceId) {
-      setChatError("Select a workspace first.");
-      return;
-    }
-
-    setChatInput("");
-    setChatError(null);
-    setLoading(true);
-    setStreamingBody("");
-    setLastChatAttempt(trimmed);
-
-    let working = currentConv;
-    if (!working) {
-      working = {
-        id: `conv-${Date.now()}`,
-        title: trimmed.slice(0, 48),
-        messages: [],
-        createdAt: new Date().toISOString(),
-      };
-    }
-
-    const userMsg: AssistantMessage = { id: `u-${Date.now()}`, role: "user", body: trimmed };
-    const withUser: Conversation = {
-      ...working,
-      title: working.messages.length === 0 ? trimmed.slice(0, 48) : working.title,
-      messages: [...working.messages, userMsg],
-    };
-
-    const nextConvs = conversations.some((c) => c.id === withUser.id)
-      ? conversations.map((c) => (c.id === withUser.id ? withUser : c))
-      : [withUser, ...conversations];
-
-    setConversations(nextConvs);
-    setCurrentConvId(withUser.id);
-
-    try {
-      const res = await fetch("/api/assistant/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: trimmed,
-          workspace_id: workspaceId,
-          selected_node_id: selectedNodeId,
-          mode: detectMode(trimmed),
-        }),
-      });
-
-      if (!res.ok || !res.body) {
-        throw new Error(await res.text());
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let fullText = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        fullText += decoder.decode(value, { stream: true });
-        setStreamingBody(fullText);
-      }
-
-      // Detect <plan> block — parse JSON plan and feed into planner
-      let displayText = fullText;
-      const planMatch = fullText.match(/<plan>\s*([\s\S]*?)\s*<\/plan>/);
-      if (planMatch && planMatch[1]?.trim()) {
-        displayText = fullText.replace(/<plan>[\s\S]*?<\/plan>/, "").trimEnd();
-        try {
-          const planData = JSON.parse(planMatch[1].trim()) as {
-            planning_window?: PlanningWindow;
-            total_minutes?: number;
-            blocks?: Array<{
-              title: string;
-              node_id: string | null;
-              duration_minutes: number;
-              start_offset: number;
-              block_type: PlanBlockType;
-              reason: string | null;
-            }>;
-          };
-          if (Array.isArray(planData.blocks) && planData.blocks.length > 0) {
-            const sessionId = `chat-plan-${Date.now()}`;
-            const planBlocks: PlanBlock[] = planData.blocks.map((b, i) => ({
-              id: `chat-block-${Date.now()}-${i}`,
-              plan_session_id: sessionId,
-              node_id: b.node_id ?? null,
-              title: b.title,
-              start_offset: b.start_offset,
-              duration_minutes: b.duration_minutes,
-              reason: b.reason ?? null,
-              block_type: b.block_type ?? "focus",
-              completion_status: "pending" as const,
-            }));
-            setPlannerState({
-              session: {
-                id: sessionId,
-                workspace_id: workspaceId ?? "",
-                user_id: "",
-                planning_window: planData.planning_window ?? "custom",
-                scope: null,
-                status: "draft",
-                created_at: new Date().toISOString(),
-              },
-              blocks: sortPlanBlocks(planBlocks),
-              recentlyUnblockedNodeIds: new Set(),
-              loading: false,
-              error: null,
-              finalised: false,
-            });
-          }
-        } catch {
-          // Invalid JSON — ignore silently
-        }
-      }
-
-      // Detect <nodes> block — extract and send to parent for extraction pipeline
-      const nodesMatch = displayText.match(/<nodes>\s*([\s\S]*?)\s*<\/nodes>/);
-      if (nodesMatch && nodesMatch[1]?.trim() && workspaceId && onExtractNodes) {
-        displayText = displayText.replace(/<nodes>[\s\S]*?<\/nodes>/, "").trimEnd();
-        onExtractNodes(nodesMatch[1].trim(), workspaceId);
-      }
-
-      const aMsg: AssistantMessage = {
-        id: `a-${Date.now()}`,
-        role: "assistant",
-        body: displayText,
-      };
-      const finalConv: Conversation = { ...withUser, messages: [...withUser.messages, aMsg] };
-      const finalConvs = nextConvs.map((c) => (c.id === finalConv.id ? finalConv : c));
-      persistConvs(finalConvs, finalConv.id);
-    } catch (err) {
-      setChatError(err instanceof Error ? err.message : "Something went wrong. Try again.");
-    } finally {
-      setLoading(false);
-      setStreamingBody("");
-    }
-  };
-
   // ── AI planner operations ──────────────────────────────────────────────────
 
   const handlePlanGenerate = async (window: PlanningWindow) => {
@@ -2275,7 +1757,7 @@ export function AssistantMode({
             ))}
             <button
               className="assistant-quick-chip"
-              onClick={() => void sendMessage("What's next?")}
+              onClick={() => onAskInChat?.("What's next?")}
               type="button"
             >
               What&apos;s next?
@@ -2473,192 +1955,6 @@ export function AssistantMode({
               </div>
             </>
           ) : null}
-        </div>
-
-        {/* ── RIGHT: Chat column ── */}
-        <div className="assistant-chat-col">
-          {/* Header */}
-          <div className="chat-col-header">
-            <div className="relative">
-              <button
-                className="conv-switcher"
-                onClick={() => setHistoryOpen((o) => !o)}
-                type="button"
-              >
-                <span className="conv-switcher-title truncate">
-                  {currentConv?.title ?? "New conversation"}
-                </span>
-                <ChevronDownIcon
-                  className={`h-[12px] w-[12px] shrink-0 transition-transform duration-150 ${
-                    historyOpen ? "rotate-180" : ""
-                  }`}
-                />
-              </button>
-
-              <AnimatePresence>
-                {historyOpen ? (
-                  <motion.div
-                    className="conv-history-popover"
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -4 }}
-                    initial={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.13 }}
-                  >
-                    <button
-                      className="conv-history-new"
-                      onClick={newConversation}
-                      type="button"
-                    >
-                      <PlusIcon className="h-[12px] w-[12px]" />
-                      New conversation
-                    </button>
-                    {conversations.length > 0 ? (
-                      <div className="conv-history-list">
-                        {conversations.map((conv) => (
-                          <button
-                            className={`conv-history-item${
-                              conv.id === currentConvId ? " conv-history-item-active" : ""
-                            }`}
-                            key={conv.id}
-                            onClick={() => {
-                              setCurrentConvId(conv.id);
-                              saveCurrentConvId(workspaceId, conv.id);
-                              setHistoryOpen(false);
-                            }}
-                            type="button"
-                          >
-                            <span className="truncate">{conv.title}</span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
-            </div>
-
-            <button
-              aria-label="New conversation"
-              className="chat-col-new-btn"
-              onClick={newConversation}
-              title="New conversation"
-              type="button"
-            >
-              <PlusIcon className="h-[13px] w-[13px]" />
-            </button>
-          </div>
-
-          {/* Thread or starter */}
-          <div className="chat-thread shell-scrollbar">
-            {messages.length === 0 && !loading ? (
-              <div className="chat-starter-state">
-                <div className="chat-starter-glyph">
-                  <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden>
-                    <circle cx="11" cy="11" r="10.5" stroke="rgba(213,58,71,0.35)" />
-                    <circle cx="11" cy="11" r="6" fill="rgba(213,58,71,0.18)" />
-                    <circle cx="11" cy="11" r="3" fill="#d53a47" />
-                  </svg>
-                </div>
-                <p className="chat-starter-heading">What are we working on?</p>
-                <p className="chat-starter-sub">
-                  Ask for a plan, break down a project, or ask what to tackle next.
-                </p>
-                <div className="chat-starter-prompts">
-                  {STARTER_PROMPTS.map((prompt) => (
-                    <button
-                      className="chat-starter-prompt"
-                      key={prompt}
-                      onClick={() => void sendMessage(prompt)}
-                      type="button"
-                    >
-                      {prompt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="chat-messages">
-                {messages.map((msg) =>
-                  msg.role === "user" ? (
-                    <div className="chat-msg-user" key={msg.id}>
-                      <p>{msg.body}</p>
-                    </div>
-                  ) : (
-                    <div className="chat-msg-assistant" key={msg.id}>
-                      <div className="chat-msg-assistant-card">
-                        <AssistantRichText body={msg.body} />
-                      </div>
-                    </div>
-                  ),
-                )}
-                {loading ? (
-                  <div className="chat-msg-assistant">
-                    {streamingBody ? (
-                      <div className="chat-msg-assistant-card">
-                        <AssistantRichText body={streamingBody} />
-                      </div>
-                    ) : (
-                      <div className="chat-msg-assistant-card">
-                        <div className="chat-loading-indicator" aria-live="polite">
-                          <span className="text-[12px] font-medium text-[var(--color-text-secondary)]">
-                            Thinking
-                          </span>
-                          <span className="chat-loading-dot" />
-                          <span className="chat-loading-dot" />
-                          <span className="chat-loading-dot" />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-                {chatError ? (
-                  <div className="chat-msg-assistant">
-                    <div className="chat-msg-assistant-card">
-                      <p className="text-[12px] text-[var(--color-text-secondary)]">{chatError}</p>
-                      {lastChatAttempt ? (
-                        <button
-                          className="assistant-quick-chip mt-3"
-                          onClick={() => void sendMessage(lastChatAttempt)}
-                          type="button"
-                        >
-                          Retry
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-                <div ref={threadEndRef} />
-              </div>
-            )}
-          </div>
-
-          {/* Composer */}
-          <div className="chat-col-composer">
-            <div className="chat-composer-row">
-              <textarea
-                className="chat-composer-input"
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void sendMessage(chatInput);
-                  }
-                }}
-                placeholder="Ask for a plan, breakdown, or next steps..."
-                rows={1}
-                value={chatInput}
-              />
-              <button
-                aria-label="Send"
-                className="composer-send-button"
-                disabled={loading || chatInput.trim().length === 0}
-                onClick={() => void sendMessage(chatInput)}
-                type="button"
-              >
-                <ArrowUpIcon className="h-[15px] w-[15px]" />
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     </div>

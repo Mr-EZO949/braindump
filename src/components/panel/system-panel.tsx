@@ -1,4 +1,9 @@
+"use client";
+
 import Image from "next/image";
+import { useEffect, useState } from "react";
+
+type Theme = "dark" | "light";
 
 type SystemPanelProps = {
   onSignOut: () => void;
@@ -8,6 +13,11 @@ type SystemPanelProps = {
   userEmail: string | null;
 };
 
+function readInitialTheme(): Theme {
+  if (typeof document === "undefined") return "dark";
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+}
+
 export function SystemPanel({
   onClose,
   onSignOut,
@@ -15,6 +25,18 @@ export function SystemPanel({
   signingOut,
   userEmail,
 }: SystemPanelProps) {
+  const [theme, setTheme] = useState<Theme>(readInitialTheme);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "light") root.setAttribute("data-theme", "light");
+    else root.removeAttribute("data-theme");
+    try {
+      localStorage.setItem("braindump-theme", theme);
+    } catch {
+      // localStorage unavailable (private mode, etc.) — theme still applied for session.
+    }
+  }, [theme]);
   return (
     <aside
       aria-hidden={!open}
@@ -54,6 +76,33 @@ export function SystemPanel({
           <button className="sp-menu-btn sp-menu-btn--danger" type="button" disabled>
             Delete account
           </button>
+        </div>
+
+        <div className="sp-divider" />
+
+        {/* Theme */}
+        <div className="px-5 py-4">
+          <p className="sp-section-label">Theme</p>
+          <div className="sp-theme-toggle">
+            <button
+              aria-pressed={theme === "dark"}
+              className="sp-theme-option"
+              data-active={theme === "dark"}
+              onClick={() => setTheme("dark")}
+              type="button"
+            >
+              Dark
+            </button>
+            <button
+              aria-pressed={theme === "light"}
+              className="sp-theme-option"
+              data-active={theme === "light"}
+              onClick={() => setTheme("light")}
+              type="button"
+            >
+              Light
+            </button>
+          </div>
         </div>
 
         {/* Spacer */}
