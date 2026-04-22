@@ -4,8 +4,6 @@ export type NodeType =
   | "class"
   | "concept"
   | "idea"
-  | "journal"
-  | "question"
   | "goal"
   | "habit";
 
@@ -46,6 +44,9 @@ export interface Node {
   status?: NodeStatus | null;
   completed_at?: string | null;
   current_importance_score?: number | null;
+  // When set, overrides the heuristic scorer for this node.
+  manual_weight?: number | null;
+  manual_weight_set_at?: string | null;
 }
 
 export interface Edge {
@@ -91,6 +92,9 @@ export type GraphEditOperation =
 export interface CreateNodeInput {
   custom_type: string;
   importance_index: number;
+  // When set in the edit sheet, writes to nodes.manual_weight — overrides
+  // the scorer for this node. null in create flow (scorer decides).
+  manual_weight: number | null;
   node_type: "goal" | "task" | "project" | "concept" | "class" | "habit" | "custom";
   raw_text: string;
   summary: string;

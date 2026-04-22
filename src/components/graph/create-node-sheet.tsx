@@ -51,6 +51,7 @@ type SharedNodeSheetProps = {
   onCreateConnection?: () => void;
   onDeleteConnection?: (edgeId: string) => void;
   onRequestDelete?: () => void;
+  onResetManualWeight?: () => void;
   onSubmit: () => void;
   onUpdateConnection?: (edgeId: string, relationId: EdgeRelationOptionId) => void;
   showRawText?: boolean;
@@ -112,6 +113,7 @@ type EditNodeSheetProps = {
   onCreateConnection: () => void;
   onDeleteConnection: (edgeId: string) => void;
   onRequestDelete: () => void;
+  onResetManualWeight: () => void;
   onSubmit: () => void;
   onUpdateConnection: (edgeId: string, relationId: EdgeRelationOptionId) => void;
   submitting: boolean;
@@ -213,6 +215,7 @@ function SharedNodeSheet({
   onCreateConnection,
   onDeleteConnection,
   onRequestDelete,
+  onResetManualWeight,
   onSubmit,
   onUpdateConnection,
   showRawText = true,
@@ -223,9 +226,10 @@ function SharedNodeSheet({
     Record<string, EdgeRelationOptionId>
   >({});
   const open = Boolean(draft);
-  const safeDraft = draft ?? {
+  const safeDraft: CreateNodeInput = draft ?? {
     custom_type: "",
     importance_index: 58,
+    manual_weight: null,
     node_type: "concept",
     raw_text: "",
     summary: "",
@@ -487,6 +491,24 @@ function SharedNodeSheet({
                     <span>Medium</span>
                     <span>High</span>
                   </div>
+                  {mode === "edit" ? (
+                    <div className="flex items-center justify-between gap-2 pt-1 text-[11px] text-(--color-text-muted)">
+                      <span>
+                        {safeDraft.manual_weight != null
+                          ? "Manual override — auto-scoring paused for this node"
+                          : "Auto-scored"}
+                      </span>
+                      {safeDraft.manual_weight != null && onResetManualWeight ? (
+                        <button
+                          className="graph-reset-manual-weight underline underline-offset-2 hover:text-(--color-text-primary)"
+                          onClick={onResetManualWeight}
+                          type="button"
+                        >
+                          Reset to auto
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -752,6 +774,7 @@ export function EditNodeSheet({
   onCreateConnection,
   onDeleteConnection,
   onRequestDelete,
+  onResetManualWeight,
   onSubmit,
   onUpdateConnection,
   submitting,
@@ -784,6 +807,7 @@ export function EditNodeSheet({
       onCreateConnection={onCreateConnection}
       onDeleteConnection={onDeleteConnection}
       onRequestDelete={onRequestDelete}
+      onResetManualWeight={onResetManualWeight}
       onSubmit={onSubmit}
       onUpdateConnection={onUpdateConnection}
       showRawText={false}
