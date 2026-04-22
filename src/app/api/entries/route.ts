@@ -177,5 +177,6 @@ export async function POST(req: NextRequest) {
     status: "completed",
     proposed_nodes: result.proposedNodes,
     proposed_node_count: result.proposedNodes.length,
+    clarifying_questions: result.clarifyingQuestions,
   });
 }

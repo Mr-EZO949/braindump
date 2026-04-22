@@ -204,7 +204,7 @@ export async function POST(req: NextRequest) {
         workspaceId: workspace_id,
         runType: "plan",
         provider: "claude",
-        modelName: AI_MODELS.CLAUDE_SONNET,
+        modelName: AI_MODELS.CLAUDE_HAIKU,
         promptVersion: PLAN_PROMPT_VERSION,
         inputHash: hashText(
           JSON.stringify({
@@ -235,7 +235,7 @@ export async function POST(req: NextRequest) {
     run: {
       run_type: "plan",
       provider: "claude",
-      model_name: AI_MODELS.CLAUDE_SONNET,
+      model_name: AI_MODELS.CLAUDE_HAIKU,
       prompt_version: PLAN_PROMPT_VERSION,
       input_hash: runMeta.input_hash,
       output_hash: runMeta.output_hash,
@@ -244,8 +244,8 @@ export async function POST(req: NextRequest) {
       latency_ms: runMeta.latency_ms,
       estimated_cost:
         runMeta.input_tokens != null && runMeta.output_tokens != null
-          ? (runMeta.input_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT +
-            (runMeta.output_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT
+          ? (runMeta.input_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT +
+            (runMeta.output_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT
           : null,
       status: "success",
       error_text: null,
