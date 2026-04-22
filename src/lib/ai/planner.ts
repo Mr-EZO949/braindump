@@ -22,8 +22,6 @@ const PRIMARY_NODE_TYPE_PRIORITY: Record<NodeType, number> = {
   class: 62,
   concept: 46,
   idea: 36,
-  question: 32,
-  journal: 20,
   habit: 98,
 };
 

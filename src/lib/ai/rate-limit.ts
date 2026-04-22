@@ -42,6 +42,34 @@ export async function checkAIRunRateLimit(params: {
   };
 }
 
+// Counts ai_runs of a given type in an arbitrary rolling window.
+// Use when the cap is per-day instead of per-hour (e.g. rerank_importance).
+export async function checkAIRunRateLimitWindow(params: {
+  supabase: SupabaseClient;
+  userId: string;
+  runType: string;
+  max: number;
+  windowMs: number;
+}): Promise<RateLimitResult> {
+  const { supabase, userId, runType, max, windowMs } = params;
+  const windowStart = new Date(Date.now() - windowMs).toISOString();
+  const resetAt = new Date(Date.now() + windowMs).toISOString();
+
+  const { count } = await supabase
+    .from("ai_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("run_type", runType)
+    .gte("created_at", windowStart);
+
+  const used = count ?? 0;
+  return {
+    allowed: used < max,
+    remaining: Math.max(0, max - used),
+    resetAt,
+  };
+}
+
 // Counts raw_entries (brain dumps) in the last hour — used for extraction.
 export async function checkEntryRateLimit(params: {
   supabase: SupabaseClient;

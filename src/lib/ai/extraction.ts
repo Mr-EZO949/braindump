@@ -35,6 +35,7 @@ export interface ExtractionSuccess {
   ok: true;
   aiRunId: string;
   proposedNodes: ProposedNode[];
+  clarifyingQuestions: string[];
 }
 
 export interface ExtractionFailure {
@@ -243,7 +244,12 @@ export async function runExtraction(params: {
       .update({ status: "completed" })
       .eq("id", rawEntryId);
 
-    return { ok: true, aiRunId, proposedNodes: [] };
+    return {
+      ok: true,
+      aiRunId,
+      proposedNodes: [],
+      clarifyingQuestions: output.clarifying_questions ?? [],
+    };
   }
 
   // Persist proposed_nodes
@@ -301,6 +307,7 @@ export async function runExtraction(params: {
       existing_parent_node_id:
         "existing_parent_node_id" in node ? node.existing_parent_node_id : null,
     })),
+    clarifyingQuestions: output.clarifying_questions ?? [],
   };
 }
 

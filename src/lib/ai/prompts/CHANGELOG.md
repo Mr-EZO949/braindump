@@ -60,7 +60,23 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Assistant (`assistant.ts`)
 
-### assistant-v2 (current)
+### assistant-v4 (current)
+- Added full mutation tool vocabulary: propose_node, propose_nodes_batch, propose_edge, update_node, archive_node, complete_node, add_task_to_calendar, reschedule_task, mark_task_done
+- Every mutation tool pauses the agent loop and surfaces an Accept/Reject card via the M2 confirmation gate
+- Added "ONE mutation per turn" rule (server auto-rejects extras) with guidance to call propose_nodes_batch for multi-item asks
+- Replaced the `<nodes>` and `<graph_edit>` tag protocols with direct tool calls; kept `<recompute_scores/>` and the planner `<plan>` block (not yet migrated to tools)
+- Added tool-selection guidance per intent ("add X"→propose_node, "break into steps"→propose_nodes_batch, "I finished"→complete_node, etc.)
+- Why: M3 replaces the old text-tag mutation path with tool-use so mutations go through the confirmation gate by default
+
+### assistant-v3
+- Reframed from "answer the query" to "collaborator the user thinks out loud with"
+- Added engagement rules: acknowledge first, clarify when ambiguous, act decisively when confident
+- Added tool-use guidance for read-only agent loop (search_nodes, get_node, get_recent_activity, get_workspace_summary, get_calendar)
+- Added tone rules: match user energy, no sycophancy, emotional acknowledgement only when warranted
+- Kept legacy `<nodes>` / `<graph_edit>` / `<plan>` / `<recompute_scores/>` tags until M3 mutation tools replace them
+- Why: M1 agent loop needs a prompt that treats tools as the default grounding mechanism and pushes clarifying questions for genuinely ambiguous asks — no more "CREATE THE NODES" for every ask
+
+### assistant-v2
 - Added mode system (explain, plan, transform)
 - Added anti-generic-advice rule: "Never produce a generic self-help tip that ignores graph context"
 - Why: assistant was giving Buzzfeed-tier productivity tips instead of using graph data

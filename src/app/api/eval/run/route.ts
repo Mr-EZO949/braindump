@@ -296,11 +296,13 @@ export async function POST(req: NextRequest) {
             title: fixture.source_title,
             summary: fixture.source_summary,
           },
-          target_node: {
-            id: "eval-tgt",
-            title: fixture.target_title,
-            summary: fixture.target_summary,
-          },
+          candidates: [
+            {
+              id: "eval-tgt",
+              title: fixture.target_title,
+              summary: fixture.target_summary,
+            },
+          ],
         });
         emitAIRunStructuredLog({
           source: "eval",
@@ -313,21 +315,22 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        const output = result.output;
-        const relatedMatch = output.related === fixture.expected_related;
+        const entry = result.output.results.find((r) => r.candidate_id === "eval-tgt")
+          ?? { related: false, edge_type: null, confidence: 0, explanation: "" };
+        const relatedMatch = entry.related === fixture.expected_related;
         const typeMatch =
-          !fixture.expected_edge_type || !output.related || output.edge_type === fixture.expected_edge_type;
+          !fixture.expected_edge_type || !entry.related || entry.edge_type === fixture.expected_edge_type;
         const passed = relatedMatch && typeMatch;
 
         report.edges.push({
           fixture_id: fixture.id,
           passed,
           expected_related: fixture.expected_related,
-          actual_related: output.related,
+          actual_related: entry.related,
           expected_edge_type: fixture.expected_edge_type,
-          actual_edge_type: output.edge_type ?? null,
-          confidence: output.confidence,
-          explanation: output.explanation,
+          actual_edge_type: entry.edge_type ?? null,
+          confidence: entry.confidence,
+          explanation: entry.explanation,
         });
       } catch (error) {
         emitAIRunStructuredLog({

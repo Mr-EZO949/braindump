@@ -20,8 +20,6 @@ const ANCHOR_TYPE_PRIORITY: Record<NodeType, number> = {
   concept: 2,
   task: 1,
   idea: 1,
-  journal: 1,
-  question: 1,
   habit: 3,
 };
 

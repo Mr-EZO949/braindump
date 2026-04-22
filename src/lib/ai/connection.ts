@@ -188,70 +188,84 @@ export async function runConnectionAnalysis(params: {
 
   const inferredCandidates: InferredEdgeCandidate[] = [];
 
-  // 7. Infer edges in parallel — failures are per-pair, never propagate
   let proposed = 0;
   let skipped = 0;
   let failed = 0;
 
-  await Promise.all(
-    topIds.map(async (candidateId) => {
-      const candidate = candidateMap.get(candidateId);
-      if (!candidate) { skipped++; return; }
+  // 7. Build the eligible candidate set — skip pairs already decided on
+  const eligibleCandidates: { id: string; title: string; summary: string | null }[] = [];
+  for (const candidateId of topIds) {
+    const candidate = candidateMap.get(candidateId);
+    if (!candidate) { skipped++; continue; }
 
-      const fwd = `${nodeId}:${candidateId}`;
-      const rev = `${candidateId}:${nodeId}`;
+    const fwd = `${nodeId}:${candidateId}`;
+    const rev = `${candidateId}:${nodeId}`;
 
-      if (activePairs.has(fwd) || activePairs.has(rev)) { skipped++; return; }
-      if (rejectedPairs.has(fwd) || rejectedPairs.has(rev)) { skipped++; return; }
-      if (canonicalPairs.has(fwd) || canonicalPairs.has(rev)) { skipped++; return; }
+    if (activePairs.has(fwd) || activePairs.has(rev)) { skipped++; continue; }
+    if (rejectedPairs.has(fwd) || rejectedPairs.has(rev)) { skipped++; continue; }
+    if (canonicalPairs.has(fwd) || canonicalPairs.has(rev)) { skipped++; continue; }
 
-      try {
-        const result = await aiProvider().inferEdge({
-          source_node: { id: nodeId, title: sourceTitle, summary: sourceSummary },
-          target_node: {
-            id: candidateId,
-            title: candidate.title,
-            summary: candidate.summary,
-          },
-          workspace_context: workspaceContext,
-        });
+    eligibleCandidates.push({
+      id: candidateId,
+      title: candidate.title,
+      summary: candidate.summary,
+    });
+  }
 
-        // Persist ai_run (best-effort)
-        void supabase.from("ai_runs").insert({
-          ...result.run,
-          run_type: "infer_edge",
-          prompt_version: INFER_EDGE_PROMPT_VERSION,
-          status: "success",
-          user_id: userId,
-          workspace_id: workspaceId,
-        });
+  // 8. Single batched inference call — evaluates all eligible candidates at once
+  if (eligibleCandidates.length > 0) {
+    try {
+      const result = await aiProvider().inferEdge({
+        source_node: { id: nodeId, title: sourceTitle, summary: sourceSummary },
+        candidates: eligibleCandidates,
+        workspace_context: workspaceContext,
+      });
 
-        const out = result.output;
+      void supabase.from("ai_runs").insert({
+        ...result.run,
+        run_type: "infer_edge",
+        prompt_version: INFER_EDGE_PROMPT_VERSION,
+        status: "success",
+        user_id: userId,
+        workspace_id: workspaceId,
+      });
+
+      for (const entry of result.output.results) {
+        if (!eligibleCandidates.some((c) => c.id === entry.candidate_id)) {
+          // Model returned an id we didn't ask about — ignore
+          continue;
+        }
+
         if (
-          out.related &&
-          out.edge_type &&
-          out.confidence >= AI_CONFIDENCE.EDGE_INFERENCE_MIN
+          entry.related &&
+          entry.edge_type &&
+          entry.confidence >= AI_CONFIDENCE.EDGE_INFERENCE_MIN
         ) {
-          // Skip belongs_to if this node already has a parent
-          if (out.edge_type === "belongs_to" && alreadyHasParent) {
+          if (entry.edge_type === "belongs_to" && alreadyHasParent) {
             skipped++;
-            return;
+            continue;
           }
           inferredCandidates.push({
-            candidateId,
-            confidence: out.confidence,
-            edge_type: out.edge_type,
-            explanation: out.explanation,
+            candidateId: entry.candidate_id,
+            confidence: entry.confidence,
+            edge_type: entry.edge_type,
+            explanation: entry.explanation,
           });
         } else {
           skipped++;
         }
-      } catch (err) {
-        console.error("[connection] inferEdge failed:", err instanceof Error ? err.message : err);
-        failed++;
       }
-    })
-  );
+
+      // Account for any candidates the model failed to return a verdict for
+      const returnedIds = new Set(result.output.results.map((r) => r.candidate_id));
+      for (const c of eligibleCandidates) {
+        if (!returnedIds.has(c.id)) failed++;
+      }
+    } catch (err) {
+      console.error("[connection] inferEdge failed:", err instanceof Error ? err.message : err);
+      failed += eligibleCandidates.length;
+    }
+  }
 
   if (inferredCandidates.length === 0) {
     return { proposed, skipped, failed };

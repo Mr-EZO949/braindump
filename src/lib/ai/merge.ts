@@ -34,8 +34,6 @@ const COMPATIBLE_TYPES: Record<string, Set<string>> = {
   concept: new Set(["concept", "idea", "task"]),
   class:   new Set(["class", "concept"]),
   idea:    new Set(["idea", "concept", "task"]),
-  journal: new Set(["journal"]),
-  question: new Set(["question", "concept", "idea"]),
   habit:   new Set(["habit", "task", "goal"]),
 };
 

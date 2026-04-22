@@ -31,7 +31,19 @@ export type AIRunType =
   | "plan"
   | "merge_check"
   | "lifecycle_cascade"
-  | "intent";
+  | "node_judgment"
+  | "rerank_importance";
+
+export interface AINodeJudgment {
+  id: string;
+  node_id: string;
+  workspace_id: string;
+  user_id: string;
+  score: number;
+  reason: string | null;
+  model_name: string;
+  computed_at: string;
+}
 
 export type AIRunStatus = "success" | "failed" | "retrying";
 
@@ -331,6 +343,10 @@ export interface ExtractionOutput {
     ProposedNode,
     "id" | "ai_run_id" | "raw_entry_id" | "created_at"
   >[];
+  // Questions the extractor wants the user to answer before more nodes can
+  // be usefully extracted — vague ideas, ambiguous references, meta-questions
+  // like "idk what to focus on". Empty when the dump is fully actionable.
+  clarifying_questions: string[];
   prompt_version: string;
 }
 
@@ -354,15 +370,20 @@ export interface RerankOutput {
 
 export interface EdgeInferenceInput {
   source_node: { id: string; title: string; summary: string | null };
-  target_node: { id: string; title: string; summary: string | null };
+  candidates: { id: string; title: string; summary: string | null }[];
   workspace_context?: string;
 }
 
-export interface EdgeInferenceOutput {
+export interface EdgeInferenceResult {
+  candidate_id: string;
   related: boolean;
   edge_type: EdgeType | null;
   confidence: number;
   explanation: string;
+}
+
+export interface EdgeInferenceOutput {
+  results: EdgeInferenceResult[];
   prompt_version: string;
 }
 
@@ -407,32 +428,6 @@ export interface MergeCheckOutput {
   same_entity: boolean;
   confidence: number;
   reason: string;
-  prompt_version: string;
-}
-
-// ---------------------------------------------------------------------------
-// Intent router (unified command bar)
-// ---------------------------------------------------------------------------
-
-export type IntentType =
-  | "braindump"
-  | "question"
-  | "plan"
-  | "edit"
-  | "status"
-  | "unclear";
-
-export interface IntentInput {
-  message: string;
-  workspace_context?: string;
-  has_graph: boolean;
-}
-
-export interface IntentOutput {
-  intent: IntentType;
-  confidence: number;
-  rationale: string;
-  clarifying_question: string | null;
   prompt_version: string;
 }
 

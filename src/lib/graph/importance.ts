@@ -12,8 +12,6 @@ const fallbackTypeOffset: Record<Node["node_type"], number> = {
   concept: 2,
   class: 0,
   idea: -3,
-  journal: -5,
-  question: -5,
   task: -9,
   habit: 6,
 };

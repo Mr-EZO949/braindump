@@ -40,6 +40,7 @@ function makeNode(
     status: "active",
     created_at: new Date().toISOString(),
     workspace_id: "ws1",
+    manual_weight: null,
     ...opts,
   };
 }

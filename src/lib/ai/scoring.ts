@@ -7,19 +7,22 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { recomputeWorkspaceEdgeDecay } from "@/lib/ai/lifecycle";
 import { getImportanceLabel } from "@/lib/graph/importance";
 
-export const SCORE_VERSION = "v5";
+export const SCORE_VERSION = "v6";
 
 // ---------------------------------------------------------------------------
 // Formula weights — must sum to ≤ 1.0 (remainder is blocker bonus headroom)
+// v6: added ai_judgment signal; rebalanced dead weights (planner, recency,
+// ai_prior were mostly flat in real workspaces and compressed the output range).
 // ---------------------------------------------------------------------------
 const W = {
-  urgency: 0.23,
-  goal_alignment: 0.17,
-  planner: 0.10,
-  recency: 0.14,
-  centrality: 0.13,
+  urgency: 0.22,
+  goal_alignment: 0.22,
+  ai_judgment: 0.25,
+  centrality: 0.15,
   user_confirmation: 0.08,
-  ai_prior: 0.05,
+  recency: 0.05,
+  planner: 0.03,
+  ai_prior: 0.00,
   // blocker_resolved_bonus: flat additive, max +10 points
 };
 
@@ -40,6 +43,7 @@ export interface NodeRow {
   status: string | null;
   created_at: string;
   workspace_id: string;
+  manual_weight: number | null;
 }
 
 export interface EdgeRow {
@@ -98,8 +102,6 @@ export function urgency(node: NodeRow): number {
     concept: 28,
     class: 26,
     idea: 20,
-    question: 22,
-    journal: 16,
     habit: 48,
   };
   const base = typeBase[node.node_type] ?? 40;
@@ -374,7 +376,7 @@ export async function computeWorkspaceScores(params: {
   // 1. Fetch all non-archived nodes
   const { data: nodes } = await supabase
     .from("nodes")
-    .select("id, node_type, status, created_at, workspace_id")
+    .select("id, node_type, status, created_at, workspace_id, manual_weight")
     .eq("workspace_id", workspaceId)
     .eq("user_id", userId)
     .neq("status", "archived");
@@ -420,6 +422,22 @@ export async function computeWorkspaceScores(params: {
     .eq("user_id", userId)
     .eq("proposal_status", "accepted")
     .not("accepted_node_id", "is", null);
+
+  // 6. Fetch latest AI judgment per node (ai_judgment_score signal).
+  const { data: judgments } = await supabase
+    .from("ai_node_judgments")
+    .select("node_id, score, computed_at")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", userId)
+    .order("computed_at", { ascending: false });
+
+  const aiJudgmentByNode = new Map<string, number>();
+  for (const row of judgments ?? []) {
+    const nodeId = row.node_id as string;
+    if (!aiJudgmentByNode.has(nodeId)) {
+      aiJudgmentByNode.set(nodeId, Number(row.score));
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Build lookup structures
@@ -516,6 +534,7 @@ export async function computeWorkspaceScores(params: {
   // ---------------------------------------------------------------------------
 
   const signalRows: Array<{
+    ai_judgment_score: number;
     ai_prior_score: number;
     blocker_resolved_bonus: number;
     goal_alignment_score: number;
@@ -536,13 +555,23 @@ export async function computeWorkspaceScores(params: {
     const c = centrality(node.id, degreeMap, maxDegree);
     const uc = userConfirmation(node.id, feedbackByNode, edgeConfirmationCountByNode);
     const ap = aiPrior(node.id, confidenceMap);
+    const aj = aiJudgmentByNode.get(node.id);
+    // When no AI judgment has been computed yet, redistribute its weight to
+    // urgency + goal_alignment so nodes without judgments aren't suppressed.
+    const hasAj = typeof aj === "number";
+    const ajScore = hasAj ? aj : 0;
+    const ajBoostFactor = hasAj ? 1 : 0;
     const bb = blockerBonus(node.id, edgesByNode, completedIds);
     const dp = dependencyPressure(node.id, edgesByNode, activeIds);
     const bp = blocksPenalty(node.id, edgesByNode, activeIds);
 
+    const urgencyW = hasAj ? W.urgency : W.urgency + W.ai_judgment * 0.4;
+    const goalAlignW = hasAj ? W.goal_alignment : W.goal_alignment + W.ai_judgment * 0.6;
+
     const rawScore =
-      (W.urgency * u +
-      W.goal_alignment * g +
+      (urgencyW * u +
+      goalAlignW * g +
+      W.ai_judgment * ajScore * ajBoostFactor +
       W.planner * p +
       W.recency * r +
       W.centrality * c +
@@ -558,6 +587,7 @@ export async function computeWorkspaceScores(params: {
       graph_centrality_score: c,
       user_confirmation_score: uc,
       ai_prior_score: ap,
+      ai_judgment_score: ajScore,
       blocker_resolved_bonus: bb,
       raw_score: clamp(rawScore, 0, 100),
     });
@@ -571,16 +601,26 @@ export async function computeWorkspaceScores(params: {
   const nodeUpdates: Array<{ id: string; current_importance_score: number; importance_index: number; importance: string }> = [];
 
   for (const row of signalRows) {
-    let finalScore =
-      row.node.status === "completed"
-        ? 0
-        : calibrateWorkspaceScore({
-            nodeId: row.node.id,
-            rawScoreByNodeId,
-            nonCompletedNodes,
-          });
+    // Manual override: user set a specific weight. Skip formula entirely.
+    // (Still runs for completed nodes → 0, because completed never counts.)
+    const hasManualOverride =
+      typeof row.node.manual_weight === "number" &&
+      Number.isFinite(row.node.manual_weight);
 
-    if (row.node.status === "paused") {
+    let finalScore: number;
+    if (row.node.status === "completed") {
+      finalScore = 0;
+    } else if (hasManualOverride) {
+      finalScore = Math.max(0, Math.min(100, row.node.manual_weight as number));
+    } else {
+      finalScore = calibrateWorkspaceScore({
+        nodeId: row.node.id,
+        rawScoreByNodeId,
+        nonCompletedNodes,
+      });
+    }
+
+    if (row.node.status === "paused" && !hasManualOverride) {
       finalScore *= PAUSED_FACTOR;
     }
 

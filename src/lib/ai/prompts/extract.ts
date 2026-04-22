@@ -1,8 +1,11 @@
-// Extraction prompt v7
+// Extraction prompt v8
+// v8 adds actionability gating + clarifying_questions for a bidirectional
+// brain dump (extractor can ask back instead of forcing every fragment to
+// become a node).
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v7";
+export const EXTRACT_PROMPT_VERSION = "extract-v8";
 
 export function buildExtractionPrompt(params: {
   raw_text: string;
@@ -37,17 +40,43 @@ export function buildExtractionPrompt(params: {
 
   return `You are a knowledge graph extraction assistant. Extract a SPARSE, STRUCTURED thought graph from the brain dump below.
 
+The brain dump is a two-way conversation, not a capture funnel. If the input is vague, meta, or unanswerable as-written, it is correct to produce ZERO nodes and ask the user a clarifying question instead. Do not force low-value nodes just to have something in the array.
+
 Rules:
-- Each node must represent ONE clear idea, task, concept, project, goal, or question.
+- Each node must represent ONE clear idea, task, concept, project, or goal.
 - Do not merge unrelated ideas into one node.
 - Do not split a single coherent idea into multiple nodes.
 - Titles should be concise (3–8 words).
 - Summaries should be 1–2 sentences max.
 - Confidence: 0.0–1.0. Use 0.9+ only if the idea is clearly stated. Use 0.6–0.8 for inferred ideas.
 - source_span: copy the exact phrase or sentence from the input that led to this node. Use null for implied anchor/group nodes.
-- Node types: project | task | class | concept | idea | journal | question | goal | habit
+- Node types: project | task | class | concept | idea | goal | habit
 - local_ref: assign each node a unique short ID like "n1", "n2", "n3". Other relationship fields must reference these IDs.
 ${workspaceContextBlock}${existingNodesBlock}
+
+Actionability rule (IMPORTANT — apply before extracting any task):
+- A task node must describe a CONCRETE, EXECUTABLE action. The user should be able to picture doing it.
+- REJECT as a task (do NOT create a node, optionally raise a clarifying_question instead):
+  - Vague verbs without an object: "work on stuff", "get things done", "be productive"
+  - Meta-expressions of uncertainty: "idk what to focus on", "not sure where to start", "I'm stuck", "I don't know"
+  - Broad intents with no subject: "fix bugs" (which bugs?), "write code" (for what?), "do homework" (for which class?)
+  - Emotional venting with no action: "I'm tired", "this is overwhelming", "feeling anxious about school"
+- ACCEPT as a task when the user names the target or scope:
+  - "fix the login bug on the signup page" → task "Fix login bug on signup page"
+  - "review the Stats 302 problem set before Thursday" → task with that exact scope
+  - "fix the three flaky tests in the checkout flow" → task (count + scope both provided)
+- If a fragment is BOTH vague AND repeated/emphatic (user clearly cares but can't articulate it), prefer raising a clarifying_question over inventing a fake task.
+
+Clarifying questions (IMPORTANT — use this channel instead of forcing bad nodes):
+- Populate clarifying_questions with up to 3 short, specific questions that, if answered, would let you extract real nodes.
+- Questions should be grounded in the user's text — reference the exact phrase or fragment you are asking about.
+- Good: "You said 'fix bugs' — which bugs, or which project are they in?"
+- Good: "When you say 'idk what to focus on', do you want me to suggest something from your existing graph, or are you trying to narrow down a specific area?"
+- Good: "You mentioned 'the report' — which report, and what's the next step you want captured?"
+- Bad: vague questions like "Can you clarify?", "What do you mean?", "Tell me more."
+- A single dump MAY yield BOTH nodes (for the parts that were specific) AND clarifying_questions (for the parts that were vague). This is the common case.
+- Leave clarifying_questions as an empty array [] when the dump is fully actionable.
+- Never put a clarifying question inside proposed_nodes. Questions live in clarifying_questions only.
 
 Named context anchor rule:
 - You MAY create a durable context node even if only one child refers to it, when that context is likely to matter again later.
@@ -140,7 +169,7 @@ Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
       "user_id": "${params.user_id}",
       "proposed_title": "string",
       "proposed_summary": "string or null",
-      "proposed_node_type": "task | project | concept | goal | idea | question | class | journal | habit",
+      "proposed_node_type": "task | project | concept | goal | idea | class | habit",
       "primary_parent_local_ref": "n2 or null",
       "existing_parent_node_id": "existing workspace node id or null",
       "depends_on_local_refs": ["n3"],
@@ -155,6 +184,7 @@ Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
       "source_span": "string or null"
     }
   ],
+  "clarifying_questions": ["string"],
   "prompt_version": "${EXTRACT_PROMPT_VERSION}"
 }`;
 }

@@ -9,8 +9,6 @@ import type {
   EmbeddingOutput,
   RerankOutput,
   MergeCheckOutput,
-  IntentOutput,
-  IntentType,
 } from "@/types/ai";
 
 // ---------------------------------------------------------------------------
@@ -43,8 +41,6 @@ const VALID_NODE_TYPES = new Set([
   "class",
   "concept",
   "idea",
-  "journal",
-  "question",
   "goal",
   "habit",
 ]);
@@ -234,8 +230,23 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
     }
   });
 
+  // clarifying_questions is optional; drop malformed entries silently instead
+  // of failing the whole extraction. Cap at 3 to keep the UI compact.
+  const clarifyingQuestions: string[] = [];
+  if (Array.isArray(raw.clarifying_questions)) {
+    for (const q of raw.clarifying_questions) {
+      if (!isString(q)) continue;
+      const trimmed = q.trim();
+      if (!trimmed) continue;
+      if (trimmed.length > 400) continue;
+      clarifyingQuestions.push(trimmed);
+      if (clarifyingQuestions.length >= 3) break;
+    }
+  }
+
   return {
     proposed_nodes: nodes,
+    clarifying_questions: clarifyingQuestions,
     prompt_version: raw.prompt_version as string,
   };
 }
@@ -261,32 +272,42 @@ export function validateEdgeInferenceOutput(
 ): EdgeInferenceOutput {
   if (!isObject(raw))
     throw new Error("Edge inference output must be an object");
-  if (!isBoolean(raw.related))
-    throw new Error("Edge inference output missing related (boolean)");
-  if (!isString(raw.explanation) || !raw.explanation.trim())
-    throw new Error("Edge inference output missing explanation");
+  if (!Array.isArray(raw.results))
+    throw new Error("Edge inference output missing results array");
   if (!isString(raw.prompt_version))
     throw new Error("Edge inference output missing prompt_version");
 
-  const confidence = isNumber(raw.confidence)
-    ? Math.min(1, Math.max(0, raw.confidence))
-    : 0;
+  const results: EdgeInferenceOutput["results"] = [];
+  for (const entry of raw.results) {
+    if (!isObject(entry)) continue;
+    if (!isString(entry.candidate_id) || !entry.candidate_id.trim()) continue;
+    if (!isBoolean(entry.related)) continue;
+    if (!isString(entry.explanation) || !entry.explanation.trim()) continue;
 
-  let edge_type = null;
-  if (raw.related) {
-    if (!isString(raw.edge_type) || !VALID_EDGE_TYPES.has(raw.edge_type)) {
-      // Fallback to related_to rather than hard failing
-      edge_type = "related_to" as const;
-    } else {
-      edge_type = raw.edge_type as EdgeInferenceOutput["edge_type"];
+    const confidence = isNumber(entry.confidence)
+      ? Math.min(1, Math.max(0, entry.confidence))
+      : 0;
+
+    let edge_type: EdgeInferenceOutput["results"][number]["edge_type"] = null;
+    if (entry.related) {
+      if (!isString(entry.edge_type) || !VALID_EDGE_TYPES.has(entry.edge_type)) {
+        edge_type = "related_to";
+      } else {
+        edge_type = entry.edge_type as EdgeInferenceOutput["results"][number]["edge_type"];
+      }
     }
+
+    results.push({
+      candidate_id: entry.candidate_id.trim(),
+      related: entry.related,
+      edge_type,
+      confidence,
+      explanation: entry.explanation.trim(),
+    });
   }
 
   return {
-    related: raw.related as boolean,
-    edge_type,
-    confidence,
-    explanation: (raw.explanation as string).trim(),
+    results,
     prompt_version: raw.prompt_version as string,
   };
 }
@@ -367,46 +388,6 @@ export function validateEmbeddingOutput(raw: unknown): EmbeddingOutput {
   return {
     embedding: raw.embedding as number[],
     token_count: isNumber(raw.token_count) ? (raw.token_count as number) : null,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Intent router output
-// ---------------------------------------------------------------------------
-
-const VALID_INTENTS: ReadonlySet<IntentType> = new Set<IntentType>([
-  "braindump",
-  "question",
-  "plan",
-  "edit",
-  "status",
-  "unclear",
-]);
-
-export function validateIntentOutput(raw: unknown): IntentOutput {
-  if (!isObject(raw)) throw new Error("Intent output must be an object");
-  if (!isString(raw.intent) || !VALID_INTENTS.has(raw.intent as IntentType))
-    throw new Error(`Intent output has invalid intent: ${String(raw.intent)}`);
-  if (!isNumber(raw.confidence))
-    throw new Error("Intent output missing confidence");
-  if (!isString(raw.rationale))
-    throw new Error("Intent output missing rationale");
-
-  const intent = raw.intent as IntentType;
-  const clarifying =
-    isString(raw.clarifying_question) && raw.clarifying_question.trim()
-      ? raw.clarifying_question.trim()
-      : null;
-
-  return {
-    intent,
-    confidence: Math.min(1, Math.max(0, raw.confidence)),
-    rationale: raw.rationale.trim(),
-    clarifying_question: clarifying,
-    prompt_version:
-      isString(raw.prompt_version) && raw.prompt_version.trim()
-        ? raw.prompt_version
-        : "intent-v1",
   };
 }
 

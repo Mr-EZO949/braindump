@@ -63,7 +63,7 @@ export interface PlannerFixture {
     id: string;
     title: string;
     summary: string | null;
-    node_type: "task" | "project" | "concept" | "goal" | "idea" | "question" | "class" | "journal";
+    node_type: "task" | "project" | "concept" | "goal" | "idea" | "class";
   }>;
   /** Minimum number of blocks expected. */
   min_blocks: number;

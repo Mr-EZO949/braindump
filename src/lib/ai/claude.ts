@@ -18,8 +18,6 @@ import type {
   PlanOutput,
   MergeCheckInput,
   MergeCheckOutput,
-  IntentInput,
-  IntentOutput,
   AIRun,
 } from "@/types/ai";
 import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS } from "./config";
@@ -29,10 +27,12 @@ import {
   validateEdgeInferenceOutput,
   validatePlanOutput,
   validateMergeCheckOutput,
-  validateIntentOutput,
 } from "./validation";
 import { buildExtractionPrompt, EXTRACT_PROMPT_VERSION } from "./prompts/extract";
-import { buildEdgeInferencePrompt, INFER_EDGE_PROMPT_VERSION } from "./prompts/infer-edge";
+import {
+  buildEdgeInferencePromptParts,
+  INFER_EDGE_PROMPT_VERSION,
+} from "./prompts/infer-edge";
 import {
   buildAssistantSystemPrompt,
   buildAssistantUserPrompt,
@@ -40,7 +40,6 @@ import {
 } from "./prompts/assistant";
 import { buildPlanPrompt, PLAN_PROMPT_VERSION } from "./prompts/plan";
 import { buildMergeCheckPrompt, MERGE_CHECK_PROMPT_VERSION } from "./prompts/merge-check";
-import { buildIntentPrompt, INTENT_PROMPT_VERSION } from "./prompts/intent";
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -54,6 +53,13 @@ function estimateCost(inputTokens: number, outputTokens: number): number {
   return (
     (inputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT +
     (outputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT
+  );
+}
+
+function estimateHaikuCost(inputTokens: number, outputTokens: number): number {
+  return (
+    (inputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT +
+    (outputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT
   );
 }
 
@@ -202,23 +208,38 @@ export class ClaudeProvider {
   async inferEdge(
     input: EdgeInferenceInput,
   ): Promise<AIProviderResult<EdgeInferenceOutput>> {
-    const prompt = buildEdgeInferencePrompt({
+    const { rulesBlock, variableBlock } = buildEdgeInferencePromptParts({
       source_title: input.source_node.title,
       source_summary: input.source_node.summary,
-      target_title: input.target_node.title,
-      target_summary: input.target_node.summary,
+      candidates: input.candidates,
       workspace_context: input.workspace_context,
     });
+    // Hash tracks the full prompt so duplicate-detection and telemetry match
+    // what the old single-string form produced.
+    const fullPrompt = `${rulesBlock}\n\n${variableBlock}`;
 
-    const run = baseRun("infer_edge", INFER_EDGE_PROMPT_VERSION, prompt, this.modelName);
+    const run = baseRun("infer_edge", INFER_EDGE_PROMPT_VERSION, fullPrompt, this.modelName);
     const start = Date.now();
+
+    const maxTokens = Math.min(4096, 256 + input.candidates.length * 180);
 
     const response = await this.client.messages.create({
       model: this.modelName,
-      max_tokens: 512,
+      max_tokens: maxTokens,
       temperature: AI_TEMPERATURE.EDGE_INFERENCE,
       system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
-      messages: [{ role: "user", content: prompt }],
+      // Split into two user content blocks so the stable rules/rubric can hit
+      // the prompt cache on repeated calls (every edge inference in a ~5min
+      // window shares the same rules — ~700 tokens cached at 10% cost).
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: rulesBlock, cache_control: { type: "ephemeral" } },
+            { type: "text", text: variableBlock },
+          ],
+        },
+      ],
     });
 
     const text = response.content[0].type === "text" ? response.content[0].text : "{}";
@@ -321,11 +342,15 @@ export class ClaudeProvider {
       workspace_context: input.workspace_context,
     });
 
-    const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt, this.modelName);
+    // Planner runs on Haiku — time-blocking a candidate list doesn't need
+    // Sonnet-level reasoning; Haiku handles the structured JSON fine at ~1/3
+    // the input cost and ~1/3 the output cost.
+    const plannerModel = AI_MODELS.CLAUDE_HAIKU;
+    const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt, plannerModel);
     const start = Date.now();
 
     const response = await this.client.messages.create({
-      model: this.modelName,
+      model: plannerModel,
       max_tokens: 4096,
       temperature: AI_TEMPERATURE.PLANNER,
       system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
@@ -336,7 +361,7 @@ export class ClaudeProvider {
     const inputTokens = response.usage.input_tokens;
     const outputTokens = response.usage.output_tokens;
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateCost(inputTokens, outputTokens);
+    const estimatedCost = estimateHaikuCost(inputTokens, outputTokens);
 
     let output: PlanOutput;
     try {
@@ -348,7 +373,7 @@ export class ClaudeProvider {
         rawOutput: text,
         runType: "plan",
         promptVersion: PLAN_PROMPT_VERSION,
-        modelName: this.modelName,
+        modelName: plannerModel,
         inputHash: run.input_hash,
         outputHash: shortHash(text),
         inputTokens,
@@ -375,66 +400,6 @@ export class ClaudeProvider {
   // -------------------------------------------------------------------------
   // checkMerge
   // -------------------------------------------------------------------------
-
-  // -------------------------------------------------------------------------
-  // classifyIntent
-  // -------------------------------------------------------------------------
-
-  async classifyIntent(
-    input: IntentInput,
-  ): Promise<AIProviderResult<IntentOutput>> {
-    const prompt = buildIntentPrompt(input);
-    const run = baseRun("intent", INTENT_PROMPT_VERSION, prompt, this.modelName);
-    const start = Date.now();
-
-    const response = await this.client.messages.create({
-      model: this.modelName,
-      max_tokens: 256,
-      temperature: 0.1,
-      system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const text = response.content[0].type === "text" ? response.content[0].text : "{}";
-    const inputTokens = response.usage.input_tokens;
-    const outputTokens = response.usage.output_tokens;
-    const latencyMs = Date.now() - start;
-    const estimatedCost = estimateCost(inputTokens, outputTokens);
-
-    let output: IntentOutput;
-    try {
-      const parsed = JSON.parse(extractJson(text));
-      output = validateIntentOutput(parsed);
-    } catch (error) {
-      throw malformedResponse({
-        message:
-          error instanceof Error ? error.message : "Intent output was malformed",
-        rawOutput: text,
-        runType: "intent",
-        promptVersion: INTENT_PROMPT_VERSION,
-        modelName: this.modelName,
-        inputHash: run.input_hash,
-        outputHash: shortHash(text),
-        inputTokens,
-        outputTokens,
-        latencyMs,
-        estimatedCost,
-        cause: error,
-      });
-    }
-
-    return {
-      output,
-      run: {
-        ...run,
-        output_hash: shortHash(text),
-        input_tokens: inputTokens,
-        output_tokens: outputTokens,
-        latency_ms: latencyMs,
-        estimated_cost: estimatedCost,
-      },
-    };
-  }
 
   async checkMerge(input: MergeCheckInput): Promise<AIProviderResult<MergeCheckOutput>> {
     const prompt = buildMergeCheckPrompt({

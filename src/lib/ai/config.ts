@@ -26,6 +26,8 @@ export const AI_FLAGS = {
 export const AI_MODELS = {
   // Claude — production LLM
   CLAUDE_SONNET: "claude-sonnet-4-6",
+  // Haiku — cheap structured tasks (history compression, node judgment)
+  CLAUDE_HAIKU: "claude-haiku-4-5-20251001",
   // Gemini — embeddings always; also the dev-tier LLM when AI_PRIMARY_PROVIDER=gemini
   GEMINI_FAST: "gemini-2.5-flash",
   GEMINI_PRO: "gemini-2.5-pro",
@@ -113,6 +115,9 @@ export const AI_COST_PER_1M_TOKENS = {
   // Claude Sonnet 4.6 (input / output)
   CLAUDE_SONNET_INPUT: 3.0,
   CLAUDE_SONNET_OUTPUT: 15.0,
+  // Claude Haiku 4.5 (input / output)
+  CLAUDE_HAIKU_INPUT: 1.0,
+  CLAUDE_HAIKU_OUTPUT: 5.0,
   // Gemini 2.5 Flash
   GEMINI_FLASH_INPUT: 0.075,
   GEMINI_FLASH_OUTPUT: 0.3,
@@ -232,4 +237,6 @@ export const AI_RATE_LIMITS = {
   CHAT_MESSAGE_MAX_CHARS: 4_000,
   // Max characters in a semantic search query
   SEARCH_QUERY_MAX_CHARS: 500,
+  // Full-workspace AI rerank: 5 per 24h (rolling)
+  RERANK_IMPORTANCE_PER_DAY: 5,
 } as const;

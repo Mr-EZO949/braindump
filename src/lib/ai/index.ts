@@ -54,7 +54,6 @@ function init() {
     answerAssistant: (input) => llm.answerAssistant(input),
     buildPlan: (input) => llm.buildPlan(input),
     checkMerge: (input) => llm.checkMerge(input),
-    classifyIntent: (input) => llm.classifyIntent(input),
     generateEmbedding: (input) => gemini.generateEmbedding(input),
     rerankCandidates: (input) => gemini.rerankCandidates(input),
   });
