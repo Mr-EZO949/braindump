@@ -28,7 +28,12 @@ import {
   validatePlanOutput,
   validateMergeCheckOutput,
 } from "./validation";
-import { buildExtractionPrompt, EXTRACT_PROMPT_VERSION } from "./prompts/extract";
+import { buildExtractionPromptParts, EXTRACT_PROMPT_VERSION } from "./prompts/extract";
+
+// Cache the extract rubric only when the brain dump is large enough that a
+// single session is likely to trigger the 3+ repeat calls needed to beat the
+// 1.25× cache-write surcharge. Short one-shot dumps skip caching.
+const EXTRACT_CACHE_MIN_DUMP_CHARS = 2000;
 import {
   buildEdgeInferencePromptParts,
   INFER_EDGE_PROMPT_VERSION,
@@ -142,16 +147,31 @@ export class ClaudeProvider {
   async extractNodes(
     input: ExtractionInput,
   ): Promise<AIProviderResult<ExtractionOutput>> {
-    const prompt = buildExtractionPrompt(input);
-    const run = baseRun("extract", EXTRACT_PROMPT_VERSION, prompt, this.modelName);
+    const { rubricBlock, variableBlock } = buildExtractionPromptParts(input);
+    // Hash the full prompt so telemetry/input-hash matches the concatenated form.
+    const fullPrompt = `${rubricBlock}\n\n${variableBlock}`;
+    const run = baseRun("extract", EXTRACT_PROMPT_VERSION, fullPrompt, this.modelName);
     const start = Date.now();
+
+    // Gate caching on dump size — small one-shot dumps won't hit the ~3 reads
+    // needed to amortize the 1.25× cache-write cost. Large dumps signal an
+    // engaged session likely to re-extract (edits, retries, follow-ups).
+    const shouldCache = input.raw_text.length >= EXTRACT_CACHE_MIN_DUMP_CHARS;
+    const rubricContent = shouldCache
+      ? { type: "text" as const, text: rubricBlock, cache_control: { type: "ephemeral" as const } }
+      : { type: "text" as const, text: rubricBlock };
 
     const response = await this.client.messages.create({
       model: this.modelName,
       max_tokens: 8192,
       temperature: AI_TEMPERATURE.EXTRACTION,
       system: "You always respond with valid JSON only. No markdown code blocks, no extra text, no explanation — just the raw JSON object.",
-      messages: [{ role: "user", content: prompt }],
+      messages: [
+        {
+          role: "user",
+          content: [rubricContent, { type: "text", text: variableBlock }],
+        },
+      ],
     });
 
     if (response.stop_reason === "max_tokens") {
@@ -208,7 +228,7 @@ export class ClaudeProvider {
   async inferEdge(
     input: EdgeInferenceInput,
   ): Promise<AIProviderResult<EdgeInferenceOutput>> {
-    const { rulesBlock, variableBlock } = buildEdgeInferencePromptParts({
+    const { stablePrefix, variableBlock } = buildEdgeInferencePromptParts({
       source_title: input.source_node.title,
       source_summary: input.source_node.summary,
       candidates: input.candidates,
@@ -216,7 +236,7 @@ export class ClaudeProvider {
     });
     // Hash tracks the full prompt so duplicate-detection and telemetry match
     // what the old single-string form produced.
-    const fullPrompt = `${rulesBlock}\n\n${variableBlock}`;
+    const fullPrompt = `${stablePrefix}\n\n${variableBlock}`;
 
     const run = baseRun("infer_edge", INFER_EDGE_PROMPT_VERSION, fullPrompt, this.modelName);
     const start = Date.now();
@@ -228,14 +248,16 @@ export class ClaudeProvider {
       max_tokens: maxTokens,
       temperature: AI_TEMPERATURE.EDGE_INFERENCE,
       system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
-      // Split into two user content blocks so the stable rules/rubric can hit
-      // the prompt cache on repeated calls (every edge inference in a ~5min
-      // window shares the same rules — ~700 tokens cached at 10% cost).
+      // Split into two user content blocks so the stable prefix (rules +
+      // hoisted workspace context) can hit the prompt cache on repeated calls.
+      // When callers batch inferEdge and pass the same workspaceContext to
+      // every call, the prefix is ~1100–1500 tokens and stable, pushing the
+      // cached portion past Anthropic's 1024-token floor.
       messages: [
         {
           role: "user",
           content: [
-            { type: "text", text: rulesBlock, cache_control: { type: "ephemeral" } },
+            { type: "text", text: stablePrefix, cache_control: { type: "ephemeral" } },
             { type: "text", text: variableBlock },
           ],
         },

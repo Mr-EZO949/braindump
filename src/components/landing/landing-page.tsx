@@ -429,7 +429,7 @@ function ReviewShowcase() {
         <div className={styles.reviewAccentLine} />
         <h3 className={styles.reviewH3}>You approve every node.</h3>
         <p className={styles.reviewP}>
-          Nothing enters your graph until you say so.
+          Dump freely — nothing enters your workspace until you say so. No second-guessing what you wrote.
         </p>
         <div className={styles.reviewStats}>
           <div className={styles.statItem}>
@@ -770,14 +770,14 @@ export default function LandingPage() {
               transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}>
               <div className={styles.badge}>
                 <span className={styles.badgeDot} />
-                For chronically overloaded minds
+                Stop organizing. Start shipping.
               </div>
               <h1 className={styles.heroH1}>
-                Your brain is full.<br />
-                <span className={styles.gradient}>Your tools aren&apos;t helping.</span>
+                Dump your brain.<br />
+                <span className={styles.gradient}>Never lose the thread.</span>
               </h1>
               <p className={styles.heroSub}>
-                Dump everything on your mind. Find what actually matters.
+                BrainDump remembers what you&apos;re working on, what&apos;s blocking what, and what to do next. You just keep moving.
               </p>
               <div className={styles.heroActions}>
                 <WaitlistForm source="hero" />
@@ -807,28 +807,28 @@ export default function LandingPage() {
             <FadeUp className={styles.centered}>
               <span className={styles.label}>The problem</span>
               <h2 className={styles.h2}>
-                Lists flatten reality.
+                Planning is eating your day.
               </h2>
             </FadeUp>
 
             <div className={styles.problemSnippets}>
               <FadeUp delay={0.05} className={styles.problemSnippet}>
                 <span className={styles.problemSnippetNum}>01</span>
-                <p>Your stats homework blocks the ML project. Your list doesn&apos;t know.</p>
+                <p>You open your list. Fifteen things stare back. Where do you even start?</p>
               </FadeUp>
               <FadeUp delay={0.12} className={styles.problemSnippet}>
                 <span className={styles.problemSnippetNum}>02</span>
-                <p>Four tasks serve the same goal. Three of them don&apos;t matter.</p>
+                <p>You finally pick one. It was blocked the whole time. Hour gone.</p>
               </FadeUp>
               <FadeUp delay={0.19} className={styles.problemSnippet}>
                 <span className={styles.problemSnippetNum}>03</span>
-                <p>You spend an hour on the wrong thing — again.</p>
+                <p>You re-plan. You re-prioritize. You never actually start.</p>
               </FadeUp>
             </div>
 
             <FadeUp delay={0.28}>
               <p className={styles.problemPunch}>
-                The problem isn&apos;t you. Your tools flatten reality.
+                It&apos;s not the work that&apos;s hard. It&apos;s the minutes you lose deciding what to do.
               </p>
             </FadeUp>
           </div>
@@ -838,9 +838,9 @@ export default function LandingPage() {
         <section className={styles.section} id="how">
           <div className={styles.inner}>
             <FadeUp className={styles.centered}>
-              <span className={styles.label}>Human in the loop</span>
+              <span className={styles.label}>Trust, not magic</span>
               <h2 className={styles.h2}>
-                You stay in control.
+                Dump freely. Approve what sticks.
               </h2>
             </FadeUp>
 
@@ -870,12 +870,12 @@ export default function LandingPage() {
         <section className={styles.graphSection}>
           <div className={styles.inner}>
             <FadeUp className={styles.centered}>
-              <span className={styles.label}>Your knowledge, connected</span>
+              <span className={styles.label}>Context you never lose</span>
               <h2 className={styles.h2}>
-                It all fits together.
+                We remember how it all connects.
               </h2>
               <p className={styles.sectionDesc}>
-                Tasks, goals, ideas — linked automatically.
+                Blockers, goals, side projects, classes — linked the moment you dump them. So you never re-explain your life to your own tools.
               </p>
             </FadeUp>
 
@@ -892,13 +892,13 @@ export default function LandingPage() {
           <div className={styles.inner}>
             <div className={styles.assistantLayout}>
               <FadeUp className={styles.assistantInfo}>
-                <span className={styles.label}>Built-in assistant</span>
+                <span className={styles.label}>Ask about your own life</span>
                 <h2 className={styles.h2}>
-                  Ask your graph,<br />
-                  not the internet
+                  A chat that actually<br />
+                  knows what you&apos;re doing
                 </h2>
                 <p className={styles.assistantDesc}>
-                  Grounded in your nodes. No hallucinations from training data.
+                  Grounded in everything you&apos;ve dumped. No re-explaining yourself, no generic advice — just answers from your own context.
                 </p>
                 <ul className={styles.assistantList}>
                   <li>&ldquo;What&apos;s blocking my project?&rdquo;</li>
@@ -942,17 +942,17 @@ export default function LandingPage() {
           <div className={styles.inner}>
             <div className={styles.assistantLayout}>
               <FadeUp className={styles.assistantInfo}>
-                <span className={styles.label}>AI planner</span>
+                <span className={styles.label}>Stop planning your day</span>
                 <h2 className={styles.h2}>
-                  Plan the next hour.
+                  We plan. You do.
                 </h2>
                 <p className={styles.assistantDesc}>
-                  Respects priorities, blockers, and prerequisite chains.
+                  Tell us the window — an hour, an afternoon, a whole day. We know what&apos;s urgent, what&apos;s blocked, and what you&apos;ve been avoiding. You just start the timer.
                 </p>
                 <ul className={styles.assistantList}>
                   <li>1-hour, 2-hour, or full-day windows</li>
-                  <li>Focus, admin, break, buffer</li>
-                  <li>Learns from your edits</li>
+                  <li>Focus, admin, break, buffer — in the right order</li>
+                  <li>Learns from what you actually did</li>
                 </ul>
               </FadeUp>
 
@@ -989,7 +989,7 @@ export default function LandingPage() {
                 </div>
                 <div className={`${styles.diffRow} ${styles.diffRowUs}`}>
                   <span className={styles.diffWhat}>BrainDump</span>
-                  <span className={styles.diffSays}>remembers, connects, prioritizes — and gets sharper as you dump.</span>
+                  <span className={styles.diffSays}>remembers your life, knows what&apos;s next, and keeps you moving — no planning tax.</span>
                 </div>
               </div>
             </FadeUp>
@@ -1001,8 +1001,8 @@ export default function LandingPage() {
           <div className={styles.ctaGlow} aria-hidden="true" />
           <FadeUp className={styles.ctaInner}>
             <h2 className={styles.ctaH2}>
-              Your thoughts are already connected.{"\n"}
-              <span className={styles.gradient}>Let us show you how.</span>
+              Stop organizing your life.{"\n"}
+              <span className={styles.gradient}>Start living it.</span>
             </h2>
             <p className={styles.ctaSub}>Join the waitlist — we&apos;ll let you in as soon as we open up.</p>
             <div className={styles.ctaActions}>

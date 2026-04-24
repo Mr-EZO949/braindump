@@ -7,38 +7,10 @@
 
 export const EXTRACT_PROMPT_VERSION = "extract-v8";
 
-export function buildExtractionPrompt(params: {
-  raw_text: string;
-  workspace_id: string;
-  user_id: string;
-  workspace_context?: string;
-  existing_nodes?: Array<{
-    id: string;
-    title: string;
-    summary: string | null;
-    node_type: string;
-  }>;
-}): string {
-  const workspaceContextBlock = params.workspace_context
-    ? `\nWorkspace context (from onboarding + current graph):\n${params.workspace_context}\n`
-    : "";
-
-  const existingNodesBlock =
-    params.existing_nodes && params.existing_nodes.length > 0
-      ? `\nExisting workspace anchor nodes (use these IDs exactly if you attach a new node under an existing parent):\n${params.existing_nodes
-          .map((node) => {
-            const summary =
-              node.summary && node.summary.length > 140
-                ? ` — ${node.summary.slice(0, 139).trimEnd()}…`
-                : node.summary
-                  ? ` — ${node.summary}`
-                  : "";
-            return `- ${node.id}: ${node.title} [${node.node_type}]${summary}`;
-          })
-          .join("\n")}\n`
-      : "";
-
-  return `You are a knowledge graph extraction assistant. Extract a SPARSE, STRUCTURED thought graph from the brain dump below.
+// Stable rubric — identical across every extraction call at this prompt
+// version. Kept as a module constant so both Anthropic cache_control and
+// Gemini implicit caching can fingerprint the same bytes across requests.
+const RUBRIC_BLOCK = `You are a knowledge graph extraction assistant. Extract a SPARSE, STRUCTURED thought graph from the brain dump provided in the Session block below.
 
 The brain dump is a two-way conversation, not a capture funnel. If the input is vague, meta, or unanswerable as-written, it is correct to produce ZERO nodes and ask the user a clarifying question instead. Do not force low-value nodes just to have something in the array.
 
@@ -52,7 +24,6 @@ Rules:
 - source_span: copy the exact phrase or sentence from the input that led to this node. Use null for implied anchor/group nodes.
 - Node types: project | task | class | concept | idea | goal | habit
 - local_ref: assign each node a unique short ID like "n1", "n2", "n3". Other relationship fields must reference these IDs.
-${workspaceContextBlock}${existingNodesBlock}
 
 Actionability rule (IMPORTANT — apply before extracting any task):
 - A task node must describe a CONCRETE, EXECUTABLE action. The user should be able to picture doing it.
@@ -155,18 +126,14 @@ Structure rules:
 - Bad soft links: anything based only on both being academic, both being tasks, or both being in the same dump.
 - Most nodes should have zero soft links. Use at most 2 soft links per node.
 
-Brain dump:
-"""
-${params.raw_text}
-"""
-
-Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
+Respond with ONLY valid JSON matching this schema (no markdown, no explanation).
+Use the workspace_id and user_id provided in the Session block verbatim.
 {
   "proposed_nodes": [
     {
       "local_ref": "n1",
-      "workspace_id": "${params.workspace_id}",
-      "user_id": "${params.user_id}",
+      "workspace_id": "<provided workspace_id>",
+      "user_id": "<provided user_id>",
       "proposed_title": "string",
       "proposed_summary": "string or null",
       "proposed_node_type": "task | project | concept | goal | idea | class | habit",
@@ -180,11 +147,69 @@ Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
           "rationale": "string or null"
         }
       ],
-      "extraction_confidence": 0.0–1.0,
+      "extraction_confidence": 0.0,
       "source_span": "string or null"
     }
   ],
   "clarifying_questions": ["string"],
   "prompt_version": "${EXTRACT_PROMPT_VERSION}"
 }`;
+
+export interface ExtractionPromptParams {
+  raw_text: string;
+  workspace_id: string;
+  user_id: string;
+  workspace_context?: string;
+  existing_nodes?: Array<{
+    id: string;
+    title: string;
+    summary: string | null;
+    node_type: string;
+  }>;
+}
+
+function buildVariableBlock(params: ExtractionPromptParams): string {
+  const workspaceContextBlock = params.workspace_context
+    ? `\nWorkspace context (from onboarding + current graph):\n${params.workspace_context}\n`
+    : "";
+
+  const existingNodesBlock =
+    params.existing_nodes && params.existing_nodes.length > 0
+      ? `\nExisting workspace anchor nodes (use these IDs exactly if you attach a new node under an existing parent):\n${params.existing_nodes
+          .map((node) => {
+            const summary =
+              node.summary && node.summary.length > 140
+                ? ` — ${node.summary.slice(0, 139).trimEnd()}…`
+                : node.summary
+                  ? ` — ${node.summary}`
+                  : "";
+            return `- ${node.id}: ${node.title} [${node.node_type}]${summary}`;
+          })
+          .join("\n")}\n`
+      : "";
+
+  return `Session:
+workspace_id: ${params.workspace_id}
+user_id: ${params.user_id}
+${workspaceContextBlock}${existingNodesBlock}
+Brain dump:
+"""
+${params.raw_text}
+"""`;
+}
+
+// Split form — returns the stable rubric separately from the per-request
+// variable block, so callers can apply Anthropic cache_control or Gemini
+// systemInstruction to the rubric while sending the variable block fresh.
+export function buildExtractionPromptParts(params: ExtractionPromptParams): {
+  rubricBlock: string;
+  variableBlock: string;
+} {
+  return { rubricBlock: RUBRIC_BLOCK, variableBlock: buildVariableBlock(params) };
+}
+
+// Legacy single-string form — concatenates rubric + variable for callers
+// that don't care about caching.
+export function buildExtractionPrompt(params: ExtractionPromptParams): string {
+  return `${RUBRIC_BLOCK}\n\n${buildVariableBlock(params)}`;
 }

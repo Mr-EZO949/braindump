@@ -38,11 +38,11 @@ import {
   validateMergeCheckOutput,
 } from "./validation";
 import {
-  buildExtractionPrompt,
+  buildExtractionPromptParts,
   EXTRACT_PROMPT_VERSION,
 } from "./prompts/extract";
 import {
-  buildEdgeInferencePrompt,
+  buildEdgeInferencePromptParts,
   INFER_EDGE_PROMPT_VERSION,
 } from "./prompts/infer-edge";
 import {
@@ -51,11 +51,11 @@ import {
   ASSISTANT_PROMPT_VERSION,
 } from "./prompts/assistant";
 import {
-  buildPlanPrompt,
+  buildPlanPromptParts,
   PLAN_PROMPT_VERSION,
 } from "./prompts/plan";
 import {
-  buildMergeCheckPrompt,
+  buildMergeCheckPromptParts,
   MERGE_CHECK_PROMPT_VERSION,
 } from "./prompts/merge-check";
 
@@ -145,19 +145,26 @@ export class GeminiProvider implements AIProvider {
   async extractNodes(
     input: ExtractionInput
   ): Promise<AIProviderResult<ExtractionOutput>> {
-    const prompt = buildExtractionPrompt(input);
-    const run = baseRun("extract", EXTRACT_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_PRO);
+    const { rubricBlock, variableBlock } = buildExtractionPromptParts(input);
+    // Hash the concatenated form so telemetry/input_hash is stable across
+    // the split vs. single-string representations.
+    const fullPrompt = `${rubricBlock}\n\n${variableBlock}`;
+    const run = baseRun("extract", EXTRACT_PROMPT_VERSION, fullPrompt, AI_MODELS.GEMINI_PRO);
     const start = Date.now();
 
+    // Put the stable rubric in systemInstruction so Gemini 2.5's implicit
+    // cache can reuse it across calls. Only variable per-request data
+    // (session ids, workspace context, brain dump) goes in the user turn.
     const model = this.genAI.getGenerativeModel({
       model: AI_MODELS.GEMINI_PRO,
       generationConfig: {
         temperature: AI_TEMPERATURE.EXTRACTION,
         responseMimeType: "application/json",
       },
+      systemInstruction: rubricBlock,
     });
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(variableBlock);
     const response = result.response;
     const text = response.text();
     const usage = response.usageMetadata;
@@ -351,25 +358,31 @@ export class GeminiProvider implements AIProvider {
   async inferEdge(
     input: EdgeInferenceInput
   ): Promise<AIProviderResult<EdgeInferenceOutput>> {
-    const prompt = buildEdgeInferencePrompt({
+    const { stablePrefix, variableBlock } = buildEdgeInferencePromptParts({
       source_title: input.source_node.title,
       source_summary: input.source_node.summary,
       candidates: input.candidates,
       workspace_context: input.workspace_context,
     });
+    const fullPrompt = `${stablePrefix}\n\n${variableBlock}`;
 
-    const run = baseRun("infer_edge", INFER_EDGE_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_PRO);
+    const run = baseRun("infer_edge", INFER_EDGE_PROMPT_VERSION, fullPrompt, AI_MODELS.GEMINI_PRO);
     const start = Date.now();
 
+    // Stable prefix (rules + hoisted workspace context) → systemInstruction
+    // for implicit caching. A full edge-inference batch fires one call per
+    // source node, all sharing the same prefix when the caller hoists
+    // workspace_context once per batch.
     const model = this.genAI.getGenerativeModel({
       model: AI_MODELS.GEMINI_PRO,
       generationConfig: {
         temperature: AI_TEMPERATURE.EDGE_INFERENCE,
         responseMimeType: "application/json",
       },
+      systemInstruction: stablePrefix,
     });
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(variableBlock);
     const response = result.response;
     const text = response.text();
     const usage = response.usageMetadata;
@@ -470,14 +483,15 @@ export class GeminiProvider implements AIProvider {
     };
     const totalMinutes = windowMinutes[input.planning_window] ?? 60;
 
-    const prompt = buildPlanPrompt({
+    const { rubricBlock, variableBlock } = buildPlanPromptParts({
       planning_window: input.planning_window,
       total_minutes: totalMinutes,
       candidate_nodes: input.candidate_nodes,
       workspace_context: input.workspace_context,
     });
+    const fullPrompt = `${rubricBlock}\n\n${variableBlock}`;
 
-    const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt, AI_MODELS.GEMINI_PRO);
+    const run = baseRun("plan", PLAN_PROMPT_VERSION, fullPrompt, AI_MODELS.GEMINI_PRO);
     const start = Date.now();
 
     const model = this.genAI.getGenerativeModel({
@@ -486,9 +500,10 @@ export class GeminiProvider implements AIProvider {
         temperature: AI_TEMPERATURE.PLANNER,
         responseMimeType: "application/json",
       },
+      systemInstruction: rubricBlock,
     });
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(variableBlock);
     const response = result.response;
     const text = response.text();
     const usage = response.usageMetadata;
@@ -535,7 +550,7 @@ export class GeminiProvider implements AIProvider {
   async checkMerge(
     input: MergeCheckInput,
   ): Promise<AIProviderResult<MergeCheckOutput>> {
-    const prompt = buildMergeCheckPrompt({
+    const { rubricBlock, variableBlock } = buildMergeCheckPromptParts({
       new_title: input.new_node.title,
       new_summary: input.new_node.summary,
       new_type: input.new_node.node_type,
@@ -544,11 +559,12 @@ export class GeminiProvider implements AIProvider {
       existing_type: input.existing_node.node_type,
       similarity: input.similarity,
     });
+    const fullPrompt = `${rubricBlock}\n\n${variableBlock}`;
 
     const run = baseRun(
       "merge_check",
       MERGE_CHECK_PROMPT_VERSION,
-      prompt,
+      fullPrompt,
       AI_MODELS.GEMINI_PRO,
     );
     const start = Date.now();
@@ -559,9 +575,10 @@ export class GeminiProvider implements AIProvider {
         temperature: AI_TEMPERATURE.MERGE_CHECK,
         responseMimeType: "application/json",
       },
+      systemInstruction: rubricBlock,
     });
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(variableBlock);
     const response = result.response;
     const text = response.text();
     const usage = response.usageMetadata;

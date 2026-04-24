@@ -10,6 +10,7 @@ import {
   runConnectionAnalysis,
   fetchPendingEdges,
 } from "@/lib/ai/connection";
+import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
 import { generateAndStoreEmbedding } from "@/lib/ai/embeddings";
 import { detectDuplicates } from "@/lib/ai/merge";
 import { drainAIJobsWithAdminClient, enqueueAIJob } from "@/lib/ai/jobs";
@@ -165,6 +166,21 @@ export async function POST(req: NextRequest) {
     }).catch(() => {});
   }
 
+  // Build workspace context ONCE for the whole batch. Passing the same snapshot
+  // to every runConnectionAnalysis keeps the inferEdge prompt prefix stable
+  // across calls, which lets Anthropic's prompt cache hit on calls 2…N.
+  let batchWorkspaceContext: string | undefined;
+  try {
+    const context = await buildWorkspaceProfileContext({
+      workspaceId: workspace_id,
+      userId: user.id,
+      supabase,
+    });
+    batchWorkspaceContext = context.workspaceContext;
+  } catch {
+    batchWorkspaceContext = undefined;
+  }
+
   // Step 2: Run connection analysis for each node in parallel — failures are per-node.
   // Track which specific node IDs failed so the client can retry only those rather
   // than re-running the whole batch.
@@ -177,6 +193,7 @@ export async function POST(req: NextRequest) {
           workspaceId: workspace_id,
           userId: user.id,
           supabase,
+          workspaceContext: batchWorkspaceContext,
         });
         return { nodeId, ...result };
       } catch {

@@ -40,6 +40,11 @@ export async function runConnectionAnalysis(params: {
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
+  // Optional pre-built workspace context. Batch callers should build this once
+  // and pass the same snapshot to every call in the batch so the shared prefix
+  // becomes stable bytes across calls — enabling prompt-cache hits on Claude.
+  // If omitted, each call builds its own (legacy path, safe fallback).
+  workspaceContext?: string;
 }): Promise<ConnectionResult> {
   if (!AI_FLAGS.EDGE_INFERENCE_ENABLED) {
     return { proposed: 0, skipped: 0, failed: 0 };
@@ -62,16 +67,18 @@ export async function runConnectionAnalysis(params: {
 
   const sourceTitle = sourceNode.title as string;
   const sourceSummary = sourceNode.summary as string | null;
-  let workspaceContext: string | undefined;
-  try {
-    const context = await buildWorkspaceProfileContext({
-      workspaceId,
-      userId,
-      supabase,
-    });
-    workspaceContext = context.workspaceContext;
-  } catch {
-    workspaceContext = undefined;
+  let workspaceContext: string | undefined = params.workspaceContext;
+  if (workspaceContext === undefined) {
+    try {
+      const context = await buildWorkspaceProfileContext({
+        workspaceId,
+        userId,
+        supabase,
+      });
+      workspaceContext = context.workspaceContext;
+    } catch {
+      workspaceContext = undefined;
+    }
   }
 
   // 2. Ensure embedding exists (no-op if already embedded)

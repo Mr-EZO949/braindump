@@ -2,10 +2,14 @@
 // v4 evaluates the source node against ALL its top-N candidates in a single call
 // to eliminate the per-pair prompt overhead that dominated cost (≥60% of Claude spend).
 // The model sees all candidates side-by-side, which also tends to improve ranking.
-// v4.1 splits the prompt into a cacheable rules block and a variable context block
+// v4.1 split the prompt into a cacheable rules block and a variable context block
 // so repeated calls within ~5min can hit the prompt cache on the rules (~700 tok).
+// v4.2 folds workspace_context into the stable prefix. When the caller hoists
+// workspace_context to be built once per batch, the full prefix is stable bytes
+// across every inferEdge call in that batch — pushing the cached portion past
+// Anthropic's 1024-token floor and enabling cache hits on calls 2…N.
 
-export const INFER_EDGE_PROMPT_VERSION = "infer-edge-v4.1";
+export const INFER_EDGE_PROMPT_VERSION = "infer-edge-v4.2";
 
 // Stable rules/framework — caches across every edge inference call in a window.
 const RULES_BLOCK = `You are a knowledge graph assistant. Your job is to keep the graph SPARSE, USEFUL, and STRUCTURALLY READABLE.
@@ -55,16 +59,16 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   "prompt_version": "${INFER_EDGE_PROMPT_VERSION}"
 }`;
 
+function buildStablePrefix(workspace_context: string | undefined): string {
+  if (!workspace_context) return RULES_BLOCK;
+  return `${RULES_BLOCK}\n\nWorkspace context:\n${workspace_context}`;
+}
+
 function buildVariableBlock(params: {
   source_title: string;
   source_summary: string | null;
   candidates: { id: string; title: string; summary: string | null }[];
-  workspace_context?: string;
 }): string {
-  const contextBlock = params.workspace_context
-    ? `Workspace context:\n${params.workspace_context}\n\n`
-    : "";
-
   const sourceBlock = `Source node:
 Title: "${params.source_title}"${params.source_summary ? `\nSummary: ${params.source_summary}` : ""}`;
 
@@ -76,33 +80,36 @@ Title: "${params.source_title}"${params.source_summary ? `\nSummary: ${params.so
     })
     .join("\n\n");
 
-  return `${contextBlock}${sourceBlock}
+  return `${sourceBlock}
 
 Candidates (evaluate each one independently against the source):
 
 ${candidateBlock}`;
 }
 
-// Single-string form retained for non-caching providers (Gemini) and dev tools.
+// Single-string form retained for non-caching providers and dev tools.
 export function buildEdgeInferencePrompt(params: {
   source_title: string;
   source_summary: string | null;
   candidates: { id: string; title: string; summary: string | null }[];
   workspace_context?: string;
 }): string {
-  return `${RULES_BLOCK}\n\n${buildVariableBlock(params)}`;
+  const prefix = buildStablePrefix(params.workspace_context);
+  const variable = buildVariableBlock(params);
+  return `${prefix}\n\n${variable}`;
 }
 
-// Split form for Anthropic caching: the rules block is cacheable; the context
-// block varies per call.
+// Split form for providers that cache by prefix boundary.
+// stablePrefix = rules + workspace_context (stable when workspace_context is
+// hoisted once per batch). variableBlock = source + candidates (per-call).
 export function buildEdgeInferencePromptParts(params: {
   source_title: string;
   source_summary: string | null;
   candidates: { id: string; title: string; summary: string | null }[];
   workspace_context?: string;
-}): { rulesBlock: string; variableBlock: string } {
+}): { stablePrefix: string; variableBlock: string } {
   return {
-    rulesBlock: RULES_BLOCK,
+    stablePrefix: buildStablePrefix(params.workspace_context),
     variableBlock: buildVariableBlock(params),
   };
 }

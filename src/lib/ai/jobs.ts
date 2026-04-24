@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { AI_JOBS } from "@/lib/ai/config";
 import { runConnectionAnalysis } from "@/lib/ai/connection";
+import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
 import { backfillEmbeddings } from "@/lib/ai/embeddings";
 import {
   backoffDelayMs,
@@ -148,6 +149,22 @@ async function runAIJob(params: {
         throw new Error("connection_batch job missing workspace_id or node_ids");
       }
 
+      // Build workspace context ONCE for the batch — the same snapshot is
+      // threaded into every runConnectionAnalysis call so the shared prompt
+      // prefix is stable bytes, enabling Anthropic prompt-cache hits on
+      // calls 2…N within the 5-minute TTL.
+      let batchWorkspaceContext: string | undefined;
+      try {
+        const context = await buildWorkspaceProfileContext({
+          workspaceId,
+          userId: job.user_id,
+          supabase,
+        });
+        batchWorkspaceContext = context.workspaceContext;
+      } catch {
+        batchWorkspaceContext = undefined;
+      }
+
       const results = await Promise.all(
         nodeIds.map((nodeId) =>
           runConnectionAnalysis({
@@ -156,6 +173,7 @@ async function runAIJob(params: {
             workspaceId,
             userId: job.user_id,
             supabase,
+            workspaceContext: batchWorkspaceContext,
           }).catch(() => ({ proposed: 0, skipped: 0, failed: 1 })),
         ),
       );
