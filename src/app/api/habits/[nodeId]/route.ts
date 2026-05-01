@@ -1,0 +1,342 @@
+// GET  /api/habits/:nodeId — returns last N days of completions + streak
+// POST /api/habits/:nodeId — body { date: "YYYY-MM-DD" } marks that date done
+// DELETE /api/habits/:nodeId?date=YYYY-MM-DD — undoes that date
+//
+// All three require the node to be habit-typed and owned by the auth user.
+
+import { NextRequest, NextResponse } from "next/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { computeStreak, lastNDays, todayLocalISO } from "@/lib/habits/streak";
+
+const HISTORY_DAYS_DEFAULT = 30;
+const HISTORY_DAYS_MAX = 365;
+const ALLOWED_BACKFILL_DAYS = 1; // user can mark today + yesterday only
+
+function isISODate(s: unknown): s is string {
+  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function dateMinusDaysISO(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map((x) => parseInt(x, 10));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - days);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+async function loadHabitNode(
+  supabase: NonNullable<Awaited<ReturnType<typeof getSupabaseServerClient>>>,
+  nodeId: string,
+  userId: string,
+) {
+  // Try with habit_started_on first. If the column doesn't exist yet
+  // (Postgres error 42703 — undefined_column) the migration hasn't been
+  // run; fall back to the base columns so the app keeps working.
+  const primary = await supabase
+    .from("nodes")
+    .select("id, user_id, node_type, habit_started_on")
+    .eq("id", nodeId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (primary.error && primary.error.code === "42703") {
+    const fallback = await supabase
+      .from("nodes")
+      .select("id, user_id, node_type")
+      .eq("id", nodeId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (!fallback.data) return null;
+    return { ...fallback.data, habit_started_on: null as string | null };
+  }
+
+  return primary.data;
+}
+
+async function buildResponse(
+  supabase: NonNullable<Awaited<ReturnType<typeof getSupabaseServerClient>>>,
+  nodeId: string,
+  userId: string,
+  todayISO: string,
+  days: number,
+  startedOn: string | null = null,
+) {
+  const since = dateMinusDaysISO(todayISO, days);
+  const { data: rows } = await supabase
+    .from("habit_completions")
+    .select("completed_on, source")
+    .eq("node_id", nodeId)
+    .eq("user_id", userId)
+    .gte("completed_on", since)
+    .order("completed_on", { ascending: false });
+
+  const dates = (rows ?? []).map((r) => r.completed_on as string);
+  const streak = computeStreak(dates, todayISO);
+  const history = lastNDays(dates, todayISO, days);
+  return { streak, history, started_on: startedOn };
+}
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ nodeId: string }> },
+) {
+  const { nodeId } = await params;
+  const supabase = await getSupabaseServerClient();
+  if (!supabase) {
+    return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const node = await loadHabitNode(supabase, nodeId, user.id);
+  if (!node) {
+    return NextResponse.json({ error: "Node not found" }, { status: 404 });
+  }
+  if (node.node_type !== "habit") {
+    return NextResponse.json({ error: "Not a habit node" }, { status: 400 });
+  }
+
+  const { searchParams } = new URL(req.url);
+  const todayISO = searchParams.get("today") ?? todayLocalISO();
+  if (!isISODate(todayISO)) {
+    return NextResponse.json({ error: "Invalid 'today' parameter" }, { status: 400 });
+  }
+  const daysParam = parseInt(searchParams.get("days") ?? "", 10);
+  const days =
+    Number.isFinite(daysParam) && daysParam > 0
+      ? Math.min(daysParam, HISTORY_DAYS_MAX)
+      : HISTORY_DAYS_DEFAULT;
+
+  const payload = await buildResponse(
+    supabase,
+    nodeId,
+    user.id,
+    todayISO,
+    days,
+    (node as { habit_started_on?: string | null }).habit_started_on ?? null,
+  );
+  return NextResponse.json(payload);
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ nodeId: string }> },
+) {
+  const { nodeId } = await params;
+  const supabase = await getSupabaseServerClient();
+  if (!supabase) {
+    return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const node = await loadHabitNode(supabase, nodeId, user.id);
+  if (!node) {
+    return NextResponse.json({ error: "Node not found" }, { status: 404 });
+  }
+  if (node.node_type !== "habit") {
+    return NextResponse.json({ error: "Not a habit node" }, { status: 400 });
+  }
+
+  let body: unknown = {};
+  try {
+    body = await req.json();
+  } catch {
+    // empty body is fine — defaults to today
+  }
+  const requestedDate = (body as { date?: unknown })?.date;
+  const todayISO = todayLocalISO();
+  const dateToMark = isISODate(requestedDate) ? requestedDate : todayISO;
+
+  // Only allow today and yesterday — backfill any further breaks the
+  // honesty of streaks. Users can override by passing a custom client TZ
+  // via `today=` on GET; that doesn't affect this validation.
+  const earliest = dateMinusDaysISO(todayISO, ALLOWED_BACKFILL_DAYS);
+  if (dateToMark < earliest || dateToMark > todayISO) {
+    return NextResponse.json(
+      { error: `Date out of range. Allowed: ${earliest} to ${todayISO}` },
+      { status: 400 },
+    );
+  }
+
+  // Idempotent insert: the unique constraint on (node_id, completed_on)
+  // means re-tapping the same day is a no-op. We swallow the duplicate
+  // error rather than return 409 so the UI just feels "already done".
+  const { error: insertError } = await supabase.from("habit_completions").insert({
+    user_id: user.id,
+    node_id: nodeId,
+    completed_on: dateToMark,
+    source: "manual",
+  });
+  // Postgres unique-violation code is 23505. Anything else surfaces as 500.
+  if (insertError && insertError.code !== "23505") {
+    console.error("[habits] insert failed", insertError);
+    return NextResponse.json({ error: insertError.message }, { status: 500 });
+  }
+
+  // Cascade to plan_tasks scheduled for that date — keeps habits ↔ planner
+  // in sync. A habit ticked off in the calendar should check off the
+  // matching planner row, and vice-versa via the status route.
+  const { data: doneTasks } = await supabase
+    .from("plan_tasks")
+    .update({ done: true })
+    .eq("user_id", user.id)
+    .eq("node_id", nodeId)
+    .eq("scheduled_date", dateToMark)
+    .eq("done", false)
+    .select("id");
+  const updatedTaskIds = (doneTasks ?? []).map((row) => row.id as string);
+
+  const payload = await buildResponse(
+    supabase,
+    nodeId,
+    user.id,
+    todayISO,
+    HISTORY_DAYS_DEFAULT,
+    (node as { habit_started_on?: string | null }).habit_started_on ?? null,
+  );
+  return NextResponse.json({ ...payload, updated_task_ids: updatedTaskIds });
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ nodeId: string }> },
+) {
+  const { nodeId } = await params;
+  const supabase = await getSupabaseServerClient();
+  if (!supabase) {
+    return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const node = await loadHabitNode(supabase, nodeId, user.id);
+  if (!node) {
+    return NextResponse.json({ error: "Node not found" }, { status: 404 });
+  }
+  if (node.node_type !== "habit") {
+    return NextResponse.json({ error: "Not a habit node" }, { status: 400 });
+  }
+
+  const { searchParams } = new URL(req.url);
+  const dateParam = searchParams.get("date");
+  const todayISO = todayLocalISO();
+  const dateToDelete = isISODate(dateParam) ? dateParam : todayISO;
+
+  await supabase
+    .from("habit_completions")
+    .delete()
+    .eq("node_id", nodeId)
+    .eq("user_id", user.id)
+    .eq("completed_on", dateToDelete);
+
+  // Reverse the planner cascade: any plan_task scheduled for that date and
+  // linked to this habit gets un-marked.
+  const { data: reopenedTasks } = await supabase
+    .from("plan_tasks")
+    .update({ done: false })
+    .eq("user_id", user.id)
+    .eq("node_id", nodeId)
+    .eq("scheduled_date", dateToDelete)
+    .eq("done", true)
+    .select("id");
+  const updatedTaskIds = (reopenedTasks ?? []).map((row) => row.id as string);
+
+  const payload = await buildResponse(
+    supabase,
+    nodeId,
+    user.id,
+    todayISO,
+    HISTORY_DAYS_DEFAULT,
+    (node as { habit_started_on?: string | null }).habit_started_on ?? null,
+  );
+  return NextResponse.json({ ...payload, updated_task_ids: updatedTaskIds });
+}
+
+// PATCH /api/habits/:nodeId — body { started_on: "YYYY-MM-DD" | null }
+// Sets or clears the habit's per-user start date. Stats math anchors here.
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ nodeId: string }> },
+) {
+  const { nodeId } = await params;
+  const supabase = await getSupabaseServerClient();
+  if (!supabase) {
+    return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const node = await loadHabitNode(supabase, nodeId, user.id);
+  if (!node) {
+    return NextResponse.json({ error: "Node not found" }, { status: 404 });
+  }
+  if (node.node_type !== "habit") {
+    return NextResponse.json({ error: "Not a habit node" }, { status: 400 });
+  }
+
+  let body: unknown = {};
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const requested = (body as { started_on?: unknown })?.started_on;
+  let startedOn: string | null;
+  if (requested === null || requested === "") {
+    startedOn = null;
+  } else if (isISODate(requested)) {
+    startedOn = requested;
+  } else {
+    return NextResponse.json(
+      { error: "started_on must be YYYY-MM-DD or null" },
+      { status: 400 },
+    );
+  }
+
+  const todayISO = todayLocalISO();
+  if (startedOn !== null && startedOn > todayISO) {
+    return NextResponse.json(
+      { error: "started_on cannot be in the future" },
+      { status: 400 },
+    );
+  }
+
+  const { error: updateError } = await supabase
+    .from("nodes")
+    .update({ habit_started_on: startedOn })
+    .eq("id", nodeId)
+    .eq("user_id", user.id);
+
+  if (updateError) {
+    return NextResponse.json({ error: updateError.message }, { status: 500 });
+  }
+
+  const payload = await buildResponse(
+    supabase,
+    nodeId,
+    user.id,
+    todayISO,
+    HISTORY_DAYS_DEFAULT,
+    startedOn,
+  );
+  return NextResponse.json(payload);
+}

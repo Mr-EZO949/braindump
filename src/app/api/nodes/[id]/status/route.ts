@@ -384,6 +384,65 @@ export async function PATCH(
     updatedNodes = updatedNode ? [updatedNode] : [];
   }
 
+  // Cascade to plan_tasks: keep planner ↔ graph in sync.
+  // - When a node transitions to "completed", mark all linked plan_tasks done.
+  // - When it transitions FROM "completed" to anything else, un-mark them.
+  // This includes the auto-completed belongs_to descendants from the cascade
+  // above (so completing a parent project also checks off all its task rows).
+  const cascadedNodeIds = (updatedNodes as Array<{ id?: string | null }>)
+    .map((n) => (typeof n?.id === "string" ? n.id : null))
+    .filter((id): id is string => id !== null);
+
+  let updatedTaskIds: string[] = [];
+  if (cascadedNodeIds.length > 0) {
+    if (newStatus === "completed") {
+      const { data: doneTasks } = await supabase
+        .from("plan_tasks")
+        .update({ done: true })
+        .in("node_id", cascadedNodeIds)
+        .eq("user_id", user.id)
+        .eq("done", false)
+        .select("id");
+      updatedTaskIds = (doneTasks ?? []).map((row) => row.id as string);
+    } else if (previousStatus === "completed") {
+      // Coming back from completed — un-mark linked plan_tasks.
+      const { data: reopenedTasks } = await supabase
+        .from("plan_tasks")
+        .update({ done: false })
+        .in("node_id", cascadedNodeIds)
+        .eq("user_id", user.id)
+        .eq("done", true)
+        .select("id");
+      updatedTaskIds = (reopenedTasks ?? []).map((row) => row.id as string);
+    }
+  }
+
+  // Cascade to habit_completions: when a habit-typed node transitions to
+  // "completed", auto-log today's habit_completion (idempotent — the unique
+  // (node_id, completed_on) constraint swallows duplicates). We do NOT
+  // auto-delete on reopen — the user re-opening a habit node today shouldn't
+  // wipe their streak history. They can manually unmark via the habit panel.
+  if (newStatus === "completed") {
+    const habitNodeIds = (updatedNodes as Array<{ id?: string | null; node_type?: string | null }>)
+      .filter((n) => n.node_type === "habit" && typeof n.id === "string")
+      .map((n) => n.id as string);
+
+    if (habitNodeIds.length > 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      const inserts = habitNodeIds.map((nodeId) => ({
+        user_id: user.id,
+        node_id: nodeId,
+        completed_on: today,
+        source: "plan_task",
+      }));
+      // Use upsert with ignoreDuplicates so an already-logged habit for today
+      // doesn't fail the request.
+      await supabase
+        .from("habit_completions")
+        .upsert(inserts, { onConflict: "node_id,completed_on", ignoreDuplicates: true });
+    }
+  }
+
   return NextResponse.json({
     node_id: id,
     status: newStatus,
@@ -396,5 +455,6 @@ export async function PATCH(
     auto_reopened_node_ids: autoReopenedNodeIds,
     newly_available: [...new Map(newlyAvailable.map((item) => [item.id, item])).values()],
     recomputed_scores: recomputedScores,
+    updated_task_ids: updatedTaskIds,
   });
 }
