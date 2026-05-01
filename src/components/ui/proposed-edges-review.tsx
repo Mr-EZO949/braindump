@@ -79,15 +79,26 @@ export function ProposedEdgesReview({ edges, onConfirm, onDismiss }: Props) {
 
                 {/* Content */}
                 <div className="per-body">
-                  {/* Nodes row */}
+                  {/* Nodes row — neutral pills with small color dots so type
+                      reads at a glance without painting the whole modal. */}
                   <div className="per-nodes-row">
-                    <span className="per-node-pill" style={{ borderColor: srcColor, color: srcColor }}>
+                    <span className="per-node-pill">
+                      <span
+                        className="per-node-pill-dot"
+                        style={{ background: srcColor }}
+                        aria-hidden="true"
+                      />
                       {edge.source_title}
                     </span>
                     <span className="per-arrow">→</span>
                     <span className="per-edge-type">{edge.edge_type.replace(/_/g, " ")}</span>
                     <span className="per-arrow">→</span>
-                    <span className="per-node-pill" style={{ borderColor: tgtColor, color: tgtColor }}>
+                    <span className="per-node-pill">
+                      <span
+                        className="per-node-pill-dot"
+                        style={{ background: tgtColor }}
+                        aria-hidden="true"
+                      />
                       {edge.target_title}
                     </span>
                   </div>
@@ -100,13 +111,9 @@ export function ProposedEdgesReview({ edges, onConfirm, onDismiss }: Props) {
                   {/* Meta */}
                   <div className="per-meta">
                     <span className="per-conf">{pct}% confidence</span>
-                    <span className="per-type-tag" style={{ color: srcColor }}>
-                      {edge.source_node_type}
-                    </span>
+                    <span className="per-type-tag">{edge.source_node_type}</span>
                     <span className="per-meta-sep">·</span>
-                    <span className="per-type-tag" style={{ color: tgtColor }}>
-                      {edge.target_node_type}
-                    </span>
+                    <span className="per-type-tag">{edge.target_node_type}</span>
                   </div>
                 </div>
               </div>

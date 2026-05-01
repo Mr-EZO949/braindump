@@ -99,9 +99,14 @@ interface ProposedNodesReviewProps {
   onClose: () => void;
   submitting: boolean;
   // Questions the extractor raised about vague or ambiguous fragments — shown
-  // above the node list. Clicking one opens chat seeded with the question.
+  // above the node list. Each gets an inline reply input; answered ones
+  // hand a Q→A pair to the chat rail in the background. Unanswered ones
+  // get auto-dispatched to chat after the modal closes.
   clarifyingQuestions?: string[];
-  onAnswerQuestion?: (question: string) => void;
+  // Called the first time the user submits an inline answer to a question.
+  // The parent records which question/answer pairs have already been sent
+  // to chat so unanswered ones can be dispatched on close.
+  onAnswerInline?: (question: string, answer: string) => void;
 }
 
 export function ProposedNodesReview({
@@ -111,10 +116,27 @@ export function ProposedNodesReview({
   onClose,
   submitting,
   clarifyingQuestions = [],
-  onAnswerQuestion,
+  onAnswerInline,
 }: ProposedNodesReviewProps) {
   const hasQuestions = clarifyingQuestions.length > 0;
   const hasProposals = proposals.length > 0;
+  // Per-question answer state. Each question's draft + submitted state is
+  // tracked separately; once submitted we collapse the input into a small
+  // "→ answer" stub so the user knows it landed in chat.
+  const [answerDrafts, setAnswerDrafts] = useState<Record<number, string>>({});
+  const [answeredAt, setAnsweredAt] = useState<Record<number, string>>({});
+
+  function submitAnswer(idx: number, question: string) {
+    const answer = (answerDrafts[idx] ?? "").trim();
+    if (!answer) return;
+    onAnswerInline?.(question, answer);
+    setAnsweredAt((prev) => ({ ...prev, [idx]: answer }));
+    setAnswerDrafts((prev) => {
+      const next = { ...prev };
+      delete next[idx];
+      return next;
+    });
+  }
   // Build list of existing nodes for duplicate checking
   const existingNodeList = useMemo(
     () => Object.entries(existingNodeTitles).map(([id, title]) => ({ id, title })),
@@ -260,21 +282,54 @@ export function ProposedNodesReview({
             </span>
           </div>
           <ul className="prn-questions-list">
-            {clarifyingQuestions.map((q, i) => (
-              <li key={i} className="prn-question">
-                <span className="prn-question-text">{q}</span>
-                {onAnswerQuestion && (
-                  <button
-                    className="prn-question-reply"
-                    onClick={() => onAnswerQuestion(q)}
-                    type="button"
-                  >
-                    Answer in chat
-                  </button>
-                )}
-              </li>
-            ))}
+            {clarifyingQuestions.map((q, i) => {
+              const submitted = answeredAt[i];
+              return (
+                <li key={i} className="prn-question">
+                  <span className="prn-question-text">{q}</span>
+                  {submitted ? (
+                    <span className="prn-question-answer" title="Sent to chat">
+                      <span className="prn-question-answer-arrow" aria-hidden="true">→</span>
+                      {submitted}
+                    </span>
+                  ) : (
+                    <div className="prn-question-replyrow">
+                      <input
+                        className="prn-question-input"
+                        type="text"
+                        placeholder="answer here…"
+                        value={answerDrafts[i] ?? ""}
+                        onChange={(e) =>
+                          setAnswerDrafts((prev) => ({ ...prev, [i]: e.target.value }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            submitAnswer(i, q);
+                          }
+                        }}
+                        maxLength={400}
+                      />
+                      <button
+                        type="button"
+                        className="prn-question-send"
+                        onClick={() => submitAnswer(i, q)}
+                        disabled={!(answerDrafts[i] ?? "").trim()}
+                        aria-label="Send answer to chat"
+                      >
+                        ↵
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
+          <p className="prn-questions-hint">
+            Type a quick answer and hit enter — it threads into chat in the
+            background. Anything you skip surfaces in chat after you&rsquo;re
+            done reviewing.
+          </p>
         </div>
       )}
 
