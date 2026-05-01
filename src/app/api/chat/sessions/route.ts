@@ -121,6 +121,15 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (error || !data) {
+      console.error("[chat/sessions] update failed", {
+        sessionId: id,
+        userId: user.id,
+        workspaceId: workspace_id,
+        error: error?.message,
+        details: error?.details,
+        hint: error?.hint,
+        code: error?.code,
+      });
       return NextResponse.json({ error: error?.message ?? "Session not found" }, { status: 404 });
     }
     return NextResponse.json({ session: data });
@@ -133,6 +142,15 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error || !data) {
+    console.error("[chat/sessions] insert failed", {
+      userId: user.id,
+      workspaceId: workspace_id,
+      messageCount: trimmed.length,
+      error: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+      code: error?.code,
+    });
     return NextResponse.json({ error: error?.message ?? "Insert failed" }, { status: 500 });
   }
   return NextResponse.json({ session: data });

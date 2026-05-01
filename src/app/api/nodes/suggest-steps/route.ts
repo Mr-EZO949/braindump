@@ -60,9 +60,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  if (!["goal", "project", "habit"].includes(node_type)) {
-    return NextResponse.json({ error: "Steps only supported for goals, projects, and habits" }, { status: 400 });
-  }
+  // Accept any node type — the user explicitly asked for a breakdown, so
+  // even a "concept" or "task" or "idea" gets its own roadmap. The model's
+  // output will land in the standard review queue regardless.
 
   // Verify workspace ownership
   const { data: workspace } = await supabase

@@ -2,6 +2,8 @@
 
 import React, { useEffect, useCallback, useMemo, useRef, useState } from "react";
 import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CloseIcon,
   PencilIcon,
   PlusIcon,
@@ -12,7 +14,7 @@ import {
   type PlannerState,
 } from "@/components/panel/planner-panel";
 import type { PlanBlock, PlanSession, PlanningWindow } from "@/types/ai";
-import type { GraphData } from "@/types/graph";
+import type { GraphData, NodeStatus } from "@/types/graph";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -1101,20 +1103,72 @@ type AssistantModeProps = {
   graphData: GraphData;
   selectedNodeId: string | null;
   workspaceId: string | null;
+  // Bumped by app-shell whenever the graph side cascades plan_tasks — we
+  // re-fetch the tasks list so the planner reflects auto-toggled rows.
+  tasksRefreshKey?: number;
   onAskInChat?: (message: string) => void;
+  // Called after the planner toggles a task that has a linked graph node,
+  // so app-shell can mirror the new status into its local graphData state
+  // (avoids a refetch and keeps the graph view consistent in real time).
+  onLinkedNodeStatusChange?: (nodeId: string, nextStatus: NodeStatus) => void;
 };
 
 export function AssistantMode({
   graphData,
   selectedNodeId,
   workspaceId,
+  tasksRefreshKey,
   onAskInChat,
+  onLinkedNodeStatusChange,
 }: AssistantModeProps) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const planTaskSelectClause =
     "id, title, done, scheduled_date, start_time, duration_minutes, created_at, node_id";
   const today = toDateString(new Date());
-  const weekDays = getWeekDays(new Date());
+
+  // Week anchor — drives which 7-day window the strip displays. Defaults to
+  // the current week. Prev/Next buttons step it ±7 days; Today snaps back.
+  const [weekAnchor, setWeekAnchor] = useState<Date>(() => new Date());
+  const weekDays = useMemo(() => getWeekDays(weekAnchor), [weekAnchor]);
+  const weekRangeLabel = useMemo(() => {
+    const start = weekDays[0];
+    const end = weekDays[6];
+    const sameMonth = start.getMonth() === end.getMonth();
+    const startLabel = start.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+    const endLabel = end.toLocaleDateString(
+      undefined,
+      sameMonth ? { day: "numeric" } : { month: "short", day: "numeric" },
+    );
+    return `${startLabel} – ${endLabel}`;
+  }, [weekDays]);
+  const isCurrentWeek = useMemo(() => {
+    const todays = getWeekDays(new Date());
+    return toDateString(todays[0]) === toDateString(weekDays[0]);
+  }, [weekDays]);
+
+  const handlePrevWeek = useCallback(() => {
+    setWeekAnchor((prev) => {
+      const next = new Date(prev);
+      next.setDate(prev.getDate() - 7);
+      return next;
+    });
+  }, []);
+
+  const handleNextWeek = useCallback(() => {
+    setWeekAnchor((prev) => {
+      const next = new Date(prev);
+      next.setDate(prev.getDate() + 7);
+      return next;
+    });
+  }, []);
+
+  const handleJumpToToday = useCallback(() => {
+    setWeekAnchor(new Date());
+    setSelectedDate(today);
+  }, [today]);
 
   // Manual task state
   const [tasks, setTasks] = useState<PlanTask[]>([]);
@@ -1214,7 +1268,19 @@ export function AssistantMode({
     return () => {
       active = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadPersistedTasks, today, workspaceId]);
+
+  // Light-touch refresh — re-pull tasks when the parent shell signals a
+  // server-side cascade (graph completion auto-toggling linked plan_tasks).
+  // Skip the very first render so we don't double-fetch with the loader above.
+  useEffect(() => {
+    if (tasksRefreshKey === undefined) return;
+    if (tasksRefreshKey === 0) return;
+    void loadPersistedTasks().catch(() => {
+      // ignore — next interaction will retry
+    });
+  }, [tasksRefreshKey, loadPersistedTasks]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -1431,12 +1497,16 @@ export function AssistantMode({
         );
       }
 
-      // Phase 10.3 — mark linked graph node as completed when task is checked off
+      // Phase 10.3 — mark linked graph node as completed when task is checked off.
+      // Notify the parent shell so it can update its cached graphData immediately,
+      // not just after a refetch.
       if (task.node_id) {
+        const nextStatus: NodeStatus = nowDone ? "completed" : "active";
+        onLinkedNodeStatusChange?.(task.node_id, nextStatus);
         void fetch(`/api/nodes/${task.node_id}/status`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: nowDone ? "completed" : "active" }),
+          body: JSON.stringify({ status: nextStatus }),
         });
       }
     },
@@ -1780,6 +1850,40 @@ export function AssistantMode({
             />
           ) : (
             <>
+              {/* Week navigation header */}
+              <div className="week-nav">
+                <button
+                  type="button"
+                  className="week-nav-btn"
+                  onClick={handlePrevWeek}
+                  aria-label="Previous week"
+                  title="Previous week"
+                >
+                  <ChevronLeftIcon className="h-[14px] w-[14px]" />
+                </button>
+                <span className="week-nav-label">
+                  {isCurrentWeek ? "This week" : weekRangeLabel}
+                  {!isCurrentWeek ? (
+                    <button
+                      type="button"
+                      className="week-nav-jump-today"
+                      onClick={handleJumpToToday}
+                    >
+                      Jump to today
+                    </button>
+                  ) : null}
+                </span>
+                <button
+                  type="button"
+                  className="week-nav-btn"
+                  onClick={handleNextWeek}
+                  aria-label="Next week"
+                  title="Next week"
+                >
+                  <ChevronRightIcon className="h-[14px] w-[14px]" />
+                </button>
+              </div>
+
               {/* Week strip */}
               <div className="week-strip">
                 {weekDays.map((day, i) => {
