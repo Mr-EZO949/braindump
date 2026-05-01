@@ -8,6 +8,7 @@ import { getLinkedNodePerspectives, type LinkedNodePerspective } from "@/lib/gra
 import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { ChatRichText } from "@/components/ui/chat-rich-text";
 import { PendingActionCard } from "@/components/panel/pending-action-card";
+import { HabitStreak } from "@/components/panel/habit-streak";
 import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/types/chat";
 import type { GraphData, NodeStatus } from "@/types/graph";
 import type { ChatSessionMeta } from "@/lib/chat/sessions";
@@ -61,6 +62,8 @@ type ContextRailProps = {
   onSelectNudge: (nudge: Nudge) => void;
   onSelectPrompt: (prompt: string) => void;
   onFindConnections: (nodeId: string) => void;
+  onSuggestSteps?: (nodeId: string) => void;
+  suggestStepsBusy?: boolean;
   onStatusChange: (nodeId: string, status: NodeStatus) => void;
   onSelectLinkedNode: (nodeId: string) => void;
   onSetActiveTab: (tab: RailTab) => void;
@@ -94,6 +97,8 @@ export function ContextRail({
   onChatInputChange,
   onClearChatScope,
   onFindConnections,
+  onSuggestSteps,
+  suggestStepsBusy,
   onStatusChange,
   onRetryChat,
   onResolvePendingAction,
@@ -118,6 +123,7 @@ export function ContextRail({
 }: ContextRailProps) {
   const promptSuggestions = getSuggestedPrompts(chatScope);
   const linkedNodes = getLinkedNodePerspectives(graphData, selectedNode?.id ?? null);
+  const isHabitNode = selectedNode?.node_type === "habit";
   const linkedGroups = groupLinkedNodes(linkedNodes);
 
   return (
@@ -197,7 +203,6 @@ export function ContextRail({
                   <button
                     className="chat-history-bar-btn"
                     data-active={chatHistoryOpen}
-                    disabled={chatSessions.length === 0}
                     onClick={onToggleChatHistory}
                     type="button"
                   >
@@ -207,6 +212,12 @@ export function ContextRail({
                     ) : null}
                   </button>
                 </div>
+
+                {chatHistoryOpen && chatSessions.length === 0 ? (
+                  <div className="chat-history-empty">
+                    No past chats yet — they appear here once you&apos;ve had a conversation.
+                  </div>
+                ) : null}
 
                 {chatHistoryOpen && chatSessions.length > 0 ? (
                   <ul className="chat-history-list">
@@ -485,6 +496,14 @@ export function ContextRail({
                     );
                   })()}
 
+                  {/* Habit streak — only for habit-typed nodes */}
+                  {isHabitNode ? (
+                    <>
+                      <div className="detail-divider" />
+                      <HabitStreak nodeId={selectedNode.id} />
+                    </>
+                  ) : null}
+
                   {/* Divider */}
                   <div className="detail-divider" />
 
@@ -521,6 +540,18 @@ export function ContextRail({
                     >
                       Find links
                     </button>
+
+                    {onSuggestSteps ? (
+                      <button
+                        className="detail-action-pill"
+                        onClick={() => onSuggestSteps(selectedNode.id)}
+                        type="button"
+                        disabled={suggestStepsBusy}
+                        title="Generate a roadmap of concrete sub-tasks for this node"
+                      >
+                        {suggestStepsBusy ? "Suggesting…" : "Suggest steps"}
+                      </button>
+                    ) : null}
 
                     {(!selectedNode.status || selectedNode.status === "active") && (
                       <button

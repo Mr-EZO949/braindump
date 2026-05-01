@@ -6,10 +6,13 @@ import { AnimatePresence, motion } from "framer-motion";
 
 import { MainStage } from "@/components/graph/main-stage";
 import { AssistantMode as AssistantModeView } from "@/components/assistant/assistant-mode";
+import { TodosView } from "@/components/ui/todos-view";
+import { HabitsView } from "@/components/ui/habits-view";
+import { RoadmapView } from "@/components/ui/roadmap-view";
 import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
 import { WhatNowDialog } from "@/components/ui/what-now-dialog";
-import { DailyBriefOverlay } from "@/components/ui/daily-brief-overlay";
+import { WeeklyReflectionModal } from "@/components/ui/weekly-reflection-modal";
 import {
   listChatSessions,
   loadChatSession,
@@ -97,6 +100,7 @@ const defaultCreateNodeDraft: CreateNodeInput = {
   raw_text: "",
   summary: "",
   title: "",
+  target_date: "",
 };
 
 const nodeColorByType: Record<Exclude<CreateNodeInput["node_type"], "custom">, string> = {
@@ -143,6 +147,7 @@ function createDraftFromNode(node: Node): CreateNodeInput {
     raw_text: node.raw_text ?? "",
     summary: node.summary ?? "",
     title: node.title,
+    target_date: typeof node.target_date === "string" ? node.target_date : "",
   };
 }
 
@@ -186,34 +191,17 @@ function writeChatHistory(
   }
 }
 
-function getDailyBriefKey(userId: string | null): string | null {
-  if (!userId) return null;
-  return `brain-dump:daily-brief-shown:${userId}`;
-}
-
-function shouldShowDailyBrief(userId: string | null): boolean {
-  if (typeof window === "undefined") return false;
-  const key = getDailyBriefKey(userId);
-  if (!key) return false;
-  try {
-    const last = window.localStorage.getItem(key);
-    const today = new Date().toISOString().slice(0, 10);
-    return last !== today;
-  } catch {
-    return false;
+// Weekly reflection unlocks on Sunday (JS Date.getDay() === 0). For dev/QA,
+// localStorage flag `dev:unlock-weekly=1` overrides the check.
+function isWeeklyReflectionAvailable(now = new Date()): boolean {
+  if (typeof window !== "undefined") {
+    try {
+      if (window.localStorage.getItem("dev:unlock-weekly") === "1") return true;
+    } catch {
+      // ignore
+    }
   }
-}
-
-function markDailyBriefShown(userId: string | null): void {
-  if (typeof window === "undefined") return;
-  const key = getDailyBriefKey(userId);
-  if (!key) return;
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    window.localStorage.setItem(key, today);
-  } catch {
-    // Ignore.
-  }
+  return now.getDay() === 0;
 }
 
 function getChatSessionIdKey(userId: string | null, workspaceId: string | null): string | null {
@@ -284,7 +272,12 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [brainDumpError, setBrainDumpError] = useState<string | null>(null);
   const [brainDumpFailedEntryId, setBrainDumpFailedEntryId] = useState<string | null>(null);
   const [whatNowOpen, setWhatNowOpen] = useState(false);
-  const [dailyBriefOpen, setDailyBriefOpen] = useState(false);
+  const [weeklyReflectionOpen, setWeeklyReflectionOpen] = useState(false);
+  // Bumped whenever the server cascades plan_tasks updates (e.g. graph
+  // completion auto-marked a linked task). The planner subscribes via prop
+  // and re-loads its tasks list when the key changes — keeps the two views
+  // in sync without a full page refresh.
+  const [plannerRefreshKey, setPlannerRefreshKey] = useState(0);
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
   const [proposedNodesSubmitting, setProposedNodesSubmitting] = useState(false);
@@ -293,6 +286,12 @@ export function AppShell({ initialUser }: AppShellProps) {
   // text so the chat seed can echo the full context.
   const [clarifyingQuestions, setClarifyingQuestions] = useState<string[]>([]);
   const [lastDumpRawText, setLastDumpRawText] = useState<string>("");
+  // Flag set when the proposed-nodes review was opened by the bootstrap
+  // wizard handoff. We use it to skip the auto suggest-steps modal +
+  // post-acceptance connection analysis so a first dump doesn't dogpile
+  // the user with three modals + several Sonnet calls. They can still
+  // trigger suggest-steps manually from any node's details panel.
+  const [proposalsFromBootstrap, setProposalsFromBootstrap] = useState(false);
   const [stepSuggestionNodes, setStepSuggestionNodes] = useState<Array<{ id: string; title: string; summary: string | null; node_type: string }>>([]);
   const [stepSuggestionOpen, setStepSuggestionOpen] = useState(false);
   const [stepSuggestionLoading, setStepSuggestionLoading] = useState(false);
@@ -667,6 +666,12 @@ export function AppShell({ initialUser }: AppShellProps) {
   }, [authUser?.id, selectedWorkspaceId, workspaces.length]);
 
   useEffect(() => {
+    // Workspace-switch reset. Keyed on selectedWorkspaceId (stable across
+    // a workspace's lifetime) rather than workspaceName — the latter
+    // briefly resolves from "General" → the actual name during bootstrap,
+    // which would re-run this effect mid-flow and wipe any in-flight chat
+    // messages (e.g. inline answers from the proposed-nodes review) that
+    // hadn't been flushed to localStorage yet.
     setSelectedNodeId(null);
     setGraphSearchValue("");
     setRailChatInput("");
@@ -689,7 +694,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     setEdgeUpdateSubmittingId(null);
     setChatScope(createWorkspaceScope(workspaceName));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceName]);
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     writeChatHistory(authUser?.id ?? null, selectedWorkspaceId, chatMessages);
@@ -737,16 +742,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     };
   }, [authUser?.id, selectedWorkspaceId, chatMessages, chatScope]);
 
-  // Daily brief — show once per day on first app open, after auth + workspace
-  // are loaded. Skipped while onboarding (welcome screen or bootstrap wizard).
-  useEffect(() => {
-    if (!authUser?.id || !selectedWorkspaceId) return;
-    if (showWelcome || bootstrapWorkspaceId || showTour) return;
-    if (!shouldShowDailyBrief(authUser.id)) return;
-    setDailyBriefOpen(true);
-    markDailyBriefShown(authUser.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUser?.id, selectedWorkspaceId, showWelcome, bootstrapWorkspaceId, showTour]);
 
   // Load the list of past sessions when workspace changes. The workspace-switch
   // effect above already sets chatSessionId from localStorage, so we only
@@ -1402,6 +1397,12 @@ export function AppShell({ initialUser }: AppShellProps) {
     setCreateNodeSubmitting(true);
     setCreateNodeError(null);
 
+    const trimmedTargetDate = createNodeDraft.target_date.trim();
+    const targetDate =
+      trimmedTargetDate.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(trimmedTargetDate)
+        ? trimmedTargetDate
+        : null;
+
     const payload = {
       color:
         createNodeDraft.node_type === "custom"
@@ -1413,6 +1414,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       raw_text: createNodeDraft.raw_text.trim() || null,
       summary: createNodeDraft.summary.trim() || null,
       title,
+      target_date: targetDate,
       user_id: authUser.id,
       workspace_id: selectedWorkspaceId,
     };
@@ -1474,6 +1476,14 @@ export function AppShell({ initialUser }: AppShellProps) {
     setEditNodeSubmitting(true);
     setEditNodeError(null);
 
+    const trimmedTargetDate = editNodeDraft.target_date.trim();
+    const targetDate =
+      trimmedTargetDate.length === 0
+        ? null
+        : /^\d{4}-\d{2}-\d{2}$/.test(trimmedTargetDate)
+          ? trimmedTargetDate
+          : null;
+
     const payload = {
       color:
         editNodeDraft.node_type === "custom"
@@ -1486,6 +1496,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         editNodeDraft.manual_weight == null ? null : new Date().toISOString(),
       node_type: resolvedNodeType as Node["node_type"],
       summary: editNodeDraft.summary.trim() || null,
+      target_date: targetDate,
       title,
       updated_at: new Date().toISOString(),
     };
@@ -2040,10 +2051,28 @@ export function AppShell({ initialUser }: AppShellProps) {
     setProposedReviewOpen(false);
     setProposedNodes([]);
 
-    // Check if any accepted nodes are goals/projects — offer step suggestions
-    // Steps are shown first; connection analysis is deferred until after the
-    // step flow completes (or is skipped) to avoid overlapping modals.
-    if (data.accepted_nodes && data.accepted_nodes.length > 0 && selectedWorkspaceId) {
+    // After the review closes, surface any clarifying questions the user
+    // didn't already answer inline — without switching off their current
+    // view.
+    const questionsToAsk = clarifyingQuestions.filter(
+      (q) => !answeredInlineQuestions.has(q),
+    );
+    const dumpToAsk = lastDumpRawText;
+    setClarifyingQuestions([]);
+    setLastDumpRawText("");
+    if (questionsToAsk.length > 0) {
+      openClarifyingQuestionsInChat(questionsToAsk, dumpToAsk);
+    }
+
+    // First-dump shortcut: if these proposals came from the bootstrap
+    // wizard, skip BOTH the suggest-steps modal and the post-acceptance
+    // connection-analysis call. A first dump already produces enough nodes
+    // and the user just spent time reviewing them — don't dogpile them
+    // with two more modals and a stack of Sonnet calls. Suggest-steps is
+    // still available manually from any node's details panel.
+    if (proposalsFromBootstrap) {
+      setProposalsFromBootstrap(false);
+    } else if (data.accepted_nodes && data.accepted_nodes.length > 0 && selectedWorkspaceId) {
       const acceptedNodes = data.accepted_nodes as Node[];
       const nodeIds = acceptedNodes.map((n) => n.id);
 
@@ -2078,6 +2107,40 @@ export function AppShell({ initialUser }: AppShellProps) {
         // No goals/projects — run connection analysis immediately
         void analyzeNodes(nodeIds);
       }
+    }
+  };
+
+  // Manual roadmap-suggestion for a single node from the details panel.
+  // Fires regardless of node type or whether it already has children —
+  // user-initiated re-prompt for finer breakdown is intentional here.
+  // Feeds the AI's text back through the standard extraction pipeline so
+  // the user reviews each proposed step before it lands in the graph.
+  const handleSuggestStepsForNode = async (nodeId: string) => {
+    if (!selectedWorkspaceId || stepSuggestionLoading) return;
+    const node = graphData.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+
+    setStepSuggestionLoading(true);
+    try {
+      const res = await fetch("/api/nodes/suggest-steps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: node.title,
+          summary: node.summary,
+          node_type: node.node_type,
+          workspace_id: selectedWorkspaceId,
+        }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { steps_text?: string };
+      if (data.steps_text) {
+        await handleExtractNodes(data.steps_text, selectedWorkspaceId);
+      }
+    } catch {
+      // step generation failed — silent for now; could surface a toast later
+    } finally {
+      setStepSuggestionLoading(false);
     }
   };
 
@@ -2137,10 +2200,21 @@ export function AppShell({ initialUser }: AppShellProps) {
   };
 
   const closeProposedNodesReview = () => {
+    // Capture pending questions/dump BEFORE we wipe state, so we can hand
+    // unanswered ones to chat after the modal closes.
+    const questionsToAsk = clarifyingQuestions.filter(
+      (q) => !answeredInlineQuestions.has(q),
+    );
+    const dumpToAsk = lastDumpRawText;
+
     setProposedReviewOpen(false);
     setProposedNodes([]);
     setClarifyingQuestions([]);
     setLastDumpRawText("");
+
+    if (questionsToAsk.length > 0) {
+      openClarifyingQuestionsInChat(questionsToAsk, dumpToAsk);
+    }
   };
 
   const requestCloseProposedNodesReview = () => {
@@ -2158,36 +2232,98 @@ export function AppShell({ initialUser }: AppShellProps) {
     closeProposedNodesReview();
   };
 
-  // Clicking a clarifying question sends the user into chat with the dump and
-  // question pre-populated as context, letting them answer conversationally
-  // instead of re-dumping from scratch.
-  const handleAnswerClarifyingQuestion = (question: string) => {
-    const dumpText = lastDumpRawText;
+  // Tracks whether we've already injected the brain dump into chat for the
+  // current review session — so inline-answer + after-close dispatch don't
+  // both add it. Reset every time a new review opens.
+  const dumpInChatRef = useRef(false);
+  // Questions the user already answered inline while the modal was open;
+  // these are excluded from the after-close auto-dispatch.
+  const [answeredInlineQuestions, setAnsweredInlineQuestions] = useState<Set<string>>(
+    () => new Set(),
+  );
 
-    closeProposedNodesReview();
-    setAppMode("assistant");
+  useEffect(() => {
+    if (proposedReviewOpen) {
+      dumpInChatRef.current = false;
+      setAnsweredInlineQuestions(new Set());
+    }
+  }, [proposedReviewOpen]);
+
+  // Opens the right-rail chat with the prior dump + extractor questions as
+  // an initial conversation. Crucially does NOT switch app mode — the user
+  // stays on whatever view they were on (graph, list, etc.) and the chat
+  // appears alongside as a side panel. Called automatically after the
+  // proposed-nodes review closes when there are unanswered questions.
+  const openClarifyingQuestionsInChat = (questions: string[], dumpText: string) => {
+    if (questions.length === 0) return;
     setRightPanelOpen(true);
     setActiveRailTab("chat");
+    setChatMessages((prev) => {
+      const out = [...prev];
+      if (!dumpInChatRef.current && dumpText.length > 0) {
+        out.push({
+          id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
+          role: "user" as const,
+          body: dumpText,
+          createdAt: new Date().toISOString(),
+          status: "ready" as const,
+        });
+        dumpInChatRef.current = true;
+      }
+      for (const q of questions) {
+        out.push({
+          id: `chat-q-${Math.random().toString(36).slice(2, 10)}`,
+          role: "assistant" as const,
+          body: q,
+          createdAt: new Date().toISOString(),
+          status: "ready" as const,
+        });
+      }
+      return out;
+    });
+    setRailChatInput("");
+  };
 
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
-        role: "user" as const,
-        body: dumpText.length > 0 ? dumpText : "(previous brain dump)",
-        createdAt: new Date().toISOString(),
-        status: "ready" as const,
-      },
-      {
+  // Handler for inline answers from the modal. Threads (dump →) question →
+  // answer into the chat rail without disturbing the user's view. The
+  // modal stays open so they can keep reviewing nodes.
+  const handleClarifyingAnswerInline = (question: string, answer: string) => {
+    const dumpText = lastDumpRawText;
+    setRightPanelOpen(true);
+    setActiveRailTab("chat");
+    setChatMessages((prev) => {
+      const out = [...prev];
+      if (!dumpInChatRef.current && dumpText.length > 0) {
+        out.push({
+          id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
+          role: "user" as const,
+          body: dumpText,
+          createdAt: new Date().toISOString(),
+          status: "ready" as const,
+        });
+        dumpInChatRef.current = true;
+      }
+      out.push({
         id: `chat-q-${Math.random().toString(36).slice(2, 10)}`,
         role: "assistant" as const,
         body: question,
         createdAt: new Date().toISOString(),
         status: "ready" as const,
-      },
-    ]);
-
-    setRailChatInput("");
+      });
+      out.push({
+        id: `chat-a-${Math.random().toString(36).slice(2, 10)}`,
+        role: "user" as const,
+        body: answer,
+        createdAt: new Date().toISOString(),
+        status: "ready" as const,
+      });
+      return out;
+    });
+    setAnsweredInlineQuestions((prev) => {
+      const next = new Set(prev);
+      next.add(question);
+      return next;
+    });
   };
 
   const closeProposedEdgesReview = () => {
@@ -2415,11 +2551,18 @@ export function AppShell({ initialUser }: AppShellProps) {
       updated_node?: Node | null;
       updated_nodes?: Node[];
       recomputed_scores?: Array<{ id: string; current_importance_score: number; importance_index: number; importance: string }>;
+      updated_task_ids?: string[];
     };
     const updatedNode = data.updated_node ?? null;
     const updatedNodeMap = new Map(
       (data.updated_nodes ?? []).map((updated) => [updated.id, updated]),
     );
+
+    // If the server cascaded any plan_tasks (linked-task auto-toggle), bump
+    // the planner refresh key so AssistantMode re-loads its task list.
+    if (data.updated_task_ids && data.updated_task_ids.length > 0) {
+      setPlannerRefreshKey((v) => v + 1);
+    }
     const scoreMap = new Map(
       (data.recomputed_scores ?? []).map((s) => [s.id, s]),
     );
@@ -2627,7 +2770,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 suppressInitialFocusAnimation={suppressInitialFocusAnimation}
               />
             </motion.div>
-          ) : (
+          ) : appMode === "assistant" ? (
             <motion.div
               key="assistant"
               className="flex min-w-0 flex-1"
@@ -2640,8 +2783,76 @@ export function AppShell({ initialUser }: AppShellProps) {
                 graphData={graphData}
                 selectedNodeId={selectedNodeId}
                 workspaceId={selectedWorkspaceId}
+                tasksRefreshKey={plannerRefreshKey}
                 onAskInChat={(message) => {
                   void submitMessage(message);
+                }}
+                onLinkedNodeStatusChange={(nodeId, nextStatus) => {
+                  // Mirror the planner toggle in the local graphData so the
+                  // graph view shows the matching status without a refetch.
+                  setGraphData((prev) => ({
+                    ...prev,
+                    nodes: prev.nodes.map((n) =>
+                      n.id === nodeId ? { ...n, status: nextStatus } : n,
+                    ),
+                  }));
+                }}
+              />
+            </motion.div>
+          ) : appMode === "todos" ? (
+            <motion.div
+              key="todos"
+              className="flex min-w-0 flex-1 lists-bg"
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              transition={{ duration: 0.14, ease: "easeOut" }}
+            >
+              <TodosView
+                graphData={graphData}
+                onSelectNode={(nodeId) => {
+                  setAppMode("graph");
+                  handleSelectNode(nodeId);
+                }}
+                onToggleStatus={(nodeId, status) => {
+                  void handleStatusChange(nodeId, status);
+                }}
+              />
+            </motion.div>
+          ) : appMode === "habits" ? (
+            <motion.div
+              key="habits"
+              className="flex min-w-0 flex-1 lists-bg"
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              transition={{ duration: 0.14, ease: "easeOut" }}
+            >
+              <HabitsView
+                graphData={graphData}
+                onSelectNode={(nodeId) => {
+                  setAppMode("graph");
+                  handleSelectNode(nodeId);
+                }}
+                onPlannerInvalidate={() => {
+                  setPlannerRefreshKey((v) => v + 1);
+                }}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="roadmap"
+              className="flex min-w-0 flex-1 lists-bg"
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              transition={{ duration: 0.14, ease: "easeOut" }}
+            >
+              <RoadmapView
+                graphData={graphData}
+                onSelectNode={(nodeId) => {
+                  setAppMode("graph");
+                  handleSelectNode(nodeId);
                 }}
               />
             </motion.div>
@@ -2678,6 +2889,10 @@ export function AppShell({ initialUser }: AppShellProps) {
             if (!selectedWorkspaceId) return;
             void analyzeNodes([nodeId]);
           }}
+          onSuggestSteps={(nodeId) => {
+            void handleSuggestStepsForNode(nodeId);
+          }}
+          suggestStepsBusy={stepSuggestionLoading}
           onSelectLinkedNode={handleSelectNode}
           onSubmitChatInput={(message) => {
             void submitMessage(message);
@@ -2718,7 +2933,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               onClose={requestCloseProposedNodesReview}
               submitting={proposedNodesSubmitting}
               clarifyingQuestions={clarifyingQuestions}
-              onAnswerQuestion={handleAnswerClarifyingQuestion}
+              onAnswerInline={handleClarifyingAnswerInline}
             />
           </motion.div>
         )}
@@ -3066,32 +3281,21 @@ export function AppShell({ initialUser }: AppShellProps) {
                 setBrainDumpWorkspaceId(selectedWorkspaceId);
                 setBrainDumpOpen(true);
               }}
-              onOpenWhatNow={() => setWhatNowOpen(true)}
-              onOpenDailyBrief={() => setDailyBriefOpen(true)}
+              onOpenWhatNow={() => setWhatNowOpen((open) => !open)}
+              onOpenWeeklyReflection={() => setWeeklyReflectionOpen(true)}
+              weeklyReflectionLocked={!isWeeklyReflectionAvailable()}
             />
           </motion.div>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {dailyBriefOpen && selectedWorkspaceId ? (
-          <DailyBriefOverlay
-            key="daily-brief"
+        {weeklyReflectionOpen && selectedWorkspaceId ? (
+          <WeeklyReflectionModal
+            key="weekly-reflection"
             workspaceId={selectedWorkspaceId}
             workspaceName={workspaceName}
-            onClose={() => setDailyBriefOpen(false)}
-            onFocusNode={(nodeId) => {
-              setDailyBriefOpen(false);
-              setAppMode("graph");
-              handleSelectNode(nodeId);
-            }}
-            onSelectNudge={(nudge) => {
-              setDailyBriefOpen(false);
-              setAppMode("assistant");
-              setActiveRailTab("chat");
-              setRightPanelOpen(true);
-              void submitMessage(nudge.starter);
-            }}
+            onClose={() => setWeeklyReflectionOpen(false)}
           />
         ) : null}
       </AnimatePresence>
@@ -3101,18 +3305,30 @@ export function AppShell({ initialUser }: AppShellProps) {
           <motion.div
             key="what-now"
             className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2"
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            initial={{ opacity: 0 }}
-            transition={{ duration: 0.12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.14 }}
           >
             <WhatNowDialog
               workspaceId={selectedWorkspaceId}
+              userId={authUser?.id ?? null}
               onClose={() => setWhatNowOpen(false)}
               onFocusNode={(nodeId) => {
                 setAppMode("graph");
                 setWhatNowOpen(false);
                 handleSelectNode(nodeId);
+              }}
+              onScheduledToPlanner={() => {
+                setWhatNowOpen(false);
+                setAppMode("assistant");
+              }}
+              onSelectNudge={(nudge) => {
+                setWhatNowOpen(false);
+                setAppMode("assistant");
+                setActiveRailTab("chat");
+                setRightPanelOpen(true);
+                void submitMessage(nudge.starter);
               }}
             />
           </motion.div>
@@ -3125,20 +3341,40 @@ export function AppShell({ initialUser }: AppShellProps) {
           workspaceId={selectedWorkspaceId}
           workspaceName={workspaceName}
           isOnboarding={!workspaceCreationFlowRef.current}
-          onComplete={() => {
+          onComplete={(handoff) => {
             const wasOnboarding = !workspaceCreationFlowRef.current;
             if (workspaceCreationFlowRef.current?.workspaceId === selectedWorkspaceId) {
               workspaceCreationFlowRef.current = null;
             }
             setBootstrapWorkspaceId(null);
+            // If the bootstrap dump produced proposed nodes, hand them
+            // straight to the review modal so the user immediately sees
+            // what got extracted from their first dump.
+            const hasHandoff =
+              handoff &&
+              ((handoff.proposed_nodes && handoff.proposed_nodes.length > 0) ||
+                (handoff.clarifying_questions && handoff.clarifying_questions.length > 0));
+            if (hasHandoff) {
+              setProposedNodes(
+                (handoff!.proposed_nodes ?? []) as typeof proposedNodes,
+              );
+              setClarifyingQuestions(
+                (handoff!.clarifying_questions ?? []) as typeof clarifyingQuestions,
+              );
+              setLastDumpRawText(handoff!.raw_text);
+              setProposalsFromBootstrap(true);
+              setProposedReviewOpen(true);
+            }
             void loadWorkspaceGraphData(
               authUser?.id ?? null,
               selectedWorkspaceId,
               selectedWorkspace?.name ?? null,
             ).then((nextGraphData) => {
               setGraphData(nextGraphData);
-              // After onboarding wizard, start the guided tour
-              if (wasOnboarding) {
+              // After onboarding wizard, start the guided tour — but only
+              // if there's no review modal already grabbing focus, else
+              // the tour pops over the proposals which is jarring.
+              if (wasOnboarding && !hasHandoff) {
                 setShowTour(true);
               }
             });
