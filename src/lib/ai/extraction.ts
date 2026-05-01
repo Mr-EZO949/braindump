@@ -266,6 +266,7 @@ export async function runExtraction(params: {
     proposed_title: n.proposed_title,
     proposed_summary: n.proposed_summary ?? null,
     proposed_node_type: n.proposed_node_type,
+    proposed_target_date: n.proposed_target_date ?? null,
     extraction_confidence: n.extraction_confidence,
     source_span: n.source_span ?? null,
     proposal_status: "pending_review",
