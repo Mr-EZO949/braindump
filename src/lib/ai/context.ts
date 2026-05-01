@@ -249,11 +249,28 @@ export async function buildAssistantContext(params: {
   // 5. Recent user actions (feedback events)
   // ---------------------------------------------------------------------------
   if (feedbackEvents.length > 0) {
-    const eventLines = feedbackEvents.slice(0, 10).map((e) => {
-      const nodeTitle = nodeById.get(e.entity_id)?.title ?? e.entity_id;
-      return `${e.event_type}: "${nodeTitle}"`;
+    // Dedupe by entity_id, keeping only the LATEST event per node. Without
+    // this the AI sees noise like "complete_node: X / reopen_node: X /
+    // complete_node: X" and tends to anchor on the first match (an old
+    // completion) — which is why a node the user un-completed yesterday
+    // gets treated as shipped today. The current state is canonically in
+    // the active-nodes block above; this list is just the most recent
+    // action per node, which mirrors the truth.
+    const seen = new Set<string>();
+    const dedupedEvents = feedbackEvents.filter((e) => {
+      if (seen.has(e.entity_id)) return false;
+      seen.add(e.entity_id);
+      return true;
     });
-    const text = `Recent actions:\n${eventLines.join("\n")}`;
+    const eventLines = dedupedEvents.slice(0, 10).map((e) => {
+      const nodeTitle = nodeById.get(e.entity_id)?.title ?? e.entity_id;
+      const node = nodeById.get(e.entity_id);
+      const currentStatus = node?.status ?? "unknown";
+      // Tag with current status so the AI cross-references action ↔ truth.
+      // e.g. `complete_node: "X" (now: active)` makes the reversal obvious.
+      return `${e.event_type}: "${nodeTitle}" (now: ${currentStatus})`;
+    });
+    const text = `Recent actions (latest per node, current status in parentheses):\n${eventLines.join("\n")}`;
     items.push({
       kind: "event",
       id: "feedback",
