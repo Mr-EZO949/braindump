@@ -176,6 +176,12 @@ export async function POST(req: NextRequest) {
         : "concept";
 
       const importanceIndex = 50; // Neutral default — scoring engine will update in Phase 7
+
+      // target_date carries through from the proposal to the canonical node
+      // unchanged. Validation already ensured the field is YYYY-MM-DD or null,
+      // and the user can edit it post-accept via update_node / the form.
+      const targetDate = (proposal.proposed_target_date as string | null) ?? null;
+
       return [{
         edits: action.edits,
         proposal,
@@ -190,6 +196,7 @@ export async function POST(req: NextRequest) {
           importance_index: importanceIndex,
           color: NODE_COLOR_BY_TYPE[nodeType],
           status: "active",
+          target_date: targetDate,
         },
       }];
     });
@@ -470,6 +477,61 @@ export async function POST(req: NextRequest) {
             if (!error) structuralEdgeProposalCount += 1;
           })
         );
+      }
+
+      // Anchor any accepted node that ended up without a belongs_to edge to
+      // the workspace's bootstrap root. Two things land here:
+      //   - subtree-roots (V7 climbing goal, OS course concept) where the
+      //     AI didn't pick an existing parent and didn't reference a
+      //     proposed sibling
+      //   - "Call mom this weekend"-style standalone tasks that don't fit
+      //     under any goal but should still hang off the workspace
+      // Without this they'd float as disconnected clusters on the canvas.
+      const orphanIds = acceptedPairs
+        .map((pair) => pair.created.id)
+        .filter((id) => !nodesWithParent.has(id));
+      if (orphanIds.length > 0) {
+        const workspaceIds = Array.from(
+          new Set(acceptedPairs.map((pair) => pair.created.workspace_id)),
+        );
+        const { data: workspaceRows } = await supabase
+          .from("workspaces")
+          .select("id, bootstrap_root_node_id")
+          .in("id", workspaceIds)
+          .eq("user_id", user.id);
+        const rootByWorkspace = new Map<string, string>();
+        for (const row of workspaceRows ?? []) {
+          if (row.bootstrap_root_node_id) {
+            rootByWorkspace.set(row.id as string, row.bootstrap_root_node_id as string);
+          }
+        }
+        const anchorRows: Array<Record<string, unknown>> = [];
+        for (const pair of acceptedPairs) {
+          if (nodesWithParent.has(pair.created.id)) continue;
+          const rootId = rootByWorkspace.get(pair.created.workspace_id);
+          if (!rootId || rootId === pair.created.id) continue;
+          anchorRows.push({
+            user_id: user.id,
+            workspace_id: pair.created.workspace_id,
+            source_node_id: pair.created.id,
+            target_node_id: rootId,
+            edge_type: "belongs_to",
+            confidence: 0.8,
+            explanation: `${pair.created.title} anchored to workspace.`,
+            status: "active",
+            user_confirmed: true,
+          });
+        }
+        if (anchorRows.length > 0) {
+          const { data: anchorEdges } = await supabase
+            .from("edges")
+            .insert(anchorRows)
+            .select("*");
+          if (anchorEdges) {
+            acceptedEdges.push(...anchorEdges);
+            structuralEdgeProposalCount += anchorEdges.length;
+          }
+        }
       }
     }
 
