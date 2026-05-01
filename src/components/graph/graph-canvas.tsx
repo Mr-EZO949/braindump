@@ -1205,60 +1205,76 @@ function getEdgeVisualStyle(
   link: GraphLink,
   emphasized: boolean,
   dimmed: boolean,
+  theme: "dark" | "light" = "dark",
 ): EdgeVisualStyle {
   const structural = link.family === "structural";
   const directional = link.directional;
+  const isLight = theme === "light";
 
-  let opacity = structural ? 0.26 : 0.09;
-  let strokeWidth = structural ? 1.46 : 0.64;
-  let stroke = structural ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.10)";
+  // Base ink — white-with-alpha on dark, dark-with-alpha on light. Light mode
+  // bumps alpha slightly so the dark strokes read as edges rather than
+  // ghost lines on a cream background.
+  const ink = (alpha: number) =>
+    isLight
+      ? `rgba(40,40,46,${Math.min(alpha * 1.5, 0.85)})`
+      : `rgba(255,255,255,${alpha})`;
+  // Warm accent used for `supports` edges
+  const warmInk = (alpha: number) =>
+    isLight
+      ? `rgba(110,80,60,${Math.min(alpha * 1.4, 0.85)})`
+      : `rgba(224,215,206,${alpha})`;
+
+  let opacity = structural ? 0.42 : 0.18;
+  let strokeWidth = structural ? 1.56 : 0.74;
+  let stroke = structural ? ink(0.34) : ink(0.18);
   let dashArray: string | undefined;
   let markerEnd: string | undefined;
 
   switch (link.edge_type) {
     case "belongs_to":
-      opacity = structural ? 0.34 : 0.14;
-      strokeWidth = structural ? 1.26 + link.strength * 0.82 : 0.7;
-      stroke = structural ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.14)";
+      opacity = structural ? 0.5 : 0.24;
+      strokeWidth = structural ? 1.36 + link.strength * 0.92 : 0.78;
+      stroke = structural ? ink(0.42) : ink(0.22);
       break;
     case "required_for":
     case "prerequisite_for":
-      opacity = structural ? 0.29 : 0.12;
-      strokeWidth = structural ? 1.44 + link.strength * 0.9 : 0.66;
-      stroke = structural ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.12)";
+      opacity = structural ? 0.46 : 0.22;
+      strokeWidth = structural ? 1.54 + link.strength * 0.96 : 0.74;
+      stroke = structural ? ink(0.4) : ink(0.2);
       dashArray = "8 7";
       break;
     case "supports":
-      opacity = structural ? 0.34 : 0.10;
-      strokeWidth = structural ? 1.0 + link.strength * 0.44 : 0.58;
-      stroke = structural ? "rgba(224,215,206,0.38)" : "rgba(224,215,206,0.12)";
+      opacity = structural ? 0.48 : 0.18;
+      strokeWidth = structural ? 1.1 + link.strength * 0.5 : 0.66;
+      stroke = structural ? warmInk(0.5) : warmInk(0.2);
       break;
     case "related_to":
-      opacity = 0.08;
-      strokeWidth = 0.54;
-      stroke = "rgba(255,255,255,0.09)";
+      opacity = 0.16;
+      strokeWidth = 0.62;
+      stroke = ink(0.18);
       dashArray = "3 6";
       break;
     case "useful_for":
-      opacity = 0.07;
-      strokeWidth = 0.5;
-      stroke = "rgba(255,255,255,0.08)";
+      opacity = 0.14;
+      strokeWidth = 0.58;
+      stroke = ink(0.16);
       break;
     case "blocks":
-      opacity = 0.10;
-      strokeWidth = 0.58;
-      stroke = "rgba(255,255,255,0.11)";
+      opacity = 0.18;
+      strokeWidth = 0.66;
+      stroke = ink(0.2);
       dashArray = "4 6";
       break;
     case "inspired_by":
-      opacity = 0.06;
-      strokeWidth = 0.44;
-      stroke = "rgba(255,255,255,0.07)";
+      opacity = 0.12;
+      strokeWidth = 0.52;
+      stroke = ink(0.14);
       dashArray = "2 8";
       break;
   }
 
   if (emphasized) {
+    // Brand red emphasis works on both backgrounds — keep as-is.
     if (link.edge_type === "belongs_to") {
       opacity = 0.42;
       strokeWidth = 2.0;
@@ -1285,7 +1301,7 @@ function getEdgeVisualStyle(
   if (dimmed) {
     opacity *= structural ? 0.28 : 0.1;
     strokeWidth *= structural ? 0.86 : 0.6;
-    stroke = structural ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.02)";
+    stroke = structural ? ink(0.08) : ink(0.02);
   }
 
   if (directional) {
@@ -1310,6 +1326,7 @@ function getNodeVisualState(options: {
   searchHit: boolean;
   selected: boolean;
   selectedNodeId: string | null;
+  theme: "dark" | "light";
 }) {
   const {
     archived,
@@ -1320,19 +1337,34 @@ function getNodeVisualState(options: {
     searchHit,
     selected,
     selectedNodeId,
+    theme,
   } = options;
+  const isLight = theme === "light";
+
+  // Light-mode color tokens. Borders/text invert (white→dark) so nodes read
+  // as light cards with dark ink instead of dark cards floating on a cream
+  // background. Selection red and search red stay since the brand red works
+  // on both backgrounds. Topsheen is dialed back since the gradient is
+  // already a white-to-cream wash.
+  const borderToken = (alpha: number) =>
+    isLight ? `rgba(20,20,24,${alpha * 1.6})` : `rgba(255,255,255,${alpha})`;
+  const TEXT_PRIMARY = isLight ? "#1a1a1c" : "#f1ece6";
+  const TEXT_DIM = isLight ? "rgba(60,58,55,0.55)" : "rgba(242,239,233,0.46)";
+  const TEXT_COMPLETED = isLight ? "rgba(80,90,80,0.55)" : "rgba(210,220,210,0.5)";
+  const TEXT_ARCHIVED = isLight ? "rgba(110,108,104,0.45)" : "rgba(200,195,190,0.35)";
+  const sheen = (dark: number) => (isLight ? Math.min(dark * 0.6 + 0.05, 0.6) : dark);
 
   // Archived nodes are shown only when the filter is toggled — always highly muted
   if (archived && !selected) {
     return {
-      border: "rgba(255,255,255,0.028)",
+      border: borderToken(0.028),
       surfaceTintOpacity: 0.04,
       glowOpacity: 0,
       heatOpacity: 0,
       opacity: 0.22,
       shadowOpacity: 0.06,
-      text: "rgba(200,195,190,0.35)",
-      topSheenOpacity: 0.08,
+      text: TEXT_ARCHIVED,
+      topSheenOpacity: sheen(0.08),
     };
   }
 
@@ -1344,8 +1376,8 @@ function getNodeVisualState(options: {
       heatOpacity: 0.54,
       opacity: 1,
       shadowOpacity: 0.34,
-      text: "#f6f2ed",
-      topSheenOpacity: 0.66,
+      text: isLight ? "#1a1a1c" : "#f6f2ed",
+      topSheenOpacity: sheen(0.66),
     };
   }
 
@@ -1357,47 +1389,47 @@ function getNodeVisualState(options: {
       heatOpacity: 0.34,
       opacity: 1,
       shadowOpacity: 0.34,
-      text: "#f1ece6",
-      topSheenOpacity: 0.58,
+      text: TEXT_PRIMARY,
+      topSheenOpacity: sheen(0.58),
     };
   }
 
   if (selectedNodeId && !inSelectedNeighborhood) {
     return {
-      border: "rgba(255,255,255,0.034)",
+      border: borderToken(0.034),
       surfaceTintOpacity: 0.12,
       glowOpacity: 0,
       heatOpacity: 0,
       opacity: 0.24,
       shadowOpacity: 0.14,
-      text: "rgba(242,239,233,0.46)",
-      topSheenOpacity: 0.28,
+      text: TEXT_DIM,
+      topSheenOpacity: sheen(0.28),
     };
   }
 
   if (inSelectedNeighborhood) {
     return {
-      border: "rgba(255,255,255,0.11)",
+      border: borderToken(0.11),
       surfaceTintOpacity: 0.22,
       glowOpacity: 0.05,
       heatOpacity: 0.05,
       opacity: 0.96,
       shadowOpacity: 0.28,
-      text: "#efeae3",
-      topSheenOpacity: 0.54,
+      text: TEXT_PRIMARY,
+      topSheenOpacity: sheen(0.54),
     };
   }
 
   if (inHoveredNeighborhood) {
     return {
-      border: "rgba(255,255,255,0.095)",
+      border: borderToken(0.095),
       surfaceTintOpacity: 0.18,
       glowOpacity: 0.03,
       heatOpacity: 0.04,
       opacity: 0.88,
       shadowOpacity: 0.26,
-      text: "#ece7e1",
-      topSheenOpacity: 0.5,
+      text: TEXT_PRIMARY,
+      topSheenOpacity: sheen(0.5),
     };
   }
 
@@ -1409,33 +1441,33 @@ function getNodeVisualState(options: {
       heatOpacity: 0.12,
       opacity: 0.94,
       shadowOpacity: 0.28,
-      text: "#f0ece6",
-      topSheenOpacity: 0.54,
+      text: TEXT_PRIMARY,
+      topSheenOpacity: sheen(0.54),
     };
   }
 
   if (completed && !selected) {
     return {
-      border: "rgba(255,255,255,0.05)",
+      border: borderToken(0.05),
       surfaceTintOpacity: 0.07,
       glowOpacity: 0,
       heatOpacity: 0,
       opacity: 0.46,
       shadowOpacity: 0.12,
-      text: "rgba(210,220,210,0.5)",
-      topSheenOpacity: 0.14,
+      text: TEXT_COMPLETED,
+      topSheenOpacity: sheen(0.14),
     };
   }
 
   return {
-    border: "rgba(255,255,255,0.072)",
-    surfaceTintOpacity: 0.16,
+    border: borderToken(0.14),
+    surfaceTintOpacity: 0.22,
     glowOpacity: 0,
     heatOpacity: 0,
-    opacity: 0.84,
-    shadowOpacity: 0.24,
-    text: "#e8e2db",
-    topSheenOpacity: 0.46,
+    opacity: 0.96,
+    shadowOpacity: 0.28,
+    text: TEXT_PRIMARY,
+    topSheenOpacity: sheen(0.5),
   };
 }
 
@@ -1499,12 +1531,38 @@ export function GraphCanvas({
   const viewportRef = useRef({ height: 0, width: 0 });
   const movedDuringPointerRef = useRef(false);
   const didFitInitialViewRef = useRef(false);
+  // Tracks whether the d3 simulation-settle handler has performed its
+  // one-time auto-fit. Persists across scene re-renders so subsequent data
+  // updates don't snap the camera back to a global fit (the bug where the
+  // viewport randomly re-centered after every status change).
+  const hasFittedOnceRef = useRef(false);
   const [viewport, setViewport] = useState({ height: 0, width: 0 });
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [view, setView] = useState<ViewState>(defaultView);
   const [, setFrameVersion] = useState(0);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState(() => new Set<string>());
+
+  // Track theme so node SVG fills can adapt. CSS custom-property reads on
+  // every render would be expensive; cheaper to subscribe to the data-theme
+  // attribute on the root element.
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    if (typeof document === "undefined") return "dark";
+    return document.documentElement.getAttribute("data-theme") === "light"
+      ? "light"
+      : "dark";
+  });
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    const update = () => {
+      setTheme(root.getAttribute("data-theme") === "light" ? "light" : "dark");
+    };
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
 
   // Structural children map derived from graphData — used for collapse logic.
   const childrenByParent = useMemo(
@@ -1813,8 +1871,14 @@ export function GraphCanvas({
       requestRender();
 
       // Once the simulation is mostly settled, re-fit the view so the graph
-      // is properly centered.  This is more reliable than simulation.on("end")
-      // which can be missed if the sim is stopped externally.
+      // is properly centered. This is more reliable than simulation.on("end").
+      //
+      // IMPORTANT: only auto-fit on the very FIRST settle for this component's
+      // lifetime — `hasFittedOnceRef` persists across scene re-renders. Without
+      // this guard, every status change/edge update would re-run the simulation
+      // and snap the camera back to a global fit, undoing the user's pan/zoom.
+      // Subsequent settles still respect an explicit focus (which is set
+      // intentionally, e.g. by clicking a node from search).
       if (!didSettleRefit && simulation.alpha() < 0.06) {
         const vp = viewportRef.current;
         if (vp.width === 0 || vp.height === 0) return; // retry next tick
@@ -1826,7 +1890,8 @@ export function GraphCanvas({
           if (retryView) {
             animateToView(retryView, false);
           }
-        } else {
+        } else if (!hasFittedOnceRef.current) {
+          hasFittedOnceRef.current = true;
           animateToView(createFittedView(scene.nodes, vp.width, vp.height), false);
         }
       }
@@ -2025,12 +2090,20 @@ export function GraphCanvas({
 
     const hasExplicitFocusRequest = focusRequestKey !== lastHandledFocusRequestRef.current;
 
-    if (suppressInitialFocusAnimationRef.current && !hasExplicitFocusRequest) {
-      suppressInitialFocusAnimationRef.current = false;
+    // Only re-center the camera on EXPLICIT focus requests. Without this gate,
+    // every scene update (status change, completion, edge add) would re-fire
+    // this effect and snap the viewport back to the focused node — which felt
+    // like the camera was randomly jumping after every action.
+    if (!hasExplicitFocusRequest) {
       return;
     }
 
-    suppressInitialFocusAnimationRef.current = false;
+    if (suppressInitialFocusAnimationRef.current) {
+      suppressInitialFocusAnimationRef.current = false;
+      lastHandledFocusRequestRef.current = focusRequestKey;
+      return;
+    }
+
     lastHandledFocusRequestRef.current = focusRequestKey;
     const frame = window.requestAnimationFrame(() => {
       focusNodeInView(focusNodeId, { followUp: true });
@@ -2043,7 +2116,6 @@ export function GraphCanvas({
     focusNodeId,
     focusNodeInView,
     focusRequestKey,
-    scene,
     suppressInitialFocusAnimation,
     viewport.height,
     viewport.width,
@@ -2375,20 +2447,53 @@ export function GraphCanvas({
       <svg className="graph-canvas-svg" role="presentation">
         <defs>
           <filter id="node-shadow" x="-44%" y="-70%" width="188%" height="240%">
-            <feDropShadow dx="0" dy="18" floodColor="#000000" floodOpacity="0.28" stdDeviation="18" />
+            {theme === "light" ? (
+              <feDropShadow dx="0" dy="6" floodColor="#1a1a1c" floodOpacity="0.12" stdDeviation="10" />
+            ) : (
+              <feDropShadow dx="0" dy="18" floodColor="#000000" floodOpacity="0.28" stdDeviation="18" />
+            )}
           </filter>
           <filter id="node-selected-shadow" x="-60%" y="-90%" width="220%" height="280%">
-            <feDropShadow dx="0" dy="18" floodColor="#000000" floodOpacity="0.32" stdDeviation="18" />
-            <feDropShadow dx="0" dy="0" floodColor="#d53a47" floodOpacity="0.18" stdDeviation="11" />
+            {theme === "light" ? (
+              <>
+                <feDropShadow dx="0" dy="8" floodColor="#1a1a1c" floodOpacity="0.18" stdDeviation="12" />
+                <feDropShadow dx="0" dy="0" floodColor="#d53a47" floodOpacity="0.22" stdDeviation="10" />
+              </>
+            ) : (
+              <>
+                <feDropShadow dx="0" dy="18" floodColor="#000000" floodOpacity="0.32" stdDeviation="18" />
+                <feDropShadow dx="0" dy="0" floodColor="#d53a47" floodOpacity="0.18" stdDeviation="11" />
+              </>
+            )}
           </filter>
           <linearGradient id="node-base-surface" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="rgba(24,24,28,0.985)" />
-            <stop offset="50%" stopColor="rgba(15,15,18,0.985)" />
-            <stop offset="100%" stopColor="rgba(7,7,9,0.985)" />
+            {theme === "light" ? (
+              <>
+                {/* Solid white card on a cream workspace — needs to read as
+                    elevated, not blend into the background. */}
+                <stop offset="0%" stopColor="#ffffff" />
+                <stop offset="100%" stopColor="#f9f7f2" />
+              </>
+            ) : (
+              <>
+                <stop offset="0%" stopColor="rgba(24,24,28,0.985)" />
+                <stop offset="50%" stopColor="rgba(15,15,18,0.985)" />
+                <stop offset="100%" stopColor="rgba(7,7,9,0.985)" />
+              </>
+            )}
           </linearGradient>
           <linearGradient id="node-top-sheen" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.085)" />
-            <stop offset="100%" stopColor="rgba(255,255,255,0)" />
+            {theme === "light" ? (
+              <>
+                <stop offset="0%" stopColor="rgba(255,255,255,0.5)" />
+                <stop offset="100%" stopColor="rgba(255,255,255,0)" />
+              </>
+            ) : (
+              <>
+                <stop offset="0%" stopColor="rgba(255,255,255,0.085)" />
+                <stop offset="100%" stopColor="rgba(255,255,255,0)" />
+              </>
+            )}
           </linearGradient>
           <linearGradient id="node-interaction-heat" x1="0" x2="1" y1="0" y2="1">
             <stop offset="0%" stopColor="rgba(218,64,77,0.58)" />
@@ -2408,7 +2513,10 @@ export function GraphCanvas({
             refX="0.6"
             refY="3"
           >
-            <path d="M 0 0 L 6 3 L 0 6 z" fill="rgba(255,255,255,0.38)" />
+            <path
+              d="M 0 0 L 6 3 L 0 6 z"
+              fill={theme === "light" ? "rgba(40,40,46,0.55)" : "rgba(255,255,255,0.38)"}
+            />
           </marker>
           <marker
             id="edge-arrow-emphasis"
@@ -2434,7 +2542,7 @@ export function GraphCanvas({
               (!focusNodeId && hoveredInteraction.connectedEdges.has(link.id));
             const dimmed = Boolean(focusNodeId) && !selectedInteraction.connectedEdges.has(link.id);
             const decay = computeEdgeDecay(link);
-            const style = getEdgeVisualStyle(link, emphasized, dimmed);
+            const style = getEdgeVisualStyle(link, emphasized, dimmed, theme);
             style.opacity *= decay;
 
             return (
@@ -2479,6 +2587,7 @@ export function GraphCanvas({
               hovered,
               inHoveredNeighborhood,
               inSelectedNeighborhood,
+              theme,
               searchHit,
               selected,
               selectedNodeId: focusNodeId,
