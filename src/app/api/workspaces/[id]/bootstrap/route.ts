@@ -7,6 +7,8 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getImportanceLabel } from "@/lib/graph/importance";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { pickGoalForArea } from "@/lib/graph/anchor-attachment";
+import { runExtraction } from "@/lib/ai/extraction";
+import { AI_FLAGS } from "@/lib/ai/config";
 import type {
   NodeType,
   WorkspaceProfile,
@@ -29,6 +31,11 @@ interface BootstrapBody {
   success_title?: string;
   goals?: GoalInput[];
   areas?: AreaInput[];
+  // Optional free-form "anything else on your mind" textarea — pipes
+  // through the extraction pipeline to produce proposed_nodes the user
+  // reviews after the wizard finishes. Lets us split multi-intent text
+  // ("ship X, lose 15lb, learn rust") into proper nodes with target_dates.
+  bootstrap_dump?: string;
 }
 
 const AREA_TYPE_TO_NODE_TYPE: Record<WorkspaceProfileAreaType, NodeType> = {
@@ -126,7 +133,7 @@ export async function POST(
 
   const { data: workspace, error: workspaceError } = await supabase
     .from("workspaces")
-    .select("id")
+    .select("id, name")
     .eq("id", workspaceId)
     .eq("user_id", user.id)
     .single();
@@ -161,6 +168,7 @@ export async function POST(
     success_title: rawSuccessTitle,
     goals,
     areas,
+    bootstrap_dump: rawBootstrapDump,
   } = (body ?? {}) as BootstrapBody;
 
   const role =
@@ -169,28 +177,48 @@ export async function POST(
     typeof rawCurrentFocus === "string" && rawCurrentFocus.trim()
       ? truncate(rawCurrentFocus.trim(), 320)
       : null;
-  const successTitle =
+  // The "Main focus" sentence the user typed. With the rework, this becomes
+  // the root node's SUMMARY (description), not its title — so we no longer
+  // truncate to 80 chars (a node title limit). Keep it readable but allow
+  // the full sentence.
+  const focusSummary =
     typeof rawSuccessTitle === "string" && rawSuccessTitle.trim()
-      ? truncate(rawSuccessTitle.trim(), 80)
-      : "Success";
+      ? truncate(rawSuccessTitle.trim(), 320)
+      : null;
+  const bootstrapDump =
+    typeof rawBootstrapDump === "string" && rawBootstrapDump.trim()
+      ? rawBootstrapDump.trim()
+      : null;
   const validGoals = normalizeGoals(goals);
   const validAreas = normalizeAreas(areas);
+
+  // Root title: workspace name (so the graph isn't anchored on a generic
+  // "Personal success"-style node, but on the user's actual workspace).
+  const rootTitle = truncate(workspace.name?.trim() || "My workspace", 80);
 
   const profilePayload: WorkspaceProfile = {
     version: 1,
     role,
     current_focus: currentFocus,
-    success_title: successTitle,
+    // Persist the original focus sentence under success_title for back-compat
+    // with anything that reads workspaces.profile_payload.success_title.
+    success_title: focusSummary ?? "",
     goals: validGoals.map((goal) => goal.title),
     areas: validAreas,
   };
 
-  const rootSummary = buildRootSummary({
-    role,
-    currentFocus,
-    goalCount: validGoals.length,
-    areaCount: validAreas.length,
-  });
+  // Root summary = the user's "Main focus" sentence as-typed when present;
+  // otherwise fall back to the auto-generated descriptor. The whole point
+  // of the rework is that this sentence lives as descriptive metadata on
+  // the root, NOT as a node title.
+  const rootSummary =
+    focusSummary ??
+    buildRootSummary({
+      role,
+      currentFocus,
+      goalCount: validGoals.length,
+      areaCount: validAreas.length,
+    });
   const rollbackBootstrap = async () => {
     await supabase
       .from("nodes")
@@ -199,17 +227,30 @@ export async function POST(
       .eq("user_id", user.id);
   };
 
+  // Root: the workspace anchor. Title = workspace name, summary = focus
+  // sentence. Importance is intentionally medium (55) — not 92 — so the
+  // root doesn't visually dominate the canvas as the biggest sphere. It's
+  // structural anchor first, "thing to look at" second.
+  // Importance is locked low via manual_weight — the scoring pipeline
+  // would otherwise push the root to the top of the workspace because
+  // its centrality (degree / total nodes) becomes ~1.0 once everything
+  // anchors to it. manual_weight bypasses the formula entirely so the
+  // root stays visually subtle on the canvas no matter how large the
+  // graph grows.
+  const ROOT_IMPORTANCE = 30;
   const { data: rootNode, error: rootError } = await supabase
     .from("nodes")
     .insert({
       user_id: user.id,
       workspace_id: workspaceId,
-      title: successTitle,
+      title: rootTitle,
       summary: rootSummary,
       raw_text: null,
       node_type: "goal" as NodeType,
-      importance: getImportanceLabel(92),
-      importance_index: 92,
+      importance: getImportanceLabel(ROOT_IMPORTANCE),
+      importance_index: ROOT_IMPORTANCE,
+      manual_weight: ROOT_IMPORTANCE,
+      manual_weight_set_at: new Date().toISOString(),
       color: NODE_COLOR_BY_TYPE.goal,
       status: "active",
     })
@@ -358,12 +399,16 @@ export async function POST(
       isMissingColumnError(updateWorkspaceError.message, "bootstrap_completed_at");
 
     if (canFallback) {
+      // Bootstrap_dump path is intentionally skipped on this fallback — if
+      // the workspace's profile columns are missing, the schema is older
+      // than this feature; we still return a working workspace.
       return NextResponse.json({
         created_root: rootNode,
         created_children: childNodes.length,
         created_edges: childNodes.length,
         profile: profilePayload,
         profile_persisted: false,
+        bootstrap_dump: { raw_entry_id: null, proposed_node_count: 0, extraction_error: null },
       });
     }
 
@@ -374,10 +419,94 @@ export async function POST(
     );
   }
 
+  // ---------------------------------------------------------------------
+  // Optional: pipe the bootstrap dump through extraction.
+  //
+  // If the user wrote a freeform "anything else on your mind" textarea,
+  // we save it as a raw_entry and run the standard extraction pipeline.
+  // The resulting proposed_nodes hit the review modal on next refresh.
+  // We do NOT roll the workspace back if extraction fails — the wizard
+  // succeeded, the dump's just a bonus pass.
+  // ---------------------------------------------------------------------
+  // The dump output the client uses to auto-open the review modal.
+  type BootstrapDumpResult = {
+    raw_entry_id: string | null;
+    proposed_node_count: number;
+    proposed_nodes: unknown[];
+    clarifying_questions: unknown[];
+    extraction_error: string | null;
+  };
+  const bootstrapDumpResult: BootstrapDumpResult = {
+    raw_entry_id: null,
+    proposed_node_count: 0,
+    proposed_nodes: [],
+    clarifying_questions: [],
+    extraction_error: null,
+  };
+
+  if (bootstrapDump && AI_FLAGS.EXTRACTION_ENABLED) {
+    const { data: rawEntry, error: rawError } = await supabase
+      .from("raw_entries")
+      .insert({
+        user_id: user.id,
+        workspace_id: workspaceId,
+        raw_text: bootstrapDump,
+        source_type: "brain_dump",
+        status: "pending",
+      })
+      .select("id")
+      .single();
+
+    if (rawError || !rawEntry) {
+      bootstrapDumpResult.extraction_error = rawError?.message ?? "Failed to save bootstrap dump";
+    } else {
+      bootstrapDumpResult.raw_entry_id = rawEntry.id;
+      const result = await runExtraction({
+        rawEntryId: rawEntry.id,
+        rawText: bootstrapDump,
+        workspaceId,
+        userId: user.id,
+        supabase,
+      });
+      if (result.ok) {
+        // Anchor any orphan proposals (no existing parent + no proposed
+        // parent_local_ref pointing at a sibling) to the workspace root.
+        // Without this the graph ends up with floating clusters — "Call
+        // Mom this weekend" or "Renew passport" don't naturally hang off
+        // a goal, and the AI leaves them parentless. Forcing the root
+        // anchor keeps the graph connected on first dump.
+        await supabase
+          .from("proposed_nodes")
+          .update({ existing_parent_node_id: rootNode.id })
+          .eq("raw_entry_id", rawEntry.id)
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", user.id)
+          .is("existing_parent_node_id", null)
+          .is("primary_parent_local_ref", null);
+
+        // Re-fetch so the response reflects the anchoring.
+        const { data: anchored } = await supabase
+          .from("proposed_nodes")
+          .select("*")
+          .eq("raw_entry_id", rawEntry.id)
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", user.id)
+          .order("local_ref", { ascending: true });
+
+        bootstrapDumpResult.proposed_node_count = (anchored ?? result.proposedNodes).length;
+        bootstrapDumpResult.proposed_nodes = anchored ?? result.proposedNodes;
+        bootstrapDumpResult.clarifying_questions = result.clarifyingQuestions ?? [];
+      } else {
+        bootstrapDumpResult.extraction_error = result.error;
+      }
+    }
+  }
+
   return NextResponse.json({
     created_root: rootNode,
     created_children: childNodes.length,
     created_edges: childNodes.length,
     profile: profilePayload,
+    bootstrap_dump: bootstrapDumpResult,
   });
 }
