@@ -44,3 +44,8 @@ next-env.d.ts
 ROADMAP.md
 ROADMAP_NEW.md
 AGENTS.md
+
+# Local test / eval / verification scripts (kept off GitHub)
+scripts/test-*.ts
+scripts/haiku-vs-sonnet-*.ts
+scripts/verify-embeddings.ts
