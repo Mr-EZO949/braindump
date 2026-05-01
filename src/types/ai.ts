@@ -138,6 +138,7 @@ export interface ProposedNode {
   proposed_title: string;
   proposed_summary: string | null;
   proposed_node_type: NodeType;
+  proposed_target_date: string | null;
   extraction_confidence: number;
   source_span: string | null;
   proposal_status: ProposalStatus;

@@ -47,6 +47,14 @@ export interface Node {
   // When set, overrides the heuristic scorer for this node.
   manual_weight?: number | null;
   manual_weight_set_at?: string | null;
+  // Optional ISO date deadline. Drives the Roadmap view: any goal/project
+  // with a target_date appears there grouped by month/quarter. Null means
+  // no deadline — the node lives only in the timeless graph view.
+  target_date?: string | null;
+  // Habit-only: the day the user marks as the official "start" of the habit.
+  // Stats (% done, missed) are computed from this day forward. Null = no
+  // anchor set; UI falls back to the earliest completion or fetched window.
+  habit_started_on?: string | null;
 }
 
 export interface Edge {
@@ -99,6 +107,9 @@ export interface CreateNodeInput {
   raw_text: string;
   summary: string;
   title: string;
+  // Optional ISO date deadline (YYYY-MM-DD). Empty string = no deadline.
+  // Surfaced in the create/edit form as a date picker.
+  target_date: string;
 }
 
 export type WorkspaceProfileAreaType =

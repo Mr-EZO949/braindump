@@ -177,6 +177,14 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
       }, new Map<string, typeof softLinks[number]>()).values()
     ).slice(0, 2);
 
+    // target_date — optional ISO date deadline. Drop anything that doesn't
+    // match YYYY-MM-DD rather than rejecting the whole node, since the model
+    // sometimes returns "Aug 1" or other shapes despite the prompt.
+    const proposedTargetDate =
+      isString(n.target_date) && /^\d{4}-\d{2}-\d{2}$/.test(n.target_date)
+        ? n.target_date
+        : null;
+
     return {
       local_ref: localRef,
       workspace_id: n.workspace_id as string,
@@ -191,6 +199,7 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
       depends_on_local_refs: Array.from(new Set(dependsOnLocalRefs)).slice(0, 2),
       soft_links: dedupedSoftLinks,
       accepted_node_id: null,
+      proposed_target_date: proposedTargetDate,
       extraction_confidence: isNumber(n.extraction_confidence)
         ? Math.min(1, Math.max(0, n.extraction_confidence))
         : 0.5,

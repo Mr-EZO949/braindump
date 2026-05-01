@@ -141,6 +141,12 @@ const PROPOSE_NODE: ToolDefinition = {
           description:
             "Optional parent node UUID. If provided, a contains edge is created from parent to the new node.",
         },
+        target_date: {
+          type: "string",
+          description:
+            "Optional ISO date (YYYY-MM-DD) deadline for this node. Use when the user mentions a specific date, day-of-week + month, or relative window like 'by Friday' / 'August 1' / 'end of Q3'. Resolve relative references against today. Goals or projects with deadlines surface in the Roadmap view.",
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+        },
       },
       required: ["title", "node_type"],
     },
@@ -152,6 +158,7 @@ const PROPOSE_NODE: ToolDefinition = {
       node_type?: string;
       importance_index?: number;
       parent_node_id?: string;
+      target_date?: string;
     };
 
     const title = typeof args.title === "string" ? args.title.trim() : "";
@@ -192,6 +199,13 @@ const PROPOSE_NODE: ToolDefinition = {
       parentId = parent.id;
     }
 
+    // Validate ISO date if provided. Empty string treated as "not set".
+    const targetDate =
+      typeof args.target_date === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(args.target_date)
+        ? args.target_date
+        : null;
+
     const { data: node, error: nodeErr } = await ctx.supabase
       .from("nodes")
       .insert({
@@ -203,6 +217,7 @@ const PROPOSE_NODE: ToolDefinition = {
         importance,
         importance_index: importanceIndex,
         status: "active",
+        target_date: targetDate,
       })
       .select("id, title, node_type")
       .single();
@@ -280,6 +295,12 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
                 description:
                   "local_ref of another item in this batch to attach under. Ignored if parent_node_id is set.",
               },
+              target_date: {
+                type: "string",
+                description:
+                  "Optional ISO date deadline (YYYY-MM-DD). Goals/projects with deadlines surface in the Roadmap view.",
+                pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+              },
             },
             required: ["title", "node_type"],
           },
@@ -298,6 +319,7 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
         importance_index?: number;
         parent_node_id?: string;
         parent_local_ref?: string;
+        target_date?: string;
       }>;
     };
 
@@ -318,6 +340,7 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
       importance_index: number;
       parent_node_id: string | null;
       parent_local_ref: string | null;
+      target_date: string | null;
     }>;
 
     for (let i = 0; i < args.nodes.length; i++) {
@@ -343,6 +366,11 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
         typeof n.summary === "string" && n.summary.trim().length > 0
           ? n.summary.trim().slice(0, 2000)
           : null;
+      const targetDate =
+        typeof n.target_date === "string" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(n.target_date)
+          ? n.target_date
+          : null;
       normalised.push({
         local_ref: typeof n.local_ref === "string" ? n.local_ref : null,
         title,
@@ -358,6 +386,7 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
           typeof n.parent_local_ref === "string" && n.parent_local_ref.length > 0
             ? n.parent_local_ref
             : null,
+        target_date: targetDate,
       });
     }
 
@@ -411,6 +440,7 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
           importance: spec.importance,
           importance_index: spec.importance_index,
           status: "active",
+          target_date: spec.target_date,
         })
         .select("id, title, node_type")
         .single();
@@ -595,7 +625,7 @@ const UPDATE_NODE: ToolDefinition = {
   schema: {
     name: "update_node",
     description:
-      "Edit an existing node's title, summary, type, or importance. Only supply the fields you want to change. Requires Accept.",
+      "Edit an existing node's title, summary, type, importance, or target_date deadline. Only supply the fields you want to change. Requires Accept.",
     input_schema: {
       type: "object",
       properties: {
@@ -607,6 +637,11 @@ const UPDATE_NODE: ToolDefinition = {
           enum: ["goal", "project", "task", "concept", "class", "habit"],
         },
         importance_index: { type: "integer", minimum: 0, maximum: 100 },
+        target_date: {
+          type: "string",
+          description:
+            "ISO date deadline (YYYY-MM-DD). Pass empty string to clear. Goals/projects with deadlines surface in the Roadmap view.",
+        },
       },
       required: ["node_id"],
     },
@@ -618,6 +653,7 @@ const UPDATE_NODE: ToolDefinition = {
       summary?: string;
       node_type?: string;
       importance_index?: number;
+      target_date?: string;
     };
     const nodeId = typeof args.node_id === "string" ? args.node_id : "";
     if (!nodeId) return { accepted: false, error: "node_id is required" };
@@ -654,6 +690,19 @@ const UPDATE_NODE: ToolDefinition = {
       const idx = Math.max(0, Math.min(100, Math.round(args.importance_index)));
       patch.importance_index = idx;
       patch.importance = importanceFromIndex(idx);
+    }
+    if (typeof args.target_date === "string") {
+      const td = args.target_date.trim();
+      if (td === "") {
+        patch.target_date = null;
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(td)) {
+        patch.target_date = td;
+      } else {
+        return {
+          accepted: false,
+          error: "target_date must be YYYY-MM-DD or empty string to clear",
+        };
+      }
     }
 
     if (Object.keys(patch).length === 0) {
