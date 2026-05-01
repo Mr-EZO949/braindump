@@ -234,6 +234,7 @@ function SharedNodeSheet({
     raw_text: "",
     summary: "",
     title: "",
+    target_date: "",
   };
 
   const handleClose = useCallback(() => {
@@ -384,6 +385,35 @@ function SharedNodeSheet({
                   rows={3}
                   value={safeDraft.summary}
                 />
+              </label>
+
+              <label className="graph-create-field">
+                <div className="space-y-1">
+                  <span className="graph-create-label">
+                    Target date <span className="graph-create-helper-inline">(optional)</span>
+                  </span>
+                  <p className="graph-create-helper">
+                    Adds this node to the Roadmap view. Leave blank for an undated thought.
+                  </p>
+                </div>
+                <div className="graph-create-date-row">
+                  <input
+                    className="graph-create-input"
+                    type="date"
+                    value={safeDraft.target_date}
+                    onChange={(event) => onChangeField("target_date", event.target.value)}
+                  />
+                  {safeDraft.target_date ? (
+                    <button
+                      type="button"
+                      className="graph-create-date-clear"
+                      onClick={() => onChangeField("target_date", "")}
+                      aria-label="Clear date"
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
               </label>
 
               {showRawText ? (
