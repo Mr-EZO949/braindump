@@ -81,8 +81,11 @@ export const AI_CANDIDATES = {
   RETRIEVAL_K: 20,
   // Top N kept after Cohere reranking
   RERANK_N: 10,
-  // Max candidates passed to edge inference per new node
-  INFERENCE_MAX: 8,
+  // Max candidates passed to edge inference per new node.
+  // Dropped from 8 → 5 — ranks 6-8 from the reranker are usually noise paying
+  // input tokens + an output verdict each. Sharpens LLM judgment and cuts
+  // ~30% of per-call tokens.
+  INFERENCE_MAX: 5,
   // Max duplicate candidates surfaced per node
   MERGE_MAX: 3,
 } as const;

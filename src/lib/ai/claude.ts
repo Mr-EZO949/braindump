@@ -238,21 +238,28 @@ export class ClaudeProvider {
     // what the old single-string form produced.
     const fullPrompt = `${stablePrefix}\n\n${variableBlock}`;
 
-    const run = baseRun("infer_edge", INFER_EDGE_PROMPT_VERSION, fullPrompt, this.modelName);
+    // inferEdge runs on Haiku — a structured binary-plus-enum verdict per
+    // candidate, which Haiku handles at Sonnet-parity in offline comparison
+    // (100% cross-model agreement on related-flag, ~100% on edge_type in the
+    // haiku-vs-sonnet-inferedge.ts test). 3× cheaper, and this fires on every
+    // new node so it dominates inferEdge cost. Extract stays on Sonnet
+    // because soft_links quality diverged there.
+    const inferModel = AI_MODELS.CLAUDE_HAIKU;
+    const run = baseRun("infer_edge", INFER_EDGE_PROMPT_VERSION, fullPrompt, inferModel);
     const start = Date.now();
 
     const maxTokens = Math.min(4096, 256 + input.candidates.length * 180);
 
     const response = await this.client.messages.create({
-      model: this.modelName,
+      model: inferModel,
       max_tokens: maxTokens,
       temperature: AI_TEMPERATURE.EDGE_INFERENCE,
       system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
       // Split into two user content blocks so the stable prefix (rules +
       // hoisted workspace context) can hit the prompt cache on repeated calls.
-      // When callers batch inferEdge and pass the same workspaceContext to
-      // every call, the prefix is ~1100–1500 tokens and stable, pushing the
-      // cached portion past Anthropic's 1024-token floor.
+      // Note: cache won't fire at current workspace sizes on Haiku either
+      // (its floor is 2048 tokens), but the marker is cheap to leave in
+      // place for when larger workspaces push the prefix past the floor.
       messages: [
         {
           role: "user",
@@ -268,7 +275,7 @@ export class ClaudeProvider {
     const inputTokens = response.usage.input_tokens;
     const outputTokens = response.usage.output_tokens;
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateCost(inputTokens, outputTokens);
+    const estimatedCost = estimateHaikuCost(inputTokens, outputTokens);
 
     let output: EdgeInferenceOutput;
     try {
@@ -281,7 +288,7 @@ export class ClaudeProvider {
         rawOutput: text,
         runType: "infer_edge",
         promptVersion: INFER_EDGE_PROMPT_VERSION,
-        modelName: this.modelName,
+        modelName: inferModel,
         inputHash: run.input_hash,
         outputHash: shortHash(text),
         inputTokens,
@@ -434,11 +441,17 @@ export class ClaudeProvider {
       similarity: input.similarity,
     });
 
-    const run = baseRun("merge_check", MERGE_CHECK_PROMPT_VERSION, prompt, this.modelName);
+    // mergeCheck runs on Haiku — binary same_entity verdict + confidence + one
+    // sentence of reasoning. Sonnet/Haiku matched 7/7 with 100% agreement on
+    // the haiku-vs-sonnet-mergecheck.ts comparison (covered the rubric trap
+    // "Financial Independence vs SaaS Revenue", cross-type goal-vs-habit,
+    // task-vs-parent granularity, and near-synonyms). 3× cheaper per call.
+    const mergeModel = AI_MODELS.CLAUDE_HAIKU;
+    const run = baseRun("merge_check", MERGE_CHECK_PROMPT_VERSION, prompt, mergeModel);
     const start = Date.now();
 
     const response = await this.client.messages.create({
-      model: this.modelName,
+      model: mergeModel,
       max_tokens: 256,
       temperature: AI_TEMPERATURE.MERGE_CHECK,
       system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
@@ -449,7 +462,7 @@ export class ClaudeProvider {
     const inputTokens = response.usage.input_tokens;
     const outputTokens = response.usage.output_tokens;
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateCost(inputTokens, outputTokens);
+    const estimatedCost = estimateHaikuCost(inputTokens, outputTokens);
 
     let output: MergeCheckOutput;
     try {
@@ -462,7 +475,7 @@ export class ClaudeProvider {
         rawOutput: text,
         runType: "merge_check",
         promptVersion: MERGE_CHECK_PROMPT_VERSION,
-        modelName: this.modelName,
+        modelName: mergeModel,
         inputHash: run.input_hash,
         outputHash: shortHash(text),
         inputTokens,
