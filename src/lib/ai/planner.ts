@@ -366,7 +366,26 @@ export async function buildPlannerCandidates(params: {
 
   const preferenceHints = buildPlannerPreferenceHints(feedbackEvents);
 
+  // Identify cluster anchors — nodes that have children via belongs_to.
+  // These are containers ("Life Admin", "This Semester's Courses") not
+  // workable items, so they should never surface as top-3 focus candidates.
+  const isClusterAnchor = new Set<string>();
+  for (const [parentId, edges] of incomingEdgesByNode.entries()) {
+    if (edges.some((e) => e.edge_type === "belongs_to")) {
+      isClusterAnchor.add(parentId);
+    }
+  }
+
+  // Hard-exclude class anchors — they're always containers (a course is the
+  // wrapper around its tasks/exams; the course itself isn't actionable).
+  const NON_ACTIONABLE_TYPES = new Set<NodeType>(["class"]);
+
   const candidates = rawNodes
+    .filter((node) => {
+      if (NON_ACTIONABLE_TYPES.has(node.node_type)) return false;
+      if (isClusterAnchor.has(node.id)) return false;
+      return true;
+    })
     .map((node) => {
       const incoming = incomingEdgesByNode.get(node.id) ?? [];
       const outgoing = outgoingEdgesByNode.get(node.id) ?? [];
