@@ -235,6 +235,73 @@ export function SunIcon(props: IconProps) {
   );
 }
 
+export function ChartBarIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M5 20V11M12 20V4M19 20V14" />
+      <path d="M3 20h18" />
+    </BaseIcon>
+  );
+}
+
+export function ListIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <circle cx="4" cy="6" r="1" fill="currentColor" stroke="none" />
+      <circle cx="4" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="4" cy="18" r="1" fill="currentColor" stroke="none" />
+    </BaseIcon>
+  );
+}
+
+export function RoadmapIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 9h18M8 3v4M16 3v4" />
+      <path d="M12 13l2 2-2 2-2-2 2-2z" fill="currentColor" stroke="none" />
+    </BaseIcon>
+  );
+}
+
+export function LockIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 1 1 8 0v3" />
+    </BaseIcon>
+  );
+}
+
+export function InfoIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <circle cx="12" cy="8" r="0.6" fill="currentColor" stroke="none" />
+    </BaseIcon>
+  );
+}
+
+export function FlameIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M12 3c1.5 3 4 4.5 4 8a4 4 0 0 1-8 0c0-1.6.8-2.7 1.6-3.5C10.4 6.7 11 5.4 12 3Z" />
+      <path d="M12 13c.7 1 1.5 1.6 1.5 2.7a1.5 1.5 0 0 1-3 0c0-.6.3-1 .7-1.4.3-.4.6-.8.8-1.3Z" />
+    </BaseIcon>
+  );
+}
+
+export function CheckSquareIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="m8 12 3 3 5-6" />
+    </BaseIcon>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>
