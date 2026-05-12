@@ -52,6 +52,17 @@ function buildDailyBuckets(): DailyBucket[] {
   return out;
 }
 
+// Monday of the current ISO week — used as the cache key so opening the
+// reflection multiple times in the same week returns the same AI commentary
+// instead of regenerating on every open.
+function isoWeekStart(now: Date = new Date()): string {
+  const d = new Date(now);
+  const day = d.getDay(); // 0 = Sunday
+  const diff = (day === 0 ? -6 : 1) - day; // shift to Monday
+  d.setDate(d.getDate() + diff);
+  return dateOnly(d);
+}
+
 async function generateCommentary(stats: {
   totalCompleted: number;
   totalCreated: number;
@@ -118,7 +129,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { workspace_id } = body as { workspace_id?: string };
+  const { workspace_id, force } = body as { workspace_id?: string; force?: boolean };
   if (!workspace_id) {
     return NextResponse.json({ error: "workspace_id is required" }, { status: 400 });
   }
@@ -204,15 +215,59 @@ export async function POST(req: NextRequest) {
 
   const topType = typeBreakdown[0]?.node_type ?? null;
 
-  // 6. AI commentary — fire and forget, fall back to null on failure
-  const commentary = await generateCommentary({
-    totalCompleted,
-    totalCreated,
-    totalScheduled,
-    totalScheduledDone,
-    topType,
-    windowDays: WINDOW_DAYS,
-  });
+  // 6. AI commentary — cached per (user, workspace, week_start). Stats are
+  //    recomputed live above (cheap SQL); only the AI message is persisted
+  //    so it stays consistent across opens within the same week. ?force=true
+  //    bypasses the cache when the user explicitly wants a fresh take.
+  const weekStart = isoWeekStart();
+  let commentary: string | null = null;
+  let cached = false;
+
+  if (!force) {
+    const { data: existing } = await supabase
+      .from("weekly_reflections")
+      .select("commentary")
+      .eq("user_id", user.id)
+      .eq("workspace_id", workspace_id)
+      .eq("week_start", weekStart)
+      .maybeSingle();
+    if (existing?.commentary) {
+      commentary = existing.commentary as string;
+      cached = true;
+    }
+  }
+
+  if (!commentary) {
+    commentary = await generateCommentary({
+      totalCompleted,
+      totalCreated,
+      totalScheduled,
+      totalScheduledDone,
+      topType,
+      windowDays: WINDOW_DAYS,
+    });
+    if (commentary) {
+      // Best-effort persist; failure here just means we'll regenerate next
+      // time, not a user-visible error.
+      await supabase.from("weekly_reflections").upsert(
+        {
+          user_id: user.id,
+          workspace_id,
+          week_start: weekStart,
+          commentary,
+          stats_at_generation: {
+            completed: totalCompleted,
+            created: totalCreated,
+            scheduled: totalScheduled,
+            scheduled_done: totalScheduledDone,
+            top_type: topType,
+          },
+          generated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,workspace_id,week_start" },
+      );
+    }
+  }
 
   return NextResponse.json({
     window_days: WINDOW_DAYS,
@@ -227,5 +282,7 @@ export async function POST(req: NextRequest) {
         totalScheduled > 0 ? totalScheduledDone / totalScheduled : null,
     },
     commentary,
+    commentary_cached: cached,
+    week_start: weekStart,
   });
 }
