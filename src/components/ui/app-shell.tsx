@@ -3325,7 +3325,9 @@ export function AppShell({ initialUser }: AppShellProps) {
               }}
               onSelectNudge={(nudge) => {
                 setWhatNowOpen(false);
-                setAppMode("assistant");
+                // No app-mode swap — the chat fires in the right rail
+                // regardless of which view you were on. Yanking to Planner
+                // is a context shift the user didn't ask for.
                 setActiveRailTab("chat");
                 setRightPanelOpen(true);
                 void submitMessage(nudge.starter);

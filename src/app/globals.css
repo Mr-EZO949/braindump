@@ -344,15 +344,14 @@
 }
 
 :root[data-theme="light"] .mode-dock-action.mode-dock-call {
-  /* Brand red tint reads fine on white; just slightly stronger contrast. */
-  background: rgba(213, 58, 71, 0.1);
-  border-color: rgba(213, 58, 71, 0.45);
-  color: rgba(180, 36, 50, 1);
+  background: rgba(213, 58, 71, 0.95);
+  border-color: rgba(213, 58, 71, 1);
+  color: #fff;
 }
 
 :root[data-theme="light"] .mode-dock-action.mode-dock-call:hover {
-  background: rgba(213, 58, 71, 0.16);
-  border-color: rgba(213, 58, 71, 0.6);
+  background: rgba(213, 58, 71, 1);
+  border-color: rgba(213, 58, 71, 1);
 }
 
 :root[data-theme="light"] .mode-dock-action[data-locked="true"] {
@@ -4366,19 +4365,19 @@ input[type="search"]::-webkit-search-results-decoration {
   opacity: 0.85;
 }
 
-/* Lock In — primary CTA, brand red. Restrained: subtle tint + accent border,
-   no glow, no gradient. Uses the same brand red token (rgba(223, 69, 83))
-   that appears elsewhere in the UI. */
+/* Focus — primary CTA, full brand red. Solid fill so it reads as the
+   action you take when you want to commit to the moment. Same red token
+   we use across the rest of the UI (links, accept buttons, etc). */
 .mode-dock-action.mode-dock-call {
-  color: var(--color-text-primary);
+  color: #fff;
   font-weight: 600;
-  background: rgba(223, 69, 83, 0.14);
-  border-color: rgba(223, 69, 83, 0.42);
+  background: rgba(223, 69, 83, 0.95);
+  border-color: rgba(223, 69, 83, 1);
 }
 
 .mode-dock-action.mode-dock-call:hover {
-  background: rgba(223, 69, 83, 0.22);
-  border-color: rgba(223, 69, 83, 0.6);
+  background: rgba(223, 69, 83, 1);
+  border-color: rgba(223, 69, 83, 1);
 }
 
 /* Brain Dump — secondary action. Just inherits the .mode-dock-action base
