@@ -19,6 +19,8 @@ function describeOp(op: GraphEditOperation): string {
       return `Rename "${op.node}" to "${op.new_title}"`;
     case "archive":
       return `Archive "${op.node}"`;
+    case "insert_between":
+      return `Insert "${op.intermediate}" between "${op.child}" and its current parent`;
   }
 }
 
@@ -28,6 +30,7 @@ function opIcon(op: GraphEditOperation): string {
     case "remove_edge": return "✕";
     case "rename": return "✎";
     case "archive": return "▣";
+    case "insert_between": return "⇲";
   }
 }
 

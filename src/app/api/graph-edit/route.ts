@@ -156,6 +156,108 @@ export async function POST(req: NextRequest) {
           break;
         }
 
+        case "insert_between": {
+          const intermediateRes = resolveTitle(op.intermediate);
+          const childRes = resolveTitle(op.child);
+          if ("error" in intermediateRes) {
+            results.push({ op: "insert_between", success: false, error: intermediateRes.error, node: op.intermediate });
+            break;
+          }
+          if ("error" in childRes) {
+            results.push({ op: "insert_between", success: false, error: childRes.error, node: op.child });
+            break;
+          }
+          if (intermediateRes.id === childRes.id) {
+            results.push({ op: "insert_between", success: false, error: "intermediate and child must be different nodes", node: op.intermediate });
+            break;
+          }
+
+          // Look up child's current parent — that becomes intermediate's
+          // new parent. If child has no belongs_to (orphan), we anchor
+          // intermediate to the workspace root instead.
+          const { data: currentParentRow } = await supabase
+            .from("edges")
+            .select("target_node_id")
+            .eq("user_id", user.id)
+            .eq("source_node_id", childRes.id)
+            .eq("edge_type", "belongs_to")
+            .eq("status", "active")
+            .maybeSingle();
+
+          let intermediateParentId: string | null =
+            (currentParentRow?.target_node_id as string | null) ?? null;
+          if (!intermediateParentId) {
+            const { data: wsRow } = await supabase
+              .from("workspaces")
+              .select("bootstrap_root_node_id")
+              .eq("id", workspace_id)
+              .eq("user_id", user.id)
+              .maybeSingle();
+            intermediateParentId = (wsRow?.bootstrap_root_node_id as string | null) ?? null;
+          }
+
+          // Cycle guard: intermediate's chosen parent can't be a descendant
+          // of intermediate itself, else we'd create a cycle (e.g. inserting
+          // a parent-node between two of its own descendants).
+          if (intermediateParentId === intermediateRes.id) {
+            results.push({ op: "insert_between", success: false, error: "intermediate cannot be its own parent", node: op.intermediate });
+            break;
+          }
+
+          // Step 1: re-parent intermediate to child's current parent.
+          await supabase
+            .from("edges")
+            .update({ status: "orphaned", updated_at: nowIso })
+            .eq("user_id", user.id)
+            .eq("source_node_id", intermediateRes.id)
+            .eq("edge_type", "belongs_to")
+            .neq("status", "orphaned")
+            .neq("status", "user_rejected");
+
+          if (intermediateParentId) {
+            const { error: interInsertErr } = await supabase.from("edges").insert({
+              user_id: user.id,
+              workspace_id,
+              source_node_id: intermediateRes.id,
+              target_node_id: intermediateParentId,
+              edge_type: "belongs_to",
+              status: "active",
+              user_confirmed: true,
+            });
+            if (interInsertErr) {
+              results.push({ op: "insert_between", success: false, error: `intermediate parent insert failed: ${interInsertErr.message}`, node: op.intermediate });
+              break;
+            }
+          }
+
+          // Step 2: re-parent child to intermediate.
+          await supabase
+            .from("edges")
+            .update({ status: "orphaned", updated_at: nowIso })
+            .eq("user_id", user.id)
+            .eq("source_node_id", childRes.id)
+            .eq("edge_type", "belongs_to")
+            .neq("status", "orphaned")
+            .neq("status", "user_rejected");
+
+          const { error: childInsertErr } = await supabase.from("edges").insert({
+            user_id: user.id,
+            workspace_id,
+            source_node_id: childRes.id,
+            target_node_id: intermediateRes.id,
+            edge_type: "belongs_to",
+            status: "active",
+            user_confirmed: true,
+          });
+
+          if (childInsertErr) {
+            results.push({ op: "insert_between", success: false, error: `child parent insert failed: ${childInsertErr.message}`, node: op.child });
+          } else {
+            results.push({ op: "insert_between", success: true, node: op.child });
+          }
+          break;
+        }
+
         case "archive": {
           const nodeRes = resolveTitle(op.node);
           if ("error" in nodeRes) { results.push({ op: "archive", success: false, error: nodeRes.error, node: op.node }); break; }
