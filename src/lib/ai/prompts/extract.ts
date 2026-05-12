@@ -5,7 +5,7 @@
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v10";
+export const EXTRACT_PROMPT_VERSION = "extract-v11";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -74,6 +74,21 @@ Existing anchor attachment rule (IMPORTANT — apply before inventing new umbrel
   - use existing_parent_node_id for an already-existing workspace node from the provided list
   - never set both on the same node
 - Use null when no existing parent is a strong structural fit.
+
+Existing-node duplication rule (IMPORTANT — apply BEFORE creating any node):
+- For every node you would propose, check if a SEMANTICALLY EQUIVALENT node already exists in the provided existing anchor list.
+- "Semantically equivalent" includes obvious paraphrases — same intent, different wording.
+  - Existing: "Send my first V7 outdoor before December"
+    Dump says: "want my first V7 before December"
+    → DO NOT create a new node. The existing one already captures this intent.
+  - Existing: "Ship a 3-year team strategy doc"
+    Dump says: "skip-level wants a 3-year team strategy doc"
+    → DO NOT create a new node. Same goal, different framing.
+  - Existing: "Get FAANG/quant internship offer"
+    Dump says: "Stripe OA scheduled for Saturday"
+    → DO create a new task ("Stripe Online Assessment") and attach it under the existing internship goal via existing_parent_node_id. The OA is real new work; the umbrella goal is not.
+- The test: if the existing node's title is reworded version of what you're about to propose at the SAME level (goal-vs-goal, project-vs-project), skip the proposal. If the new node is a CONCRETE STEP toward an existing goal/project, create it but attach it to the existing parent.
+- When in doubt, prefer attaching to an existing anchor over creating a parallel one. The graph stays cleaner with one node + 5 children than two near-duplicate nodes with 2 children each.
 
 Semantic clustering rule (IMPORTANT — apply this actively):
 - When 3 or more extracted nodes clearly belong to the same life domain, create a cluster node for them, even if the user never named it.

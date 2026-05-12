@@ -10,6 +10,7 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getImportanceLabel } from "@/lib/graph/importance";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { generateAndStoreEmbedding } from "@/lib/ai/embeddings";
+import { runClusteringPass } from "@/lib/ai/clustering";
 import { scoreNodesJudgment } from "@/lib/ai/judgment";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import type { NodeType, WorkspaceProfile } from "@/types/graph";
@@ -235,19 +236,27 @@ export async function POST(req: NextRequest) {
 
       acceptedNodes.push(...acceptedPairs.map((pair) => pair.created));
 
-      // Embed each accepted node — fire per-node, never block response on failure
-      for (const node of acceptedPairs.map((pair) => pair.created)) {
-        void generateAndStoreEmbedding({
-          nodeId: node.id,
-          title: node.title,
-          summary: node.summary,
-          workspaceId: node.workspace_id,
-          userId: user.id,
-          supabase,
-        }).catch(() => {
-          // Logged silently — node is accepted regardless
-        });
-      }
+      // Embed each accepted node in parallel + AWAIT before returning. The
+      // old fire-and-forget version raced against downstream work (the
+      // clustering pass that runs on the next /api/entries call would see
+      // nodes without embeddings and skip them, never proposing umbrellas).
+      // Failures are still swallowed per-node so a flaky Gemini call
+      // doesn't fail the accept; we just lose a single embedding to the
+      // retry queue.
+      await Promise.all(
+        acceptedPairs.map(({ created: node }) =>
+          generateAndStoreEmbedding({
+            nodeId: node.id,
+            title: node.title,
+            summary: node.summary,
+            workspaceId: node.workspace_id,
+            userId: user.id,
+            supabase,
+          }).catch(() => {
+            // Logged silently — node is accepted regardless
+          }),
+        ),
+      );
 
       await Promise.all(
         acceptedPairs.map(({ created, proposal }) =>
@@ -655,6 +664,33 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Retroactive clustering pass — runs AFTER acceptance so freshly-created
+  // nodes (with embeddings now persisted) are eligible for grouping. Best-
+  // effort; failures here don't block the response. Suggestions are
+  // persisted to cluster_suggestions and surface either via the returned
+  // payload (clients can show them in a dedicated review section) or on
+  // the next /api/entries call.
+  let clusterSuggestions: Awaited<ReturnType<typeof runClusteringPass>> = [];
+  if (acceptedPairs.length > 0) {
+    const workspaceIdsTouched = Array.from(
+      new Set(acceptedPairs.map((pair) => pair.created.workspace_id)),
+    );
+    try {
+      const passes = await Promise.all(
+        workspaceIdsTouched.map((wsId) =>
+          runClusteringPass({
+            supabase,
+            userId: user.id,
+            workspaceId: wsId,
+          }),
+        ),
+      );
+      clusterSuggestions = passes.flat();
+    } catch (err) {
+      console.error("[review] clustering pass failed", err);
+    }
+  }
+
   return NextResponse.json({
     accepted_nodes: rescoredAcceptedNodes,
     accepted_edges: acceptedEdges,
@@ -662,5 +698,6 @@ export async function POST(req: NextRequest) {
     generated_edge_proposals: structuralEdgeProposalCount,
     rejected_count: toReject.length,
     feedback_event_count: feedbackRows.length,
+    cluster_suggestions: clusterSuggestions,
   });
 }

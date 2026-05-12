@@ -223,10 +223,48 @@ export async function runExtraction(params: {
     return { ok: false, error: errorText };
   }
 
-  // Filter out low-confidence proposals
+  // Title-normalization helper for dedupe — strips case, punctuation, and
+  // common stopwords so "Ship a 3-year team strategy doc" and "Ship 3-Year
+  // Team Strategy Doc" land on the same fingerprint. Doesn't catch
+  // semantic paraphrases ("V7 climbing goal" vs "Send first V7 outdoor"),
+  // those need embedding similarity — but it kills the literal duplicates
+  // that the AI keeps inventing despite the prompt's no-duplicate rule.
+  const STOPWORDS = new Set([
+    "a", "an", "the", "of", "for", "to", "in", "on", "at", "by", "with",
+    "and", "or", "my", "this", "that",
+  ]);
+  const normalizeTitle = (title: string): string => {
+    return title
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter((tok) => tok.length > 0 && !STOPWORDS.has(tok))
+      .sort()
+      .join(" ");
+  };
+  const existingTitleFingerprints = new Map<string, string>(); // fp → existing node id
+  for (const n of workspaceProfile.existingNodes) {
+    existingTitleFingerprints.set(normalizeTitle(n.title), n.id);
+  }
+
+  // Filter out low-confidence proposals AND near-duplicates of existing
+  // anchors. When a proposal's normalized title matches an existing node's,
+  // we drop the proposal entirely — the existing node already represents
+  // that intent, and creating a parallel one fragments the graph.
+  let droppedDuplicateCount = 0;
   const qualifiedNodes = enrichExistingParentAssignments(
     output.proposed_nodes
     .filter((n) => n.extraction_confidence >= AI_CONFIDENCE.EXTRACTION_MIN)
+    .filter((n) => {
+      const fp = normalizeTitle(n.proposed_title);
+      if (fp.length === 0) return true; // edge case: empty after stopwords
+      const existingId = existingTitleFingerprints.get(fp);
+      if (existingId) {
+        droppedDuplicateCount++;
+        return false;
+      }
+      return true;
+    })
     .map((node) => ({
       ...node,
       existing_parent_node_id:
@@ -236,6 +274,12 @@ export async function runExtraction(params: {
     })),
     workspaceProfile.existingNodes,
   );
+
+  if (droppedDuplicateCount > 0) {
+    console.log(
+      `[extraction] dropped ${droppedDuplicateCount} duplicate proposal${droppedDuplicateCount === 1 ? "" : "s"} (matched existing workspace anchor titles)`,
+    );
+  }
 
   if (qualifiedNodes.length === 0) {
     // No usable proposals — still mark as completed (not failed)

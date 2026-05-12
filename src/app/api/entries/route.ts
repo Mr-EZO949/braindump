@@ -171,6 +171,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Note: clustering runs AFTER acceptance (in proposals/nodes/review)
+  // rather than here. At this point the new nodes are still proposals
+  // without embeddings, so clustering wouldn't see them and would miss
+  // exactly the groupings the user just dumped about.
+
   return NextResponse.json({
     raw_entry_id: rawEntry.id,
     ai_run_id: result.aiRunId,
