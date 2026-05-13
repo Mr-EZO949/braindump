@@ -890,7 +890,11 @@ export function AppShell({ initialUser }: AppShellProps) {
     setRightPanelOpen(false);
   }, [filteredGraphData.nodes, selectedNodeId]);
 
-  const handleExtractNodes = async (nodesContent: string, wsId: string) => {
+  const handleExtractNodes = async (
+    nodesContent: string,
+    wsId: string,
+    options?: { defaultParentNodeId?: string },
+  ) => {
     try {
       const entryRes = await fetch("/api/entries", {
         method: "POST",
@@ -899,6 +903,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           raw_text: nodesContent,
           workspace_id: wsId,
           source_type: "assistant_save",
+          default_parent_node_id: options?.defaultParentNodeId ?? null,
         }),
       });
       const entryData = await entryRes.json() as {
@@ -2135,7 +2140,11 @@ export function AppShell({ initialUser }: AppShellProps) {
       if (!res.ok) return;
       const data = (await res.json()) as { steps_text?: string };
       if (data.steps_text) {
-        await handleExtractNodes(data.steps_text, selectedWorkspaceId);
+        // Pin the generated steps under the source node so they don't
+        // float to the workspace root.
+        await handleExtractNodes(data.steps_text, selectedWorkspaceId, {
+          defaultParentNodeId: nodeId,
+        });
       }
     } catch {
       // step generation failed — silent for now; could surface a toast later

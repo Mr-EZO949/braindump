@@ -59,10 +59,17 @@ export async function POST(req: NextRequest) {
     raw_text,
     workspace_id,
     source_type = "brain_dump",
+    default_parent_node_id,
   } = body as {
     raw_text: string;
     workspace_id: string;
     source_type?: string;
+    // Optional: when set, any extracted proposal that has no parent
+    // assignment (neither existing_parent_node_id nor a primary_parent_local_ref
+    // pointing at a same-dump sibling) gets this node as its parent. Used
+    // by the "suggest steps" flow so the generated subtasks anchor under
+    // the source node instead of falling back to the workspace root.
+    default_parent_node_id?: string | null;
   };
 
   // Empty input guard
@@ -158,6 +165,29 @@ export async function POST(req: NextRequest) {
     supabase,
   });
 
+  // Apply the default-parent override (e.g. from suggest-steps). Any
+  // extracted proposal that ended up parent-less gets pinned under the
+  // caller-supplied node. Mirrors the bootstrap orphan-anchor pattern.
+  if (default_parent_node_id && result.ok) {
+    await supabase
+      .from("proposed_nodes")
+      .update({ existing_parent_node_id: default_parent_node_id })
+      .eq("raw_entry_id", rawEntry.id)
+      .eq("workspace_id", workspace_id)
+      .eq("user_id", user.id)
+      .is("existing_parent_node_id", null)
+      .is("primary_parent_local_ref", null);
+    // Refresh the returned proposals so the client sees the parent set.
+    const { data: refreshed } = await supabase
+      .from("proposed_nodes")
+      .select("*")
+      .eq("raw_entry_id", rawEntry.id)
+      .order("local_ref", { ascending: true });
+    if (refreshed) {
+      result.proposedNodes = refreshed as typeof result.proposedNodes;
+    }
+  }
+
   if (!result.ok) {
     // Extraction failed — entry is saved, user can retry
     return NextResponse.json(
@@ -169,6 +199,59 @@ export async function POST(req: NextRequest) {
       },
       { status: 207 } // 207 = partial success (entry saved, extraction failed)
     );
+  }
+
+  // Completion-detection apply step. The AI listed existing workspace
+  // nodes the user reported as DONE in this dump ("did the 14k long run",
+  // "shipped the redesign"). We mark each as completed via a direct
+  // status update — keeps the AI from inventing retrospective event nodes.
+  //
+  // For auto_complete_local_refs (newly-proposed milestones to create as
+  // already-done), the entries route can't apply them yet because the
+  // proposed_nodes are still pending review. Instead, we stash the local
+  // refs in the proposed_nodes' source_span field with a marker so the
+  // acceptance route can complete them on accept. Cleaner: a dedicated
+  // column, but local_ref marker keeps the migration footprint small.
+  const completedExistingTitles: string[] = [];
+  if (result.completeExistingNodeIds.length > 0) {
+    // Verify ownership + same workspace before applying status changes —
+    // the AI could (theoretically) emit a UUID from another workspace.
+    const { data: ownedNodes } = await supabase
+      .from("nodes")
+      .select("id, title, status")
+      .eq("user_id", user.id)
+      .eq("workspace_id", workspace_id)
+      .in("id", result.completeExistingNodeIds);
+    const ownedIds = (ownedNodes ?? [])
+      .filter((n) => n.status !== "completed" && n.status !== "archived")
+      .map((n) => n.id as string);
+    if (ownedIds.length > 0) {
+      await supabase
+        .from("nodes")
+        .update({ status: "completed", completed_at: new Date().toISOString() })
+        .in("id", ownedIds);
+      for (const n of ownedNodes ?? []) {
+        if (ownedIds.includes(n.id as string)) {
+          completedExistingTitles.push(n.title as string);
+        }
+      }
+    }
+  }
+
+  // Mark auto-complete proposed nodes so the acceptance route knows to
+  // create them with status = completed. We piggyback on source_span:
+  // the AI uses it for provenance, but we append a marker the
+  // acceptance route detects + strips before persisting.
+  if (result.autoCompleteLocalRefs.length > 0) {
+    for (const localRef of result.autoCompleteLocalRefs) {
+      await supabase
+        .from("proposed_nodes")
+        .update({
+          source_span: "[[AUTO_COMPLETE]]",
+        })
+        .eq("raw_entry_id", rawEntry.id)
+        .eq("local_ref", localRef);
+    }
   }
 
   // Note: clustering runs AFTER acceptance (in proposals/nodes/review)
@@ -183,5 +266,7 @@ export async function POST(req: NextRequest) {
     proposed_nodes: result.proposedNodes,
     proposed_node_count: result.proposedNodes.length,
     clarifying_questions: result.clarifyingQuestions,
+    completed_existing_node_titles: completedExistingTitles,
+    auto_complete_local_refs: result.autoCompleteLocalRefs,
   });
 }
