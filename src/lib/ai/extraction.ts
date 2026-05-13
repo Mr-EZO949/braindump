@@ -36,6 +36,13 @@ export interface ExtractionSuccess {
   aiRunId: string;
   proposedNodes: ProposedNode[];
   clarifyingQuestions: string[];
+  // Existing workspace nodes the user reported as done in this dump.
+  // Caller (entries route) is responsible for applying status → completed.
+  completeExistingNodeIds: string[];
+  // local_refs of newly-proposed nodes that should be created as
+  // already-completed (e.g. milestone the user just hit with no
+  // matching pre-existing anchor).
+  autoCompleteLocalRefs: string[];
 }
 
 export interface ExtractionFailure {
@@ -293,6 +300,8 @@ export async function runExtraction(params: {
       aiRunId,
       proposedNodes: [],
       clarifyingQuestions: output.clarifying_questions ?? [],
+      completeExistingNodeIds: output.complete_existing_node_ids ?? [],
+      autoCompleteLocalRefs: output.auto_complete_local_refs ?? [],
     };
   }
 
@@ -353,6 +362,8 @@ export async function runExtraction(params: {
         "existing_parent_node_id" in node ? node.existing_parent_node_id : null,
     })),
     clarifyingQuestions: output.clarifying_questions ?? [],
+    completeExistingNodeIds: output.complete_existing_node_ids ?? [],
+    autoCompleteLocalRefs: output.auto_complete_local_refs ?? [],
   };
 }
 

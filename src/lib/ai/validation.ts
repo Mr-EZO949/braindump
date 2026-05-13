@@ -253,9 +253,40 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
     }
   }
 
+  // complete_existing_node_ids — list of existing workspace node UUIDs the
+  // user reported as DONE in this dump. Validated as well-formed uuid
+  // strings; the entries route will further check ownership/workspace
+  // before applying the completion.
+  const completeExistingNodeIds: string[] = [];
+  if (Array.isArray(raw.complete_existing_node_ids)) {
+    for (const id of raw.complete_existing_node_ids) {
+      if (!isString(id)) continue;
+      const trimmed = id.trim();
+      if (!/^[0-9a-fA-F-]{36}$/.test(trimmed)) continue;
+      completeExistingNodeIds.push(trimmed);
+    }
+  }
+
+  // auto_complete_local_refs — local_refs of newly-proposed nodes that
+  // should be created as already-completed. Validated against the
+  // accepted nodes list (must match an existing local_ref).
+  const validLocalRefs = new Set(
+    nodes.map((n) => n.local_ref).filter((r): r is string => typeof r === "string"),
+  );
+  const autoCompleteLocalRefs: string[] = [];
+  if (Array.isArray(raw.auto_complete_local_refs)) {
+    for (const ref of raw.auto_complete_local_refs) {
+      if (!isString(ref)) continue;
+      if (!validLocalRefs.has(ref)) continue;
+      autoCompleteLocalRefs.push(ref);
+    }
+  }
+
   return {
     proposed_nodes: nodes,
     clarifying_questions: clarifyingQuestions,
+    complete_existing_node_ids: completeExistingNodeIds,
+    auto_complete_local_refs: autoCompleteLocalRefs,
     prompt_version: raw.prompt_version as string,
   };
 }

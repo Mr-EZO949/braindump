@@ -348,6 +348,17 @@ export interface ExtractionOutput {
   // be usefully extracted — vague ideas, ambiguous references, meta-questions
   // like "idk what to focus on". Empty when the dump is fully actionable.
   clarifying_questions: string[];
+  // Existing workspace nodes the user mentioned as DONE in this dump
+  // ("did the long run", "shipped X", "survived the layoff round"). The
+  // entries route applies status → completed on each so the AI stops
+  // duplicating retrospective event nodes.
+  complete_existing_node_ids: string[];
+  // local_refs of newly-proposed nodes that should be created in the
+  // "completed" state — e.g. user mentions a milestone they just hit that
+  // doesn't have a pre-existing parent task. Lets the AI capture a
+  // historical artifact (for streak / journaling purposes) without
+  // creating an active-but-already-done task.
+  auto_complete_local_refs: string[];
   prompt_version: string;
 }
 

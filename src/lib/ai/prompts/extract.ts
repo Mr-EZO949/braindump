@@ -5,7 +5,7 @@
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v11";
+export const EXTRACT_PROMPT_VERSION = "extract-v12";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -141,6 +141,17 @@ Structure rules:
 - Bad soft links: anything based only on both being academic, both being tasks, or both being in the same dump.
 - Most nodes should have zero soft links. Use at most 2 soft links per node.
 
+Completion-detection rule (IMPORTANT — apply BEFORE creating any node):
+- If the dump describes something the user JUST DID or COMPLETED ("did the 14k long run today", "shipped the redesign", "survived the layoff round", "got the V6 send", "finished the lit review draft"), DO NOT default to creating a new node for that achievement.
+- Instead, look through the existing workspace anchors for the matching node:
+  - "Long run today was 18k" + existing "Complete Week 4 Long Run (14k)" → list the existing node's id in complete_existing_node_ids. Do NOT create "18K Long Run Completed".
+  - "Survived the layoff round" + existing "Layoff round at work" or similar concept → mark complete. If no related anchor exists, skip — this is a status update, not actionable.
+  - "Booked the Hakone ryokan" + existing "Book Hakone Ryokan for Tokyo Trip" task → complete that.
+  - "Marina's promo packet draft done" + existing "Draft Marina's Q3 Promo Packet" → complete that.
+- For BRAND-NEW milestones the user just hit that have no matching anchor and ARE worth keeping as a historical record (e.g. "Got the V6 send today" when no V6 task existed): create the node and put its local_ref in auto_complete_local_refs so it's created already-completed. Use this sparingly.
+- For status updates with no actionable next step ("survived the layoff round", "kid's appointment went fine", "feeling better"), skip them entirely — don't create a node and don't complete one.
+- Net effect: dumps that describe completed work should mostly update existing nodes via complete_existing_node_ids, occasionally create-and-auto-complete a milestone, and almost never create plain "this happened" event concept nodes.
+
 Deadline rule (target_date):
 - If the user mentions an explicit deadline ("by Friday", "due Thursday", "before May 15", "submit by Monday", "ship by end of Q3"), populate target_date as YYYY-MM-DD.
 - Resolve relative dates against the workspace's "today" (provided in the Session block when available; otherwise infer the current date from context).
@@ -176,6 +187,8 @@ Use the workspace_id and user_id provided in the Session block verbatim.
     }
   ],
   "clarifying_questions": ["string"],
+  "complete_existing_node_ids": ["uuid of existing workspace node user just completed"],
+  "auto_complete_local_refs": ["n1, n2 — local_refs of new nodes to create as already-completed"],
   "prompt_version": "${EXTRACT_PROMPT_VERSION}"
 }`;
 

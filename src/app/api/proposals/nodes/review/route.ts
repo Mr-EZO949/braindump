@@ -183,6 +183,15 @@ export async function POST(req: NextRequest) {
       // and the user can edit it post-accept via update_node / the form.
       const targetDate = (proposal.proposed_target_date as string | null) ?? null;
 
+      // Auto-complete marker — the entries route sets source_span to
+      // `[[AUTO_COMPLETE]]` for proposals the AI flagged as "user
+      // already did this." The node lands in the graph with status =
+      // completed so it never shows up in active task lists. The
+      // source_span text is replaced with null so it doesn't pollute
+      // the node's provenance.
+      const autoComplete = proposal.source_span === "[[AUTO_COMPLETE]]";
+      const statusOnInsert: "active" | "completed" = autoComplete ? "completed" : "active";
+
       return [{
         edits: action.edits,
         proposal,
@@ -196,7 +205,8 @@ export async function POST(req: NextRequest) {
           importance: getImportanceLabel(importanceIndex),
           importance_index: importanceIndex,
           color: NODE_COLOR_BY_TYPE[nodeType],
-          status: "active",
+          status: statusOnInsert,
+          completed_at: autoComplete ? new Date().toISOString() : null,
           target_date: targetDate,
         },
       }];
