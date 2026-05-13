@@ -147,6 +147,11 @@ const PROPOSE_NODE: ToolDefinition = {
             "Optional ISO date (YYYY-MM-DD) deadline for this node. Use when the user mentions a specific date, day-of-week + month, or relative window like 'by Friday' / 'August 1' / 'end of Q3'. Resolve relative references against today. Goals or projects with deadlines surface in the Roadmap view.",
           pattern: "^\\d{4}-\\d{2}-\\d{2}$",
         },
+        body: {
+          type: "string",
+          description:
+            "Optional longer description (≤400 chars) answering: so what / why does this matter / what's the next concrete step. Distinct from summary, which only says 'what is this'. Skip when there's nothing to say beyond the summary.",
+        },
       },
       required: ["title", "node_type"],
     },
@@ -159,6 +164,7 @@ const PROPOSE_NODE: ToolDefinition = {
       importance_index?: number;
       parent_node_id?: string;
       target_date?: string;
+      body?: string;
     };
 
     const title = typeof args.title === "string" ? args.title.trim() : "";
@@ -206,6 +212,12 @@ const PROPOSE_NODE: ToolDefinition = {
         ? args.target_date
         : null;
 
+    // Trim body to the soft 400-char cap. null when empty / not supplied.
+    const body =
+      typeof args.body === "string" && args.body.trim().length > 0
+        ? args.body.trim().slice(0, 400)
+        : null;
+
     const { data: node, error: nodeErr } = await ctx.supabase
       .from("nodes")
       .insert({
@@ -213,6 +225,7 @@ const PROPOSE_NODE: ToolDefinition = {
         workspace_id: ctx.workspaceId,
         title,
         summary,
+        body,
         node_type: nodeType,
         importance,
         importance_index: importanceIndex,
@@ -642,6 +655,11 @@ const UPDATE_NODE: ToolDefinition = {
           description:
             "ISO date deadline (YYYY-MM-DD). Pass empty string to clear. Goals/projects with deadlines surface in the Roadmap view.",
         },
+        body: {
+          type: "string",
+          description:
+            "Long-form description (≤400 chars) answering: so what / why it matters / next step. Pass empty string to clear.",
+        },
       },
       required: ["node_id"],
     },
@@ -654,6 +672,7 @@ const UPDATE_NODE: ToolDefinition = {
       node_type?: string;
       importance_index?: number;
       target_date?: string;
+      body?: string;
     };
     const nodeId = typeof args.node_id === "string" ? args.node_id : "";
     if (!nodeId) return { accepted: false, error: "node_id is required" };
@@ -703,6 +722,10 @@ const UPDATE_NODE: ToolDefinition = {
           error: "target_date must be YYYY-MM-DD or empty string to clear",
         };
       }
+    }
+    if (typeof args.body === "string") {
+      const trimmedBody = args.body.trim();
+      patch.body = trimmedBody.length > 0 ? trimmedBody.slice(0, 400) : null;
     }
 
     if (Object.keys(patch).length === 0) {

@@ -233,6 +233,7 @@ function SharedNodeSheet({
     node_type: "concept",
     raw_text: "",
     summary: "",
+    body: "",
     title: "",
     target_date: "",
   };
@@ -384,6 +385,26 @@ function SharedNodeSheet({
                   placeholder="Short summary"
                   rows={3}
                   value={safeDraft.summary}
+                />
+              </label>
+
+              <label className="graph-create-field">
+                <div className="space-y-1">
+                  <span className="graph-create-label">
+                    Context <span className="graph-create-helper-inline">(optional)</span>
+                  </span>
+                  <p className="graph-create-helper">
+                    So what / why it matters / what&rsquo;s next. A few sentences max — the
+                    summary already says &ldquo;what is this&rdquo;.
+                  </p>
+                </div>
+                <textarea
+                  className="graph-create-input graph-create-textarea graph-create-textarea-summary"
+                  onChange={(event) => onChangeField("body", event.target.value)}
+                  placeholder="Why this matters and what's the next step"
+                  rows={4}
+                  value={safeDraft.body}
+                  maxLength={400}
                 />
               </label>
 

@@ -318,6 +318,7 @@ export async function runExtraction(params: {
     soft_links: n.soft_links ?? [],
     proposed_title: n.proposed_title,
     proposed_summary: n.proposed_summary ?? null,
+    proposed_body: n.proposed_body ?? null,
     proposed_node_type: n.proposed_node_type,
     proposed_target_date: n.proposed_target_date ?? null,
     extraction_confidence: n.extraction_confidence,
@@ -334,6 +335,20 @@ export async function runExtraction(params: {
     const fallbackRows = rows.map((row) =>
       Object.fromEntries(
         Object.entries(row).filter(([key]) => key !== "existing_parent_node_id")
+      )
+    );
+    const retry = await supabase.from("proposed_nodes").insert(fallbackRows).select();
+    savedNodes = retry.data;
+    nodesError = retry.error;
+  }
+
+  // Same fallback for proposed_body — the migration that adds it may not
+  // have run yet on every environment, so we drop the column and retry
+  // rather than erroring out.
+  if (nodesError && isMissingColumnError(nodesError.message, "proposed_body")) {
+    const fallbackRows = rows.map((row) =>
+      Object.fromEntries(
+        Object.entries(row).filter(([key]) => key !== "proposed_body")
       )
     );
     const retry = await supabase.from("proposed_nodes").insert(fallbackRows).select();

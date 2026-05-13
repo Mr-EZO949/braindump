@@ -30,6 +30,10 @@ export interface Node {
   workspace_id?: string | null;
   title: string;
   summary: string | null;
+  // Long-form description answering "so what?", "why it matters?", and
+  // "what should be done?" — kept compact (~400 chars) so cards stay
+  // glanceable. Filled by AI extraction; user-editable on create/edit.
+  body: string | null;
   raw_text: string | null;
   node_type: NodeType;
   importance: Importance;
@@ -111,6 +115,9 @@ export interface CreateNodeInput {
   node_type: "goal" | "task" | "project" | "concept" | "class" | "habit" | "custom";
   raw_text: string;
   summary: string;
+  // Optional long-form context (so what / why it matters / what's next).
+  // Empty string = none. ~400 chars is the soft cap.
+  body: string;
   title: string;
   // Optional ISO date deadline (YYYY-MM-DD). Empty string = no deadline.
   // Surfaced in the create/edit form as a date picker.

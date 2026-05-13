@@ -433,6 +433,7 @@ export function buildChatNodeContext(
     id: node.id,
     title: node.title,
     summary: node.summary,
+    body: node.body ?? null,
     node_type: node.node_type,
     importance: getImportanceLabel(getImportanceIndex(node)),
     importanceIndex: getImportanceIndex(node),

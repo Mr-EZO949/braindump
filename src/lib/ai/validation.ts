@@ -193,6 +193,12 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
       proposed_summary: isString(n.proposed_summary)
         ? n.proposed_summary
         : null,
+      // Body is capped at 400 chars at validation time. The prompt asks for
+      // ≤400; anything longer gets trimmed rather than rejected so a
+      // slightly-runaway response doesn't fail the whole extraction.
+      proposed_body: isString(n.proposed_body)
+        ? n.proposed_body.trim().slice(0, 400) || null
+        : null,
       proposed_node_type: n.proposed_node_type as ExtractionOutput["proposed_nodes"][number]["proposed_node_type"],
       primary_parent_local_ref: primaryParentLocalRef,
       existing_parent_node_id: existingParentNodeId,

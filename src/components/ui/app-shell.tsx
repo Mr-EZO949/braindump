@@ -99,6 +99,7 @@ const defaultCreateNodeDraft: CreateNodeInput = {
   node_type: "concept",
   raw_text: "",
   summary: "",
+  body: "",
   title: "",
   target_date: "",
 };
@@ -146,6 +147,7 @@ function createDraftFromNode(node: Node): CreateNodeInput {
     node_type: nodeType,
     raw_text: node.raw_text ?? "",
     summary: node.summary ?? "",
+    body: node.body ?? "",
     title: node.title,
     target_date: typeof node.target_date === "string" ? node.target_date : "",
   };
@@ -1418,6 +1420,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       node_type: resolvedNodeType as Node["node_type"],
       raw_text: createNodeDraft.raw_text.trim() || null,
       summary: createNodeDraft.summary.trim() || null,
+      body: createNodeDraft.body.trim() || null,
       title,
       target_date: targetDate,
       user_id: authUser.id,
@@ -1501,6 +1504,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         editNodeDraft.manual_weight == null ? null : new Date().toISOString(),
       node_type: resolvedNodeType as Node["node_type"],
       summary: editNodeDraft.summary.trim() || null,
+      body: editNodeDraft.body.trim() || null,
       target_date: targetDate,
       title,
       updated_at: new Date().toISOString(),

@@ -171,6 +171,9 @@ export async function POST(req: NextRequest) {
 
       const title = (action.edits?.proposed_title ?? proposal.proposed_title as string).trim();
       const summary = (action.edits?.proposed_summary ?? proposal.proposed_summary as string | null) || null;
+      // proposed_body may not exist on older proposals (migration not yet
+      // run); fall back to null so accept doesn't break the response.
+      const body = ((proposal as { proposed_body?: string | null }).proposed_body ?? null) || null;
       const rawType = action.edits?.proposed_node_type ?? (proposal.proposed_node_type as string);
       const nodeType: NodeType = VALID_NODE_TYPES.has(rawType as NodeType)
         ? (rawType as NodeType)
@@ -200,6 +203,7 @@ export async function POST(req: NextRequest) {
           workspace_id: proposal.workspace_id as string,
           title,
           summary,
+          body,
           raw_text: null,
           node_type: nodeType,
           importance: getImportanceLabel(importanceIndex),
@@ -213,10 +217,31 @@ export async function POST(req: NextRequest) {
     });
 
     if (acceptedInputs.length > 0) {
-      const { data: created, error: insertError } = await supabase
+      let { data: created, error: insertError } = await supabase
         .from("nodes")
         .insert(acceptedInputs.map((entry) => entry.nodeRow))
         .select();
+
+      // Fallback if `body` column doesn't exist yet (migration not run on
+      // this env). Strip body from each row and retry — the rest of the
+      // flow stays functional, the user just doesn't see body content
+      // until they run the migration.
+      if (
+        insertError &&
+        /column.*body|"body".*does not exist/i.test(insertError.message ?? "")
+      ) {
+        const retry = await supabase
+          .from("nodes")
+          .insert(
+            acceptedInputs.map((entry) => {
+              const { body: _body, ...rest } = entry.nodeRow as Record<string, unknown>;
+              return rest;
+            }),
+          )
+          .select();
+        created = retry.data;
+        insertError = retry.error;
+      }
 
       if (insertError) {
         return NextResponse.json(

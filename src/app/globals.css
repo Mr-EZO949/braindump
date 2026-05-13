@@ -1656,7 +1656,28 @@ input[type="search"]::-webkit-search-results-decoration {
   line-height: 1.6;
   letter-spacing: -0.01em;
   color: var(--color-text-secondary);
+  margin: 0 0 10px;
+}
+
+/* Long-form body — "so what / why it matters / next step". Visually
+   distinct from the summary: smaller, muted, left border accent so the
+   eye reads it as the context paragraph rather than another lede. */
+.detail-body {
+  font-size: 12.5px;
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+  color: var(--color-text-secondary);
   margin: 0 0 14px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.025);
+  border-left: 2px solid rgba(213, 58, 71, 0.4);
+  border-radius: 0 6px 6px 0;
+  white-space: pre-wrap;
+}
+
+:root[data-theme="light"] .detail-body {
+  background: rgba(0, 0, 0, 0.025);
+  border-left-color: rgba(213, 58, 71, 0.5);
 }
 
 .detail-meta-row {

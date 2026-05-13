@@ -5,7 +5,7 @@
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v12";
+export const EXTRACT_PROMPT_VERSION = "extract-v13";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -19,11 +19,24 @@ Rules:
 - Do not merge unrelated ideas into one node.
 - Do not split a single coherent idea into multiple nodes.
 - Titles should be concise (3–8 words).
-- Summaries should be 1–2 sentences max.
+- Summaries should be 1–2 sentences max — they answer "what is this?".
+- Bodies are a separate, longer field — see Body rule below.
 - Confidence: 0.0–1.0. Use 0.9+ only if the idea is clearly stated. Use 0.6–0.8 for inferred ideas.
 - source_span: copy the exact phrase or sentence from the input that led to this node. Use null for implied anchor/group nodes.
 - Node types: project | task | class | concept | idea | goal | habit
 - local_ref: assign each node a unique short ID like "n1", "n2", "n3". Other relationship fields must reference these IDs.
+
+Body rule (IMPORTANT — what makes a node feel useful instead of vague):
+- proposed_body is a SEPARATE field from proposed_summary. The summary says "what this is"; the body says "so what, why it matters, what to do."
+- Keep proposed_body ≤ 400 characters. Write it as 1–2 flowing sentences (not bullet points, not markdown).
+- A good body packs three signals:
+  1. WHY THIS MATTERS — what's the stake, deadline, or downstream impact?
+  2. WHAT'S NEXT — the concrete next action, blocker, or open question.
+  3. CONTEXT THE USER GAVE — names, numbers, dates from the dump.
+- If the dump genuinely didn't give enough to write an honest body, set proposed_body to null. Don't pad with platitudes ("important to the user", "should focus on this").
+- Example good body for a task "Draft Marina's Q3 Promo Packet": "Owed to Marina by next Wednesday — Tomás's biggest IC report-back this quarter. Pull last cycle's packet as a template, then add Q3 wins and the staff/IC narrative. Blocker once started: needs Marina's self-assessment by Monday."
+- Example bad body (skip — too vague): "This is an important task to complete. The user should prioritize it."
+- Bodies are most useful on tasks, projects, and goals. Concepts and ideas can use them too, but only when there's something to say beyond the summary.
 
 Actionability rule (IMPORTANT — apply before extracting any task):
 - A task node must describe a CONCRETE, EXECUTABLE action. The user should be able to picture doing it.
@@ -170,6 +183,7 @@ Use the workspace_id and user_id provided in the Session block verbatim.
       "user_id": "<provided user_id>",
       "proposed_title": "string",
       "proposed_summary": "string or null",
+      "proposed_body": "string ≤400 chars (so what / why it matters / next step) or null",
       "proposed_node_type": "task | project | concept | goal | idea | class | habit",
       "primary_parent_local_ref": "n2 or null",
       "existing_parent_node_id": "existing workspace node id or null",

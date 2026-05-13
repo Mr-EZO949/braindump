@@ -137,6 +137,10 @@ export interface ProposedNode {
   accepted_node_id: string | null;
   proposed_title: string;
   proposed_summary: string | null;
+  // Long-form description (so what / why it matters / next step). Filled
+  // by the extractor when there's enough signal in the dump; null when
+  // the dump didn't say enough to write something honest.
+  proposed_body: string | null;
   proposed_node_type: NodeType;
   proposed_target_date: string | null;
   extraction_confidence: number;

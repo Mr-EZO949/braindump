@@ -461,10 +461,17 @@ export function ContextRail({
             <div className="shell-scrollbar flex-1 overflow-y-auto">
               {selectedNode ? (
                 <div className="detail-panel">
-                  {/* Summary */}
+                  {/* Summary — "what is this" */}
                   <p className="detail-summary">
                     {selectedNode.summary ?? "No summary yet."}
                   </p>
+
+                  {/* Body — "so what / why it matters / next step". Only
+                      shown when present; falls back silently if the
+                      extractor / user didn't fill it. */}
+                  {selectedNode.body ? (
+                    <p className="detail-body">{selectedNode.body}</p>
+                  ) : null}
 
                   {/* Meta tags row */}
                   <div className="detail-meta-row">

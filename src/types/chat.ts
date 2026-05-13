@@ -20,6 +20,9 @@ export interface ChatNodeContext {
   id: string;
   title: string;
   summary: string | null;
+  // Long-form description (so what / why it matters / next step). Optional
+  // because older nodes / minimal proposals may not have one filled in.
+  body?: string | null;
   node_type: NodeType;
   importance: Importance;
   importanceIndex: number;
