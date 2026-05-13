@@ -49,3 +49,6 @@ AGENTS.md
 scripts/test-*.ts
 scripts/haiku-vs-sonnet-*.ts
 scripts/verify-embeddings.ts
+
+# Local test reports (kept off GitHub)
+tmp/
