@@ -1919,6 +1919,49 @@ export function AppShell({ initialUser }: AppShellProps) {
       setBrainDumpFailedEntryId(null);
       const nodes = data.proposed_nodes ?? [];
       const questions = data.clarifying_questions ?? [];
+      const completedTitles =
+        (data as { completed_existing_node_titles?: string[] }).completed_existing_node_titles ?? [];
+
+      // Mirror the dump into the chat thread so the assistant becomes the
+      // primary surface — every dump shows up as a user message, every
+      // extraction outcome as an assistant response, and follow-ups land
+      // in the same conversation. The proposed-nodes review modal still
+      // opens for the actual accept/reject pass.
+      const summary = [
+        nodes.length > 0
+          ? `Extracted ${nodes.length} node${nodes.length === 1 ? "" : "s"}.`
+          : "No new nodes extracted.",
+        completedTitles.length > 0
+          ? `Marked ${completedTitles.length} existing node${completedTitles.length === 1 ? "" : "s"} as done: ${completedTitles.slice(0, 3).join(", ")}${completedTitles.length > 3 ? "…" : ""}.`
+          : null,
+        questions.length > 0
+          ? `Raised ${questions.length} clarifying question${questions.length === 1 ? "" : "s"} — answer inline when ready.`
+          : null,
+        nodes.length > 0 ? "Review them in the panel that just opened." : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const nowIso = new Date().toISOString();
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
+          role: "user" as const,
+          body: trimmed,
+          createdAt: nowIso,
+          status: "ready" as const,
+        },
+        {
+          id: `chat-extract-${Math.random().toString(36).slice(2, 10)}`,
+          role: "assistant" as const,
+          body: summary,
+          createdAt: nowIso,
+          status: "ready" as const,
+        },
+      ]);
+      setRightPanelOpen(true);
+      setActiveRailTab("chat");
+
       if (nodes.length > 0 || questions.length > 0) {
         setProposedNodes(nodes);
         setClarifyingQuestions(questions);
