@@ -114,10 +114,17 @@ const MINI_NODES = [
 const MINI_EDGES: [number, number][] = [[0, 1], [0, 2], [1, 3], [2, 3], [3, 4]];
 
 const PHASE_DELAYS = [
-  400, 680, 680, 680, 680, 680, 700,
-  300, 190, 190, 190, 190, 190, 1800,
-  300, 250, 250, 250, 250, 250,
-  320, 320, 320, 320, 320, 3400,
+  280, 160, 160, 160, 160, 160, 1800,    // input: 0-6
+  280, 170, 170, 170, 170, 170, 1500,    // extracted: 7-13
+  300, 240, 240, 240, 240, 240,           // graph nodes: 14-19
+  280, 280, 280, 280, 280, 1400,          // graph edges + brief hold: 20-25
+  320, 260, 260, 260, 1800, 1200,          // focus card: 26-31 (header+summary, item1, item2, item3, hold, hold)
+];
+
+const WHAT_NOW_CHIPS = [
+  "blocks proposal",
+  "due Friday",
+  "~25 min",
 ];
 
 const MARQUEE_R1 = [
@@ -154,26 +161,6 @@ const REVIEW_ITEMS = [
   { type: "task",     title: "Fix auth bug",           status: "accepted" as const },
   { type: "question", title: "Auth ↔ Search link?",    status: "rejected" as const },
   { type: "journal",  title: "Roadmap clarity",        status: "accepted" as const },
-];
-
-// Assistant chat messages
-const CHAT_MSGS = [
-  { role: "user" as const,      text: "What should I focus on this week?" },
-  { role: "assistant" as const,  text: "Based on your graph, the auth bug is blocking 3 downstream tasks — including the proposal. I'd start there." },
-  { role: "user" as const,      text: "What's connected to the auth bug?" },
-  { role: "assistant" as const,  text: "It's upstream of: Finish proposal, Embedding search, and the Sarah meeting. It also relates to your \"Auth ↔ Search\" question node." },
-];
-
-// Node type info
-const TYPE_INFO = [
-  { key: "task",     label: "Tasks",     desc: "Things to do" },
-  { key: "goal",     label: "Goals",     desc: "Where you're headed" },
-  { key: "idea",     label: "Ideas",     desc: "Sparks worth keeping" },
-  { key: "concept",  label: "Concepts",  desc: "Things you're learning" },
-  { key: "question", label: "Questions", desc: "Open threads" },
-  { key: "journal",  label: "Journals",  desc: "How you feel" },
-  { key: "project",  label: "Projects",  desc: "Active efforts" },
-  { key: "class",    label: "Classes",   desc: "Courses & study" },
 ];
 
 // Graph: SaaS project with related classes, tasks, ideas
@@ -231,6 +218,428 @@ function MarqueeRow({ items, reverse }: { items: typeof MARQUEE_R1; reverse?: bo
             {item.t}
           </span>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Context Core (AI section visual) ─────────────────────
+
+const CONTEXT_NODES = [
+  { angle:  -90, t: "goal",     label: "Ship v1" },
+  { angle:  -45, t: "task",     label: "Auth bug" },
+  { angle:    0, t: "idea",     label: "Embed search" },
+  { angle:   45, t: "habit",    label: "Spanish 10m" },
+  { angle:   90, t: "journal",  label: "Tue: stuck" },
+  { angle:  135, t: "project",  label: "API rebuild" },
+  { angle:  180, t: "concept",  label: "RAFT" },
+  { angle: -135, t: "question", label: "What blocks?" },
+];
+
+function ContextCore() {
+  const ref = useRef<HTMLDivElement>(null);
+  const v = useInView(ref, { once: true, margin: "-60px" });
+
+  const cx = 220, cy = 220, ringR = 150;
+
+  return (
+    <div ref={ref} className={styles.contextCore}>
+      <div className={styles.panelChrome}>
+        <span className={styles.chromeDot} />
+        <span className={styles.chromeDot} />
+        <span className={styles.chromeDot} />
+        <span className={styles.panelLabel}>context · live</span>
+      </div>
+
+      <div className={styles.contextStage}>
+        <svg viewBox="0 0 440 440" className={styles.contextSvg} aria-hidden="true">
+          <defs>
+            <radialGradient id="coreGlow">
+              <stop offset="0%"  stopColor="rgba(213, 58, 71, 0.6)" />
+              <stop offset="55%" stopColor="rgba(213, 58, 71, 0.12)" />
+              <stop offset="100%" stopColor="transparent" />
+            </radialGradient>
+          </defs>
+
+          <circle cx={cx} cy={cy} r={110} fill="url(#coreGlow)" />
+
+          {CONTEXT_NODES.map((n, i) => {
+            const rad = (n.angle * Math.PI) / 180;
+            const nx = cx + ringR * Math.cos(rad);
+            const ny = cy + ringR * Math.sin(rad);
+            const c = NC[n.t];
+            return (
+              <motion.line
+                key={`l${i}`}
+                x1={nx} y1={ny} x2={cx} y2={cy}
+                stroke={c}
+                strokeWidth="1"
+                strokeOpacity="0.35"
+                strokeDasharray="2 5"
+                initial={{ pathLength: 0 }}
+                animate={v ? { pathLength: 1, strokeDashoffset: [0, -28] } : {}}
+                transition={{
+                  pathLength: { delay: 0.35 + i * 0.06, duration: 0.55, ease: "easeOut" },
+                  strokeDashoffset: {
+                    delay: 0.9 + i * 0.06,
+                    duration: 2 + (i % 3) * 0.4,
+                    repeat: Infinity,
+                    ease: "linear",
+                  },
+                }}
+              />
+            );
+          })}
+
+          <motion.circle
+            cx={cx} cy={cy} r={26}
+            fill="rgba(213, 58, 71, 0.96)"
+            stroke="rgba(255, 255, 255, 0.18)"
+            strokeWidth="1.5"
+            initial={{ scale: 0 }}
+            animate={v ? { scale: 1 } : {}}
+            transition={{ delay: 0.15, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          />
+          <motion.circle
+            cx={cx} cy={cy} r={26}
+            fill="none"
+            stroke="rgba(213, 58, 71, 0.55)"
+            strokeWidth="1.2"
+            animate={v ? { r: [26, 50], opacity: [0.55, 0] } : {}}
+            transition={{ duration: 2.6, repeat: Infinity, ease: "easeOut" }}
+          />
+          <text x={cx} y={cy + 4} textAnchor="middle"
+            fill="rgba(255,255,255,0.96)" fontSize="11" fontWeight="700"
+            fontFamily="ui-monospace, monospace" letterSpacing="0.08em">AI</text>
+
+          {CONTEXT_NODES.map((n, i) => {
+            const rad = (n.angle * Math.PI) / 180;
+            const nx = cx + ringR * Math.cos(rad);
+            const ny = cy + ringR * Math.sin(rad);
+            const lx = cx + (ringR + 30) * Math.cos(rad);
+            const ly = cy + (ringR + 30) * Math.sin(rad);
+            const c = NC[n.t];
+            const isLeft = Math.cos(rad) < -0.25;
+            const isRight = Math.cos(rad) > 0.25;
+            const anchor = isLeft ? "end" : isRight ? "start" : "middle";
+            return (
+              <motion.g key={`n${i}`}
+                initial={{ opacity: 0, scale: 0 }}
+                animate={v ? { opacity: 1, scale: 1 } : {}}
+                transition={{ delay: 0.5 + i * 0.06, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                style={{ transformOrigin: `${nx}px ${ny}px` }}
+              >
+                <circle cx={nx} cy={ny} r={17} fill={`${c}1e`} stroke={c} strokeWidth="1.4" strokeOpacity="0.78" />
+                <text x={nx} y={ny + 3} textAnchor="middle" fill={c}
+                  fontSize="6.5" fontWeight="700" fontFamily="ui-monospace, monospace" opacity="0.92">
+                  {n.t.toUpperCase().slice(0, 4)}
+                </text>
+                <text x={lx} y={ly + 3} textAnchor={anchor}
+                  fill="rgba(255,255,255,0.55)" fontSize="9.5"
+                  fontFamily="ui-sans-serif, system-ui, sans-serif">
+                  {n.label}
+                </text>
+              </motion.g>
+            );
+          })}
+        </svg>
+      </div>
+
+      <div className={styles.contextStats}>
+        <div className={styles.contextStat}>
+          <span className={styles.contextStatVal}>247</span>
+          <span className={styles.contextStatLabel}>nodes</span>
+        </div>
+        <span className={styles.contextStatDivider} />
+        <div className={styles.contextStat}>
+          <span className={styles.contextStatVal}>891</span>
+          <span className={styles.contextStatLabel}>edges</span>
+        </div>
+        <span className={styles.contextStatDivider} />
+        <div className={styles.contextStat}>
+          <span className={styles.contextStatVal}>∞</span>
+          <span className={styles.contextStatLabel}>memory</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Four Lenses (one graph, multiple views) ──────────────
+
+type Lens = {
+  key: "graph" | "tasks" | "habits" | "roadmap";
+  label: string;
+  hint: string;
+};
+
+const LENSES: Lens[] = [
+  { key: "graph",   label: "Graph",   hint: "how it all connects" },
+  { key: "tasks",   label: "Tasks",   hint: "today, this week, blocked" },
+  { key: "habits",  label: "Habits",  hint: "streaks, cadence, check-ins" },
+  { key: "roadmap", label: "Roadmap", hint: "goals over time" },
+];
+
+function LensesShowcase() {
+  const [active, setActive] = useState<Lens["key"]>("graph");
+  const ref = useRef<HTMLDivElement>(null);
+  const v = useInView(ref, { once: true, margin: "-60px" });
+
+  return (
+    <div ref={ref} className={styles.lensesWrap}>
+      <div className={styles.lensesTabs} role="tablist" aria-label="Views">
+        {LENSES.map((lens, i) => (
+          <motion.button
+            key={lens.key}
+            type="button"
+            role="tab"
+            aria-selected={active === lens.key}
+            className={`${styles.lensesTab} ${active === lens.key ? styles.lensesTabActive : ""}`}
+            onClick={() => setActive(lens.key)}
+            onMouseEnter={() => setActive(lens.key)}
+            initial={{ opacity: 0, y: 12 }}
+            animate={v ? { opacity: 1, y: 0 } : {}}
+            transition={{ delay: 0.05 + i * 0.06, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <span className={styles.lensesTabLabel}>{lens.label}</span>
+            <span className={styles.lensesTabHint}>{lens.hint}</span>
+          </motion.button>
+        ))}
+      </div>
+
+      <div className={styles.lensesStage}>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={active}
+            className={styles.lensesPane}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {active === "graph" && <LensGraph />}
+            {active === "tasks" && <LensTasks />}
+            {active === "habits" && <LensHabits />}
+            {active === "roadmap" && <LensRoadmap />}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+function LensGraph() {
+  const tree = [
+    { id: "root", x: 210, y: 30,  t: "goal",     label: "Ship v1" },
+    { id: "a",    x: 90,  y: 110, t: "project",  label: "Backend" },
+    { id: "b",    x: 210, y: 110, t: "project",  label: "Frontend" },
+    { id: "c",    x: 330, y: 110, t: "project",  label: "Launch" },
+    { id: "a1",   x: 40,  y: 190, t: "task",     label: "Auth" },
+    { id: "a2",   x: 140, y: 190, t: "task",     label: "API" },
+    { id: "b1",   x: 210, y: 190, t: "task",     label: "UI" },
+    { id: "c1",   x: 290, y: 190, t: "idea",     label: "Beta" },
+    { id: "c2",   x: 380, y: 190, t: "task",     label: "Docs" },
+  ];
+  const edges: [string, string][] = [
+    ["root", "a"], ["root", "b"], ["root", "c"],
+    ["a", "a1"], ["a", "a2"],
+    ["b", "b1"],
+    ["c", "c1"], ["c", "c2"],
+  ];
+  const idx = Object.fromEntries(tree.map((n) => [n.id, n]));
+  return (
+    <svg viewBox="0 0 420 220" className={styles.lensSvg} aria-hidden="true">
+      {edges.map(([from, to], i) => {
+        const a = idx[from], b = idx[to];
+        const midY = (a.y + b.y) / 2;
+        return (
+          <path
+            key={i}
+            d={`M ${a.x} ${a.y + 14} C ${a.x} ${midY}, ${b.x} ${midY}, ${b.x} ${b.y - 14}`}
+            stroke="rgba(255,255,255,0.1)"
+            strokeWidth="1.2"
+            fill="none"
+          />
+        );
+      })}
+      {tree.map((n) => {
+        const c = NC[n.t];
+        return (
+          <g key={n.id}>
+            <circle cx={n.x} cy={n.y} r={18} fill={`${c}14`} stroke={`${c}48`} strokeWidth="1.4" />
+            <text x={n.x} y={n.y + 3.5} textAnchor="middle" fontSize="7.5" fontWeight="700"
+              fontFamily="ui-monospace, monospace" fill={c} opacity="0.92">
+              {n.t.toUpperCase().slice(0, 4)}
+            </text>
+            <text x={n.x} y={n.y + 32} textAnchor="middle" fontSize="8.5"
+              fontFamily="ui-sans-serif, system-ui, sans-serif" fill="rgba(255,255,255,0.42)">
+              {n.label}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+const LENS_TASKS = [
+  { title: "Finish proposal draft",    type: "task",    meta: "due today",       status: "active"   },
+  { title: "Debug auth session bug",   type: "task",    meta: "blocks 3 others", status: "active"   },
+  { title: "Review PR feedback",       type: "task",    meta: "15m · admin",     status: "active"   },
+  { title: "Read RAFT paper §4",       type: "task",    meta: "from CS229",      status: "active"   },
+  { title: "Email Sarah re: roadmap",  type: "task",    meta: "this week",       status: "done"     },
+];
+
+function LensTasks() {
+  return (
+    <div className={styles.lensTasks}>
+      {LENS_TASKS.map((t, i) => {
+        const c = NC[t.type];
+        return (
+          <motion.div
+            key={i}
+            className={styles.lensTaskRow}
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.04 + i * 0.05, duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <span
+              className={styles.lensTaskBox}
+              data-checked={t.status === "done"}
+              style={{ borderColor: `${c}55` }}
+            >
+              {t.status === "done" ? "✓" : ""}
+            </span>
+            <span className={styles.lensTaskTitle} data-done={t.status === "done"}>{t.title}</span>
+            <span className={styles.lensTaskMeta}>{t.meta}</span>
+          </motion.div>
+        );
+      })}
+    </div>
+  );
+}
+
+const LENS_HABITS = [
+  { name: "Spanish · 10m",   streak: 12, days: [1,1,1,1,1,1,0] },
+  { name: "Leetcode · 1/d",  streak: 4,  days: [1,0,1,1,1,0,0] },
+  { name: "Read · 20 pages", streak: 7,  days: [1,1,1,1,1,1,1] },
+];
+
+function LensHabits() {
+  return (
+    <div className={styles.lensHabits}>
+      {LENS_HABITS.map((h, i) => (
+        <motion.div
+          key={i}
+          className={styles.lensHabitRow}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 + i * 0.08, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <div className={styles.lensHabitInfo}>
+            <span className={styles.lensHabitName}>{h.name}</span>
+            <span className={styles.lensHabitStreak}>🔥 {h.streak}-day streak</span>
+          </div>
+          <div className={styles.lensHabitDots}>
+            {h.days.map((d, j) => (
+              <span
+                key={j}
+                className={`${styles.lensHabitDot} ${d ? styles.lensHabitDotOn : ""}`}
+              />
+            ))}
+          </div>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
+const ROADMAP_BARS = [
+  { label: "Ship Analytics SaaS v1", color: "#a35258", start: 0,  span: 3 },
+  { label: "Finish CS229",            color: "#96784d", start: 1,  span: 2 },
+  { label: "Launch personal blog",    color: "#5c7a6e", start: 2,  span: 2 },
+  { label: "Run a half-marathon",     color: "#677480", start: 0,  span: 5 },
+];
+
+function LensRoadmap() {
+  const months = ["May", "Jun", "Jul", "Aug", "Sep"];
+  return (
+    <div className={styles.lensRoadmap}>
+      <div className={styles.lensRoadmapHeader}>
+        {months.map((m) => (
+          <span key={m} className={styles.lensRoadmapMonth}>{m}</span>
+        ))}
+      </div>
+      <div className={styles.lensRoadmapBody}>
+        {ROADMAP_BARS.map((b, i) => (
+          <motion.div
+            key={i}
+            className={styles.lensRoadmapRow}
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.05 + i * 0.07, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <span className={styles.lensRoadmapLabel}>{b.label}</span>
+            <div className={styles.lensRoadmapTrack}>
+              <motion.span
+                className={styles.lensRoadmapBar}
+                style={{
+                  left: `${(b.start / 5) * 100}%`,
+                  width: `${(b.span / 5) * 100}%`,
+                  background: `linear-gradient(90deg, ${b.color}aa, ${b.color}55)`,
+                  borderColor: `${b.color}66`,
+                }}
+                initial={{ scaleX: 0, transformOrigin: "left" }}
+                animate={{ scaleX: 1 }}
+                transition={{ delay: 0.15 + i * 0.08, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+              />
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Habits & streaks deep section ────────────────────────
+
+const HABITS_CALENDAR = Array.from({ length: 35 }, (_, i) => {
+  const seed = (i * 9301 + 49297) % 233280;
+  const v = (seed / 233280);
+  return v > 0.75 ? 3 : v > 0.55 ? 2 : v > 0.35 ? 1 : 0;
+});
+
+function HabitsCalendar() {
+  const ref = useRef<HTMLDivElement>(null);
+  const v = useInView(ref, { once: true, margin: "-80px" });
+  return (
+    <div ref={ref} className={styles.habitCalendarWrap}>
+      <div className={styles.panelChrome}>
+        <span className={styles.chromeDot} />
+        <span className={styles.chromeDot} />
+        <span className={styles.chromeDot} />
+        <span className={styles.panelLabel}>Spanish 10m · feeds &ldquo;Mexico City trip&rdquo;</span>
+      </div>
+      <div className={styles.habitCalendarBody}>
+        <div className={styles.habitCalendarGrid}>
+          {HABITS_CALENDAR.map((level, i) => (
+            <motion.span
+              key={i}
+              className={styles.habitCell}
+              data-level={level}
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={v ? { opacity: 1, scale: 1 } : {}}
+              transition={{ delay: (i % 7) * 0.04 + Math.floor(i / 7) * 0.06, duration: 0.28 }}
+            />
+          ))}
+        </div>
+        <div className={styles.habitCalendarLegend}>
+          <span className={styles.habitLegendLabel}>less</span>
+          {[0, 1, 2, 3].map((l) => (
+            <span key={l} className={styles.habitCell} data-level={l} />
+          ))}
+          <span className={styles.habitLegendLabel}>more</span>
+        </div>
       </div>
     </div>
   );
@@ -450,63 +859,6 @@ function ReviewShowcase() {
   );
 }
 
-// ── Node types grid ───────────────────────────────────────
-
-function NodeTypesGrid() {
-  const ref = useRef<HTMLDivElement>(null);
-  const v = useInView(ref, { once: true, margin: "-60px" });
-  return (
-    <div ref={ref} className={styles.typesGrid}>
-      {TYPE_INFO.map((t, i) => {
-        const c = NC[t.key];
-        return (
-          <motion.div key={t.key} className={styles.typeCard}
-            style={{ "--type-c": c } as React.CSSProperties}
-            initial={{ opacity: 0, y: 16 }}
-            animate={v ? { opacity: 1, y: 0 } : {}}
-            transition={{ delay: i * 0.05, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}>
-            <div className={styles.typeCardDot} style={{ background: c }} />
-            <span className={styles.typeCardName}>{t.label}</span>
-            <span className={styles.typeCardDesc}>{t.desc}</span>
-          </motion.div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ── Assistant chat mockup ─────────────────────────────────
-
-function AssistantChat() {
-  const ref = useRef<HTMLDivElement>(null);
-  const v = useInView(ref, { once: true, margin: "-60px" });
-  return (
-    <div ref={ref} className={styles.chatPanel}>
-      <div className={styles.panelChrome}>
-        <span className={styles.chromeDot} />
-        <span className={styles.chromeDot} />
-        <span className={styles.chromeDot} />
-        <span className={styles.panelLabel}>assistant</span>
-      </div>
-      <div className={styles.chatBody}>
-        {CHAT_MSGS.map((msg, i) => (
-          <motion.div key={i}
-            className={`${styles.chatMsg} ${msg.role === "user" ? styles.chatUser : styles.chatBot}`}
-            initial={{ opacity: 0, y: 12, scale: 0.97 }}
-            animate={v ? { opacity: 1, y: 0, scale: 1 } : {}}
-            transition={{ delay: 0.2 + i * 0.25, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}>
-            {msg.role === "assistant" && <Image src="/logo_icon.svg" alt="" width={24} height={24} className={styles.chatIcon} />}
-            <span className={styles.chatText}>{msg.text}</span>
-          </motion.div>
-        ))}
-      </div>
-      <div className={styles.chatInput}>
-        <span className={styles.chatPlaceholder}>Ask your graph anything…</span>
-      </div>
-    </div>
-  );
-}
-
 // ── MiniGraph (hero demo screen 3) ───────────────────────
 
 function MiniGraph({ visibleNodes, visibleEdges }: { visibleNodes: number; visibleEdges: number }) {
@@ -554,12 +906,15 @@ function ThoughtDemo() {
 
   useEffect(() => {
     const delay = PHASE_DELAYS[phase] ?? 1000;
-    const t = setTimeout(() => setPhase(p => (p >= 25 ? 0 : p + 1)), delay);
+    const t = setTimeout(() => setPhase(p => (p >= 31 ? 0 : p + 1)), delay);
     return () => clearTimeout(t);
   }, [phase]);
 
-  const screen: "input" | "extracted" | "graph" =
-    phase < 7 ? "input" : phase < 14 ? "extracted" : "graph";
+  const screen: "input" | "extracted" | "graph" | "whatNow" =
+    phase < 7 ? "input"
+      : phase < 14 ? "extracted"
+      : phase < 26 ? "graph"
+      : "whatNow";
 
   const visibleThoughts = Math.min(phase, 5);
   const visiblePills    = phase >= 8 ? Math.min(phase - 7, 5) : 0;
@@ -567,7 +922,17 @@ function ThoughtDemo() {
   const visibleEdges    = phase >= 20 ? Math.min(phase - 19, 5) : 0;
   const cursorIdx       = phase >= 1 && phase <= 6 ? Math.min(phase - 1, 4) : -1;
 
-  const labels = { input: "brain dump", extracted: "extracted", graph: "graph" };
+  const whatNowQuestionOn = phase >= 26;
+  const whatNowAnswerOn   = phase >= 27;
+  const whatNowChipsOn    = phase >= 28;
+  const whatNowActionOn   = phase >= 29;
+
+  const labels = {
+    input: "brain dump",
+    extracted: "extracted",
+    graph: "graph",
+    whatNow: "what now?",
+  };
 
   return (
     <div className={styles.thoughtDemo}>
@@ -583,7 +948,7 @@ function ThoughtDemo() {
           </motion.span>
         </AnimatePresence>
         <div className={styles.screenDots}>
-          {(["input", "extracted", "graph"] as const).map(s => (
+          {(["input", "extracted", "graph", "whatNow"] as const).map(s => (
             <span key={s} className={`${styles.screenDot} ${screen === s ? styles.screenDotActive : ""}`} />
           ))}
         </div>
@@ -630,6 +995,53 @@ function ThoughtDemo() {
               initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }} transition={{ duration: 0.28 }}>
               <MiniGraph visibleNodes={visibleNodes} visibleEdges={visibleEdges} />
+            </motion.div>
+          )}
+          {screen === "whatNow" && (
+            <motion.div key="whatNow" className={styles.demoWhatNow}
+              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }} transition={{ duration: 0.28 }}>
+
+              <motion.div className={styles.demoWhatNowQuestion}
+                initial={{ opacity: 0, y: 6 }}
+                animate={whatNowQuestionOn ? { opacity: 1, y: 0 } : { opacity: 0, y: 6 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
+                What should I work on right now?
+              </motion.div>
+
+              <motion.div className={styles.demoWhatNowAnswer}
+                initial={{ opacity: 0, y: 10 }}
+                animate={whatNowAnswerOn ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }}
+                transition={{ duration: 0.36, ease: [0.22, 1, 0.36, 1] }}>
+                <div className={styles.demoWhatNowAnswerHeader}>
+                  <span className={styles.demoWhatNowAvatar} aria-hidden="true">
+                    <span className={styles.demoWhatNowAvatarDot} />
+                  </span>
+                  <span className={styles.demoWhatNowAvatarName}>BrainDump</span>
+                </div>
+                <p className={styles.demoWhatNowAnswerText}>
+                  Work on the <strong>auth session bug</strong> &mdash; it&apos;s blocking the proposal due Friday, and you&apos;ve avoided it for three days.
+                </p>
+                <div className={styles.demoWhatNowChips}>
+                  {WHAT_NOW_CHIPS.map((label, i) => (
+                    <motion.span key={i} className={styles.demoWhatNowChip}
+                      initial={{ opacity: 0, scale: 0.94 }}
+                      animate={whatNowChipsOn ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.94 }}
+                      transition={{ duration: 0.28, delay: i * 0.06, ease: [0.22, 1, 0.36, 1] }}>
+                      {label}
+                    </motion.span>
+                  ))}
+                </div>
+              </motion.div>
+
+              <motion.button type="button" className={styles.demoWhatNowAction}
+                aria-hidden="true" tabIndex={-1}
+                initial={{ opacity: 0, y: 6 }}
+                animate={whatNowActionOn ? { opacity: 1, y: 0 } : { opacity: 0, y: 6 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}>
+                <span className={styles.demoWhatNowActionIcon} aria-hidden="true">▶</span>
+                Start 25-min focus
+              </motion.button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -770,18 +1182,18 @@ export default function LandingPage() {
               transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}>
               <div className={styles.badge}>
                 <span className={styles.badgeDot} />
-                Stop organizing. Start shipping.
+                AI that understands your whole life
               </div>
               <h1 className={styles.heroH1}>
-                Dump your brain.<br />
-                <span className={styles.gradient}>Never lose the thread.</span>
+                Stop planning.{" "}
+                <span className={styles.gradient}>Start working.</span>
               </h1>
               <p className={styles.heroSub}>
-                BrainDump remembers what you&apos;re working on, what&apos;s blocking what, and what to do next. You just keep moving.
+                Dump your thoughts as messy text. The AI turns it into a graph of connected priorities, tells you what to work on next, and never forgets what you told it last week.
               </p>
               <div className={styles.heroActions}>
                 <WaitlistForm source="hero" />
-                <a href="#problem" className={styles.btnGhost}>See why</a>
+                <a href="#lenses" className={styles.btnGhost}>See what&apos;s inside</a>
               </div>
             </motion.div>
 
@@ -834,6 +1246,26 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* ── Four Lenses ── */}
+        <section className={styles.section} id="lenses">
+          <div className={styles.inner}>
+            <FadeUp className={styles.centered}>
+              <span className={styles.label}>What&apos;s inside</span>
+              <h2 className={styles.h2}>
+                The last productivity app<br />
+                <span className={styles.gradient}>you&apos;ll ever need.</span>
+              </h2>
+              <p className={styles.sectionDesc}>
+                Tasks, habits, roadmaps, graph — every view the AI reads from when it answers. Hover a tab to peek inside.
+              </p>
+            </FadeUp>
+
+            <FadeUp delay={0.12}>
+              <LensesShowcase />
+            </FadeUp>
+          </div>
+        </section>
+
         {/* ── Review ── */}
         <section className={styles.section} id="how">
           <div className={styles.inner}>
@@ -850,90 +1282,17 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* ── Node types ── */}
-        <section className={styles.sectionAlt}>
-          <div className={styles.inner}>
-            <FadeUp className={styles.centered}>
-              <span className={styles.label}>Eight types of thought</span>
-              <h2 className={styles.h2}>
-                Not everything is a to-do
-              </h2>
-            </FadeUp>
-
-            <FadeUp delay={0.1}>
-              <NodeTypesGrid />
-            </FadeUp>
-          </div>
-        </section>
-
-        {/* ── Graph structure ── */}
+        {/* ── Graph structure (the substrate) ── */}
         <section className={styles.graphSection}>
           <div className={styles.inner}>
-            <FadeUp className={styles.centered}>
-              <span className={styles.label}>Context you never lose</span>
-              <h2 className={styles.h2}>
-                We remember how it all connects.
-              </h2>
-              <p className={styles.sectionDesc}>
-                Blockers, goals, side projects, classes — linked the moment you dump them. So you never re-explain your life to your own tools.
-              </p>
-            </FadeUp>
-
-            <FadeUp delay={0.15}>
+            <FadeUp delay={0.05}>
               <div className={styles.graphWrap}>
                 <GraphPreview />
+                <p className={styles.graphCaption}>
+                  Every dot you dump becomes a node. Every node finds its neighbours.
+                </p>
               </div>
             </FadeUp>
-          </div>
-        </section>
-
-        {/* ── Assistant ── */}
-        <section className={styles.section}>
-          <div className={styles.inner}>
-            <div className={styles.assistantLayout}>
-              <FadeUp className={styles.assistantInfo}>
-                <span className={styles.label}>Ask about your own life</span>
-                <h2 className={styles.h2}>
-                  A chat that actually<br />
-                  knows what you&apos;re doing
-                </h2>
-                <p className={styles.assistantDesc}>
-                  Grounded in everything you&apos;ve dumped. No re-explaining yourself, no generic advice — just answers from your own context.
-                </p>
-                <ul className={styles.assistantList}>
-                  <li>&ldquo;What&apos;s blocking my project?&rdquo;</li>
-                  <li>&ldquo;Summarize what I learned this week&rdquo;</li>
-                  <li>&ldquo;Which tasks relate to my CS229 notes?&rdquo;</li>
-                </ul>
-              </FadeUp>
-
-              <FadeUp delay={0.15} className={styles.assistantChatWrap}>
-                <AssistantChat />
-              </FadeUp>
-            </div>
-          </div>
-        </section>
-
-        {/* ── Create from chat ── */}
-        <section className={styles.sectionAlt}>
-          <div className={styles.inner}>
-            <div className={styles.createLayout}>
-              <FadeUp delay={0.1} className={styles.createVisualWrap}>
-                <CreateFromChatDemo />
-              </FadeUp>
-
-              <FadeUp className={styles.createInfo}>
-                <span className={styles.label}>Talk, don&apos;t click</span>
-                <h2 className={styles.h2}>
-                  Describe it once.
-                </h2>
-                <ul className={styles.assistantList}>
-                  <li>&ldquo;Break this goal into weekly tasks&rdquo;</li>
-                  <li>&ldquo;Add a project for the ML paper with subtasks&rdquo;</li>
-                  <li>&ldquo;Track my job search — applications, prep, interviews&rdquo;</li>
-                </ul>
-              </FadeUp>
-            </div>
           </div>
         </section>
 
@@ -963,6 +1322,69 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* ── Create from chat ── */}
+        <section className={styles.sectionAlt}>
+          <div className={styles.inner}>
+            <div className={styles.createLayout}>
+              <FadeUp delay={0.1} className={styles.createVisualWrap}>
+                <CreateFromChatDemo />
+              </FadeUp>
+
+              <FadeUp className={styles.createInfo}>
+                <span className={styles.label}>Talk, don&apos;t click</span>
+                <h2 className={styles.h2}>
+                  Describe it once.
+                </h2>
+                <ul className={styles.assistantList}>
+                  <li>&ldquo;Break this goal into weekly tasks&rdquo;</li>
+                  <li>&ldquo;Add a project for the ML paper with subtasks&rdquo;</li>
+                  <li>&ldquo;Track my job search — applications, prep, interviews&rdquo;</li>
+                </ul>
+              </FadeUp>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Habits deep dive ── */}
+        <section className={styles.section}>
+          <div className={styles.inner}>
+            <div className={styles.assistantLayout}>
+              <FadeUp className={styles.assistantInfo}>
+                <span className={styles.label}>Habits</span>
+                <h2 className={styles.h2}>
+                  Streaks with{" "}
+                  <span className={styles.gradient}>a destination.</span>
+                </h2>
+                <p className={styles.habitsLede}>
+                  Every habit points at a real goal you wrote down. So a streak isn&apos;t a vanity number — it&apos;s a milestone counter.
+                </p>
+
+                <div className={styles.habitLinks}>
+                  <div className={styles.habitLinkRow}>
+                    <span className={styles.habitLinkFrom}>Spanish &middot; 10m/day</span>
+                    <span className={styles.habitLinkArrow} aria-hidden="true">→</span>
+                    <span className={styles.habitLinkTo}>Mexico City trip</span>
+                  </div>
+                  <div className={styles.habitLinkRow}>
+                    <span className={styles.habitLinkFrom}>Leetcode &middot; 1/day</span>
+                    <span className={styles.habitLinkArrow} aria-hidden="true">→</span>
+                    <span className={styles.habitLinkTo}>Job hunt (started Feb)</span>
+                  </div>
+                  <div className={styles.habitLinkRow}>
+                    <span className={styles.habitLinkFrom}>Read &middot; 20 pages</span>
+                    <span className={styles.habitLinkArrow} aria-hidden="true">→</span>
+                    <span className={styles.habitLinkTo}>Finish 6 books · Q3</span>
+                  </div>
+                </div>
+              </FadeUp>
+
+              <FadeUp delay={0.15} className={styles.assistantChatWrap}>
+                <HabitsCalendar />
+              </FadeUp>
+            </div>
+          </div>
+        </section>
+
         {/* ── Differentiator ── */}
         <section className={styles.diff}>
           <div className={styles.inner}>
@@ -976,20 +1398,24 @@ export default function LandingPage() {
             <FadeUp delay={0.1}>
               <div className={styles.diffList}>
                 <div className={styles.diffRow}>
-                  <span className={styles.diffWhat}>To-do lists</span>
-                  <span className={styles.diffSays}>tell you what. Not what <em>first</em>, not <em>why</em>.</span>
+                  <span className={styles.diffWhat}>To-do apps</span>
+                  <span className={styles.diffSays}>track tasks in a vacuum. No habits, no goals, no <em>why</em>.</span>
+                </div>
+                <div className={styles.diffRow}>
+                  <span className={styles.diffWhat}>Habit apps</span>
+                  <span className={styles.diffSays}>track streaks. They don&apos;t know what those streaks are <em>for</em>.</span>
                 </div>
                 <div className={styles.diffRow}>
                   <span className={styles.diffWhat}>Note apps</span>
-                  <span className={styles.diffSays}>store. They don&apos;t connect.</span>
+                  <span className={styles.diffSays}>store. They don&apos;t connect to the work you&apos;re doing.</span>
                 </div>
                 <div className={styles.diffRow}>
                   <span className={styles.diffWhat}>AI chatbots</span>
-                  <span className={styles.diffSays}>answer once, then forget your goals.</span>
+                  <span className={styles.diffSays}>answer once, then forget your life every conversation.</span>
                 </div>
                 <div className={`${styles.diffRow} ${styles.diffRowUs}`}>
                   <span className={styles.diffWhat}>BrainDump</span>
-                  <span className={styles.diffSays}>remembers your life, knows what&apos;s next, and keeps you moving — no planning tax.</span>
+                  <span className={styles.diffSays}>all four — tasks, habits, notes, AI — sharing one graph that <em>actually remembers</em>.</span>
                 </div>
               </div>
             </FadeUp>
@@ -1001,8 +1427,8 @@ export default function LandingPage() {
           <div className={styles.ctaGlow} aria-hidden="true" />
           <FadeUp className={styles.ctaInner}>
             <h2 className={styles.ctaH2}>
-              Stop organizing your life.{"\n"}
-              <span className={styles.gradient}>Start living it.</span>
+              One graph for everything.{"\n"}
+              <span className={styles.gradient}>Every app for nothing.</span>
             </h2>
             <p className={styles.ctaSub}>Join the waitlist — we&apos;ll let you in as soon as we open up.</p>
             <div className={styles.ctaActions}>
@@ -1016,8 +1442,8 @@ export default function LandingPage() {
           <div className={styles.footerInner}>
             <Image src="/logo_withtext.svg" alt="BrainDump" width={160} height={32} className={styles.footerLogoImg} />
             <div className={styles.footerLinks}>
-              <a href="#" className={styles.footerLink}>Privacy</a>
-              <a href="#" className={styles.footerLink}>Terms</a>
+              <Link href="/privacy" className={styles.footerLink}>Privacy</Link>
+              <Link href="/terms" className={styles.footerLink}>Terms</Link>
             </div>
             <span className={styles.footerCopy}>© 2026 BrainDump</span>
           </div>
