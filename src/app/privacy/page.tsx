@@ -33,7 +33,7 @@ export default function PrivacyPolicyPage() {
           <p className={styles.effective}>Effective: 14 May 2026 · Last updated: 14 May 2026</p>
 
           <p className={styles.lede}>
-            BrainDump (&ldquo;we,&rdquo; &ldquo;us&rdquo;) is operated by [YOUR_LEGAL_NAME].
+            BrainDump (&ldquo;we,&rdquo; &ldquo;us&rdquo;) is operated by Zhangir Ospan.
             This policy explains what personal information we collect when you use our website
             and app (the &ldquo;Service&rdquo;), what we do with it, and the rights you have over it.
             We try to write this in plain English &mdash; but where the law requires us to be precise, we are.
@@ -191,11 +191,11 @@ export default function PrivacyPolicyPage() {
           <ul>
             <li><strong>Access</strong> the data we hold about you.</li>
             <li><strong>Correct</strong> inaccurate data (most data is editable directly inside the app).</li>
-            <li><strong>Delete</strong> your account and content from within the app or by emailing us.</li>
-            <li><strong>Export</strong> a copy of your content in a machine-readable format.</li>
+            <li><strong>Delete</strong> your account and all associated content from within the app (Settings &rarr; Delete account), or by emailing us.</li>
+            <li><strong>Export</strong> a copy of your content in a machine-readable format by requesting it from us at the email below.</li>
             <li><strong>Opt out</strong> of optional marketing communications.</li>
           </ul>
-          <p>To exercise a right that isn&apos;t directly available in the app, email us at <strong>[CONTACT_EMAIL]</strong>. We will respond within 30 days.</p>
+          <p>To exercise a right that isn&apos;t directly available in the app, email us at <strong>ospanzhangir2005@gmail.com</strong>. We will respond within 30 days.</p>
         </section>
 
         <section className={styles.section} id="california">
@@ -209,7 +209,7 @@ export default function PrivacyPolicyPage() {
             <li><strong>Right to limit use of sensitive information.</strong> We do not use sensitive personal information beyond what is necessary to provide the Service.</li>
             <li><strong>Right to non-discrimination</strong> for exercising any of these rights.</li>
           </ul>
-          <p>To exercise these rights, email <strong>[CONTACT_EMAIL]</strong>. You may also designate an authorized agent.</p>
+          <p>To exercise these rights, email <strong>ospanzhangir2005@gmail.com</strong>. You may also designate an authorized agent.</p>
         </section>
 
         <section className={styles.section} id="eea-uk">
@@ -256,7 +256,7 @@ export default function PrivacyPolicyPage() {
             BrainDump is not directed at children. You must be at least <strong>13 years old</strong> to use the Service. If you are in the European Economic Area or the UK, you must be at least <strong>16 years old</strong>, or have verifiable parental consent if you are between 13 and 16.
           </p>
           <p>
-            If we learn we have collected personal information from a child without proper consent, we will delete it. If you believe a child has provided us personal information, contact us at <strong>[CONTACT_EMAIL]</strong>.
+            If we learn we have collected personal information from a child without proper consent, we will delete it. If you believe a child has provided us personal information, contact us at <strong>ospanzhangir2005@gmail.com</strong>.
           </p>
         </section>
 
@@ -269,12 +269,12 @@ export default function PrivacyPolicyPage() {
 
         <section className={styles.section} id="contact">
           <h2 className={styles.h2}>15. Contact us</h2>
-          <p>Questions, requests, or complaints? Email us at <strong>[CONTACT_EMAIL]</strong>.</p>
-          <p>For physical mail or formal legal notice: <strong>[YOUR_MAILING_ADDRESS]</strong>.</p>
+          <p>Questions, requests, or complaints? Email us at <strong>ospanzhangir2005@gmail.com</strong>.</p>
+          <p>For formal legal notice, email <strong>ospanzhangir2005@gmail.com</strong>.</p>
         </section>
 
         <div className={styles.footer}>
-          <span className={styles.footerCopy}>© 2026 [YOUR_LEGAL_NAME]. All rights reserved.</span>
+          <span className={styles.footerCopy}>© 2026 Zhangir Ospan. All rights reserved.</span>
           <div className={styles.footerLinks}>
             <Link href="/terms" className={styles.footerLink}>Terms</Link>
             <Link href="/" className={styles.footerLink}>Home</Link>

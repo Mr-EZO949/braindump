@@ -34,7 +34,7 @@ export default function TermsOfServicePage() {
 
           <p className={styles.lede}>
             These Terms of Service (&ldquo;Terms&rdquo;) are a binding agreement between you and BrainDump,
-            operated by [YOUR_LEGAL_NAME] (&ldquo;we,&rdquo; &ldquo;us,&rdquo; &ldquo;our&rdquo;).
+            operated by Zhangir Ospan (&ldquo;we,&rdquo; &ldquo;us,&rdquo; &ldquo;our&rdquo;).
             They govern your access to and use of our website, mobile experience, API, and the BrainDump
             application (collectively, the &ldquo;Service&rdquo;).
           </p>
@@ -98,7 +98,7 @@ export default function TermsOfServicePage() {
             <li>Provide accurate, current information when registering and keep it up to date;</li>
             <li>Keep your password confidential and not share account access with others;</li>
             <li>Be responsible for all activity that happens under your account; and</li>
-            <li>Notify us immediately at <strong>[CONTACT_EMAIL]</strong> if you suspect unauthorized access.</li>
+            <li>Notify us immediately at <strong>ospanzhangir2005@gmail.com</strong> if you suspect unauthorized access.</li>
           </ul>
           <p>
             We may suspend or terminate accounts that violate these Terms (see <a href="#termination">Section 10</a>).
@@ -152,7 +152,7 @@ export default function TermsOfServicePage() {
             <li>Reverse engineer, decompile, scrape, or attempt to extract source code or proprietary algorithms from the Service, except where this restriction is prohibited by law;</li>
             <li>Use the Service to develop a competing product or to train machine learning models on data we provide;</li>
             <li>Send unsolicited messages, spam, or malware through the Service;</li>
-            <li>Probe, scan, or test the vulnerability of the Service without our prior written consent (responsible disclosures to <strong>[CONTACT_EMAIL]</strong> are welcome);</li>
+            <li>Probe, scan, or test the vulnerability of the Service without our prior written consent (responsible disclosures to <strong>ospanzhangir2005@gmail.com</strong> are welcome);</li>
             <li>Use bots, scrapers, or automated tools to access the Service except as expressly allowed by our public API and rate limits;</li>
             <li>Misrepresent your identity or affiliation with anyone; or</li>
             <li>Interfere with the Service or impose an unreasonable load on our infrastructure.</li>
@@ -181,7 +181,7 @@ export default function TermsOfServicePage() {
             The Service is provided in a pre-release / early-access state. It may contain bugs, be unavailable, lose data, or change without notice. Features may appear and disappear. We will try to give you reasonable warning of breaking changes but cannot guarantee any specific feature, level of performance, or uptime.
           </p>
           <p>
-            <strong>Maintain your own backups of anything you can&apos;t afford to lose.</strong> Use the export feature in-app or contact us at <strong>[CONTACT_EMAIL]</strong> if you need a one-off export.
+            <strong>Maintain your own backups of anything you can&apos;t afford to lose.</strong> You can request a copy of your data at any time by emailing <strong>ospanzhangir2005@gmail.com</strong>; we&apos;ll send it to you in a machine-readable format.
           </p>
         </section>
 
@@ -199,7 +199,7 @@ export default function TermsOfServicePage() {
           <h2 className={styles.h2}>10. Termination</h2>
 
           <h3 className={styles.h3}>10.1 By you</h3>
-          <p>You can stop using the Service and delete your account at any time from within the app or by emailing <strong>[CONTACT_EMAIL]</strong>. Deletion removes your content from our active systems within 30 days (subject to the backup window described in our <Link href="/privacy">Privacy Policy</Link>).</p>
+          <p>You can stop using the Service and delete your account at any time from within the app or by emailing <strong>ospanzhangir2005@gmail.com</strong>. Deletion removes your content from our active systems within 30 days (subject to the backup window described in our <Link href="/privacy">Privacy Policy</Link>).</p>
 
           <h3 className={styles.h3}>10.2 By us</h3>
           <p>We may suspend or terminate your access if:</p>
@@ -246,7 +246,7 @@ export default function TermsOfServicePage() {
         <section className={styles.section} id="indemnification">
           <h2 className={styles.h2}>13. Indemnification</h2>
           <p>
-            You agree to indemnify, defend, and hold harmless [YOUR_LEGAL_NAME], its affiliates, and their respective directors, officers, employees, and agents from and against any claims, liabilities, damages, losses, and expenses (including reasonable legal fees) arising out of or related to:
+            You agree to indemnify, defend, and hold harmless Zhangir Ospan, its affiliates, and their respective directors, officers, employees, and agents from and against any claims, liabilities, damages, losses, and expenses (including reasonable legal fees) arising out of or related to:
           </p>
           <ul>
             <li>Your use of the Service;</li>
@@ -270,7 +270,7 @@ export default function TermsOfServicePage() {
 
           <h3 className={styles.h3}>14.2 Informal resolution</h3>
           <p>
-            Before filing any formal claim, please contact us at <strong>[CONTACT_EMAIL]</strong> with a description of the dispute. We&apos;ll try to resolve it informally within 60 days.
+            Before filing any formal claim, please contact us at <strong>ospanzhangir2005@gmail.com</strong> with a description of the dispute. We&apos;ll try to resolve it informally within 60 days.
           </p>
 
           <h3 className={styles.h3}>14.3 Binding arbitration</h3>
@@ -278,7 +278,7 @@ export default function TermsOfServicePage() {
             <strong>If we cannot resolve the dispute informally, any dispute, claim, or controversy arising out of or relating to these Terms or the Service will be resolved by binding individual arbitration</strong> administered by the American Arbitration Association (AAA) under its Consumer Arbitration Rules, in Wilmington, Delaware, USA. The arbitrator&apos;s decision will be final and binding. Judgment on the award may be entered in any court of competent jurisdiction.
           </p>
           <p>
-            You may opt out of arbitration within 30 days of first accepting these Terms by emailing <strong>[CONTACT_EMAIL]</strong> with the subject line &ldquo;Arbitration Opt-Out&rdquo; and including your name, account email, and a statement that you opt out.
+            You may opt out of arbitration within 30 days of first accepting these Terms by emailing <strong>ospanzhangir2005@gmail.com</strong> with the subject line &ldquo;Arbitration Opt-Out&rdquo; and including your name, account email, and a statement that you opt out.
           </p>
 
           <h3 className={styles.h3}>14.4 Class action waiver</h3>
@@ -312,7 +312,7 @@ export default function TermsOfServicePage() {
 
           <h3 className={styles.h3}>15.6 Notices</h3>
           <p>
-            We may give you notice by email (to the address associated with your account) or by posting in the Service. Legal notices to us must be sent to <strong>[YOUR_MAILING_ADDRESS]</strong>, with a copy to <strong>[CONTACT_EMAIL]</strong>.
+            We may give you notice by email (to the address associated with your account) or by posting in the Service. Legal notices to us must be sent by email to <strong>ospanzhangir2005@gmail.com</strong>.
           </p>
 
           <h3 className={styles.h3}>15.7 Force majeure</h3>
@@ -324,12 +324,12 @@ export default function TermsOfServicePage() {
 
         <section className={styles.section} id="contact">
           <h2 className={styles.h2}>16. Contact</h2>
-          <p>For questions about these Terms, write to <strong>[CONTACT_EMAIL]</strong>.</p>
-          <p>For formal legal notice: <strong>[YOUR_MAILING_ADDRESS]</strong>.</p>
+          <p>For questions about these Terms, write to <strong>ospanzhangir2005@gmail.com</strong>.</p>
+          <p>For formal legal notice, email <strong>ospanzhangir2005@gmail.com</strong>.</p>
         </section>
 
         <div className={styles.footer}>
-          <span className={styles.footerCopy}>© 2026 [YOUR_LEGAL_NAME]. All rights reserved.</span>
+          <span className={styles.footerCopy}>© 2026 Zhangir Ospan. All rights reserved.</span>
           <div className={styles.footerLinks}>
             <Link href="/privacy" className={styles.footerLink}>Privacy</Link>
             <Link href="/" className={styles.footerLink}>Home</Link>
