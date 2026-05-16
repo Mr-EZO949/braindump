@@ -280,7 +280,7 @@ export async function POST(
   // -------------------------------------------------------------------------
   await supabase
     .from("nodes")
-    .update({ status: "archived" })
+    .update({ status: "archived", archived_at: new Date().toISOString() })
     .eq("id", sourceNodeId)
     .eq("user_id", user.id);
 
