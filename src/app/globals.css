@@ -11069,6 +11069,28 @@ input[type="search"]::-webkit-search-results-decoration {
     font-size: 12px;
   }
 
+  /* The dock is one flex row with many items; on narrow screens it's wider
+     than the viewport and a centered fixed element clips on both edges.
+     Constrain it to the viewport and let it scroll horizontally so every
+     control stays reachable instead of being cut off. */
+  .mode-dock {
+    max-width: calc(100vw - 16px);
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .mode-dock::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mode-dock-btn,
+  .mode-dock-action,
+  .mode-dock-sep {
+    flex-shrink: 0;
+  }
+
   /* Brain dump — wider on tablet */
   .brain-dump-card {
     width: min(580px, 94vw);

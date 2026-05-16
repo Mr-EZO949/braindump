@@ -932,7 +932,7 @@ function buildGraphLayout(graphData: GraphData) {
   };
 }
 
-function getGraphBounds(nodes: GraphNode[]) {
+function getGraphBounds(nodes: GraphNode[], restOnly = false) {
   if (nodes.length === 0) {
     return {
       centerX: 0,
@@ -948,8 +948,17 @@ function getGraphBounds(nodes: GraphNode[]) {
   let maxY = -Infinity;
 
   nodes.forEach((node) => {
-    const x = node.x ?? node.restX;
-    const y = node.y ?? node.restY;
+    // restOnly: ignore transient simulation positions (node.x/node.y) and use
+    // the deterministic layout target instead — pinned coords if the node is
+    // pinned, otherwise its rest position. This makes the initial fit stable
+    // regardless of how far the d3 sim has flung nodes mid-settle, which is
+    // the root cause of the "graph centers in a random place on load" bug.
+    const x = restOnly
+      ? (node.fx ?? node.restX)
+      : (node.x ?? node.restX);
+    const y = restOnly
+      ? (node.fy ?? node.restY)
+      : (node.y ?? node.restY);
     minX = Math.min(minX, x - node.width / 2);
     maxX = Math.max(maxX, x + node.width / 2);
     minY = Math.min(minY, y - node.height / 2);
@@ -964,7 +973,12 @@ function getGraphBounds(nodes: GraphNode[]) {
   };
 }
 
-function createFittedView(nodes: GraphNode[], width: number, height: number): ViewState {
+function createFittedView(
+  nodes: GraphNode[],
+  width: number,
+  height: number,
+  restOnly = false,
+): ViewState {
   if (width === 0 || height === 0 || nodes.length === 0) {
     return defaultView;
   }
@@ -973,17 +987,24 @@ function createFittedView(nodes: GraphNode[], width: number, height: number): Vi
   // intentional layout. Using all nodes would zoom out to include scattered
   // auto-layout nodes and make the graph look broken on first load.
   const pinnedNodes = nodes.filter((n) => n.fx !== null && n.fx !== undefined);
-  const bounds = getGraphBounds(pinnedNodes.length > 0 ? pinnedNodes : nodes);
-  const usableWidth = Math.max(width - 100, 360);
-  const usableHeight = Math.max(height - 120, 340);
+  const bounds = getGraphBounds(
+    pinnedNodes.length > 0 ? pinnedNodes : nodes,
+    restOnly,
+  );
   const isMobile = width <= 768;
+  // On mobile the top controls overlay the canvas, so leave more vertical
+  // breathing room and allow zooming out further so the whole graph fits.
+  const usableWidth = Math.max(width - (isMobile ? 56 : 100), isMobile ? 300 : 360);
+  const usableHeight = Math.max(height - (isMobile ? 200 : 120), 320);
   const zoom = clamp(
     Math.min(usableWidth / Math.max(bounds.width, 1), usableHeight / Math.max(bounds.height, 1)),
-    isMobile ? 0.35 : 0.68,
-    isMobile ? 0.7 : 1.06,
+    isMobile ? 0.22 : 0.68,
+    isMobile ? 0.62 : 1.06,
   );
   const targetX = width * 0.5;
-  const targetY = height * 0.42;
+  // Mobile: center vertically (the graph sits below the overlaid controls).
+  // Desktop: bias slightly upward so the detail rail doesn't crowd it.
+  const targetY = height * (isMobile ? 0.54 : 0.42);
 
   return {
     panX: targetX - width / 2 - bounds.centerX * zoom,
@@ -2071,11 +2092,13 @@ export function GraphCanvas({
 
     didFitInitialViewRef.current = true;
     const frame = window.requestAnimationFrame(() => {
-      // Always compute a fresh fitted view from current node positions.
-      // The saved initialView from localStorage may be stale if nodes changed
-      // since the last session. The simulation settle handler will re-fit
-      // again after positions stabilize.
-      setView(createFittedView(scene.nodes, viewport.width, viewport.height));
+      // Fit from the DETERMINISTIC rest/pinned layout (restOnly=true), not the
+      // transient d3 positions. At this point the simulation is mid-settle and
+      // nodes are flung far from where they'll end up; fitting to that is the
+      // root cause of the historical "centers in a random place" bug. Rest
+      // positions are where the layout pulls every node, known at scene-build
+      // time, so this lands the camera correctly on the first frame.
+      setView(createFittedView(scene.nodes, viewport.width, viewport.height, true));
     });
 
     return () => {
