@@ -309,14 +309,27 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [lastAnalysisWorkspaceId, setLastAnalysisWorkspaceId] = useState<string | null>(null);
   const [findAllConfirmOpen, setFindAllConfirmOpen] = useState(false);
 
-  // Panel state
-  const [rightPanelOpen, setRightPanelOpen] = useState(() =>
-    typeof window !== "undefined" ? !window.matchMedia("(max-width: 768px)").matches : true,
-  );
+  // Panel state.
+  // IMPORTANT: this must initialize to the SAME value the server renders
+  // (true) — reading window.matchMedia in the initializer makes the first
+  // client render diverge from SSR on mobile and breaks hydration. The real
+  // viewport-derived value is applied in a mount effect below, after
+  // hydration, so there is no server/client mismatch.
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [systemPanelOpen, setSystemPanelOpen] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [activeRailTab, setActiveRailTab] = useState<RailTab>("details");
   const [railChatInput, setRailChatInput] = useState("");
+
+  // Apply the viewport-derived default for the right panel AFTER hydration.
+  // On mobile the rail should start closed; doing this in an effect (not the
+  // useState initializer) keeps the first client render identical to the
+  // server's, avoiding the hydration mismatch. Runs once on mount.
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 768px)").matches) {
+      setRightPanelOpen(false);
+    }
+  }, []);
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -341,6 +354,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [focusRequestKey, setFocusRequestKey] = useState(0);
   const [authUser, setAuthUser] = useState<AuthUserState | null>(initialUser);
   const [signingOut, setSigningOut] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [nodeTypeFilter, setNodeTypeFilter] = useState("all");
   const [importanceFilter, setImportanceFilter] =
@@ -1827,6 +1841,36 @@ export function AppShell({ initialUser }: AppShellProps) {
     router.replace("/login");
   };
 
+  const handleDeleteAccount = async () => {
+    if (deletingAccount) {
+      return;
+    }
+
+    setDeletingAccount(true);
+
+    try {
+      const res = await fetch("/api/account/delete", { method: "POST" });
+
+      if (!res.ok) {
+        setDeletingAccount(false);
+        return false;
+      }
+
+      // Clear the local session, then leave. The server already removed
+      // every row this user owned via FK cascade.
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
+
+      setSystemPanelOpen(false);
+      router.replace("/login");
+      return true;
+    } catch {
+      setDeletingAccount(false);
+      return false;
+    }
+  };
+
   const deleteWorkspace = async (
     workspaceId: string,
     options?: { fallbackWorkspaceId?: string | null },
@@ -2716,8 +2760,12 @@ export function AppShell({ initialUser }: AppShellProps) {
           onSignOut={() => {
             void handleSignOut();
           }}
+          onDeleteAccount={() => {
+            void handleDeleteAccount();
+          }}
           open={systemPanelOpen}
           signingOut={signingOut}
+          deletingAccount={deletingAccount}
           userEmail={authUser?.email ?? null}
         />
 

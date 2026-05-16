@@ -1,33 +1,62 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Theme = "dark" | "light";
 
 type SystemPanelProps = {
   onSignOut: () => void;
+  onDeleteAccount: () => void;
   onClose: () => void;
   open: boolean;
   signingOut: boolean;
+  deletingAccount: boolean;
   userEmail: string | null;
 };
 
-function readInitialTheme(): Theme {
-  if (typeof document === "undefined") return "dark";
+function readDomTheme(): Theme {
   return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
 }
 
 export function SystemPanel({
   onClose,
   onSignOut,
+  onDeleteAccount,
   open,
   signingOut,
+  deletingAccount,
   userEmail,
 }: SystemPanelProps) {
-  const [theme, setTheme] = useState<Theme>(readInitialTheme);
+  // Must initialize to the same constant the server renders ("dark"). Reading
+  // the DOM/localStorage in the initializer would make the first client
+  // render diverge from SSR for light-theme users and break hydration. The
+  // real theme is synced from the DOM in a mount effect below.
+  const [theme, setTheme] = useState<Theme>("dark");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // The pre-paint script in layout.tsx already applied the correct theme to
+  // <html>. The apply-effect below must skip its first run so it doesn't
+  // overwrite that with the SSR default before we've synced.
+  const skipThemeApplyRef = useRef(true);
+
+  // Reset the destructive-confirm state whenever the panel closes so it
+  // never reopens already armed.
+  useEffect(() => {
+    if (!open) setConfirmingDelete(false);
+  }, [open]);
+
+  // Sync state to whatever the pre-paint script applied (post-hydration).
+  useEffect(() => {
+    setTheme(readDomTheme());
+  }, []);
 
   useEffect(() => {
+    if (skipThemeApplyRef.current) {
+      // First run = the initial sync, not a user action. The DOM theme is
+      // already correct (set by the layout script); don't touch it.
+      skipThemeApplyRef.current = false;
+      return;
+    }
     const root = document.documentElement;
     if (theme === "light") root.setAttribute("data-theme", "light");
     else root.removeAttribute("data-theme");
@@ -73,9 +102,42 @@ export function SystemPanel({
           <button className="sp-menu-btn" type="button" disabled>
             Manage subscription
           </button>
-          <button className="sp-menu-btn sp-menu-btn--danger" type="button" disabled>
-            Delete account
-          </button>
+
+          {confirmingDelete ? (
+            <div className="flex flex-col gap-2 rounded-md border border-[rgba(213,58,71,0.3)] bg-[rgba(213,58,71,0.06)] p-3">
+              <p className="text-[12px] leading-snug text-(--color-text-secondary)">
+                This permanently deletes your account and{" "}
+                <strong className="text-(--color-text-primary)">all your data</strong> —
+                every node, edge, dump, and chat. This cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  className="sp-menu-btn sp-menu-btn--danger flex-1"
+                  type="button"
+                  onClick={onDeleteAccount}
+                  disabled={deletingAccount}
+                >
+                  {deletingAccount ? "Deleting…" : "Delete everything"}
+                </button>
+                <button
+                  className="sp-menu-btn flex-1"
+                  type="button"
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={deletingAccount}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="sp-menu-btn sp-menu-btn--danger"
+              type="button"
+              onClick={() => setConfirmingDelete(true)}
+            >
+              Delete account
+            </button>
+          )}
         </div>
 
         <div className="sp-divider" />
