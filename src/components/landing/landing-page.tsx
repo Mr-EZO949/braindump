@@ -1427,8 +1427,8 @@ export default function LandingPage() {
           <div className={styles.ctaGlow} aria-hidden="true" />
           <FadeUp className={styles.ctaInner}>
             <h2 className={styles.ctaH2}>
-              One graph for everything.{"\n"}
-              <span className={styles.gradient}>Every app for nothing.</span>
+              The last productivity app{"\n"}
+              <span className={styles.gradient}>you&apos;ll ever need.</span>
             </h2>
             <p className={styles.ctaSub}>Join the waitlist — we&apos;ll let you in as soon as we open up.</p>
             <div className={styles.ctaActions}>
