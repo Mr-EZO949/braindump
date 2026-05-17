@@ -3,6 +3,8 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
+import { InstallAppButton } from "@/components/pwa/install-app-button";
+
 type Theme = "dark" | "light";
 
 type SystemPanelProps = {
@@ -99,6 +101,10 @@ export function SystemPanel({
 
         {/* Account actions */}
         <div className="px-5 py-4 flex flex-col gap-1">
+          {/* Self-hides on desktop, in-app browsers, or when already
+              installed — only shows a real install path on mobile. */}
+          <InstallAppButton />
+
           <button className="sp-menu-btn" type="button" disabled>
             Manage subscription
           </button>

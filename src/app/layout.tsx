@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
+import { InstallBanner } from "@/components/pwa/install-banner";
 import { ServiceWorkerRegister } from "@/components/pwa/service-worker-register";
 
 const inter = Inter({
@@ -65,6 +66,7 @@ export default function RootLayout({
       </head>
       <body className={`${inter.variable} ${geistMono.variable} antialiased`}>
         <ServiceWorkerRegister />
+        <InstallBanner />
         {children}
       </body>
     </html>
