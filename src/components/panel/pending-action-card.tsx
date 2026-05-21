@@ -15,7 +15,9 @@ interface PendingActionCardProps {
 const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
   propose_node: { verb: "Add", noun: "new node" },
   propose_nodes_batch: { verb: "Add", noun: "nodes" },
+  propose_changes_batch: { verb: "Apply", noun: "changes" },
   propose_edge: { verb: "Connect", noun: "nodes" },
+  propose_merge: { verb: "Merge", noun: "nodes" },
   update_node: { verb: "Edit", noun: "node" },
   archive_node: { verb: "Archive", noun: "node" },
   complete_node: { verb: "Complete", noun: "node" },
@@ -23,6 +25,53 @@ const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
   reschedule_task: { verb: "Reschedule", noun: "task" },
   mark_task_done: { verb: "Mark done", noun: "task" },
 };
+
+// propose_changes_batch carries a `changes` array of heterogeneous ops.
+type ChangeOp = {
+  kind?: unknown;
+  title?: unknown;
+  node_type?: unknown;
+  node_id?: unknown;
+  source_node_id?: unknown;
+  target_node_id?: unknown;
+  edge_type?: unknown;
+};
+
+function isChangeList(value: unknown): value is ChangeOp[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "object" && v !== null);
+}
+
+const CHANGE_KIND_GLYPH: Record<string, string> = {
+  create_node: "+",
+  create_edge: "⇄",
+  complete: "✓",
+  archive: "⌫",
+};
+
+function shortId(value: unknown): string {
+  return typeof value === "string" && value.length >= 8 ? value.slice(0, 8) : "node";
+}
+
+function describeChange(op: ChangeOp): string {
+  const kind = typeof op.kind === "string" ? op.kind : "";
+  switch (kind) {
+    case "create_node": {
+      const title = typeof op.title === "string" ? op.title : "(untitled)";
+      const type = typeof op.node_type === "string" ? ` · ${op.node_type}` : "";
+      return `${title}${type}`;
+    }
+    case "create_edge": {
+      const type = typeof op.edge_type === "string" ? op.edge_type : "edge";
+      return `${shortId(op.source_node_id)} → ${shortId(op.target_node_id)} · ${type}`;
+    }
+    case "complete":
+      return `complete ${shortId(op.node_id)}`;
+    case "archive":
+      return `archive ${shortId(op.node_id)}`;
+    default:
+      return kind || "(unknown)";
+  }
+}
 
 function labelFor(name: string): { verb: string; noun: string } {
   return TOOL_LABELS[name] ?? { verb: "Run", noun: name };
@@ -53,15 +102,20 @@ export function PendingActionCard({ action, disabled, onResolve }: PendingAction
   const { verb, noun } = labelFor(action.toolName);
 
   const isBatch = action.toolName === "propose_nodes_batch";
+  const isChangesBatch = action.toolName === "propose_changes_batch";
   const batchNodes = isBatch && isBatchNodeList(action.toolInput.nodes)
     ? (action.toolInput.nodes as BatchNode[])
     : null;
+  const changes = isChangesBatch && isChangeList(action.toolInput.changes)
+    ? (action.toolInput.changes as ChangeOp[])
+    : null;
 
-  const entries = isBatch
-    ? [] // batch card renders its own list below
-    : Object.entries(action.toolInput).filter(
-        ([, value]) => renderField(value) !== null,
-      );
+  const entries =
+    isBatch || isChangesBatch
+      ? [] // batch cards render their own lists below
+      : Object.entries(action.toolInput).filter(
+          ([, value]) => renderField(value) !== null,
+        );
 
   const awaiting = action.status === "awaiting";
   const accepted = action.status === "accepted";
@@ -73,7 +127,11 @@ export function PendingActionCard({ action, disabled, onResolve }: PendingAction
       <div className="pending-action-header">
         <span className="pending-action-verb">{verb}</span>
         <span className="pending-action-noun">
-          {isBatch && batchNodes ? `${batchNodes.length} ${noun}` : noun}
+          {isBatch && batchNodes
+            ? `${batchNodes.length} ${noun}`
+            : isChangesBatch && changes
+              ? `${changes.length} ${noun}`
+              : noun}
         </span>
       </div>
 
@@ -94,6 +152,26 @@ export function PendingActionCard({ action, disabled, onResolve }: PendingAction
           {batchNodes.length > 12 ? (
             <li className="pending-action-batch-more">
               +{batchNodes.length - 12} more
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+
+      {isChangesBatch && changes ? (
+        <ul className="pending-action-batch-list">
+          {changes.slice(0, 12).map((op, idx) => {
+            const kind = typeof op.kind === "string" ? op.kind : "";
+            const glyph = CHANGE_KIND_GLYPH[kind] ?? "•";
+            return (
+              <li className="pending-action-batch-item" key={idx}>
+                <span className="pending-action-batch-type">{glyph}</span>
+                <span className="pending-action-batch-title">{describeChange(op)}</span>
+              </li>
+            );
+          })}
+          {changes.length > 12 ? (
+            <li className="pending-action-batch-more">
+              +{changes.length - 12} more
             </li>
           ) : null}
         </ul>

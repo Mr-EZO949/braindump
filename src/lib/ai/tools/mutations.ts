@@ -951,12 +951,340 @@ const PROPOSE_MERGE: ToolDefinition = {
 };
 
 // ---------------------------------------------------------------------------
+// propose_changes_batch
+// Heterogeneous multi-action turn: "add X and link it to Y and complete Z."
+// One Accept covers a list of mixed-kind ops; the handler runs them in order
+// and reports a per-op outcome. Lifts the "one mutation per user turn" rule
+// for non-uniform asks (uniform multi-node asks should still use
+// propose_nodes_batch, which carries nesting via local_refs).
+// ---------------------------------------------------------------------------
+
+type BatchChange =
+  | {
+      kind: "create_node";
+      title: string;
+      node_type: string;
+      summary?: string;
+      parent_node_id?: string;
+      target_date?: string;
+      importance_index?: number;
+      body?: string;
+    }
+  | {
+      kind: "create_edge";
+      source_node_id: string;
+      target_node_id: string;
+      edge_type: string;
+    }
+  | { kind: "complete"; node_id: string }
+  | { kind: "archive"; node_id: string };
+
+const VALID_EDGE_TYPES_BATCH = new Set([
+  "belongs_to",
+  "contains",
+  "required_for",
+  "supports",
+  "related_to",
+]);
+
+const PROPOSE_CHANGES_BATCH: ToolDefinition = {
+  schema: {
+    name: "propose_changes_batch",
+    description:
+      "Propose a heterogeneous batch of graph changes the user asked for in a single turn. Use ONLY when the user's message implies more than one DIFFERENT kind of mutation (e.g. \"add X and link it to Y\", \"complete A and archive B\"). For multiple new related NODES alone, prefer propose_nodes_batch. The user sees one inline card listing every change and confirms once; the server applies them in order.",
+    input_schema: {
+      type: "object",
+      properties: {
+        changes: {
+          type: "array",
+          minItems: 2,
+          maxItems: 12,
+          items: {
+            type: "object",
+            properties: {
+              kind: {
+                type: "string",
+                enum: ["create_node", "create_edge", "complete", "archive"],
+                description:
+                  "The kind of change. create_node = new node (optionally with parent_node_id). create_edge = connect two existing nodes (pass real UUIDs). complete = mark a node done. archive = soft-remove a node.",
+              },
+              // create_node fields
+              title: { type: "string" },
+              node_type: {
+                type: "string",
+                enum: ["goal", "project", "task", "concept", "class", "habit"],
+              },
+              summary: { type: "string" },
+              parent_node_id: { type: "string" },
+              target_date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+              importance_index: { type: "integer", minimum: 0, maximum: 100 },
+              body: { type: "string" },
+              // create_edge fields
+              source_node_id: { type: "string" },
+              target_node_id: { type: "string" },
+              edge_type: {
+                type: "string",
+                enum: [
+                  "belongs_to",
+                  "contains",
+                  "required_for",
+                  "supports",
+                  "related_to",
+                ],
+              },
+              // complete/archive fields
+              node_id: { type: "string" },
+            },
+            required: ["kind"],
+          },
+        },
+      },
+      required: ["changes"],
+    },
+  },
+  handler: async (input, ctx: ToolContext) => {
+    const args = (input ?? {}) as { changes?: BatchChange[] };
+    if (!Array.isArray(args.changes) || args.changes.length === 0) {
+      return { accepted: false, error: "changes must be a non-empty array" };
+    }
+
+    type OpResult =
+      | { kind: BatchChange["kind"]; ok: true; id?: string; detail?: string }
+      | { kind: BatchChange["kind"]; ok: false; error: string };
+    const results: OpResult[] = [];
+    const nowIso = new Date().toISOString();
+
+    for (const change of args.changes) {
+      switch (change.kind) {
+        case "create_node": {
+          const title = typeof change.title === "string" ? change.title.trim() : "";
+          if (!title) {
+            results.push({ kind: "create_node", ok: false, error: "title required" });
+            break;
+          }
+          const nodeType =
+            typeof change.node_type === "string" ? change.node_type.toLowerCase() : "";
+          if (!VALID_NODE_TYPES.has(nodeType)) {
+            results.push({
+              kind: "create_node",
+              ok: false,
+              error: `invalid node_type "${change.node_type}"`,
+            });
+            break;
+          }
+          const importanceIndex =
+            typeof change.importance_index === "number"
+              ? Math.max(0, Math.min(100, Math.round(change.importance_index)))
+              : 50;
+          let parentId: string | null = null;
+          if (typeof change.parent_node_id === "string" && change.parent_node_id) {
+            const parent = await fetchWorkspaceNode(ctx, change.parent_node_id);
+            if (!parent) {
+              results.push({
+                kind: "create_node",
+                ok: false,
+                error: "parent_node_id not in this workspace",
+              });
+              break;
+            }
+            parentId = parent.id;
+          }
+          const targetDate =
+            typeof change.target_date === "string" &&
+            /^\d{4}-\d{2}-\d{2}$/.test(change.target_date)
+              ? change.target_date
+              : null;
+          const summary =
+            typeof change.summary === "string" && change.summary.trim()
+              ? change.summary.trim().slice(0, 2000)
+              : null;
+          const body =
+            typeof change.body === "string" && change.body.trim()
+              ? change.body.trim().slice(0, 400)
+              : null;
+          const { data: node, error: nodeErr } = await ctx.supabase
+            .from("nodes")
+            .insert({
+              user_id: ctx.userId,
+              workspace_id: ctx.workspaceId,
+              title,
+              summary,
+              body,
+              node_type: nodeType,
+              importance: importanceFromIndex(importanceIndex),
+              importance_index: importanceIndex,
+              status: "active",
+              target_date: targetDate,
+            })
+            .select("id, title")
+            .single();
+          if (nodeErr || !node) {
+            results.push({
+              kind: "create_node",
+              ok: false,
+              error: nodeErr?.message ?? "insert failed",
+            });
+            break;
+          }
+          if (parentId) {
+            await ctx.supabase.from("edges").insert({
+              user_id: ctx.userId,
+              workspace_id: ctx.workspaceId,
+              source_node_id: parentId,
+              target_node_id: node.id as string,
+              edge_type: "contains",
+              status: "active",
+            });
+          }
+          results.push({ kind: "create_node", ok: true, id: node.id as string });
+          break;
+        }
+
+        case "create_edge": {
+          if (
+            !change.source_node_id ||
+            !change.target_node_id ||
+            !change.edge_type ||
+            !VALID_EDGE_TYPES_BATCH.has(change.edge_type)
+          ) {
+            results.push({
+              kind: "create_edge",
+              ok: false,
+              error: "source, target, and valid edge_type required",
+            });
+            break;
+          }
+          if (change.source_node_id === change.target_node_id) {
+            results.push({
+              kind: "create_edge",
+              ok: false,
+              error: "source and target must differ",
+            });
+            break;
+          }
+          // Verify both nodes belong to this user + workspace.
+          const { data: pair } = await ctx.supabase
+            .from("nodes")
+            .select("id, workspace_id")
+            .in("id", [change.source_node_id, change.target_node_id])
+            .eq("user_id", ctx.userId);
+          if (
+            !pair ||
+            pair.length < 2 ||
+            pair.some((n: { workspace_id?: string }) => n.workspace_id !== ctx.workspaceId)
+          ) {
+            results.push({
+              kind: "create_edge",
+              ok: false,
+              error: "one or both nodes not in this workspace",
+            });
+            break;
+          }
+          const { error: edgeErr } = await ctx.supabase.from("edges").insert({
+            user_id: ctx.userId,
+            workspace_id: ctx.workspaceId,
+            source_node_id: change.source_node_id,
+            target_node_id: change.target_node_id,
+            edge_type: change.edge_type,
+            status: "active",
+          });
+          if (edgeErr) {
+            results.push({ kind: "create_edge", ok: false, error: edgeErr.message });
+            break;
+          }
+          results.push({ kind: "create_edge", ok: true });
+          break;
+        }
+
+        case "complete": {
+          if (!change.node_id) {
+            results.push({ kind: "complete", ok: false, error: "node_id required" });
+            break;
+          }
+          const target = await fetchWorkspaceNode(ctx, change.node_id);
+          if (!target) {
+            results.push({
+              kind: "complete",
+              ok: false,
+              error: "node not in this workspace",
+            });
+            break;
+          }
+          const { error: updateErr } = await ctx.supabase
+            .from("nodes")
+            .update({ status: "completed", completed_at: nowIso })
+            .eq("id", target.id)
+            .eq("user_id", ctx.userId);
+          if (updateErr) {
+            results.push({ kind: "complete", ok: false, error: updateErr.message });
+            break;
+          }
+          results.push({ kind: "complete", ok: true, id: target.id });
+          break;
+        }
+
+        case "archive": {
+          if (!change.node_id) {
+            results.push({ kind: "archive", ok: false, error: "node_id required" });
+            break;
+          }
+          const target = await fetchWorkspaceNode(ctx, change.node_id);
+          if (!target) {
+            results.push({
+              kind: "archive",
+              ok: false,
+              error: "node not in this workspace",
+            });
+            break;
+          }
+          // Mirror the standalone archive route: set archived_at AND orphan
+          // every active edge touching this node, so we don't recreate the
+          // dangling-edge bug fixed earlier.
+          await ctx.supabase
+            .from("nodes")
+            .update({ status: "archived", archived_at: nowIso })
+            .eq("id", target.id)
+            .eq("user_id", ctx.userId);
+          await ctx.supabase
+            .from("edges")
+            .update({ status: "orphaned", updated_at: nowIso })
+            .eq("user_id", ctx.userId)
+            .or(
+              `source_node_id.eq.${target.id},target_node_id.eq.${target.id}`,
+            );
+          results.push({ kind: "archive", ok: true, id: target.id });
+          break;
+        }
+
+        default: {
+          // Exhaustiveness — TS proves change is `never` here.
+          results.push({
+            kind: (change as { kind: BatchChange["kind"] }).kind,
+            ok: false,
+            error: "unknown change kind",
+          });
+        }
+      }
+    }
+
+    const okCount = results.filter((r) => r.ok).length;
+    return {
+      accepted: true,
+      applied: okCount,
+      total: results.length,
+      results,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
 export const MUTATION_TOOLS: ToolDefinition[] = [
   PROPOSE_NODE,
   PROPOSE_NODES_BATCH,
+  PROPOSE_CHANGES_BATCH,
   PROPOSE_EDGE,
   PROPOSE_MERGE,
   UPDATE_NODE,
