@@ -654,7 +654,7 @@ const HUB_OUTCOMES = [
   { type: "idea",     icon: "⇄", label: "Connect",  example: "“link Spanish to my Mexico trip”" },
   { type: "goal",     icon: "✓", label: "Complete", example: "“I shipped the auth fix”" },
   { type: "project",  icon: "⏱", label: "Schedule", example: "“block 2h Friday for the proposal”" },
-  { type: "concept",  icon: "⊕", label: "Merge",    example: "“Coursera DL is a duplicate of DL Spec”" },
+  { type: "concept",  icon: "⌫", label: "Archive",  example: "“archive my old job hunt”" },
   { type: "question", icon: "◎", label: "Plan",     example: "“what should I work on next hour?”" },
 ];
 
