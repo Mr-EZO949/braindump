@@ -8,6 +8,8 @@
 // Claude as a tool_result so the model knows what the user chose and can
 // continue the conversation coherently.
 
+import { mergeNodes } from "@/lib/graph/merge";
+
 import type { ToolContext, ToolDefinition } from "./read-only";
 
 // ---------------------------------------------------------------------------
@@ -877,6 +879,78 @@ const COMPLETE_NODE: ToolDefinition = {
 };
 
 // ---------------------------------------------------------------------------
+// propose_merge
+// Collapse a duplicate node into a canonical (kept) one. Edges move from the
+// duplicate to the canonical; the duplicate is archived. Same logic the
+// merge-suggestion UI runs, exposed for chat-driven merges ("merge X into Y",
+// "X is a duplicate of Y", "combine these").
+// ---------------------------------------------------------------------------
+
+const PROPOSE_MERGE: ToolDefinition = {
+  schema: {
+    name: "propose_merge",
+    description:
+      "Propose merging a duplicate node into a canonical (kept) node. Use when the user says \"merge X into Y\", identifies one node as a duplicate of another, or asks to combine two nodes. All active edges on the duplicate are re-pointed to the canonical, then the duplicate is archived. The user must Accept before the merge runs.",
+    input_schema: {
+      type: "object",
+      properties: {
+        canonical_node_id: {
+          type: "string",
+          description: "UUID of the node to KEEP (the canonical).",
+        },
+        duplicate_node_id: {
+          type: "string",
+          description:
+            "UUID of the node to ARCHIVE (the duplicate). Its edges are moved to the canonical first.",
+        },
+      },
+      required: ["canonical_node_id", "duplicate_node_id"],
+    },
+  },
+  handler: async (input, ctx: ToolContext) => {
+    const args = (input ?? {}) as {
+      canonical_node_id?: string;
+      duplicate_node_id?: string;
+    };
+    if (
+      typeof args.canonical_node_id !== "string" ||
+      typeof args.duplicate_node_id !== "string" ||
+      !args.canonical_node_id ||
+      !args.duplicate_node_id
+    ) {
+      return {
+        accepted: false,
+        error: "canonical_node_id and duplicate_node_id are required",
+      };
+    }
+    if (args.canonical_node_id === args.duplicate_node_id) {
+      return {
+        accepted: false,
+        error: "canonical and duplicate must be different nodes",
+      };
+    }
+
+    const result = await mergeNodes(
+      ctx.supabase,
+      ctx.userId,
+      args.duplicate_node_id, // the absorbed source
+      args.canonical_node_id, // the kept target
+    );
+
+    if (!result.ok) {
+      return { accepted: false, error: result.error };
+    }
+    return {
+      accepted: true,
+      kept_node_id: result.kept_node_id,
+      archived_node_id: result.archived_node_id,
+      edges_moved: result.edges_moved,
+      edges_skipped: result.edges_skipped,
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -884,6 +958,7 @@ export const MUTATION_TOOLS: ToolDefinition[] = [
   PROPOSE_NODE,
   PROPOSE_NODES_BATCH,
   PROPOSE_EDGE,
+  PROPOSE_MERGE,
   UPDATE_NODE,
   ARCHIVE_NODE,
   COMPLETE_NODE,
