@@ -49,6 +49,10 @@ import {
   type LocalGraphCameraView,
 } from "@/lib/graph/data";
 
+import {
+  findChildlessProjects,
+  looksLikeBrainDump,
+} from "@/lib/graph/dump-heuristic";
 import { getImportanceIndex, getImportanceLabel } from "@/lib/graph/importance";
 import {
   buildEdgePayloadFromSelection,
@@ -320,6 +324,12 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [activeRailTab, setActiveRailTab] = useState<RailTab>("details");
   const [railChatInput, setRailChatInput] = useState("");
+  // When a chat message looks like a brain dump, we hold it here and show an
+  // inline "Brain dump / Just chatting" chooser instead of routing silently.
+  const [pendingDumpText, setPendingDumpText] = useState<string | null>(null);
+  // Project ids we've already offered a roadmap for this session — so the
+  // in-thread "want a roadmap?" prompt never nags about the same project.
+  const roadmapPromptedRef = useRef<Set<string>>(new Set());
 
   // Apply the viewport-derived default for the right panel AFTER hydration.
   // On mobile the rail should start closed; doing this in an effect (not the
@@ -1181,12 +1191,25 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       // If the user accepted a graph-changing tool, refresh the graph.
       if (decision === "accept" && targetWorkspaceId && authUser?.id) {
+        const prevNodeIds = new Set(graphData.nodes.map((n) => n.id));
         const nextGraphData = await loadWorkspaceGraphData(
           authUser.id,
           targetWorkspaceId,
           selectedWorkspace?.name ?? null,
         );
         setGraphData(nextGraphData);
+
+        // Parity with the braindump pipeline: any node the assistant just
+        // created is run through connection inference so it links to the
+        // nodes that logically make sense (surfaced in the edge-review
+        // modal), instead of floating disconnected. No new nodes (e.g. an
+        // accepted complete_node / propose_edge) → analyzeNodes no-ops.
+        const newNodeIds = nextGraphData.nodes
+          .filter((n) => !prevNodeIds.has(n.id))
+          .map((n) => n.id);
+        if (newNodeIds.length > 0) {
+          void analyzeNodes(newNodeIds, targetWorkspaceId);
+        }
       }
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") {
@@ -1928,6 +1951,125 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
+  // Shared tail for every dump (button, chat, bootstrap): mirror the dump +
+  // a conversational summary into chat, then open the proposed-nodes review
+  // modal. One implementation so all entry points behave identically.
+  const applyDumpExtraction = (
+    rawText: string,
+    data: {
+      proposed_nodes?: ProposedNode[];
+      clarifying_questions?: string[];
+      completed_existing_node_titles?: string[];
+    },
+  ) => {
+    const nodes = data.proposed_nodes ?? [];
+    const questions = data.clarifying_questions ?? [];
+    const completedTitles = data.completed_existing_node_titles ?? [];
+
+    const summary = [
+      nodes.length > 0
+        ? `I analyzed your dump and proposed ${nodes.length} node${nodes.length === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
+        : "I went through your dump but didn't find anything new worth proposing.",
+      completedTitles.length > 0
+        ? `I also marked ${completedTitles.length} existing item${completedTitles.length === 1 ? "" : "s"} done: ${completedTitles.slice(0, 3).join(", ")}${completedTitles.length > 3 ? "…" : ""}.`
+        : null,
+      questions.length > 0
+        ? `I have ${questions.length} quick clarifying question${questions.length === 1 ? "" : "s"} — answer inline when ready.`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const nowIso = new Date().toISOString();
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
+        role: "user" as const,
+        body: rawText,
+        createdAt: nowIso,
+        status: "ready" as const,
+      },
+      {
+        id: `chat-extract-${Math.random().toString(36).slice(2, 10)}`,
+        role: "assistant" as const,
+        body: summary,
+        createdAt: nowIso,
+        status: "ready" as const,
+      },
+    ]);
+    setRightPanelOpen(true);
+    setActiveRailTab("chat");
+
+    if (nodes.length > 0 || questions.length > 0) {
+      setProposedNodes(nodes);
+      setClarifyingQuestions(questions);
+      setLastDumpRawText(rawText);
+      setProposedReviewOpen(true);
+    }
+  };
+
+  // Dump submitted from the chat composer (after the user picked "Brain
+  // dump" in the chooser). Same extraction pipeline as the button.
+  const submitDumpFromChat = async (text: string) => {
+    const trimmed = text.trim();
+    const targetWorkspaceId = selectedWorkspaceId;
+    if (!trimmed || !targetWorkspaceId) return;
+    try {
+      const res = await fetch("/api/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ raw_text: trimmed, workspace_id: targetWorkspaceId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        proposed_nodes?: ProposedNode[];
+        clarifying_questions?: string[];
+        completed_existing_node_titles?: string[];
+        error?: string;
+        message?: string;
+      };
+      if (!res.ok && res.status !== 207) {
+        const nowIso = new Date().toISOString();
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
+            role: "user" as const,
+            body: trimmed,
+            createdAt: nowIso,
+            status: "ready" as const,
+          },
+          {
+            id: `chat-err-${Math.random().toString(36).slice(2, 10)}`,
+            role: "assistant" as const,
+            body:
+              data.error ??
+              data.message ??
+              "I couldn't process that as a dump. Try again or rephrase it.",
+            createdAt: nowIso,
+            status: "error" as const,
+          },
+        ]);
+        setRightPanelOpen(true);
+        setActiveRailTab("chat");
+        return;
+      }
+      applyDumpExtraction(trimmed, data);
+    } catch {
+      const nowIso = new Date().toISOString();
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `chat-err-${Math.random().toString(36).slice(2, 10)}`,
+          role: "assistant" as const,
+          body: "Network error processing that dump. Try again.",
+          createdAt: nowIso,
+          status: "error" as const,
+        },
+      ]);
+    }
+  };
+
   const handleBrainDumpSubmit = async () => {
     const trimmed = brainDumpValue.trim();
     // Use the workspace captured at open time, not the current selection.
@@ -1965,57 +2107,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       setBrainDumpOpen(false);
       setBrainDumpError(null);
       setBrainDumpFailedEntryId(null);
-      const nodes = data.proposed_nodes ?? [];
-      const questions = data.clarifying_questions ?? [];
-      const completedTitles =
-        (data as { completed_existing_node_titles?: string[] }).completed_existing_node_titles ?? [];
-
-      // Mirror the dump into the chat thread so the assistant becomes the
-      // primary surface — every dump shows up as a user message, every
-      // extraction outcome as an assistant response, and follow-ups land
-      // in the same conversation. The proposed-nodes review modal still
-      // opens for the actual accept/reject pass.
-      const summary = [
-        nodes.length > 0
-          ? `Extracted ${nodes.length} node${nodes.length === 1 ? "" : "s"}.`
-          : "No new nodes extracted.",
-        completedTitles.length > 0
-          ? `Marked ${completedTitles.length} existing node${completedTitles.length === 1 ? "" : "s"} as done: ${completedTitles.slice(0, 3).join(", ")}${completedTitles.length > 3 ? "…" : ""}.`
-          : null,
-        questions.length > 0
-          ? `Raised ${questions.length} clarifying question${questions.length === 1 ? "" : "s"} — answer inline when ready.`
-          : null,
-        nodes.length > 0 ? "Review them in the panel that just opened." : null,
-      ]
-        .filter(Boolean)
-        .join(" ");
-      const nowIso = new Date().toISOString();
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
-          role: "user" as const,
-          body: trimmed,
-          createdAt: nowIso,
-          status: "ready" as const,
-        },
-        {
-          id: `chat-extract-${Math.random().toString(36).slice(2, 10)}`,
-          role: "assistant" as const,
-          body: summary,
-          createdAt: nowIso,
-          status: "ready" as const,
-        },
-      ]);
-      setRightPanelOpen(true);
-      setActiveRailTab("chat");
-
-      if (nodes.length > 0 || questions.length > 0) {
-        setProposedNodes(nodes);
-        setClarifyingQuestions(questions);
-        setLastDumpRawText(trimmed);
-        setProposedReviewOpen(true);
-      }
+      applyDumpExtraction(trimmed, data);
     } catch (err) {
       setBrainDumpError(
         err instanceof Error ? err.message : "Could not process that brain dump.",
@@ -2142,6 +2234,44 @@ export function AppShell({ initialUser }: AppShellProps) {
         nodes: [...prev.nodes, ...positioned],
         edges: [...prev.edges, ...acceptedEdges],
       }));
+
+      // After accepting, if any project landed with no steps under it,
+      // proactively ask in-thread whether they want a roadmap. Guarded so
+      // it never nags about the same project twice in a session. The user
+      // replies in chat → the assistant proposes steps via the normal
+      // propose-with-Accept/Reject flow.
+      const mergedGraph: GraphData = {
+        nodes: [...graphData.nodes, ...positioned],
+        edges: [...graphData.edges, ...acceptedEdges],
+      };
+      const childless = findChildlessProjects(mergedGraph).filter(
+        (p) => !roadmapPromptedRef.current.has(p.id),
+      );
+      if (childless.length > 0) {
+        childless.forEach((p) => roadmapPromptedRef.current.add(p.id));
+        const names = childless.slice(0, 3).map((p) => `"${p.title}"`);
+        const extra = childless.length - names.length;
+        const nameList =
+          names.length === 1
+            ? names[0]
+            : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+        const body =
+          childless.length === 1
+            ? `${nameList} is a project with no steps under it yet. Want me to suggest a roadmap for it? Just say the word and I'll propose steps you can review.`
+            : `${nameList}${extra > 0 ? ` and ${extra} more` : ""} are projects with no steps under them yet. Want me to suggest a roadmap for any of them?`;
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            id: `chat-roadmap-${Math.random().toString(36).slice(2, 10)}`,
+            role: "assistant" as const,
+            body,
+            createdAt: new Date().toISOString(),
+            status: "ready" as const,
+          },
+        ]);
+        setRightPanelOpen(true);
+        setActiveRailTab("chat");
+      }
     }
     setProposedNodesSubmitting(false);
     setProposedReviewOpen(false);
@@ -2999,7 +3129,33 @@ export function AppShell({ initialUser }: AppShellProps) {
           suggestStepsBusy={stepSuggestionLoading}
           onSelectLinkedNode={handleSelectNode}
           onSubmitChatInput={(message) => {
+            const trimmed = message.trim();
+            if (!trimmed) return;
+            // If it clearly reads as a dump, don't route silently — surface
+            // the chooser and let the user decide.
+            if (
+              pendingDumpText === null &&
+              !chatLoading &&
+              looksLikeBrainDump(trimmed)
+            ) {
+              setPendingDumpText(trimmed);
+              setRailChatInput("");
+              setRightPanelOpen(true);
+              setActiveRailTab("chat");
+              return;
+            }
             void submitMessage(message);
+          }}
+          pendingDumpText={pendingDumpText}
+          onResolveDumpChoice={(choice) => {
+            const text = pendingDumpText;
+            setPendingDumpText(null);
+            if (!text) return;
+            if (choice === "chat") {
+              void submitMessage(text);
+              return;
+            }
+            void submitDumpFromChat(text);
           }}
           onToggle={() => setRightPanelOpen((open) => !open)}
           open={rightPanelOpen}
@@ -3453,6 +3609,44 @@ export function AppShell({ initialUser }: AppShellProps) {
               workspaceCreationFlowRef.current = null;
             }
             setBootstrapWorkspaceId(null);
+
+            // Mirror the first (bootstrap) dump into the chat thread, exactly
+            // like every later brain dump does — so the user's most important
+            // dump isn't the one missing from their history.
+            const bootstrapDumpText = handoff?.raw_text?.trim() ?? "";
+            if (bootstrapDumpText) {
+              const nodeCount = handoff?.proposed_nodes?.length ?? 0;
+              const questionCount = handoff?.clarifying_questions?.length ?? 0;
+              const bootstrapSummary = [
+                nodeCount > 0
+                  ? `I analyzed your first dump and proposed ${nodeCount} node${nodeCount === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
+                  : "I went through your dump but didn't find anything new worth proposing yet.",
+                questionCount > 0
+                  ? `I have ${questionCount} quick clarifying question${questionCount === 1 ? "" : "s"} — answer inline when ready.`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" ");
+              const bootstrapNowIso = new Date().toISOString();
+              setChatMessages((prev) => [
+                ...prev,
+                {
+                  id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
+                  role: "user" as const,
+                  body: bootstrapDumpText,
+                  createdAt: bootstrapNowIso,
+                  status: "ready" as const,
+                },
+                {
+                  id: `chat-extract-${Math.random().toString(36).slice(2, 10)}`,
+                  role: "assistant" as const,
+                  body: bootstrapSummary,
+                  createdAt: bootstrapNowIso,
+                  status: "ready" as const,
+                },
+              ]);
+            }
+
             // If the bootstrap dump produced proposed nodes, hand them
             // straight to the review modal so the user immediately sees
             // what got extracted from their first dump.

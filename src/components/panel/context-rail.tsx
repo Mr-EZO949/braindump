@@ -68,6 +68,8 @@ type ContextRailProps = {
   onSelectLinkedNode: (nodeId: string) => void;
   onSetActiveTab: (tab: RailTab) => void;
   onSubmitChatInput: (message: string) => void;
+  pendingDumpText?: string | null;
+  onResolveDumpChoice?: (choice: "dump" | "chat") => void;
   onToggle: () => void;
   open: boolean;
   selectedNode: ChatNodeContext | null;
@@ -110,6 +112,8 @@ export function ContextRail({
   onSelectLinkedNode,
   onSetActiveTab,
   onSubmitChatInput,
+  pendingDumpText,
+  onResolveDumpChoice,
   onToggle,
   open,
   selectedNode,
@@ -417,43 +421,71 @@ export function ContextRail({
                 )}
               </div>
 
-              {/* Chat input */}
+              {/* Chat input — replaced by the dump chooser when a typed
+                  message reads as a brain dump. */}
               <div className="border-t border-[color:var(--color-border-faint)] px-4 py-3">
-                <div className="flex items-end gap-2">
-                  <textarea
-                    className="rail-chat-input"
-                    onChange={(e) => onChatInputChange(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        onSubmitChatInput(chatInputValue);
-                      }
-                    }}
-                    placeholder={getChatComposerCue(chatScope)}
-                    rows={1}
-                    value={chatInputValue}
-                  />
-                  {chatLoading ? (
-                    <button
-                      aria-label="Stop"
-                      className="composer-send-button composer-send-button--stop"
-                      onClick={onCancelChat}
-                      type="button"
-                    >
-                      <span className="composer-stop-square" aria-hidden="true" />
-                    </button>
-                  ) : (
-                    <button
-                      aria-label="Send"
-                      className="composer-send-button"
-                      disabled={chatInputValue.trim().length === 0}
-                      onClick={() => onSubmitChatInput(chatInputValue)}
-                      type="button"
-                    >
-                      <ArrowUpIcon className="h-[15px] w-[15px]" />
-                    </button>
-                  )}
-                </div>
+                {pendingDumpText ? (
+                  <div className="flex flex-col gap-2.5">
+                    <p className="text-[12.5px] leading-snug text-(--color-text-secondary)">
+                      That reads like a brain dump. How should I take it?
+                    </p>
+                    <p className="line-clamp-2 rounded-md border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.025)] px-3 py-2 text-[12px] italic text-(--color-text-muted)">
+                      {pendingDumpText}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onResolveDumpChoice?.("dump")}
+                        className="flex-1 rounded-full border border-[rgba(213,58,71,0.55)] bg-[rgba(213,58,71,0.95)] px-4 py-2 text-[12.5px] font-semibold text-white"
+                      >
+                        Brain dump
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onResolveDumpChoice?.("chat")}
+                        className="flex-1 rounded-full border border-[rgba(255,255,255,0.12)] bg-transparent px-4 py-2 text-[12.5px] font-semibold text-(--color-text-secondary)"
+                      >
+                        Just chatting
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-end gap-2">
+                    <textarea
+                      className="rail-chat-input"
+                      onChange={(e) => onChatInputChange(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          onSubmitChatInput(chatInputValue);
+                        }
+                      }}
+                      placeholder={getChatComposerCue(chatScope)}
+                      rows={1}
+                      value={chatInputValue}
+                    />
+                    {chatLoading ? (
+                      <button
+                        aria-label="Stop"
+                        className="composer-send-button composer-send-button--stop"
+                        onClick={onCancelChat}
+                        type="button"
+                      >
+                        <span className="composer-stop-square" aria-hidden="true" />
+                      </button>
+                    ) : (
+                      <button
+                        aria-label="Send"
+                        className="composer-send-button"
+                        disabled={chatInputValue.trim().length === 0}
+                        onClick={() => onSubmitChatInput(chatInputValue)}
+                        type="button"
+                      >
+                        <ArrowUpIcon className="h-[15px] w-[15px]" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ) : (
