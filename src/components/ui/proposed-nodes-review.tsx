@@ -93,6 +93,11 @@ interface ProposedNodesReviewProps {
     actions: Array<{
       id: string;
       action: "accept" | "reject";
+      // When a proposal is rejected because it duplicates an existing
+      // canonical node, this carries the canonical node's id so the server
+      // can re-parent any proposed children to it (instead of orphaning
+      // them when their proposed parent is rejected).
+      replaced_by_node_id?: string;
       edits?: { proposed_title: string; proposed_summary: string | null; proposed_node_type: string };
     }>
   ) => Promise<void>;
@@ -215,17 +220,30 @@ export function ProposedNodesReview({
       await onAccept(proposals.map((p) => ({ id: p.id, action: "reject" })));
       return;
     }
-    const actions = proposals.map((p) => ({
-      id: p.id,
-      action: (checked.has(p.id) ? "accept" : "reject") as "accept" | "reject",
-      edits: checked.has(p.id)
-        ? {
-            proposed_title: edits[p.id].proposed_title,
-            proposed_summary: edits[p.id].proposed_summary || null,
-            proposed_node_type: edits[p.id].proposed_node_type,
-          }
-        : undefined,
-    }));
+    const actions = proposals.map((p) => {
+      const isAccept = checked.has(p.id);
+      // For rejects, if the modal auto-unchecked this proposal because it
+      // duplicates an existing node, pass the canonical node id so the
+      // server re-parents any proposed children to it instead of orphaning
+      // them (the long-standing merge desync).
+      const replacement = !isAccept
+        ? (duplicatesByProposal[p.id] ?? [])
+            .filter((d) => d.similarity >= HIGH_CONFIDENCE_THRESHOLD)
+            .sort((a, b) => b.similarity - a.similarity)[0]?.nodeId
+        : undefined;
+      return {
+        id: p.id,
+        action: (isAccept ? "accept" : "reject") as "accept" | "reject",
+        replaced_by_node_id: replacement,
+        edits: isAccept
+          ? {
+              proposed_title: edits[p.id].proposed_title,
+              proposed_summary: edits[p.id].proposed_summary || null,
+              proposed_node_type: edits[p.id].proposed_node_type,
+            }
+          : undefined,
+      };
+    });
     await onAccept(actions);
   };
 

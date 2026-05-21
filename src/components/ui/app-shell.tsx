@@ -2169,6 +2169,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     actions: Array<{
       id: string;
       action: "accept" | "reject";
+      replaced_by_node_id?: string;
       edits?: { proposed_title: string; proposed_summary: string | null; proposed_node_type: string };
     }>
   ) => {

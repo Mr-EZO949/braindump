@@ -19,6 +19,12 @@ import type { ExtractionSoftLink } from "@/types/ai";
 interface ReviewAction {
   id: string; // proposed_node id
   action: "accept" | "reject";
+  // When a proposal is rejected because it duplicates an existing canonical
+  // node, this carries the canonical node's id. Without it, any child
+  // proposals whose parent_local_ref points at this proposal would be
+  // orphaned (their parent never got created). With it, the children are
+  // re-parented to the canonical existing node instead.
+  replaced_by_node_id?: string;
   edits?: {
     proposed_title: string;
     proposed_summary: string | null;
@@ -374,6 +380,55 @@ export async function POST(req: NextRequest) {
           title: created.title,
         });
       });
+
+      // ---------------------------------------------------------------------
+      // Duplicate-merge re-parenting:
+      //
+      // When a proposed parent is rejected because it duplicates an existing
+      // canonical node (UI auto-unchecks high-confidence duplicates), its
+      // proposed children still carry a parent_local_ref pointing at it. If
+      // we did nothing here, those children would create with no parent edge
+      // — orphaned. Instead, register the canonical node id under the
+      // rejected proposal's local_ref so downstream edge wiring (primary
+      // parent + depends_on lookups) resolves to the canonical.
+      // ---------------------------------------------------------------------
+      const replacementCandidateIds = Array.from(
+        new Set(
+          actions
+            .filter((a) => a.action === "reject" && typeof a.replaced_by_node_id === "string")
+            .map((a) => a.replaced_by_node_id as string),
+        ),
+      );
+      if (replacementCandidateIds.length > 0) {
+        const { data: replacementRows } = await supabase
+          .from("nodes")
+          .select("id, title, workspace_id")
+          .in("id", replacementCandidateIds)
+          .eq("user_id", user.id);
+        const replacementMap = new Map(
+          (replacementRows ?? []).map((row) => [
+            row.id as string,
+            { id: row.id as string, title: row.title as string, workspace_id: row.workspace_id as string },
+          ]),
+        );
+        for (const action of actions) {
+          if (action.action !== "reject" || !action.replaced_by_node_id) continue;
+          const proposal = proposalMap.get(action.id);
+          if (!proposal?.local_ref) continue;
+          const canonical = replacementMap.get(action.replaced_by_node_id);
+          if (!canonical) continue;
+          // Refuse to re-map across workspaces (defensive — never trust the client).
+          if (canonical.workspace_id !== proposal.workspace_id) continue;
+          // Don't clobber an actual acceptance under the same local_ref.
+          if (acceptedByLocalRef.has(proposal.local_ref)) continue;
+          acceptedByLocalRef.set(proposal.local_ref, {
+            aiRunId: null,
+            confidence: 0.85,
+            nodeId: canonical.id,
+            title: canonical.title,
+          });
+        }
+      }
 
       const structuralEdgeRows: Array<{
         ai_run_id: string | null;
