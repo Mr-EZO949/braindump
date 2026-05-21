@@ -25,8 +25,16 @@ export function looksLikeBrainDump(text: string): boolean {
     .split(/[.!\n]+/)
     .map((s) => s.trim())
     .filter(Boolean).length;
-  // Multi-item signal: list-like or several clauses.
-  return newlines >= 1 || commas >= 2 || segments >= 3;
+  // Multi-item signal: any of the list-like / multi-clause cues. Two
+  // sentences with no commas (e.g. "started X. also did Y.") is still a
+  // dump even though the regex has no comma to count, so length-gated
+  // two-segment messages count too.
+  return (
+    newlines >= 1 ||
+    commas >= 2 ||
+    segments >= 3 ||
+    (t.length >= 100 && segments >= 2)
+  );
 }
 
 // Active projects with no children — candidates for a "want a roadmap?"

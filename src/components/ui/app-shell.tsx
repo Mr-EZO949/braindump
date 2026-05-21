@@ -3132,17 +3132,42 @@ export function AppShell({ initialUser }: AppShellProps) {
           onSubmitChatInput={(message) => {
             const trimmed = message.trim();
             if (!trimmed) return;
-            // If it clearly reads as a dump, don't route silently — surface
-            // the chooser and let the user decide.
+            // Two-stage detection so most chat messages incur ZERO AI cost:
+            //   1. Cheap client-side regex (looksLikeBrainDump) gates everything.
+            //   2. Only when it fires do we ask Haiku to confirm it's actually
+            //      a dump (vs a multi-clause question that happens to look
+            //      dump-like). Classifier failures fail-safe to "yes, dump"
+            //      so the chooser still shows and we never silently swallow
+            //      a real dump.
             if (
               pendingDumpText === null &&
               !chatLoading &&
               looksLikeBrainDump(trimmed)
             ) {
-              setPendingDumpText(trimmed);
               setRailChatInput("");
-              setRightPanelOpen(true);
-              setActiveRailTab("chat");
+              void (async () => {
+                let isDump = true; // fail-safe default
+                try {
+                  const res = await fetch("/api/assistant/classify-dump", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text: trimmed }),
+                  });
+                  if (res.ok) {
+                    const data = (await res.json()) as { is_dump?: boolean };
+                    isDump = data.is_dump !== false;
+                  }
+                } catch {
+                  // Network error: keep the fail-safe (treat as dump).
+                }
+                if (isDump) {
+                  setPendingDumpText(trimmed);
+                  setRightPanelOpen(true);
+                  setActiveRailTab("chat");
+                } else {
+                  void submitMessage(trimmed);
+                }
+              })();
               return;
             }
             void submitMessage(message);
