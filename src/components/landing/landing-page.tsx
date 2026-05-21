@@ -645,100 +645,76 @@ function HabitsCalendar() {
   );
 }
 
-// ── Create-from-chat demo ────────────────────────────────
+// ── Control Hub (one chat input → every action) ──────────
 
-const CREATE_DEMO_PROMPT = "Break my ML paper into tasks with a literature review section";
-
-const CREATE_DEMO_NODES = [
-  { title: "ML Paper", type: "project", delay: 0 },
-  { title: "Literature Review", type: "goal", delay: 0.18 },
-  { title: "Find related papers", type: "task", delay: 0.32 },
-  { title: "Summarize key findings", type: "task", delay: 0.44 },
-  { title: "Write methodology draft", type: "task", delay: 0.56 },
-  { title: "Outline experiments", type: "task", delay: 0.68 },
+// Outcomes the chat can run. Six of them, deliberately diverse so the user
+// reads "this covers it all" instead of "this is a notes tool."
+const HUB_OUTCOMES = [
+  { type: "task",     icon: "+", label: "Add",      example: "“I started Spanish on Duolingo”" },
+  { type: "idea",     icon: "⇄", label: "Connect",  example: "“link Spanish to my Mexico trip”" },
+  { type: "goal",     icon: "✓", label: "Complete", example: "“I shipped the auth fix”" },
+  { type: "project",  icon: "⏱", label: "Schedule", example: "“block 2h Friday for the proposal”" },
+  { type: "concept",  icon: "⊕", label: "Merge",    example: "“Coursera DL is a duplicate of DL Spec”" },
+  { type: "question", icon: "◎", label: "Plan",     example: "“what should I work on next hour?”" },
 ];
 
-const CREATE_DEMO_EDGES: [number, number][] = [[0, 1], [1, 2], [1, 3], [0, 4], [0, 5]];
-
-function CreateFromChatDemo() {
+function ControlHubDemo() {
   const ref = useRef<HTMLDivElement>(null);
-  const v = useInView(ref, { once: true, margin: "-60px" });
+  const v = useInView(ref, { once: true, margin: "-80px" });
+
   return (
-    <div ref={ref} className={styles.createDemo}>
-      {/* Prompt bubble */}
-      <motion.div className={styles.createPrompt}
-        initial={{ opacity: 0, y: 14 }}
-        animate={v ? { opacity: 1, y: 0 } : {}}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}>
-        <span className={styles.createPromptLabel}>You said</span>
-        <p className={styles.createPromptText}>&ldquo;{CREATE_DEMO_PROMPT}&rdquo;</p>
+    <div ref={ref} className={styles.hubDemo}>
+      <div className={styles.hubAmbient} aria-hidden="true" />
+
+      {/* Sonar pulse rings emanate from the chat input — convey "broadcast"
+          without per-card SVG arcs, so the layout stays responsive. */}
+      <motion.div className={styles.hubRing}
+        aria-hidden="true"
+        initial={{ opacity: 0 }}
+        animate={v ? { opacity: 1 } : {}}
+        transition={{ delay: 0.3, duration: 0.5 }} />
+      <motion.div className={`${styles.hubRing} ${styles.hubRingSlow}`}
+        aria-hidden="true"
+        initial={{ opacity: 0 }}
+        animate={v ? { opacity: 1 } : {}}
+        transition={{ delay: 0.5, duration: 0.5 }} />
+
+      {/* The hub: a glowing chat input pill */}
+      <motion.div className={styles.hubInput}
+        initial={{ opacity: 0, y: 16, scale: 0.96 }}
+        animate={v ? { opacity: 1, y: 0, scale: 1 } : {}}
+        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}>
+        <span className={styles.hubInputSparkle} aria-hidden="true">✦</span>
+        <span className={styles.hubInputText}>Ask anything…</span>
+        <span className={styles.hubInputCursor} aria-hidden="true" />
+        <span className={styles.hubInputKbd}>⏎</span>
       </motion.div>
 
-      {/* Arrow */}
-      <motion.div className={styles.createArrow} aria-hidden="true"
-        initial={{ opacity: 0, scaleY: 0 }}
-        animate={v ? { opacity: 1, scaleY: 1 } : {}}
-        transition={{ delay: 0.3, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
-        <svg width="2" height="40" viewBox="0 0 2 40">
-          <line x1="1" y1="0" x2="1" y2="40" stroke="rgba(213,58,71,0.3)" strokeWidth="2" strokeDasharray="4 4" />
-        </svg>
-        <svg width="12" height="8" viewBox="0 0 12 8" className={styles.createArrowHead}>
-          <path d="M1 1 L6 6 L11 1" stroke="rgba(213,58,71,0.4)" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-        </svg>
-      </motion.div>
-
-      {/* Generated graph preview */}
-      <div className={styles.createGraph}>
-        <svg viewBox="0 0 400 220" className={styles.createGraphSvg} aria-hidden="true">
-          {CREATE_DEMO_EDGES.map(([ai, bi], i) => {
-            const positions = [
-              { x: 200, y: 30 },   // ML Paper
-              { x: 100, y: 100 },  // Literature Review
-              { x: 40, y: 180 },   // Find related papers
-              { x: 160, y: 180 },  // Summarize key findings
-              { x: 280, y: 100 },  // Write methodology draft
-              { x: 360, y: 100 },  // Outline experiments
-            ];
-            const pa = positions[ai], pb = positions[bi];
-            return (
-              <motion.path key={`ce${i}`}
-                d={`M ${pa.x} ${pa.y} L ${pb.x} ${pb.y}`}
-                stroke="rgba(213,58,71,0.25)" strokeWidth="1.5" fill="none" strokeLinecap="round"
-                initial={{ pathLength: 0, opacity: 0 }}
-                animate={v ? { pathLength: 1, opacity: 1 } : {}}
-                transition={{ delay: 0.6 + CREATE_DEMO_NODES[bi].delay, duration: 0.35, ease: "easeOut" }} />
-            );
-          })}
-          {CREATE_DEMO_NODES.map((node, i) => {
-            const positions = [
-              { x: 200, y: 30 },
-              { x: 100, y: 100 },
-              { x: 40, y: 180 },
-              { x: 160, y: 180 },
-              { x: 280, y: 100 },
-              { x: 360, y: 100 },
-            ];
-            const pos = positions[i];
-            const c = NC[node.type];
-            return (
-              <motion.g key={`cn${i}`}
-                initial={{ opacity: 0 }}
-                animate={v ? { opacity: 1 } : {}}
-                transition={{ delay: 0.5 + node.delay, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
-                <circle cx={pos.x} cy={pos.y} r={18} fill={`${c}20`} stroke={`${c}40`} strokeWidth="1" />
-                <circle cx={pos.x} cy={pos.y} r={11} fill={`${c}30`} stroke={c} strokeWidth="1.5" strokeOpacity="0.8" />
-                <text x={pos.x} y={pos.y + 3.5} textAnchor="middle" fill={c} fontSize="6.5" fontWeight="700"
-                  fontFamily="ui-monospace, monospace" opacity="0.95">
-                  {node.type.slice(0, 4).toUpperCase()}
-                </text>
-                <text x={pos.x} y={pos.y + 32} textAnchor="middle" fill="rgba(255,255,255,0.5)" fontSize="8"
-                  fontFamily="ui-sans-serif, system-ui, sans-serif" fontWeight="500">
-                  {node.title}
-                </text>
-              </motion.g>
-            );
-          })}
-        </svg>
+      {/* Outcome cards fan out below */}
+      <div className={styles.hubCards}>
+        {HUB_OUTCOMES.map((outcome, i) => {
+          const color = NC[outcome.type];
+          return (
+            <motion.div key={outcome.label}
+              className={styles.hubCard}
+              style={{
+                "--hub-card-c": color,
+              } as React.CSSProperties}
+              initial={{ opacity: 0, y: 18, scale: 0.96 }}
+              animate={v ? { opacity: 1, y: 0, scale: 1 } : {}}
+              transition={{
+                delay: 0.55 + i * 0.08,
+                duration: 0.42,
+                ease: [0.22, 1, 0.36, 1],
+              }}>
+              <span className={styles.hubCardIcon} aria-hidden="true">
+                {outcome.icon}
+              </span>
+              <span className={styles.hubCardLabel}>{outcome.label}</span>
+              <span className={styles.hubCardExample}>{outcome.example}</span>
+            </motion.div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1296,6 +1272,26 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* ── Control everything via chat ── */}
+        <section className={styles.hubSection}>
+          <div className={styles.inner}>
+            <FadeUp className={styles.centered}>
+              <span className={styles.label}>Control everything via chat</span>
+              <h2 className={styles.h2}>
+                Whatever you&apos;d click,{" "}
+                <span className={styles.gradient}>just type.</span>
+              </h2>
+              <p className={styles.sectionDesc}>
+                Add, link, complete, schedule, merge, plan — the chat does all of it. No menus, no clicking around. Say what you want; review what we propose; tap Accept.
+              </p>
+            </FadeUp>
+
+            <FadeUp delay={0.1}>
+              <ControlHubDemo />
+            </FadeUp>
+          </div>
+        </section>
+
         {/* ── Planner ── */}
         <section className={styles.section}>
           <div className={styles.inner}>
@@ -1317,29 +1313,6 @@ export default function LandingPage() {
 
               <FadeUp delay={0.15} className={styles.assistantChatWrap}>
                 <PlannerDemo />
-              </FadeUp>
-            </div>
-          </div>
-        </section>
-
-        {/* ── Create from chat ── */}
-        <section className={styles.sectionAlt}>
-          <div className={styles.inner}>
-            <div className={styles.createLayout}>
-              <FadeUp delay={0.1} className={styles.createVisualWrap}>
-                <CreateFromChatDemo />
-              </FadeUp>
-
-              <FadeUp className={styles.createInfo}>
-                <span className={styles.label}>Talk, don&apos;t click</span>
-                <h2 className={styles.h2}>
-                  Describe it once.
-                </h2>
-                <ul className={styles.assistantList}>
-                  <li>&ldquo;Break this goal into weekly tasks&rdquo;</li>
-                  <li>&ldquo;Add a project for the ML paper with subtasks&rdquo;</li>
-                  <li>&ldquo;Track my job search — applications, prep, interviews&rdquo;</li>
-                </ul>
               </FadeUp>
             </div>
           </div>
