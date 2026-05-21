@@ -215,7 +215,7 @@ export function WorkspaceBootstrapWizard({
                   <input
                     className="bootstrap-line-input"
                     type="text"
-                    placeholder="lead two teams without losing my marathon, my marriage, or my mind"
+                    placeholder="do my best work without burning out"
                     value={successTitle}
                     onChange={(e) => setSuccessTitle(e.target.value)}
                     maxLength={240}
