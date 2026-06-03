@@ -15,15 +15,87 @@ const DUE_SOON_WINDOW_DAYS = 7;
 const PLANNER_FEEDBACK_WINDOW_DAYS = 30;
 const TITLE_PREVIEW_LIMIT = 2;
 
+// ─── Planner priority weights ────────────────────────────────────────────
+//
+// All tunables for `computePlannerPriority` live in this block. The numbers
+// encode product intent ("dependency-just-cleared beats due-soon beats
+// carried-over") rather than historical tuning. To re-tune the planner:
+// change a number HERE, not in arithmetic somewhere downstream.
+//
+// Relative magnitudes are sanity-checked at module load.
+
+/** Per-node-type base priority. Higher = more likely to be planned today. */
 const PRIMARY_NODE_TYPE_PRIORITY: Record<NodeType, number> = {
+  // task and habit are the most actionable units — both anchor the plan
   task: 120,
+  habit: 98,
+  // goal frames direction but isn't itself executable in a session
   goal: 104,
+  // project contains tasks but isn't actionable on its own
   project: 70,
+  // class is a container for sessions/exams; the sessions are what plan
   class: 62,
+  // concept/idea are reference/ideation — surface only when nothing else is doing
   concept: 46,
   idea: 36,
-  habit: 98,
 };
+const NODE_TYPE_PRIORITY_FALLBACK = 40;
+
+/**
+ * Positive contributions. Numbers chosen so the ORDER reflects priority:
+ *   recently_unblocked > due_soon > carried_over > unlocks-bonus.
+ * If the user complains that due-dates are getting buried under unblocked
+ * items (or vice-versa), retune these constants — don't add new signals.
+ */
+const PLANNER_BONUSES = {
+  /** A prerequisite just completed; this node finally became actionable. */
+  RECENTLY_UNBLOCKED: 300,
+  /** target_date within 7 days. */
+  DUE_SOON: 240,
+  /** User previously planned this and didn't get to it. */
+  CARRIED_OVER: 170,
+  /** Has downstream dependents — completing this unlocks more work. */
+  UNLOCKS_BASE: 120,
+  UNLOCKS_PER_DEPENDENT: 18,
+  /** Bonus cap so a chain-hub doesn't dwarf urgency signals. */
+  UNLOCKS_MAX_BONUS: 72,
+} as const;
+
+/**
+ * Negative contributions. Penalties are smaller than the corresponding
+ * bonuses on purpose: a node should stay visible even when blocked so the
+ * user can review it, just demoted in the ranking.
+ */
+const PLANNER_PENALTIES = {
+  /** Has unmet structural prerequisites — can't really be started. */
+  PREREQ_BASE: 70,
+  PREREQ_PER_EXTRA: 12,
+  PREREQ_MAX_PENALTY: 36,
+  /** Has soft blockers (depends_on / blocks edges). */
+  BLOCKER_BASE: 42,
+  BLOCKER_PER_EXTRA: 8,
+  BLOCKER_MAX_PENALTY: 24,
+} as const;
+
+/**
+ * Importance is 0–100 from the scoring module. Multiply into planner-priority
+ * space so a high-importance node (95) ranks similarly to a recently-unblocked
+ * task (95 * 1.8 = 171 ≈ low end of CARRIED_OVER).
+ */
+const IMPORTANCE_PRIORITY_WEIGHT = 1.8;
+
+// Static design invariants. If a future tuner accidentally inverts these,
+// fail at module load instead of producing subtly wrong plans.
+if (PLANNER_BONUSES.RECENTLY_UNBLOCKED <= PLANNER_BONUSES.DUE_SOON) {
+  throw new Error(
+    "[planner] RECENTLY_UNBLOCKED must outrank DUE_SOON — newly-actionable work is the strongest signal",
+  );
+}
+if (PLANNER_BONUSES.DUE_SOON <= PLANNER_BONUSES.CARRIED_OVER) {
+  throw new Error(
+    "[planner] DUE_SOON must outrank CARRIED_OVER — a deadline beats a leftover",
+  );
+}
 
 const PREREQUISITE_EDGE_TYPES = new Set(["prerequisite_for", "required_for"]);
 const BLOCKER_EDGE_TYPES = new Set(["blocks", "depends_on"]);
@@ -160,7 +232,63 @@ function buildPlannerPreferenceHints(feedbackEvents: PlanFeedbackEventRow[]) {
   });
 }
 
-function computePlannerPriority(params: {
+// ─── Priority signal helpers ─────────────────────────────────────────────
+//
+// Each helper returns the contribution of one signal to the final priority.
+// Splitting them out lets the main function read as a sum of intentions
+// instead of a wall of arithmetic, and makes each piece individually
+// testable.
+
+function nodeTypeBasePriority(nodeType: NodeType): number {
+  return PRIMARY_NODE_TYPE_PRIORITY[nodeType] ?? NODE_TYPE_PRIORITY_FALLBACK;
+}
+
+function unlocksBonus(unlocksCount: number): number {
+  if (unlocksCount <= 0) return 0;
+  return (
+    PLANNER_BONUSES.UNLOCKS_BASE +
+    Math.min(
+      PLANNER_BONUSES.UNLOCKS_MAX_BONUS,
+      unlocksCount * PLANNER_BONUSES.UNLOCKS_PER_DEPENDENT,
+    )
+  );
+}
+
+function prerequisitePenalty(prerequisiteCount: number): number {
+  if (prerequisiteCount <= 0) return 0;
+  return (
+    PLANNER_PENALTIES.PREREQ_BASE +
+    Math.min(
+      PLANNER_PENALTIES.PREREQ_MAX_PENALTY,
+      prerequisiteCount * PLANNER_PENALTIES.PREREQ_PER_EXTRA,
+    )
+  );
+}
+
+function blockerPenalty(blockerCount: number): number {
+  if (blockerCount <= 0) return 0;
+  return (
+    PLANNER_PENALTIES.BLOCKER_BASE +
+    Math.min(
+      PLANNER_PENALTIES.BLOCKER_MAX_PENALTY,
+      blockerCount * PLANNER_PENALTIES.BLOCKER_PER_EXTRA,
+    )
+  );
+}
+
+function importanceContribution(score: number | null): number {
+  return Math.round((score ?? 0) * IMPORTANCE_PRIORITY_WEIGHT);
+}
+
+/**
+ * Combine signals into a single priority number for ranking planner
+ * candidates. Higher = more deserving of a slot in today's plan.
+ *
+ * Reads top-down as a sum of intentions: base type, then bonuses (good
+ * reasons to plan it), then penalties (reasons not to), then importance.
+ * Exported so it can be tested in isolation.
+ */
+export function computePlannerPriority(params: {
   dueSoon: boolean;
   carriedOver: boolean;
   currentImportanceScore: number | null;
@@ -169,34 +297,17 @@ function computePlannerPriority(params: {
   blockerCount: number;
   prerequisiteCount: number;
   unlocksCount: number;
-}) {
-  let priority = PRIMARY_NODE_TYPE_PRIORITY[params.nodeType] ?? 40;
-
-  if (params.recentlyUnblocked) {
-    priority += 300;
-  }
-
-  if (params.dueSoon) {
-    priority += 240;
-  }
-
-  if (params.carriedOver) {
-    priority += 170;
-  }
-
-  if (params.unlocksCount > 0) {
-    priority += 120 + Math.min(72, params.unlocksCount * 18);
-  }
-
-  if (params.prerequisiteCount > 0) {
-    priority -= 70 + Math.min(36, params.prerequisiteCount * 12);
-  }
-
-  if (params.blockerCount > 0) {
-    priority -= 42 + Math.min(24, params.blockerCount * 8);
-  }
-
-  return priority + Math.round((params.currentImportanceScore ?? 0) * 1.8);
+}): number {
+  return (
+    nodeTypeBasePriority(params.nodeType) +
+    (params.recentlyUnblocked ? PLANNER_BONUSES.RECENTLY_UNBLOCKED : 0) +
+    (params.dueSoon ? PLANNER_BONUSES.DUE_SOON : 0) +
+    (params.carriedOver ? PLANNER_BONUSES.CARRIED_OVER : 0) +
+    unlocksBonus(params.unlocksCount) -
+    prerequisitePenalty(params.prerequisiteCount) -
+    blockerPenalty(params.blockerCount) +
+    importanceContribution(params.currentImportanceScore)
+  );
 }
 
 function sortManualItems(a: PlanTaskRow, b: PlanTaskRow) {
@@ -420,7 +531,7 @@ export async function buildPlannerCandidates(params: {
       const recentlyUnblocked = recentlyUnblockedIds.has(node.id);
 
       if (recentlyUnblocked) {
-        planningSignals.push("Recently unblocked");
+        planningSignals.push("Ready to start");
       }
 
       if (dueSoon && dueSoonDate) {
@@ -432,15 +543,12 @@ export async function buildPlannerCandidates(params: {
       }
 
       if (unlocksTitles.length > 0) {
-        planningSignals.push(`Unblocks ${summarizeTitles(unlocksTitles)}`);
+        planningSignals.push(`Required for ${summarizeTitles(unlocksTitles)}`);
       }
 
-      if (prerequisiteTitles.length > 0) {
-        planningSignals.push(`Blocked by ${summarizeTitles(prerequisiteTitles)}`);
-      }
-
-      if (blockerTitles.length > 0) {
-        planningSignals.push(`Depends on ${summarizeTitles(blockerTitles)}`);
+      const dependsOnTitles = [...prerequisiteTitles, ...blockerTitles];
+      if (dependsOnTitles.length > 0) {
+        planningSignals.push(`Depends on ${summarizeTitles(dependsOnTitles)}`);
       }
 
       const priority = computePlannerPriority({
