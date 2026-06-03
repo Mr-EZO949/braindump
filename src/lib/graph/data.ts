@@ -438,6 +438,8 @@ export function buildChatNodeContext(
     importance: getImportanceLabel(getImportanceIndex(node)),
     importanceIndex: getImportanceIndex(node),
     currentImportanceScore: node.current_importance_score ?? null,
+    importanceReason: node.importance_reason ?? null,
+    importanceTopSignals: node.importance_top_signals ?? null,
     status: node.status ?? null,
     connectedNodeTitles,
     edgeTypes: neighboringEdges.map((edge) => edge.edge_type),

@@ -48,6 +48,12 @@ export interface Node {
   status?: NodeStatus | null;
   completed_at?: string | null;
   current_importance_score?: number | null;
+  // Explainability for the importance score — populated by computeWorkspaceScores
+  // on every recompute. `importance_reason` is the AI judgment's one-line
+  // explanation; `importance_top_signals` lists the 1-3 highest-weighted
+  // signals that drove the score (e.g. ['urgency', 'goal_alignment']).
+  importance_reason?: string | null;
+  importance_top_signals?: string[] | null;
   // When set, overrides the heuristic scorer for this node.
   manual_weight?: number | null;
   manual_weight_set_at?: string | null;

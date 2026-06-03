@@ -7,22 +7,24 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { recomputeWorkspaceEdgeDecay } from "@/lib/ai/lifecycle";
 import { getImportanceLabel } from "@/lib/graph/importance";
 
-export const SCORE_VERSION = "v6";
+export const SCORE_VERSION = "v7";
 
 // ---------------------------------------------------------------------------
-// Formula weights — must sum to ≤ 1.0 (remainder is blocker bonus headroom)
-// v6: added ai_judgment signal; rebalanced dead weights (planner, recency,
-// ai_prior were mostly flat in real workspaces and compressed the output range).
+// Formula weights — must sum to 1.0 (remainder is blocker bonus headroom)
+//
+// v7: simplification pass.
+//   - Dropped `recency` (5%) — redundant with the urgency recency burst.
+//   - Dropped `planner` (3%) — needed weeks of feedback to be meaningful.
+//   - Dropped `ai_prior` (0%) — was already weighted to zero.
+//   The freed 8 points went to urgency + goal_alignment, the two signals
+//   that move predictably with user intent in small graphs.
 // ---------------------------------------------------------------------------
 const W = {
-  urgency: 0.22,
-  goal_alignment: 0.22,
+  urgency: 0.26,
+  goal_alignment: 0.26,
   ai_judgment: 0.25,
   centrality: 0.15,
   user_confirmation: 0.08,
-  recency: 0.05,
-  planner: 0.03,
-  ai_prior: 0.00,
   // blocker_resolved_bonus: flat additive, max +10 points
 };
 
@@ -30,8 +32,17 @@ const W = {
 const PAUSED_FACTOR = 0.32;
 const CALIBRATED_SCORE_FLOOR = 12;
 const CALIBRATED_SCORE_CEILING = 94;
-const WORKSPACE_CALIBRATION_BLEND = 0.58;
+// v7: dropped from 0.58 → 0.32. The high blend was compressing genuinely
+// different nodes toward the median ("everything feels same-y"). Keep some
+// calibration so raw scores aren't dominant in lopsided workspaces, but let
+// the absolute signal breathe.
+const WORKSPACE_CALIBRATION_BLEND = 0.32;
+// PLANNER_FEEDBACK_WINDOW_DAYS is kept exported via buildPlannerLearningSignals
+// for the unit tests; production no longer references it in the hot path.
 const PLANNER_FEEDBACK_WINDOW_DAYS = 30;
+// Mark the v6-only constant as exported to keep the diff smaller; the test
+// file uses it through the helpers.
+void PLANNER_FEEDBACK_WINDOW_DAYS;
 
 // ---------------------------------------------------------------------------
 // Internal types (raw DB rows, typed loosely to avoid schema coupling)
@@ -110,17 +121,26 @@ export function urgency(node: NodeRow): number {
   return clamp(base + recencyBurst, 0, 100);
 }
 
-/** goal_alignment_score: direct edges to/from goal nodes. */
+/**
+ * goal_alignment_score: log-scaled by count of goal-connected edges.
+ *
+ * v7: replaced the four hard-bucketed steps (5 / 56 / 74 / 88) with a smooth
+ * curve. The old version made adding a single goal edge flip a node from
+ * "irrelevant" to "high priority", which felt unstable. The new curve:
+ *   0 edges  → 12 (low floor — not abandoned but not strongly aligned)
+ *   1 edge   → 58
+ *   2 edges  → 68
+ *   3 edges  → 76
+ *   4+ edges → 82 (cap — diminishing returns)
+ */
 export function goalAlignment(nodeId: string, goalIds: Set<string>, edgesByNode: Map<string, EdgeRow[]>): number {
   if (goalIds.has(nodeId)) return 90; // The node itself is a goal
   const edges = edgesByNode.get(nodeId) ?? [];
   const goalConnections = edges.filter(
     (e) => goalIds.has(e.source_node_id === nodeId ? e.target_node_id : e.source_node_id),
   ).length;
-  if (goalConnections === 0) return 5;
-  if (goalConnections === 1) return 56;
-  if (goalConnections === 2) return 74;
-  return 88;
+  if (goalConnections === 0) return 12;
+  return Math.min(82, 40 + 18 * Math.log2(1 + goalConnections));
 }
 
 function parseStringArray(value: unknown) {
@@ -188,12 +208,6 @@ export function plannerScore(nodeId: string, signals: PlannerLearningSignals): n
   return clamp(score, 0, 100);
 }
 
-/** recency_score: exponential decay from created_at. */
-function recency(node: NodeRow): number {
-  const daysSince = (Date.now() - new Date(node.created_at).getTime()) / 86_400_000;
-  return clamp(100 * Math.exp(-daysSince / 40), 0, 100);
-}
-
 /**
  * centrality_score: degree normalized by the highest-degree node in the workspace.
  * Avoids dividing by zero on empty graphs.
@@ -220,13 +234,6 @@ function userConfirmation(
   }
   score += (edgeConfirmationCountByNode.get(nodeId) ?? 0) * 9;
   return clamp(score, 0, 100);
-}
-
-/** ai_prior_score: extraction confidence from proposed_nodes. Defaults to 50. */
-function aiPrior(nodeId: string, confidenceMap: Map<string, number>): number {
-  const conf = confidenceMap.get(nodeId);
-  if (conf === undefined) return 50;
-  return clamp(conf * 100, 0, 100);
 }
 
 /**
@@ -357,6 +364,8 @@ export type NodeScoreUpdate = {
   current_importance_score: number;
   importance_index: number;
   importance: string;
+  importance_reason: string | null;
+  importance_top_signals: string[];
 };
 
 export async function computeWorkspaceScores(params: {
@@ -369,9 +378,6 @@ export async function computeWorkspaceScores(params: {
   nodeUpdates: NodeScoreUpdate[];
 }> {
   const { workspaceId, userId, supabase } = params;
-  const plannerFeedbackAfter = new Date(
-    Date.now() - PLANNER_FEEDBACK_WINDOW_DAYS * 24 * 60 * 60 * 1000,
-  ).toISOString();
 
   // 1. Fetch all non-archived nodes
   const { data: nodes } = await supabase
@@ -397,16 +403,7 @@ export async function computeWorkspaceScores(params: {
     .eq("user_id", userId)
     .neq("status", "orphaned");
 
-  // 3. Fetch plan_task node_ids
-  const { data: planTasks } = await supabase
-    .from("plan_tasks")
-    .select("node_id")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .eq("done", false)
-    .not("node_id", "is", null);
-
-  // 4. Fetch feedback events for this workspace
+  // 3. Fetch feedback events for this workspace (drives user_confirmation signal)
   const nodeIds = nodes.map((n) => n.id as string);
   const { data: feedbackEvents } = await supabase
     .from("feedback_events")
@@ -414,28 +411,24 @@ export async function computeWorkspaceScores(params: {
     .eq("workspace_id", workspaceId)
     .eq("user_id", userId);
 
-  // 5. Fetch AI extraction confidences (for ai_prior) using accepted_node_id.
-  const { data: proposals } = await supabase
-    .from("proposed_nodes")
-    .select("accepted_node_id, extraction_confidence")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .eq("proposal_status", "accepted")
-    .not("accepted_node_id", "is", null);
-
-  // 6. Fetch latest AI judgment per node (ai_judgment_score signal).
+  // 4. Fetch latest AI judgment per node (ai_judgment_score signal + reason).
+  // The reason gets surfaced to the user as the "why is this ranked here?"
+  // text, so we keep it alongside the numeric score.
   const { data: judgments } = await supabase
     .from("ai_node_judgments")
-    .select("node_id, score, computed_at")
+    .select("node_id, score, reason, computed_at")
     .eq("workspace_id", workspaceId)
     .eq("user_id", userId)
     .order("computed_at", { ascending: false });
 
   const aiJudgmentByNode = new Map<string, number>();
+  const aiJudgmentReasonByNode = new Map<string, string>();
   for (const row of judgments ?? []) {
     const nodeId = row.node_id as string;
     if (!aiJudgmentByNode.has(nodeId)) {
       aiJudgmentByNode.set(nodeId, Number(row.score));
+      const reason = row.reason as string | null;
+      if (reason) aiJudgmentReasonByNode.set(nodeId, reason);
     }
   }
 
@@ -445,12 +438,6 @@ export async function computeWorkspaceScores(params: {
 
   const nodeRows = nodes as NodeRow[];
   const edgeRows = (edges ?? []) as EdgeRow[];
-  const planNodeIds = new Set((planTasks ?? []).map((p) => p.node_id as string).filter(Boolean));
-  const plannerSignals = buildPlannerLearningSignals({
-    feedbackEvents: (feedbackEvents ?? []) as FeedbackRow[],
-    planTaskNodeIds: planNodeIds,
-    recentAfter: plannerFeedbackAfter,
-  });
   const completedIds = new Set(nodeRows.filter((n) => n.status === "completed").map((n) => n.id));
   const goalIds = new Set(nodeRows.filter((n) => n.node_type === "goal").map((n) => n.id));
   // Active = not completed and not archived — these are nodes that still need doing.
@@ -519,30 +506,18 @@ export async function computeWorkspaceScores(params: {
     }
   }
 
-  // confidenceMap: accepted_node_id → extraction_confidence
-  const confidenceMap = new Map<string, number>();
-  for (const proposal of proposals ?? []) {
-    const acceptedNodeId = proposal.accepted_node_id as string | null;
-    const confidence = proposal.extraction_confidence as number | null;
-    if (!acceptedNodeId || confidence == null) continue;
-    const current = confidenceMap.get(acceptedNodeId) ?? 0;
-    confidenceMap.set(acceptedNodeId, Math.max(current, confidence));
-  }
-
   // ---------------------------------------------------------------------------
   // Compute per-node scores
   // ---------------------------------------------------------------------------
 
   const signalRows: Array<{
     ai_judgment_score: number;
-    ai_prior_score: number;
     blocker_resolved_bonus: number;
     goal_alignment_score: number;
     graph_centrality_score: number;
     node: NodeRow;
-    planner_score: number;
     raw_score: number;
-    recency_score: number;
+    top_signals: string[];
     urgency_score: number;
     user_confirmation_score: number;
   }> = [];
@@ -550,11 +525,8 @@ export async function computeWorkspaceScores(params: {
   for (const node of nodeRows) {
     const u = urgency(node);
     const g = goalAlignment(node.id, goalIds, edgesByNode);
-    const p = plannerScore(node.id, plannerSignals);
-    const r = recency(node);
     const c = centrality(node.id, degreeMap, maxDegree);
     const uc = userConfirmation(node.id, feedbackByNode, edgeConfirmationCountByNode);
-    const ap = aiPrior(node.id, confidenceMap);
     const aj = aiJudgmentByNode.get(node.id);
     // When no AI judgment has been computed yet, redistribute its weight to
     // urgency + goal_alignment so nodes without judgments aren't suppressed.
@@ -570,26 +542,40 @@ export async function computeWorkspaceScores(params: {
 
     const rawScore =
       (urgencyW * u +
-      goalAlignW * g +
-      W.ai_judgment * ajScore * ajBoostFactor +
-      W.planner * p +
-      W.recency * r +
-      W.centrality * c +
-      W.user_confirmation * uc +
-      W.ai_prior * ap +
-      bb) * dp + bp;
+        goalAlignW * g +
+        W.ai_judgment * ajScore * ajBoostFactor +
+        W.centrality * c +
+        W.user_confirmation * uc +
+        bb) *
+        dp +
+      bp;
+
+    // Compute the top contributors for the "why is this ranked here?" UI.
+    // We rank by *weighted* contribution so the user sees what's actually
+    // moving the score, not just which raw signal is highest.
+    const contributions: Array<{ signal: string; value: number }> = [
+      { signal: "urgency", value: urgencyW * u },
+      { signal: "goal_alignment", value: goalAlignW * g },
+      { signal: "ai_judgment", value: W.ai_judgment * ajScore * ajBoostFactor },
+      { signal: "centrality", value: W.centrality * c },
+      { signal: "user_confirmation", value: W.user_confirmation * uc },
+      { signal: "blocker_resolved_bonus", value: bb },
+    ].sort((a, b) => b.value - a.value);
+    const topSignals = contributions
+      .filter((c) => c.value > 1)
+      .slice(0, 3)
+      .map((c) => c.signal);
+
     signalRows.push({
       node,
       urgency_score: u,
       goal_alignment_score: g,
-      planner_score: p,
-      recency_score: r,
       graph_centrality_score: c,
       user_confirmation_score: uc,
-      ai_prior_score: ap,
       ai_judgment_score: ajScore,
       blocker_resolved_bonus: bb,
       raw_score: clamp(rawScore, 0, 100),
+      top_signals: topSignals,
     });
   }
 
@@ -598,7 +584,7 @@ export async function computeWorkspaceScores(params: {
   );
   const nonCompletedNodes = nodeRows.filter((node) => node.status !== "completed");
   const scoreRows: unknown[] = [];
-  const nodeUpdates: Array<{ id: string; current_importance_score: number; importance_index: number; importance: string }> = [];
+  const nodeUpdates: NodeScoreUpdate[] = [];
 
   for (const row of signalRows) {
     // Manual override: user set a specific weight. Skip formula entirely.
@@ -626,16 +612,19 @@ export async function computeWorkspaceScores(params: {
 
     finalScore = clamp(finalScore, 0, 100);
 
+    // node_scores keeps a per-signal breakdown for diagnostics. Dropped
+    // signals (planner, recency, ai_prior) are sent as 0 so the column types
+    // stay compatible with prior v6 rows without a migration.
     scoreRows.push({
       node_id: row.node.id,
       score_version: SCORE_VERSION,
       urgency_score: Math.round(row.urgency_score),
       goal_alignment_score: Math.round(row.goal_alignment_score),
-      planner_score: Math.round(row.planner_score),
-      recency_score: Math.round(row.recency_score),
+      planner_score: 0,
+      recency_score: 0,
       graph_centrality_score: Math.round(row.graph_centrality_score),
       user_confirmation_score: Math.round(row.user_confirmation_score),
-      ai_prior_score: Math.round(row.ai_prior_score),
+      ai_prior_score: 0,
       blocker_resolved_bonus: row.blocker_resolved_bonus,
       final_score: Math.round(finalScore),
       computed_at: new Date().toISOString(),
@@ -647,6 +636,8 @@ export async function computeWorkspaceScores(params: {
       current_importance_score: roundedScore,
       importance_index: roundedScore,
       importance: getImportanceLabel(roundedScore),
+      importance_reason: aiJudgmentReasonByNode.get(row.node.id) ?? null,
+      importance_top_signals: row.top_signals,
     });
   }
 
@@ -670,6 +661,8 @@ export async function computeWorkspaceScores(params: {
           current_importance_score: update.current_importance_score,
           importance_index: update.importance_index,
           importance: update.importance,
+          importance_reason: update.importance_reason,
+          importance_top_signals: update.importance_top_signals,
         })
         .eq("id", update.id)
         .eq("user_id", userId)

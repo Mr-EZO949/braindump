@@ -27,6 +27,8 @@ export interface ChatNodeContext {
   importance: Importance;
   importanceIndex: number;
   currentImportanceScore?: number | null;
+  importanceReason?: string | null;
+  importanceTopSignals?: string[] | null;
   status: NodeStatus | null;
   connectedNodeTitles: string[];
   edgeTypes: EdgeType[];
