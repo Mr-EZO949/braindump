@@ -1,7 +1,19 @@
+// Edge lifecycle: decay weights + prerequisite cascade.
+//
+// An edge connects two nodes. As nodes complete, their edges should fade —
+// the user doesn't need to see finished business at full strength forever.
+// But "fade" depends on *who* finished: if both endpoints are done the edge
+// is closed history; if only one is done the relationship is still half-live.
+//
+// This file owns the rules for that fade plus the cascade that fires when a
+// prerequisite completes (downstream nodes may become "newly ready").
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { AI_DECAY } from "@/lib/ai/config";
 import type { EdgeStatus, NodeStatus } from "@/types/graph";
+
+// ─── Public types ────────────────────────────────────────────────────────
 
 export interface LifecycleCascadeResult {
   newlyAvailable: Array<{ id: string; title: string }>;
@@ -14,6 +26,92 @@ export interface EdgeDecayState {
   stale: boolean;
 }
 
+// ─── Decay configuration ─────────────────────────────────────────────────
+//
+// All tunables live here. Don't sprinkle multipliers across the file again.
+
+/**
+ * A decay profile describes how an edge fades over time. Three axes:
+ *   - `startDays`: how long the edge stays at full strength after completion
+ *   - `fullDays`: how long until the edge reaches its floor
+ *   - `floor`: the minimum weight the edge will hold (never zero unless
+ *      the edge is orphaned/rejected — that's handled separately)
+ *
+ * Between `startDays` and `fullDays` the decay is linear. Linear (not
+ * exponential) so the user has a clear mental model: "halfway through the
+ * window, the edge is at the midpoint between 1 and floor."
+ */
+type DecayProfile = {
+  startDays: number;
+  fullDays: number;
+  floor: number;
+};
+
+/**
+ * Two profiles, selected by *how many* endpoints are completed:
+ *
+ *   FULLY_RESOLVED — both endpoints done. The relationship is closed
+ *   history. Fade aggressively so the user isn't stuck staring at past
+ *   work indefinitely.
+ *
+ *   ONE_SIDED — exactly one endpoint done. The other is still active and
+ *   may want to reference the completed node for context (e.g. "I shipped
+ *   the auth refactor that this task depended on"). Decay slowly and stop
+ *   at a meaningful floor so the connection remains discoverable.
+ *
+ * The numbers come from product intent, not historical tuning:
+ *   - ONE_SIDED.fullDays (40) ≈ "still useful a month later"
+ *   - FULLY_RESOLVED.fullDays (18) ≈ "fades within ~2 sprints"
+ *   - ONE_SIDED.floor (0.20) = 4× the resolved floor, so one-sided edges
+ *     remain visibly more prominent at their respective floors
+ */
+const DECAY_PROFILES = {
+  FULLY_RESOLVED: {
+    startDays: AI_DECAY.DECAY_START_DAYS,
+    fullDays: 18,
+    floor: 0.05,
+  },
+  ONE_SIDED: {
+    startDays: AI_DECAY.DECAY_START_DAYS,
+    fullDays: 40,
+    floor: 0.2,
+  },
+} as const satisfies Record<string, DecayProfile>;
+
+/**
+ * Per-edge user feedback adjustments. Confirmations boost the edge weight
+ * (positive signal: "yes this connection matters"). Rejections drag it
+ * down (negative signal: "this edge is wrong").
+ *
+ * Bounds matter:
+ *   - Confirmation boost is capped so a few extra clicks don't drown out
+ *     all other signal. After ~5 confirmations the boost saturates.
+ *   - Rejection drives to zero linearly — 5 rejections kill the edge weight
+ *     entirely, which is the right behavior: if the user has rejected this
+ *     edge multiple times, it should not contribute.
+ */
+const FEEDBACK_ADJUSTMENT = {
+  CONFIRMATION_PER_CLICK: 0.12,
+  CONFIRMATION_MAX_BOOST: 0.6,
+  REJECTION_PER_CLICK: 0.2,
+} as const;
+
+// Static sanity check — caught at module load if someone fat-fingers a profile.
+for (const [name, profile] of Object.entries(DECAY_PROFILES)) {
+  if (profile.fullDays <= profile.startDays) {
+    throw new Error(
+      `[lifecycle] Decay profile "${name}" has fullDays (${profile.fullDays}) <= startDays (${profile.startDays})`,
+    );
+  }
+  if (profile.floor < 0 || profile.floor >= 1) {
+    throw new Error(
+      `[lifecycle] Decay profile "${name}" floor (${profile.floor}) must be in [0, 1)`,
+    );
+  }
+}
+
+// ─── Pure helpers ────────────────────────────────────────────────────────
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -22,21 +120,65 @@ function roundTo(value: number, decimals = 4) {
   return Number(value.toFixed(decimals));
 }
 
-function computeDecayFactor(daysSince: number, params: { floor: number; fullDays: number }) {
-  if (daysSince < AI_DECAY.DECAY_START_DAYS) {
-    return 1;
-  }
-
-  if (daysSince >= params.fullDays) {
-    return params.floor;
-  }
-
-  const progress =
-    (daysSince - AI_DECAY.DECAY_START_DAYS) / (params.fullDays - AI_DECAY.DECAY_START_DAYS);
-
-  return 1 - progress * (1 - params.floor);
+/**
+ * Pick the decay profile for an edge based on which endpoints completed.
+ * Returns null when neither endpoint is completed → the edge is at full
+ * strength forever (no decay applies).
+ */
+function pickDecayProfile(
+  sourceCompletedAt: string | null,
+  targetCompletedAt: string | null,
+): DecayProfile | null {
+  const sourceDone = sourceCompletedAt !== null;
+  const targetDone = targetCompletedAt !== null;
+  if (!sourceDone && !targetDone) return null;
+  if (sourceDone && targetDone) return DECAY_PROFILES.FULLY_RESOLVED;
+  return DECAY_PROFILES.ONE_SIDED;
 }
 
+/** Days elapsed since the most recent completion timestamp. */
+function daysSinceMostRecent(
+  now: Date,
+  sourceCompletedAt: string | null,
+  targetCompletedAt: string | null,
+): number {
+  const stamps = [sourceCompletedAt, targetCompletedAt]
+    .filter((s): s is string => s !== null)
+    .map((s) => new Date(s).getTime());
+  if (stamps.length === 0) return 0;
+  const mostRecent = Math.max(...stamps);
+  return (now.getTime() - mostRecent) / (1000 * 60 * 60 * 24);
+}
+
+/** Linear ramp from 1.0 (at `startDays`) to `floor` (at `fullDays`). */
+function decayCurve(daysSince: number, profile: DecayProfile): number {
+  if (daysSince < profile.startDays) return 1;
+  if (daysSince >= profile.fullDays) return profile.floor;
+  const progress =
+    (daysSince - profile.startDays) / (profile.fullDays - profile.startDays);
+  return 1 - progress * (1 - profile.floor);
+}
+
+/** Edge weight multiplier from accumulated user confirmations. Capped. */
+function confirmationBoost(count: number): number {
+  if (count <= 0) return 1;
+  const raw = count * FEEDBACK_ADJUSTMENT.CONFIRMATION_PER_CLICK;
+  return 1 + Math.min(raw, FEEDBACK_ADJUSTMENT.CONFIRMATION_MAX_BOOST);
+}
+
+/** Edge weight multiplier from accumulated user rejections. Floors at 0. */
+function rejectionPenalty(count: number): number {
+  if (count <= 0) return 1;
+  return Math.max(0, 1 - count * FEEDBACK_ADJUSTMENT.REJECTION_PER_CLICK);
+}
+
+// ─── Decay state derivation ──────────────────────────────────────────────
+
+/**
+ * Pure function: given completion timestamps for both endpoints + current
+ * edge status, return the edge's current decay state. No I/O; safe to test
+ * in isolation and to call from the UI for explanations.
+ */
 export function deriveEdgeDecayState(params: {
   now?: Date;
   sourceCompletedAt?: string | null;
@@ -50,44 +192,33 @@ export function deriveEdgeDecayState(params: {
     edgeStatus = null,
   } = params;
 
+  // Terminal states short-circuit. Orphaned/user-rejected edges contribute
+  // nothing and are flagged stale so the caller can skip them entirely.
   if (edgeStatus === "orphaned" || edgeStatus === "user_rejected") {
-    return {
-      decayFactor: 0,
-      derivedStatus: edgeStatus,
-      stale: true,
-    };
+    return { decayFactor: 0, derivedStatus: edgeStatus, stale: true };
   }
 
-  const completedAts = [sourceCompletedAt, targetCompletedAt].filter(Boolean) as string[];
-  if (completedAts.length === 0) {
-    return {
-      decayFactor: 1,
-      derivedStatus: "active",
-      stale: false,
-    };
+  const profile = pickDecayProfile(sourceCompletedAt, targetCompletedAt);
+  if (!profile) {
+    return { decayFactor: 1, derivedStatus: "active", stale: false };
   }
 
-  const mostRecentCompletedAtMs = Math.max(
-    ...completedAts.map((completedAt) => new Date(completedAt).getTime()),
+  const daysSince = daysSinceMostRecent(now, sourceCompletedAt, targetCompletedAt);
+  const decayFactor = roundTo(
+    clamp(decayCurve(daysSince, profile), profile.floor, 1),
   );
-  const daysSince =
-    (now.getTime() - mostRecentCompletedAtMs) / (1000 * 60 * 60 * 24);
-
-  const bothCompleted = completedAts.length === 2;
-  const fullDays = bothCompleted
-    ? Math.max(AI_DECAY.DECAY_START_DAYS + 1, Math.round(AI_DECAY.DECAY_FULL_DAYS * 0.6))
-    : Math.round(AI_DECAY.DECAY_FULL_DAYS * 1.35);
-  const floor = bothCompleted
-    ? AI_DECAY.DECAY_FLOOR
-    : Math.max(0.18, AI_DECAY.DECAY_FLOOR);
-  const decayFactor = roundTo(clamp(computeDecayFactor(daysSince, { floor, fullDays }), floor, 1));
 
   return {
     decayFactor,
     derivedStatus: decayFactor < 0.999 ? "decayed" : "active",
-    stale: decayFactor <= floor + 0.001,
+    // "stale" means the edge has fully decayed to its floor — used by
+    // consumers to drop these from default views without deleting them.
+    // 0.001 tolerance absorbs floating-point comparison noise.
+    stale: decayFactor <= profile.floor + 0.001,
   };
 }
+
+// ─── Prerequisite cascade ────────────────────────────────────────────────
 
 export async function runPrerequisiteCascade(params: {
   triggeredByNodeId: string;
@@ -120,7 +251,9 @@ export async function runPrerequisiteCascade(params: {
 
   const downstreamIds: string[] = [
     ...new Set(
-      (outEdges as Array<{ target_node_id: string }>).map((edge) => edge.target_node_id),
+      (outEdges as Array<{ target_node_id: string }>).map(
+        (edge) => edge.target_node_id,
+      ),
     ),
   ];
 
@@ -154,17 +287,12 @@ export async function runPrerequisiteCascade(params: {
         .in("edge_type", ["prerequisite_for", "required_for"])
         .eq("status", "active");
 
-      if (!prereqEdges?.length) {
-        continue;
-      }
+      if (!prereqEdges?.length) continue;
 
-      const allSatisfied = (prereqEdges as Array<{ source_node_id: string }>).every((edge) =>
-        completedIds.has(edge.source_node_id),
-      );
-
-      if (!allSatisfied) {
-        continue;
-      }
+      const allSatisfied = (
+        prereqEdges as Array<{ source_node_id: string }>
+      ).every((edge) => completedIds.has(edge.source_node_id));
+      if (!allSatisfied) continue;
 
       const { data: targetNode } = await supabase
         .from("nodes")
@@ -181,16 +309,19 @@ export async function runPrerequisiteCascade(params: {
         continue;
       }
 
-      newlyAvailable.push({ id: targetNode.id as string, title: targetNode.title as string });
+      newlyAvailable.push({
+        id: targetNode.id as string,
+        title: targetNode.title as string,
+      });
       cascadeRows.push({
         lifecycle_event_id: lifecycleEventId,
         affected_node_id: targetId,
         action_taken: "unblocked",
         details: {
           trigger_node_id: triggeredByNodeId,
-          satisfied_prereqs: (prereqEdges as Array<{ source_node_id: string }>).map(
-            (edge) => edge.source_node_id,
-          ),
+          satisfied_prereqs: (
+            prereqEdges as Array<{ source_node_id: string }>
+          ).map((edge) => edge.source_node_id),
         },
       });
     }
@@ -219,6 +350,8 @@ export async function runPrerequisiteCascade(params: {
   return { newlyAvailable, cascadeCount: cascadeRows.length };
 }
 
+// ─── Workspace-wide recompute ────────────────────────────────────────────
+
 export async function recomputeWorkspaceEdgeDecay(params: {
   workspaceId: string;
   userId: string;
@@ -231,25 +364,28 @@ export async function recomputeWorkspaceEdgeDecay(params: {
 }> {
   const { workspaceId, userId, supabase } = params;
 
-  const [{ data: edges }, { data: nodes }, { data: edgeFeedbackEvents }] = await Promise.all([
-    supabase
-      .from("edges")
-      .select("id, source_node_id, target_node_id, status, confidence, user_confirmed, user_rejected")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId),
-    supabase
-      .from("nodes")
-      .select("id, status, completed_at")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId),
-    supabase
-      .from("feedback_events")
-      .select("entity_id, event_type")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId)
-      .eq("entity_type", "edge")
-      .in("event_type", ["confirm_edge", "reject_edge"]),
-  ]);
+  const [{ data: edges }, { data: nodes }, { data: edgeFeedbackEvents }] =
+    await Promise.all([
+      supabase
+        .from("edges")
+        .select(
+          "id, source_node_id, target_node_id, status, confidence, user_confirmed, user_rejected",
+        )
+        .eq("workspace_id", workspaceId)
+        .eq("user_id", userId),
+      supabase
+        .from("nodes")
+        .select("id, status, completed_at")
+        .eq("workspace_id", workspaceId)
+        .eq("user_id", userId),
+      supabase
+        .from("feedback_events")
+        .select("entity_id, event_type")
+        .eq("workspace_id", workspaceId)
+        .eq("user_id", userId)
+        .eq("entity_type", "edge")
+        .in("event_type", ["confirm_edge", "reject_edge"]),
+    ]);
 
   if (!edges?.length || !nodes?.length) {
     return { active: 0, decayed: 0, recomputed: 0, stale: 0 };
@@ -264,15 +400,12 @@ export async function recomputeWorkspaceEdgeDecay(params: {
       },
     ]),
   );
+
   const confirmationCounts = new Map<string, number>();
   const rejectionCounts = new Map<string, number>();
-
   for (const event of edgeFeedbackEvents ?? []) {
     const edgeId = event.entity_id as string | null;
-    if (!edgeId) {
-      continue;
-    }
-
+    if (!edgeId) continue;
     if (event.event_type === "confirm_edge") {
       confirmationCounts.set(edgeId, (confirmationCounts.get(edgeId) ?? 0) + 1);
     } else if (event.event_type === "reject_edge") {
@@ -300,12 +433,18 @@ export async function recomputeWorkspaceEdgeDecay(params: {
     const edgeId = edge.id as string;
     const source = nodeMap.get(edge.source_node_id as string);
     const target = nodeMap.get(edge.target_node_id as string);
-    const currentStatus = ((edge.status as EdgeStatus | null) ?? "active") as EdgeStatus;
+    const currentStatus = ((edge.status as EdgeStatus | null) ??
+      "active") as EdgeStatus;
 
+    // Counts come from feedback_events when present; we fall back to the
+    // legacy boolean columns for edges that pre-date the events table.
     const confirmationCount =
-      confirmationCounts.get(edgeId) ?? (((edge.user_confirmed as boolean | null) ?? false) ? 1 : 0);
+      confirmationCounts.get(edgeId) ??
+      (((edge.user_confirmed as boolean | null) ?? false) ? 1 : 0);
     const rejectionCount =
-      rejectionCounts.get(edgeId) ?? (((edge.user_rejected as boolean | null) ?? false) ? 1 : 0);
+      rejectionCounts.get(edgeId) ??
+      (((edge.user_rejected as boolean | null) ?? false) ? 1 : 0);
+
     const normalizedConfidence = clamp(
       typeof edge.confidence === "number" ? edge.confidence : 0,
       0,
@@ -319,10 +458,16 @@ export async function recomputeWorkspaceEdgeDecay(params: {
       edgeStatus: currentStatus,
     });
 
-    const confirmationBoost = 1 + confirmationCount * 0.12;
-    const rejectionPenalty = Math.max(0, 1 - rejectionCount * 0.2);
     const finalWeight = roundTo(
-      clamp(normalizedConfidence * 100 * confirmationBoost * rejectionPenalty * decayState.decayFactor, 0, 100),
+      clamp(
+        normalizedConfidence *
+          100 *
+          confirmationBoost(confirmationCount) *
+          rejectionPenalty(rejectionCount) *
+          decayState.decayFactor,
+        0,
+        100,
+      ),
     );
 
     edgeScoreRows.push({
@@ -335,25 +480,16 @@ export async function recomputeWorkspaceEdgeDecay(params: {
       final_weight: finalWeight,
     });
 
-    if (decayState.derivedStatus === "active") {
-      active += 1;
-    } else if (decayState.derivedStatus === "decayed") {
-      decayed += 1;
-    }
-
-    if (decayState.stale) {
-      stale += 1;
-    }
+    if (decayState.derivedStatus === "active") active += 1;
+    else if (decayState.derivedStatus === "decayed") decayed += 1;
+    if (decayState.stale) stale += 1;
 
     if (
       currentStatus !== "orphaned" &&
       currentStatus !== "user_rejected" &&
       currentStatus !== decayState.derivedStatus
     ) {
-      edgeStatusUpdates.push({
-        id: edgeId,
-        status: decayState.derivedStatus,
-      });
+      edgeStatusUpdates.push({ id: edgeId, status: decayState.derivedStatus });
     }
   }
 
