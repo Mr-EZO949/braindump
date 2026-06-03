@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type StreakState = {
   streak: number;
@@ -22,7 +22,9 @@ type HabitStreakProps = {
   nodeId: string;
 };
 
-const HISTORY_DISPLAY = 14; // last two weeks of dots in the mini calendar
+// How many days of history we pull from the API. Scroll exposes the older
+// half — default view still anchors to the most recent ~14 days.
+const HISTORY_DAYS_FETCH = 90;
 
 export function HabitStreak({ nodeId }: HabitStreakProps) {
   const [data, setData] = useState<HabitData | null>(null);
@@ -35,7 +37,10 @@ export function HabitStreak({ nodeId }: HabitStreakProps) {
     setLoading(true);
     setError(null);
 
-    fetch(`/api/habits/${nodeId}`, { signal: ac.signal, cache: "no-store" })
+    fetch(`/api/habits/${nodeId}?days=${HISTORY_DAYS_FETCH}`, {
+      signal: ac.signal,
+      cache: "no-store",
+    })
       .then(async (r) => {
         const json = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(json?.error ?? "Could not load streak");
@@ -95,8 +100,6 @@ export function HabitStreak({ nodeId }: HabitStreakProps) {
 
   if (!data) return null;
 
-  const recent = data.history.slice(-HISTORY_DISPLAY);
-
   return (
     <div className="habit-streak">
       <div className="habit-streak-header">
@@ -123,16 +126,40 @@ export function HabitStreak({ nodeId }: HabitStreakProps) {
         </button>
       </div>
 
-      <div className="habit-streak-grid" role="img" aria-label="Last 14 days">
-        {recent.map((day) => (
-          <span
-            key={day.date}
-            className="habit-streak-dot"
-            data-done={day.done}
-            title={`${day.date}: ${day.done ? "done" : "skipped"}`}
-          />
-        ))}
-      </div>
+      <HabitStreakHistory history={data.history} />
+    </div>
+  );
+}
+
+// Horizontally scrollable history strip. Anchors to "today" on the right
+// edge by default so the most-recent days are visible without scrolling.
+// User scrolls left to see older history (up to HISTORY_DAYS_FETCH days).
+function HabitStreakHistory({ history }: { history: HistoryDay[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Anchor to the right (most-recent) on mount and whenever the history
+    // grows. scrollLeft = scrollWidth places the rightmost item flush right.
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth;
+  }, [history.length]);
+
+  return (
+    <div
+      ref={scrollRef}
+      className="habit-streak-grid"
+      role="img"
+      aria-label={`Last ${history.length} days of activity`}
+    >
+      {history.map((day) => (
+        <span
+          key={day.date}
+          className="habit-streak-dot"
+          data-done={day.done}
+          title={`${day.date}: ${day.done ? "done" : "skipped"}`}
+        />
+      ))}
     </div>
   );
 }
