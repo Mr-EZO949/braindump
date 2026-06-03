@@ -24,6 +24,7 @@ import { ProposedNodesReview } from "@/components/ui/proposed-nodes-review";
 import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
 import { GraphEditReview } from "@/components/ui/graph-edit-review";
 import { MergeAlert } from "@/components/ui/merge-alert";
+import { NudgeRibbon } from "@/components/nudges/nudge-ribbon";
 import { WorkspaceBootstrapWizard } from "@/components/ui/workspace-bootstrap-wizard";
 import { WelcomeScreen, shouldShowWelcome, markWelcomeDone } from "@/components/ui/onboarding-tutorial";
 import { GuidedTour } from "@/components/ui/guided-tour";
@@ -3438,6 +3439,16 @@ export function AppShell({ initialUser }: AppShellProps) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* AI reach-out ribbon — top-of-screen nudges */}
+      <NudgeRibbon
+        onOpenNode={(nodeId, workspaceId) => {
+          if (workspaceId && workspaceId !== selectedWorkspaceId) {
+            setSelectedWorkspaceId(workspaceId);
+          }
+          handleSelectNode(nodeId);
+        }}
+      />
 
       {/* Merge duplicate alerts */}
       {mergeCandidates.length > 0 && (

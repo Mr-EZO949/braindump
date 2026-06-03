@@ -181,14 +181,28 @@ export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
                     ) : null}
                     {item.progress.total > 0 ? (
                       <div className="roadmap-progress">
-                        <div className="roadmap-progress-bar">
+                        <div
+                          className="roadmap-progress-bar"
+                          data-state={
+                            ratio >= 1
+                              ? "done"
+                              : ratio === 0
+                                ? "empty"
+                                : "partial"
+                          }
+                        >
                           <div
                             className="roadmap-progress-fill"
                             style={{ width: `${Math.round(ratio * 100)}%` }}
                           />
                         </div>
                         <span className="roadmap-progress-label">
-                          {item.progress.done}/{item.progress.total} subtasks done
+                          <span className="roadmap-progress-pct">
+                            {Math.round(ratio * 100)}%
+                          </span>
+                          <span className="roadmap-progress-fraction">
+                            {item.progress.done}/{item.progress.total} done
+                          </span>
                         </span>
                       </div>
                     ) : null}

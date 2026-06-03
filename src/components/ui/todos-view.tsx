@@ -16,6 +16,15 @@ function scoreOf(n: Node): number {
   return n.current_importance_score ?? n.importance_index ?? 0;
 }
 
+// Tier mapping mirrors getScoreTier() in context-rail.tsx — kept in sync so
+// the list-row chip color matches the tier label in the details panel.
+function scoreTier(score: number): "critical" | "high" | "normal" | "low" {
+  if (score >= 90) return "critical";
+  if (score >= 74) return "high";
+  if (score >= 40) return "normal";
+  return "low";
+}
+
 function statusRank(status: string | null | undefined): number {
   switch (status) {
     case "active":
@@ -177,6 +186,7 @@ export function TodosView({ graphData, onSelectNode, onToggleStatus }: TodosView
                   className="list-view-row"
                   data-completed={completed || undefined}
                   data-archived={archived || undefined}
+                  data-tier={scoreTier(score)}
                   onClick={() => onSelectNode(node.id)}
                 >
                   <span className="list-view-row-main">
@@ -189,7 +199,12 @@ export function TodosView({ graphData, onSelectNode, onToggleStatus }: TodosView
                     {node.target_date ? (
                       <span className="list-view-row-date">{node.target_date}</span>
                     ) : null}
-                    <span className="list-view-row-score">{score}</span>
+                    <span
+                      className="list-view-row-score"
+                      data-tier={scoreTier(score)}
+                    >
+                      {score}
+                    </span>
                   </span>
                 </button>
               </li>

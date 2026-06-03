@@ -1758,6 +1758,54 @@ input[type="search"]::-webkit-search-results-decoration {
   transition: width 400ms ease-out;
 }
 
+/* "Why is this 73?" explainer — shows top-contributing signals as chips
+   and the AI's one-line reason. Lives directly under the score bar. */
+.detail-score-explainer {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detail-score-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.detail-score-signal-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: rgba(246, 242, 237, 0.72);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+}
+
+.detail-score-reason {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(246, 242, 237, 0.62);
+  font-style: italic;
+  padding-left: 8px;
+  border-left: 2px solid rgba(213, 58, 71, 0.4);
+}
+
+:root[data-theme="light"] .detail-score-signal-chip {
+  color: rgba(28, 28, 30, 0.72);
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="light"] .detail-score-reason {
+  color: rgba(28, 28, 30, 0.62);
+}
+
 .detail-divider {
   height: 1px;
   background: var(--color-border-faint);
@@ -1863,12 +1911,35 @@ input[type="search"]::-webkit-search-results-decoration {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  /* Horizontally scrollable — anchored to right (today) on mount.
+     The mask fades the left edge so the user notices there's more history
+     to scroll into. No flex-wrap so the strip stays one row. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  padding: 4px 2px;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 24px,
+    #000 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 24px,
+    #000 100%
+  );
+}
+
+.habit-streak-grid::-webkit-scrollbar {
+  display: none;
 }
 
 .habit-streak-dot {
   width: 12px;
   height: 12px;
+  flex-shrink: 0;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -1946,9 +2017,81 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .detail-actions {
+  /* Three-row layout: primary action (filled), secondary pills (compact),
+     destructive action (de-emphasized at bottom). Vertical stacking makes
+     the hierarchy unambiguous. */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Primary action — the "do this" button for the node's current state.
+   Filled scarlet, full-width. Only one shows at a time. */
+.detail-action-primary {
+  appearance: none;
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(223, 69, 83, 1);
+  background: rgba(223, 69, 83, 0.95);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
+}
+.detail-action-primary:hover {
+  background: rgba(223, 69, 83, 1);
+}
+
+/* Reopen / Unarchive — same affordance level but cooler tone since the
+   action is recoverable / less momentous than completion. */
+.detail-action-primary--reopen {
+  border-color: rgba(140, 180, 240, 0.5);
+  background: rgba(140, 180, 240, 0.18);
+  color: rgba(220, 230, 255, 1);
+}
+.detail-action-primary--reopen:hover {
+  background: rgba(140, 180, 240, 0.28);
+  border-color: rgba(140, 180, 240, 0.7);
+}
+
+/* Secondary row — AI tools. Sit between primary and destructive. */
+.detail-actions-secondary {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* Destructive action — separated, low-emphasis. The visible gap from the
+   secondary row signals "this is different." */
+.detail-action-destructive {
+  appearance: none;
+  align-self: flex-start;
+  padding: 5px 12px;
+  margin-top: 2px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: rgba(246, 242, 237, 0.45);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--motion-fast), border-color var(--motion-fast);
+}
+.detail-action-destructive:hover {
+  color: rgba(220, 90, 90, 0.9);
+  border-color: rgba(220, 90, 90, 0.3);
+}
+
+:root[data-theme="light"] .detail-action-primary--reopen {
+  background: rgba(140, 180, 240, 0.14);
+  color: rgba(40, 80, 160, 1);
+}
+:root[data-theme="light"] .detail-action-destructive {
+  color: rgba(28, 28, 30, 0.5);
+  border-color: rgba(0, 0, 0, 0.06);
 }
 
 .detail-action-pill {
@@ -4214,6 +4357,71 @@ input[type="search"]::-webkit-search-results-decoration {
   background: var(--color-text-primary);
 }
 
+/* Chat composer mic button — matches the brain-dump treatment so users
+   recognize voice-input as the same action wherever it appears. */
+.composer-mic-button {
+  display: inline-flex;
+  height: 40px;
+  width: 40px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast),
+    border-color var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.composer-mic-button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--color-text-primary);
+}
+
+.composer-mic-button[data-recording="true"] {
+  background: rgba(223, 69, 83, 0.95);
+  border-color: rgba(223, 69, 83, 1);
+  color: #fff;
+  animation: mic-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(223, 69, 83, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(223, 69, 83, 0);
+  }
+}
+
+/* Interim transcript preview inside the textarea — italic ghost text. */
+.rail-chat-interim {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 10px;
+  pointer-events: none;
+  font-style: italic;
+  font-size: 12.5px;
+  color: rgba(246, 242, 237, 0.45);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-chat-mic-error {
+  margin: 0;
+  font-size: 11px;
+  color: rgba(223, 69, 83, 0.9);
+  padding: 0 4px;
+}
+
 .shell-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
@@ -5247,9 +5455,9 @@ input[type="search"]::-webkit-search-results-decoration {
   width: 100%;
   padding: 9px 12px;
   border-radius: 10px;
-  border: 1px solid rgba(223, 69, 83, 0.4);
-  background: rgba(223, 69, 83, 0.16);
-  color: #f6f2ed;
+  border: 1px solid rgba(223, 69, 83, 1);
+  background: rgba(223, 69, 83, 0.95);
+  color: #fff;
   font-size: 12.5px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -5258,8 +5466,8 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .lockin-schedule-btn:hover:not(:disabled) {
-  background: rgba(223, 69, 83, 0.24);
-  border-color: rgba(223, 69, 83, 0.55);
+  background: rgba(223, 69, 83, 1);
+  border-color: rgba(223, 69, 83, 1);
 }
 
 .lockin-schedule-btn:disabled {
@@ -11612,6 +11820,158 @@ input[type="search"]::-webkit-search-results-decoration {
   cursor: not-allowed;
 }
 
+/* ─── Stepped review flow ─────────────────────────────────────────────── */
+
+.weekly-step-caption {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: rgba(246, 242, 237, 0.55);
+}
+
+.weekly-step-indicator {
+  display: flex;
+  gap: 6px;
+  padding: 14px 24px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.weekly-step-dot {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(246, 242, 237, 0.5);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 140ms,
+    border-color 140ms,
+    color 140ms;
+}
+
+.weekly-step-dot:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(246, 242, 237, 0.8);
+}
+
+.weekly-step-dot[data-active="true"] {
+  background: rgba(223, 69, 83, 0.95);
+  border-color: rgba(223, 69, 83, 1);
+  color: #fff;
+}
+
+.weekly-step-dot[data-complete="true"]:not([data-active="true"]) {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(246, 242, 237, 0.85);
+}
+
+.weekly-step-dot-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.weekly-step-dot[data-active="true"] .weekly-step-dot-num {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.weekly-step-dot:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.weekly-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 22px 24px 10px;
+  min-height: 320px;
+}
+
+.weekly-chart-solo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.weekly-commentary--prominent {
+  padding: 18px 20px;
+  border-left: 2px solid rgba(223, 69, 83, 0.55);
+  background: rgba(223, 69, 83, 0.05);
+  border-radius: 0 12px 12px 0;
+}
+
+.weekly-commentary--prominent .weekly-commentary-text {
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+
+.weekly-step-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 24px 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.weekly-step-back,
+.weekly-step-next {
+  appearance: none;
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition:
+    background 120ms,
+    border-color 120ms;
+}
+
+.weekly-step-back {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: #f6f2ed;
+}
+
+.weekly-step-back:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.weekly-step-back:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.weekly-step-next {
+  border: 1px solid rgba(223, 69, 83, 1);
+  background: rgba(223, 69, 83, 0.95);
+  color: #fff;
+  margin-left: auto;
+}
+
+.weekly-step-next:hover {
+  background: rgba(223, 69, 83, 1);
+}
+
 @media (max-width: 760px) {
   .weekly-kpi-row {
     grid-template-columns: repeat(2, 1fr);
@@ -11621,6 +11981,23 @@ input[type="search"]::-webkit-search-results-decoration {
   }
   .weekly-mood-sliders {
     grid-template-columns: 1fr;
+  }
+  .weekly-step-indicator {
+    padding: 12px 16px 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .weekly-step-indicator::-webkit-scrollbar {
+    display: none;
+  }
+  .weekly-step-dot-label {
+    display: none;
+  }
+  .weekly-step-body {
+    padding: 18px 16px 8px;
+  }
+  .weekly-step-nav {
+    padding: 12px 16px 18px;
   }
 }
 
@@ -11768,9 +12145,32 @@ input[type="search"]::-webkit-search-results-decoration {
   border-radius: 10px;
   border: 1px solid var(--color-border-faint);
   background: var(--color-bg-surface);
+  /* Tier-colored left border gives priority a visual cue at a glance.
+     Width is constant; the color (set by [data-tier]) does the work. */
+  border-left: 3px solid var(--list-view-row-tier-color, transparent);
   cursor: pointer;
   text-align: left;
   transition: border-color var(--motion-fast), background var(--motion-fast);
+}
+
+.list-view-row[data-tier="critical"] {
+  --list-view-row-tier-color: rgba(223, 69, 83, 0.95);
+}
+.list-view-row[data-tier="high"] {
+  --list-view-row-tier-color: rgba(223, 69, 83, 0.55);
+}
+.list-view-row[data-tier="normal"] {
+  --list-view-row-tier-color: rgba(255, 255, 255, 0.16);
+}
+.list-view-row[data-tier="low"] {
+  --list-view-row-tier-color: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="light"] .list-view-row[data-tier="normal"] {
+  --list-view-row-tier-color: rgba(0, 0, 0, 0.16);
+}
+:root[data-theme="light"] .list-view-row[data-tier="low"] {
+  --list-view-row-tier-color: rgba(0, 0, 0, 0.06);
 }
 
 .list-view-row:hover {
@@ -11861,8 +12261,45 @@ input[type="search"]::-webkit-search-results-decoration {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-primary);
-  min-width: 24px;
-  text-align: right;
+  min-width: 28px;
+  padding: 2px 8px;
+  text-align: center;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.list-view-row-score[data-tier="critical"] {
+  background: rgba(223, 69, 83, 0.18);
+  color: rgba(255, 220, 224, 1);
+}
+.list-view-row-score[data-tier="high"] {
+  background: rgba(223, 69, 83, 0.1);
+  color: rgba(246, 200, 206, 1);
+}
+.list-view-row-score[data-tier="normal"] {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(246, 242, 237, 0.85);
+}
+.list-view-row-score[data-tier="low"] {
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(246, 242, 237, 0.55);
+}
+
+:root[data-theme="light"] .list-view-row-score[data-tier="critical"] {
+  background: rgba(223, 69, 83, 0.14);
+  color: rgba(150, 30, 40, 1);
+}
+:root[data-theme="light"] .list-view-row-score[data-tier="high"] {
+  background: rgba(223, 69, 83, 0.08);
+  color: rgba(180, 50, 60, 1);
+}
+:root[data-theme="light"] .list-view-row-score[data-tier="normal"] {
+  background: rgba(0, 0, 0, 0.04);
+  color: rgba(28, 28, 30, 0.8);
+}
+:root[data-theme="light"] .list-view-row-score[data-tier="low"] {
+  background: rgba(0, 0, 0, 0.02);
+  color: rgba(28, 28, 30, 0.55);
 }
 
 /* Roadmap view --------------------------------------------------- */
@@ -12015,33 +12452,64 @@ input[type="search"]::-webkit-search-results-decoration {
 .roadmap-progress {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  margin-top: 4px;
 }
 
 .roadmap-progress-bar {
   flex: 1;
-  height: 4px;
+  height: 8px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.06);
   overflow: hidden;
+  position: relative;
+  /* Subtle inset shadow gives the track depth so the fill reads as filling
+     a real volume rather than painting over a flat line. */
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.08);
+}
+
+.roadmap-progress-bar[data-state="empty"] {
+  opacity: 0.6;
 }
 
 :root:not([data-theme="light"]) .roadmap-progress-bar {
   background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.3);
 }
 
 .roadmap-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, rgba(213, 58, 71, 0.45), rgba(213, 58, 71, 0.85));
+  background: linear-gradient(90deg, rgba(213, 58, 71, 0.55), rgba(223, 69, 83, 0.95));
   border-radius: 999px;
-  transition: width 250ms ease-out;
+  transition: width 320ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  position: relative;
+}
+
+/* Green-tinted fill once complete — visual "done" reward. */
+.roadmap-progress-bar[data-state="done"] .roadmap-progress-fill {
+  background: linear-gradient(90deg, rgba(95, 201, 160, 0.6), rgba(95, 201, 160, 0.95));
 }
 
 .roadmap-progress-label {
-  font-size: 10.5px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.roadmap-progress-pct {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.roadmap-progress-fraction {
+  font-size: 10.5px;
+  opacity: 0.7;
 }
 
 /* ============================================================
@@ -12722,5 +13190,165 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .todos-row-check[data-checked="true"]:hover {
   background: rgba(95, 201, 160, 0.8);
+}
+
+/* ─── Nudge ribbon ──────────────────────────────────────────────────── */
+.nudge-ribbon {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  max-width: min(640px, calc(100vw - 24px));
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(20, 20, 24, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow:
+    0 18px 40px rgba(0, 0, 0, 0.32),
+    0 2px 6px rgba(0, 0, 0, 0.16);
+  color: #f6f2ed;
+  font-size: 13px;
+  animation: nudge-ribbon-in 240ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@keyframes nudge-ribbon-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.nudge-ribbon-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: rgba(223, 69, 83, 0.16);
+  color: rgba(223, 69, 83, 1);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.nudge-ribbon[data-kind="newly_ready"] .nudge-ribbon-glyph {
+  background: rgba(95, 201, 160, 0.16);
+  color: rgba(95, 201, 160, 1);
+}
+
+.nudge-ribbon[data-kind="stale"] .nudge-ribbon-glyph {
+  background: rgba(180, 180, 188, 0.16);
+  color: rgba(220, 220, 226, 1);
+}
+
+.nudge-ribbon-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nudge-ribbon-title {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nudge-ribbon-detail {
+  margin: 0;
+  font-size: 11.5px;
+  color: rgba(246, 242, 237, 0.62);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nudge-ribbon-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.nudge-ribbon-action {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #f6f2ed;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background 120ms,
+    border-color 120ms;
+}
+
+.nudge-ribbon-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.nudge-ribbon-action-primary {
+  background: rgba(223, 69, 83, 0.95);
+  border-color: rgba(223, 69, 83, 1);
+  color: #fff;
+  font-weight: 600;
+}
+
+.nudge-ribbon-action-primary:hover {
+  background: rgba(223, 69, 83, 1);
+  border-color: rgba(223, 69, 83, 1);
+}
+
+.nudge-ribbon-action-dismiss {
+  padding: 6px 9px;
+  font-size: 11px;
+  color: rgba(246, 242, 237, 0.55);
+}
+
+.nudge-ribbon-count {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(223, 69, 83, 0.95);
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(20, 20, 24, 1);
+}
+
+@media (max-width: 640px) {
+  .nudge-ribbon {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    max-width: calc(100vw - 16px);
+  }
+
+  .nudge-ribbon-actions {
+    margin-left: auto;
+  }
+
+  .nudge-ribbon-detail {
+    font-size: 11px;
+  }
 }
 

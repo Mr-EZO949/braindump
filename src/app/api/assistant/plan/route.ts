@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
   const workspaceContext = [
     profileCtx.workspaceContext,
     recentlyUnblockedTitles
-      ? `Recently unblocked (depended-on work just completed): ${recentlyUnblockedTitles}`
+      ? `Newly ready (dependencies just completed): ${recentlyUnblockedTitles}`
       : null,
     manualPlannerItems
       ? `Standalone manual planner items to account for: ${manualPlannerItems}`

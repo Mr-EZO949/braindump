@@ -156,8 +156,8 @@ function SortablePlannerBlock({
           <p className="planner-block-title">
             {block.title}
             {isUnblocked ? (
-              <span className="planner-unblocked-badge" title="Recently unblocked">
-                Unblocked
+              <span className="planner-unblocked-badge" title="Dependencies just cleared — ready to start">
+                Ready
               </span>
             ) : null}
           </p>

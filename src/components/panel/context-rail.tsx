@@ -5,10 +5,11 @@ import {
   getSuggestedPrompts,
 } from "@/lib/graph/chat";
 import { getLinkedNodePerspectives, type LinkedNodePerspective } from "@/lib/graph/insights";
-import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
+import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, MicIcon } from "@/components/ui/icons";
 import { ChatRichText } from "@/components/ui/chat-rich-text";
 import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { HabitStreak } from "@/components/panel/habit-streak";
+import { useVoiceInput } from "@/components/voice/use-voice-input";
 import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/types/chat";
 import type { GraphData, NodeStatus } from "@/types/graph";
 import type { ChatSessionMeta } from "@/lib/chat/sessions";
@@ -29,7 +30,7 @@ function getLinkCategory(labels: string[]): LinkCategory {
   for (const label of labels) {
     if (label === "belongs to") return "parent";
     if (label === "contains") return "children";
-    if (label === "required for" || label === "requires") return "dependencies";
+    if (label === "required for" || label === "depends on") return "dependencies";
     if (label === "supports" || label === "supported by") return "supports";
   }
   return "related";
@@ -89,6 +90,17 @@ function getScoreTier(score: number): string {
   return "Low priority";
 }
 
+// Human labels for the raw signal names persisted by computeWorkspaceScores.
+// Anything not in the map renders the raw snake_case name as a fallback.
+const SIGNAL_LABELS: Record<string, string> = {
+  urgency: "Urgency",
+  goal_alignment: "Goal alignment",
+  ai_judgment: "AI judgment",
+  centrality: "Graph centrality",
+  user_confirmation: "User confirmation",
+  blocker_resolved_bonus: "Just unblocked",
+};
+
 export function ContextRail({
   activeTab,
   chatInputValue,
@@ -129,6 +141,12 @@ export function ContextRail({
   const linkedNodes = getLinkedNodePerspectives(graphData, selectedNode?.id ?? null);
   const isHabitNode = selectedNode?.node_type === "habit";
   const linkedGroups = groupLinkedNodes(linkedNodes);
+
+  // Voice input for the chat composer. Hidden in Firefox (unsupported).
+  const voice = useVoiceInput({
+    currentValue: chatInputValue,
+    onChange: onChatInputChange,
+  });
 
   return (
     <div
@@ -450,40 +468,76 @@ export function ContextRail({
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-end gap-2">
-                    <textarea
-                      className="rail-chat-input"
-                      onChange={(e) => onChatInputChange(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          onSubmitChatInput(chatInputValue);
-                        }
-                      }}
-                      placeholder={getChatComposerCue(chatScope)}
-                      rows={1}
-                      value={chatInputValue}
-                    />
-                    {chatLoading ? (
-                      <button
-                        aria-label="Stop"
-                        className="composer-send-button composer-send-button--stop"
-                        onClick={onCancelChat}
-                        type="button"
-                      >
-                        <span className="composer-stop-square" aria-hidden="true" />
-                      </button>
-                    ) : (
-                      <button
-                        aria-label="Send"
-                        className="composer-send-button"
-                        disabled={chatInputValue.trim().length === 0}
-                        onClick={() => onSubmitChatInput(chatInputValue)}
-                        type="button"
-                      >
-                        <ArrowUpIcon className="h-[15px] w-[15px]" />
-                      </button>
-                    )}
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-end gap-2">
+                      <div className="relative flex-1">
+                        <textarea
+                          className="rail-chat-input"
+                          onChange={(e) => onChatInputChange(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              if (voice.recording) voice.stop();
+                              onSubmitChatInput(chatInputValue);
+                            }
+                          }}
+                          placeholder={
+                            voice.recording
+                              ? "Listening…"
+                              : getChatComposerCue(chatScope)
+                          }
+                          rows={1}
+                          value={chatInputValue}
+                        />
+                        {voice.recording && voice.interimText ? (
+                          <span className="rail-chat-interim">
+                            {voice.interimText}
+                          </span>
+                        ) : null}
+                      </div>
+                      {voice.supported ? (
+                        <button
+                          aria-label={
+                            voice.recording ? "Stop recording" : "Voice input"
+                          }
+                          className="composer-mic-button"
+                          data-recording={voice.recording}
+                          onClick={voice.toggle}
+                          type="button"
+                        >
+                          <MicIcon className="h-[14px] w-[14px]" />
+                        </button>
+                      ) : null}
+                      {chatLoading ? (
+                        <button
+                          aria-label="Stop"
+                          className="composer-send-button composer-send-button--stop"
+                          onClick={onCancelChat}
+                          type="button"
+                        >
+                          <span
+                            className="composer-stop-square"
+                            aria-hidden="true"
+                          />
+                        </button>
+                      ) : (
+                        <button
+                          aria-label="Send"
+                          className="composer-send-button"
+                          disabled={chatInputValue.trim().length === 0}
+                          onClick={() => {
+                            if (voice.recording) voice.stop();
+                            onSubmitChatInput(chatInputValue);
+                          }}
+                          type="button"
+                        >
+                          <ArrowUpIcon className="h-[15px] w-[15px]" />
+                        </button>
+                      )}
+                    </div>
+                    {voice.error ? (
+                      <p className="rail-chat-mic-error">{voice.error}</p>
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -516,9 +570,12 @@ export function ContextRail({
                     )}
                   </div>
 
-                  {/* Score — compact inline */}
+                  {/* Score — compact inline + why */}
                   {(() => {
                     const displayScore = selectedNode.currentImportanceScore ?? selectedNode.importanceIndex;
+                    const signals = selectedNode.importanceTopSignals ?? [];
+                    const reason = selectedNode.importanceReason;
+                    const hasExplainer = reason || signals.length > 0;
                     return (
                       <div className="detail-score">
                         <div className="detail-score-header">
@@ -531,6 +588,25 @@ export function ContextRail({
                             style={{ width: `${Math.round(displayScore)}%` }}
                           />
                         </div>
+                        {hasExplainer ? (
+                          <div className="detail-score-explainer">
+                            {signals.length > 0 ? (
+                              <div className="detail-score-signals">
+                                {signals.map((sig) => (
+                                  <span
+                                    key={sig}
+                                    className="detail-score-signal-chip"
+                                  >
+                                    {SIGNAL_LABELS[sig] ?? sig}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            {reason ? (
+                              <p className="detail-score-reason">{reason}</p>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })()}
@@ -572,63 +648,70 @@ export function ContextRail({
                   {/* Actions — compact row */}
                   <div className="detail-divider" />
                   <div className="detail-actions">
-                    <button
-                      className="detail-action-pill"
-                      onClick={() => onFindConnections(selectedNode.id)}
-                      type="button"
-                    >
-                      Find links
-                    </button>
-
-                    {onSuggestSteps ? (
-                      <button
-                        className="detail-action-pill"
-                        onClick={() => onSuggestSteps(selectedNode.id)}
-                        type="button"
-                        disabled={suggestStepsBusy}
-                        title="Generate a roadmap of concrete sub-tasks for this node"
-                      >
-                        {suggestStepsBusy ? "Suggesting…" : "Suggest steps"}
-                      </button>
-                    ) : null}
-
+                    {/* Primary row — the headline action for the current
+                        state. Full-width, filled, scarlet. Only one shows
+                        at a time, so the user always knows the "do this"
+                        button by its position. */}
                     {(!selectedNode.status || selectedNode.status === "active") && (
                       <button
-                        className="detail-action-pill detail-action-pill--complete"
+                        className="detail-action-primary detail-action-primary--complete"
                         onClick={() => onStatusChange(selectedNode.id, "completed")}
                         type="button"
                       >
-                        Complete
+                        Mark complete
                       </button>
                     )}
-
                     {(selectedNode.status === "completed" || selectedNode.status === "paused") && (
                       <button
-                        className="detail-action-pill detail-action-pill--reopen"
+                        className="detail-action-primary detail-action-primary--reopen"
                         onClick={() => onStatusChange(selectedNode.id, "active")}
                         type="button"
                       >
                         Reopen
                       </button>
                     )}
-
-                    {selectedNode.status !== "archived" ? (
+                    {selectedNode.status === "archived" && (
                       <button
-                        className="detail-action-pill detail-action-pill--danger"
-                        onClick={() => onStatusChange(selectedNode.id, "archived")}
-                        type="button"
-                      >
-                        Archive
-                      </button>
-                    ) : (
-                      <button
-                        className="detail-action-pill detail-action-pill--reopen"
+                        className="detail-action-primary detail-action-primary--reopen"
                         onClick={() => onStatusChange(selectedNode.id, "active")}
                         type="button"
                       >
                         Unarchive
                       </button>
                     )}
+
+                    {/* Secondary row — AI tools. Compact neutral pills. */}
+                    <div className="detail-actions-secondary">
+                      <button
+                        className="detail-action-pill"
+                        onClick={() => onFindConnections(selectedNode.id)}
+                        type="button"
+                      >
+                        Find links
+                      </button>
+                      {onSuggestSteps ? (
+                        <button
+                          className="detail-action-pill"
+                          onClick={() => onSuggestSteps(selectedNode.id)}
+                          type="button"
+                          disabled={suggestStepsBusy}
+                          title="Generate a roadmap of concrete sub-tasks for this node"
+                        >
+                          {suggestStepsBusy ? "Suggesting…" : "Suggest steps"}
+                        </button>
+                      ) : null}
+                    </div>
+
+                    {/* Destructive row — separated and de-emphasized. */}
+                    {selectedNode.status !== "archived" ? (
+                      <button
+                        className="detail-action-destructive"
+                        onClick={() => onStatusChange(selectedNode.id, "archived")}
+                        type="button"
+                      >
+                        Archive
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ) : (

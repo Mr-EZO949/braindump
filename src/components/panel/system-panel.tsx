@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
 import { InstallAppButton } from "@/components/pwa/install-app-button";
+import { PushToggleButton } from "@/components/pwa/push-toggle-button";
 
 type Theme = "dark" | "light";
 
@@ -104,6 +105,7 @@ export function SystemPanel({
           {/* Self-hides on desktop, in-app browsers, or when already
               installed — only shows a real install path on mobile. */}
           <InstallAppButton />
+          <PushToggleButton />
 
           <button className="sp-menu-btn" type="button" disabled>
             Manage subscription
