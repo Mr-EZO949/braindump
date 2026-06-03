@@ -1851,6 +1851,11 @@ export function GraphCanvas({
         }
       }) as ForceLink<GraphNode, GraphLink>;
 
+    // Mobile cuts the sim short — fewer ticks, less battery, faster settle.
+    // The rest forces already pull to deterministic targets, so a coarser
+    // settle still lands within ~3px of the desktop endpoint.
+    const isMobileSim =
+      typeof window !== "undefined" && window.innerWidth <= 768;
     const simulation = forceSimulation<GraphNode, GraphLink>(scene.nodes)
       .force("link", linkForce)
       .force(
@@ -1865,9 +1870,9 @@ export function GraphCanvas({
       )
       .force("restX", forceX<GraphNode>((node) => node.restX).strength(0.82))
       .force("restY", forceY<GraphNode>((node) => node.restY).strength(0.92))
-      .velocityDecay(0.72)
-      .alphaDecay(0.12)
-      .alphaMin(0.02)
+      .velocityDecay(isMobileSim ? 0.78 : 0.72)
+      .alphaDecay(isMobileSim ? 0.2 : 0.12)
+      .alphaMin(isMobileSim ? 0.05 : 0.02)
       .alphaTarget(0);
 
     let didSettleRefit = false;
@@ -2592,7 +2597,16 @@ export function GraphCanvas({
             );
           })}
 
-          {scene.nodes.filter((node) => !hiddenNodeIds.has(node.id)).map((node) => {
+          {(() => {
+            // Mobile-only render shortcuts: SVG filters and text labels are
+            // expensive on phone GPUs. At low zoom the filter shadow is barely
+            // visible and labels are unreadable, so we drop them — selected /
+            // hovered nodes still get the full treatment so the focus state
+            // stays legible during interaction.
+            const isMobileRender = viewport.width <= 768;
+            const dropFiltersAtThisZoom = isMobileRender && view.zoom < 0.55;
+            const dropLabelsAtThisZoom = isMobileRender && view.zoom < 0.32;
+            return scene.nodes.filter((node) => !hiddenNodeIds.has(node.id)).map((node) => {
             const position = getRenderedNodePosition(node, draggingNodeId);
             const selected = focusNodeId === node.id;
             const hovered = hoveredNodeId === node.id;
@@ -2615,7 +2629,14 @@ export function GraphCanvas({
               selected,
               selectedNodeId: focusNodeId,
             });
-            const nodeFilter = selected ? "url(#node-selected-shadow)" : "url(#node-shadow)";
+            const skipShadow =
+              dropFiltersAtThisZoom && !selected && !hovered && !searchHit;
+            const skipLabel = dropLabelsAtThisZoom && !selected && !hovered;
+            const nodeFilter = skipShadow
+              ? undefined
+              : selected
+                ? "url(#node-selected-shadow)"
+                : "url(#node-shadow)";
             const lineHeight = node.lines.length === 1 ? 0 : node.fontSize * 1.04;
             const initialY = node.lines.length === 1 ? 2 : -lineHeight / 2 + 1;
             const nodeRadius = Math.min(node.width, node.height) * 0.44;
@@ -2784,26 +2805,28 @@ export function GraphCanvas({
                     x={-(node.width - 2) / 2}
                     y={-(node.height - 2) / 2}
                   />
-                  <text
-                    fill={visual.text}
-                    fontFamily="var(--font-geist-sans), sans-serif"
-                    fontSize={node.fontSize}
-                    fontWeight={560}
-                    letterSpacing="-0.02em"
-                    textAnchor="middle"
-                    textDecoration={node.status === "completed" ? "line-through" : undefined}
-                    y={initialY}
-                  >
-                    {node.lines.map((line, index) => (
-                      <tspan
-                        dy={index === 0 ? 0 : lineHeight}
-                        key={`${node.id}-${line}`}
-                        x={0}
-                      >
-                        {line}
-                      </tspan>
-                    ))}
-                  </text>
+                  {skipLabel ? null : (
+                    <text
+                      fill={visual.text}
+                      fontFamily="var(--font-geist-sans), sans-serif"
+                      fontSize={node.fontSize}
+                      fontWeight={560}
+                      letterSpacing="-0.02em"
+                      textAnchor="middle"
+                      textDecoration={node.status === "completed" ? "line-through" : undefined}
+                      y={initialY}
+                    >
+                      {node.lines.map((line, index) => (
+                        <tspan
+                          dy={index === 0 ? 0 : lineHeight}
+                          key={`${node.id}-${line}`}
+                          x={0}
+                        >
+                          {line}
+                        </tspan>
+                      ))}
+                    </text>
+                  )}
                 </g>
 
                 {/* Collapsed-children badge — shown when node has hidden subtree */}
@@ -2863,7 +2886,8 @@ export function GraphCanvas({
                 )}
               </g>
             );
-          })}
+          });
+          })()}
         </g>
       </svg>
     </div>
