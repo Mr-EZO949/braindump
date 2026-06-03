@@ -319,6 +319,16 @@ export function WeeklyReflectionModal({
     label: "steady",
   });
   const [moodSaved, setMoodSaved] = useState(false);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+
+  // Step titles drive the indicator label + body header. Kept short so they
+  // don't fight the content for vertical space.
+  const STEPS: Array<{ index: 1 | 2 | 3; title: string; caption: string }> = [
+    { index: 1, title: "This week", caption: "The headline numbers" },
+    { index: 2, title: "How it shaped up", caption: "Pace, shape, reflection" },
+    { index: 3, title: "Check in", caption: "How did the week feel?" },
+  ];
+  const current = STEPS[step - 1];
 
   // Load mood from localStorage if previously saved this week
   useEffect(() => {
@@ -421,134 +431,187 @@ export function WeeklyReflectionModal({
               <ChartBarIcon className="h-[12px] w-[12px]" />
               Weekly review · {workspaceName}
             </p>
-            <h2 className="weekly-title">Last 7 days, in your own context</h2>
+            <h2 className="weekly-title">{current.title}</h2>
+            <p className="weekly-step-caption">{current.caption}</p>
           </div>
           <button className="weekly-close" type="button" onClick={onClose} aria-label="Close">
             <CloseIcon className="h-[14px] w-[14px]" />
           </button>
         </header>
 
+        {/* Step indicator — three dots, the current one filled. */}
+        <div className="weekly-step-indicator" role="tablist" aria-label="Review steps">
+          {STEPS.map((s) => (
+            <button
+              key={s.index}
+              type="button"
+              role="tab"
+              aria-selected={s.index === step}
+              aria-label={`Step ${s.index}: ${s.title}`}
+              className="weekly-step-dot"
+              data-active={s.index === step}
+              data-complete={s.index < step}
+              onClick={() => setStep(s.index)}
+              disabled={loading || !data}
+            >
+              <span className="weekly-step-dot-num">{s.index}</span>
+              <span className="weekly-step-dot-label">{s.title}</span>
+            </button>
+          ))}
+        </div>
+
         {loading ? (
           <div className="weekly-loading">Loading reflection…</div>
         ) : error ? (
           <div className="weekly-error">{error}</div>
         ) : !data ? null : (
-          <>
-            {/* KPI strip */}
-            <section className="weekly-kpi-row">
-              <div className="weekly-kpi">
-                <span className="weekly-kpi-value">{data.totals.completed}</span>
-                <span className="weekly-kpi-label">completed</span>
-              </div>
-              <div className="weekly-kpi">
-                <span className="weekly-kpi-value">{data.totals.created}</span>
-                <span className="weekly-kpi-label">created</span>
-              </div>
-              <div className="weekly-kpi">
-                <span className="weekly-kpi-value">{data.totals.scheduled}</span>
-                <span className="weekly-kpi-label">scheduled</span>
-              </div>
-              <div className="weekly-kpi">
-                <span className="weekly-kpi-value">
-                  {completionRatePct !== null ? `${completionRatePct}%` : "—"}
-                </span>
-                <span className="weekly-kpi-label">plan rate</span>
-              </div>
-            </section>
+          <div className="weekly-step-body">
+            {step === 1 ? (
+              <>
+                {/* KPI strip — the four headline numbers, given room to breathe. */}
+                <section className="weekly-kpi-row">
+                  <div className="weekly-kpi">
+                    <span className="weekly-kpi-value">{data.totals.completed}</span>
+                    <span className="weekly-kpi-label">completed</span>
+                  </div>
+                  <div className="weekly-kpi">
+                    <span className="weekly-kpi-value">{data.totals.created}</span>
+                    <span className="weekly-kpi-label">created</span>
+                  </div>
+                  <div className="weekly-kpi">
+                    <span className="weekly-kpi-value">{data.totals.scheduled}</span>
+                    <span className="weekly-kpi-label">scheduled</span>
+                  </div>
+                  <div className="weekly-kpi">
+                    <span className="weekly-kpi-value">
+                      {completionRatePct !== null ? `${completionRatePct}%` : "—"}
+                    </span>
+                    <span className="weekly-kpi-label">plan rate</span>
+                  </div>
+                </section>
 
-            {/* Charts */}
-            <section className="weekly-charts">
-              <div className="weekly-chart-cell">
-                <h3 className="weekly-chart-title">Completed per day</h3>
-                <BarChart daily={data.daily} />
-              </div>
-              <div className="weekly-chart-cell">
-                <h3 className="weekly-chart-title">Cumulative</h3>
-                <LineChart daily={data.daily} />
-              </div>
-              <div className="weekly-chart-cell">
-                <h3 className="weekly-chart-title">By type</h3>
-                <PieChart types={data.type_breakdown} />
-              </div>
-            </section>
-
-            {/* AI commentary */}
-            {data.commentary ? (
-              <section className="weekly-commentary">
-                <p className="weekly-commentary-label">Reflection</p>
-                <p className="weekly-commentary-text">{data.commentary}</p>
-              </section>
+                {/* Daily bar chart sits with the KPIs — both answer "how much". */}
+                <section className="weekly-chart-solo">
+                  <h3 className="weekly-chart-title">Completed per day</h3>
+                  <BarChart daily={data.daily} />
+                </section>
+              </>
             ) : null}
 
-            {/* Mood check-in */}
-            <section className="weekly-mood">
-              <h3 className="weekly-mood-title">How did the week feel?</h3>
+            {step === 2 ? (
+              <>
+                {/* Cumulative + pie + AI commentary — the "shape" + the read. */}
+                <section className="weekly-charts">
+                  <div className="weekly-chart-cell">
+                    <h3 className="weekly-chart-title">Cumulative</h3>
+                    <LineChart daily={data.daily} />
+                  </div>
+                  <div className="weekly-chart-cell">
+                    <h3 className="weekly-chart-title">By type</h3>
+                    <PieChart types={data.type_breakdown} />
+                  </div>
+                </section>
 
-              <div className="weekly-mood-sliders">
-                <label className="weekly-slider">
-                  <span className="weekly-slider-label">
-                    Energy <span className="weekly-slider-val">{mood.energy}</span>
-                  </span>
-                  <input
-                    type="range"
-                    min={1}
-                    max={10}
-                    value={mood.energy}
-                    onChange={(e) => {
-                      setMood({ ...mood, energy: Number(e.target.value) });
-                      setMoodSaved(false);
-                    }}
-                  />
-                </label>
-                <label className="weekly-slider">
-                  <span className="weekly-slider-label">
-                    Momentum <span className="weekly-slider-val">{mood.momentum}</span>
-                  </span>
-                  <input
-                    type="range"
-                    min={1}
-                    max={10}
-                    value={mood.momentum}
-                    onChange={(e) => {
-                      setMood({ ...mood, momentum: Number(e.target.value) });
-                      setMoodSaved(false);
-                    }}
-                  />
-                </label>
-                <label className="weekly-slider">
-                  <span className="weekly-slider-label">
-                    Satisfaction <span className="weekly-slider-val">{mood.satisfaction}</span>
-                  </span>
-                  <input
-                    type="range"
-                    min={1}
-                    max={10}
-                    value={mood.satisfaction}
-                    onChange={(e) => {
-                      setMood({ ...mood, satisfaction: Number(e.target.value) });
-                      setMoodSaved(false);
-                    }}
-                  />
-                </label>
-              </div>
+                {data.commentary ? (
+                  <section className="weekly-commentary weekly-commentary--prominent">
+                    <p className="weekly-commentary-label">Reflection</p>
+                    <p className="weekly-commentary-text">{data.commentary}</p>
+                  </section>
+                ) : null}
+              </>
+            ) : null}
 
-              <div className="weekly-mood-select">
-                {MOOD_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className="weekly-mood-chip"
-                    data-active={mood.label === opt.value}
-                    onClick={() => {
-                      setMood({ ...mood, label: opt.value });
-                      setMoodSaved(false);
-                    }}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
+            {step === 3 ? (
+              <section className="weekly-mood">
+                <div className="weekly-mood-sliders">
+                  <label className="weekly-slider">
+                    <span className="weekly-slider-label">
+                      Energy <span className="weekly-slider-val">{mood.energy}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={10}
+                      value={mood.energy}
+                      onChange={(e) => {
+                        setMood({ ...mood, energy: Number(e.target.value) });
+                        setMoodSaved(false);
+                      }}
+                    />
+                  </label>
+                  <label className="weekly-slider">
+                    <span className="weekly-slider-label">
+                      Momentum <span className="weekly-slider-val">{mood.momentum}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={10}
+                      value={mood.momentum}
+                      onChange={(e) => {
+                        setMood({ ...mood, momentum: Number(e.target.value) });
+                        setMoodSaved(false);
+                      }}
+                    />
+                  </label>
+                  <label className="weekly-slider">
+                    <span className="weekly-slider-label">
+                      Satisfaction <span className="weekly-slider-val">{mood.satisfaction}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={10}
+                      value={mood.satisfaction}
+                      onChange={(e) => {
+                        setMood({ ...mood, satisfaction: Number(e.target.value) });
+                        setMoodSaved(false);
+                      }}
+                    />
+                  </label>
+                </div>
 
+                <div className="weekly-mood-select">
+                  {MOOD_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className="weekly-mood-chip"
+                      data-active={mood.label === opt.value}
+                      onClick={() => {
+                        setMood({ ...mood, label: opt.value });
+                        setMoodSaved(false);
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </div>
+        )}
+
+        {/* Step nav: Back / Next on 1-2, Save on 3. Hidden while loading. */}
+        {data && !loading && !error ? (
+          <footer className="weekly-step-nav">
+            <button
+              type="button"
+              className="weekly-step-back"
+              onClick={() => setStep((s) => (s > 1 ? ((s - 1) as 1 | 2 | 3) : s))}
+              disabled={step === 1}
+            >
+              Back
+            </button>
+            {step < 3 ? (
+              <button
+                type="button"
+                className="weekly-step-next"
+                onClick={() => setStep((s) => (s < 3 ? ((s + 1) as 1 | 2 | 3) : s))}
+              >
+                Next
+              </button>
+            ) : (
               <button
                 type="button"
                 className="weekly-mood-save"
@@ -557,9 +620,9 @@ export function WeeklyReflectionModal({
               >
                 {moodSaved ? "Saved" : "Save reflection"}
               </button>
-            </section>
-          </>
-        )}
+            )}
+          </footer>
+        ) : null}
       </motion.div>
     </motion.div>
   );
