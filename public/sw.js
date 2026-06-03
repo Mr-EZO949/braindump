@@ -35,6 +35,56 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// Web-push: the cron sends a JSON payload with title/body/node_id. We show
+// it as a system notification and route the click back into the app at the
+// linked node (if any).
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  const title = data.title || "BrainDump";
+  const options = {
+    body: data.body || "",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    data: { node_id: data.node_id || null, nudge_id: data.nudge_id || null },
+    tag: data.nudge_id || undefined,
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const { node_id } = event.notification.data || {};
+  const target = node_id ? `/app?node=${encodeURIComponent(node_id)}` : "/app";
+
+  event.waitUntil(
+    (async () => {
+      const allClients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      // Re-use an open app tab if there is one.
+      for (const client of allClients) {
+        try {
+          const url = new URL(client.url);
+          if (url.pathname.startsWith("/app")) {
+            await client.focus();
+            client.postMessage({ type: "nudge:open", node_id });
+            return;
+          }
+        } catch {
+          // skip malformed
+        }
+      }
+      await self.clients.openWindow(target);
+    })(),
+  );
+});
+
 self.addEventListener("fetch", (event) => {
   const { request } = event;
 

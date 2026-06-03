@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/node-cleanup",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/nudges",
+      "schedule": "0 */4 * * *"
     }
   ]
 }
