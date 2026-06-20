@@ -7013,17 +7013,22 @@ input[type="search"]::-webkit-search-results-decoration {
 .rail-chat-input {
   flex: 1;
   resize: none;
-  background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.055);
-  border-radius: 8px;
-  padding: 7px 10px;
+  /* Grow with content up to max-height (graceful: unsupported browsers just
+     sit at min-height and scroll internally). */
+  field-sizing: content;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 11px;
+  padding: 10px 13px;
   color: var(--color-text-primary);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
-  min-height: 34px;
-  max-height: 100px;
+  min-height: 42px;
+  max-height: 140px;
   outline: none;
-  transition: border-color var(--motion-fast);
+  transition:
+    border-color var(--motion-fast),
+    background-color var(--motion-fast);
 }
 
 .rail-chat-input::placeholder {

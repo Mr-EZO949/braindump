@@ -296,8 +296,8 @@ export function getSuggestedPrompts(scope: ChatScope) {
 
 export function getChatComposerCue(scope: ChatScope) {
   if (scope.kind === "node") {
-    return "Use the stage composer below to ask about this node.";
+    return "Ask about this node…";
   }
 
-  return "Use the stage composer below to continue.";
+  return "Ask anything about your workspace…";
 }
