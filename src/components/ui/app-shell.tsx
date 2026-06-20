@@ -68,6 +68,7 @@ import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
 import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
+import { classifyTaskSize } from "@/lib/ai/sizing";
 import type { RailTab, ChatMessage, ChatScope, Nudge, PendingAction } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, NodeType, Workspace } from "@/types/graph";
 import type { ProposedNode } from "@/types/ai";
@@ -328,6 +329,13 @@ export function AppShell({ initialUser }: AppShellProps) {
   // When a chat message looks like a brain dump, we hold it here and show an
   // inline "Brain dump / Just chatting" chooser instead of routing silently.
   const [pendingDumpText, setPendingDumpText] = useState<string | null>(null);
+  // When a freshly-created task looks like a multi-session project, we hold it
+  // here and show an inline "break it down?" chooser in the chat rail (the
+  // sizing layer — see lib/ai/sizing.ts).
+  const [pendingSizeBreakdown, setPendingSizeBreakdown] = useState<{
+    nodeId: string;
+    title: string;
+  } | null>(null);
   // Project ids we've already offered a roadmap for this session — so the
   // in-thread "want a roadmap?" prompt never nags about the same project.
   const roadmapPromptedRef = useRef<Set<string>>(new Set());
@@ -1489,6 +1497,62 @@ export function AppShell({ initialUser }: AppShellProps) {
     setSelectedNodeId(createdNode.id);
     setRightPanelOpen(true);
     setActiveRailTab("details");
+
+    // Sizing layer: only second-guess plain tasks. If the user explicitly
+    // created a project/goal/etc., take it at face value. Runs after the
+    // node is already on screen so the common (task) path has zero delay.
+    if (resolvedNodeType === "task") {
+      void maybeOfferBreakdown(createdNode);
+    }
+  };
+
+  // Decide whether a just-created task is really a multi-session endeavour and,
+  // if so, offer the inline "break it into steps?" chooser. The cheap heuristic
+  // decides most titles for free; only 'ambiguous' ones cost a Haiku call,
+  // which fails safe to "task" (no interruption) on any error.
+  //
+  // We do NOT mutate the node here. Breaking it down just nests generated steps
+  // under it (a task can have children), and only if the user accepts — so
+  // "Keep as one task" genuinely leaves it untouched. No DB write happens until
+  // the user actually picks "Break it down".
+  //
+  // No concurrency guard: the sole caller is the manual create-node form, where
+  // a second creation can't realistically land within the classify window, and
+  // a clobbered chooser causes no harm now that nothing is mutated.
+  const maybeOfferBreakdown = async (node: Node) => {
+    const title = node.title;
+    let verdict = classifyTaskSize(title);
+    if (verdict === "ambiguous") {
+      verdict = "task"; // fail-safe: don't interrupt unless we're confident
+      try {
+        const res = await fetch("/api/assistant/classify-size", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { size?: "task" | "project" };
+          if (data.size === "project") verdict = "project";
+        }
+      } catch {
+        // network error — keep the task default, never block creation
+      }
+    }
+    if (verdict !== "project") return;
+    setPendingSizeBreakdown({ nodeId: node.id, title });
+    setRightPanelOpen(true);
+    setActiveRailTab("chat");
+  };
+
+  // Resolve the breakdown chooser. "light"/"full" generate nested steps under
+  // the task (leaving its type alone) at the chosen depth; "keep" leaves the
+  // task exactly as created.
+  const handleResolveSizeBreakdown = (choice: "light" | "full" | "keep") => {
+    const pending = pendingSizeBreakdown;
+    setPendingSizeBreakdown(null);
+    if (pending && choice !== "keep") {
+      void handleSuggestStepsForNode(pending.nodeId, choice);
+    }
   };
 
   const handleSubmitEditNode = async () => {
@@ -1638,6 +1702,10 @@ export function AppShell({ initialUser }: AppShellProps) {
     setEditNodeDraft(null);
     setEditNodeError(null);
     setDeleteNodeConfirmOpen(false);
+    // Drop a pending breakdown offer if its node was just deleted.
+    setPendingSizeBreakdown((p) =>
+      p && nodeIds.includes(p.nodeId) ? null : p,
+    );
     setChatScope(createWorkspaceScope(workspaceName));
     setRightPanelOpen(true);
     setEdgeError(null);
@@ -2343,7 +2411,10 @@ export function AppShell({ initialUser }: AppShellProps) {
   // user-initiated re-prompt for finer breakdown is intentional here.
   // Feeds the AI's text back through the standard extraction pipeline so
   // the user reviews each proposed step before it lands in the graph.
-  const handleSuggestStepsForNode = async (nodeId: string) => {
+  const handleSuggestStepsForNode = async (
+    nodeId: string,
+    mode: "light" | "full" = "full",
+  ) => {
     if (!selectedWorkspaceId || stepSuggestionLoading) return;
     const node = graphData.nodes.find((n) => n.id === nodeId);
     if (!node) return;
@@ -2358,6 +2429,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           summary: node.summary,
           node_type: node.node_type,
           workspace_id: selectedWorkspaceId,
+          mode,
         }),
       });
       if (!res.ok) return;
@@ -3125,8 +3197,8 @@ export function AppShell({ initialUser }: AppShellProps) {
             if (!selectedWorkspaceId) return;
             void analyzeNodes([nodeId]);
           }}
-          onSuggestSteps={(nodeId) => {
-            void handleSuggestStepsForNode(nodeId);
+          onSuggestSteps={(nodeId, mode) => {
+            void handleSuggestStepsForNode(nodeId, mode);
           }}
           suggestStepsBusy={stepSuggestionLoading}
           onSelectLinkedNode={handleSelectNode}
@@ -3184,6 +3256,8 @@ export function AppShell({ initialUser }: AppShellProps) {
             }
             void submitDumpFromChat(text);
           }}
+          pendingSizeBreakdown={pendingSizeBreakdown}
+          onResolveSizeBreakdown={handleResolveSizeBreakdown}
           onToggle={() => setRightPanelOpen((open) => !open)}
           open={rightPanelOpen}
           selectedNode={selectedNode}

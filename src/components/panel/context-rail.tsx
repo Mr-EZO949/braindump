@@ -10,6 +10,7 @@ import { ChatRichText } from "@/components/ui/chat-rich-text";
 import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { HabitStreak } from "@/components/panel/habit-streak";
 import { useVoiceInput } from "@/components/voice/use-voice-input";
+import { classifyTaskSize } from "@/lib/ai/sizing";
 import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/types/chat";
 import type { GraphData, NodeStatus } from "@/types/graph";
 import type { ChatSessionMeta } from "@/lib/chat/sessions";
@@ -63,7 +64,7 @@ type ContextRailProps = {
   onSelectNudge: (nudge: Nudge) => void;
   onSelectPrompt: (prompt: string) => void;
   onFindConnections: (nodeId: string) => void;
-  onSuggestSteps?: (nodeId: string) => void;
+  onSuggestSteps?: (nodeId: string, mode: "light" | "full") => void;
   suggestStepsBusy?: boolean;
   onStatusChange: (nodeId: string, status: NodeStatus) => void;
   onSelectLinkedNode: (nodeId: string) => void;
@@ -71,6 +72,8 @@ type ContextRailProps = {
   onSubmitChatInput: (message: string) => void;
   pendingDumpText?: string | null;
   onResolveDumpChoice?: (choice: "dump" | "chat") => void;
+  pendingSizeBreakdown?: { title: string } | null;
+  onResolveSizeBreakdown?: (choice: "light" | "full" | "keep") => void;
   onToggle: () => void;
   open: boolean;
   selectedNode: ChatNodeContext | null;
@@ -126,6 +129,8 @@ export function ContextRail({
   onSubmitChatInput,
   pendingDumpText,
   onResolveDumpChoice,
+  pendingSizeBreakdown,
+  onResolveSizeBreakdown,
   onToggle,
   open,
   selectedNode,
@@ -467,6 +472,40 @@ export function ContextRail({
                       </button>
                     </div>
                   </div>
+                ) : pendingSizeBreakdown ? (
+                  <div className="flex flex-col gap-2.5">
+                    <p className="text-[12.5px] leading-snug text-(--color-text-secondary)">
+                      This looks like more than one sitting. Break it into steps?
+                    </p>
+                    <p className="line-clamp-2 rounded-md border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.025)] px-3 py-2 text-[12px] italic text-(--color-text-muted)">
+                      {pendingSizeBreakdown.title}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onResolveSizeBreakdown?.("light")}
+                        className="flex-1 rounded-full border border-[rgba(107,140,239,0.55)] bg-transparent px-3 py-2 text-[12px] font-semibold text-[rgba(150,175,255,0.95)]"
+                        title="Just the 1–3 immediate next steps to get unstuck"
+                      >
+                        Quick steps
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onResolveSizeBreakdown?.("full")}
+                        className="flex-1 rounded-full border border-[rgba(107,140,239,0.55)] bg-[rgba(107,140,239,0.95)] px-3 py-2 text-[12px] font-semibold text-white"
+                        title="A full roadmap of sub-tasks"
+                      >
+                        Full roadmap
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onResolveSizeBreakdown?.("keep")}
+                      className="self-start text-[11.5px] font-medium text-(--color-text-muted) underline-offset-2 hover:underline"
+                    >
+                      Keep as one task
+                    </button>
+                  </div>
                 ) : (
                   <div className="flex flex-col gap-1">
                     <div className="flex items-end gap-2">
@@ -689,16 +728,34 @@ export function ContextRail({
                       >
                         Find links
                       </button>
-                      {onSuggestSteps ? (
-                        <button
-                          className="detail-action-pill"
-                          onClick={() => onSuggestSteps(selectedNode.id)}
-                          type="button"
-                          disabled={suggestStepsBusy}
-                          title="Generate a roadmap of concrete sub-tasks for this node"
-                        >
-                          {suggestStepsBusy ? "Suggesting…" : "Suggest steps"}
-                        </button>
+                      {/* Breakdown is only offered when the node is actually
+                          worth breaking down — a project/goal, or a title the
+                          sizing heuristic reads as multi-step. No "Suggest
+                          steps" noise on atomic tasks like "call mom". */}
+                      {onSuggestSteps &&
+                      (selectedNode.node_type === "project" ||
+                        selectedNode.node_type === "goal" ||
+                        classifyTaskSize(selectedNode.title) !== "task") ? (
+                        <>
+                          <button
+                            className="detail-action-pill"
+                            onClick={() => onSuggestSteps(selectedNode.id, "light")}
+                            type="button"
+                            disabled={suggestStepsBusy}
+                            title="Just the 1–3 immediate next steps to get unstuck"
+                          >
+                            Quick steps
+                          </button>
+                          <button
+                            className="detail-action-pill"
+                            onClick={() => onSuggestSteps(selectedNode.id, "full")}
+                            type="button"
+                            disabled={suggestStepsBusy}
+                            title="A full roadmap of sub-tasks"
+                          >
+                            {suggestStepsBusy ? "Suggesting…" : "Full roadmap"}
+                          </button>
+                        </>
                       ) : null}
                     </div>
 

@@ -8,7 +8,18 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { AI_MODELS, AI_TEMPERATURE } from "@/lib/ai/config";
 
-const STEP_SYSTEM_PROMPT = `You are a task-breakdown assistant for BrainDump, a graph-based planning tool.
+// Shared output contract — both modes emit the same parseable brain-dump shape.
+const OUTPUT_FORMAT = `Output format — write as a brain dump that the extraction engine can parse:
+
+Under "[parent title]":
+- Task: [step title]. [summary]
+- Task: [step title]. [summary]
+...
+
+Only output the brain dump text. No preamble, no explanation, no markdown.`;
+
+// Full roadmap — the whole breakdown.
+const STEP_SYSTEM_PROMPT_FULL = `You are a task-breakdown assistant for BrainDump, a graph-based planning tool.
 
 Given a goal or project, generate 4–8 concrete, actionable steps the user should take to accomplish it. Each step should be a task that can be checked off.
 
@@ -19,14 +30,26 @@ Rules:
 - Keep titles short (under 60 characters) but descriptive.
 - Include a one-sentence summary for each step explaining why it matters or what it involves.
 
-Output format — write as a brain dump that the extraction engine can parse:
+${OUTPUT_FORMAT}`;
 
-Under "[parent title]":
-- Task: [step title]. [summary]
-- Task: [step title]. [summary]
-...
+// Light — just enough to get unstuck. For paralysis relief, not planning.
+const STEP_SYSTEM_PROMPT_LIGHT = `You are a task-breakdown assistant for BrainDump, a tool for people who get stuck starting things.
 
-Only output the brain dump text. No preamble, no explanation, no markdown.`;
+Given a goal or project, generate ONLY the 1–3 most immediate, concrete next actions — the smallest things the user can do right now to get moving. This is not a full plan; it's the first push past the blank page.
+
+Rules:
+- Each step must be doable in one short sitting. "Open a new doc and write the title" beats "Draft the report".
+- Pick the true first step(s) — what literally has to happen before anything else.
+- Keep titles short (under 60 characters) and concrete.
+- One-sentence summary each.
+
+${OUTPUT_FORMAT}`;
+
+// Count the "- Task:" lines the model produced. Used to decide whether the
+// cheap Haiku pass returned a usable breakdown or something too thin to ship.
+function countSteps(text: string): number {
+  return text.split("\n").filter((l) => /^\s*-\s*Task:/i.test(l)).length;
+}
 
 export async function POST(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
@@ -49,12 +72,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { title, summary, node_type, workspace_id } = body as {
+  const { title, summary, node_type, workspace_id, mode } = body as {
     title: string;
     summary: string | null;
     node_type: string;
     workspace_id: string;
+    mode?: "light" | "full";
   };
+  const stepMode = mode === "light" ? "light" : "full";
 
   if (!title || !workspace_id) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -86,22 +111,43 @@ export async function POST(req: NextRequest) {
     ? `Goal/Project: "${title}"\nDescription: ${summary}`
     : `Goal/Project: "${title}"`;
 
-  try {
+  const systemPrompt =
+    stepMode === "light" ? STEP_SYSTEM_PROMPT_LIGHT : STEP_SYSTEM_PROMPT_FULL;
+  // Light wants 1–3 steps, so a single step is a valid result — only escalate
+  // if it came back empty. Full wants a real roadmap, so <2 steps is too thin.
+  const minSteps = stepMode === "light" ? 1 : 2;
+
+  async function generate(model: string): Promise<string> {
     const response = await client.messages.create({
-      model: AI_MODELS.CLAUDE_SONNET,
+      model,
       max_tokens: 800,
       temperature: AI_TEMPERATURE.PLANNER,
-      system: STEP_SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });
-
     const textBlock = response.content.find((b) => b.type === "text");
-    const stepsText = textBlock?.text?.trim() ?? "";
+    return textBlock?.text?.trim() ?? "";
+  }
+
+  try {
+    // Haiku first — most breakdowns are routine and don't need Sonnet's
+    // depth. Escalate to Sonnet only when Haiku comes back too thin. A Sonnet
+    // throw rides the outer catch → 502.
+    let model: string = AI_MODELS.CLAUDE_HAIKU;
+    let stepsText = await generate(model);
+    let escalated = false;
+
+    if (countSteps(stepsText) < minSteps) {
+      model = AI_MODELS.CLAUDE_SONNET;
+      stepsText = await generate(model);
+      escalated = true;
+    }
 
     if (!stepsText) {
       return NextResponse.json({ error: "No steps generated" }, { status: 502 });
     }
 
+    console.log("[suggest-steps]", { mode: stepMode, model, escalated, steps: countSteps(stepsText) });
     return NextResponse.json({ steps_text: stepsText });
   } catch {
     return NextResponse.json({ error: "AI generation failed" }, { status: 502 });
