@@ -12,11 +12,15 @@ function node(
 }
 
 function belongsTo(child: string, parent: string): Edge {
+  return edge(child, parent, "belongs_to");
+}
+
+function edge(source: string, target: string, type: Edge["edge_type"]): Edge {
   return {
-    id: `${child}->${parent}`,
-    source_node_id: child,
-    target_node_id: parent,
-    edge_type: "belongs_to",
+    id: `${source}-${type}-${target}`,
+    source_node_id: source,
+    target_node_id: target,
+    edge_type: type,
   } as unknown as Edge;
 }
 
@@ -80,5 +84,30 @@ describe("needsNextAction", () => {
     const nodes = [node("p", "project"), node("other", "project"), node("t", "task")];
     // task belongs to `other`, not `p`
     expect(needsNextAction("p", nodes, [belongsTo("t", "other")])).toBe(true);
+  });
+
+  // Guards the edge_type filter — every other test uses belongs_to, so without
+  // this a non-parentage edge (depends_on/blocks) could leak in as a "child"
+  // and silently suppress the dead-end offer.
+  it("does not count a non-belongs_to edge as a child", () => {
+    const nodes = [node("p", "project"), node("t", "task")];
+    expect(needsNextAction("p", nodes, [edge("t", "p", "depends_on")])).toBe(true);
+  });
+
+  it("survives a stale edge to a deleted child (orphan id, no throw)", () => {
+    expect(needsNextAction("p", [node("p", "project")], [belongsTo("ghost", "p")])).toBe(true);
+  });
+
+  it("counts an active goal child as a real next step", () => {
+    const nodes = [node("p", "project"), node("subg", "goal")];
+    expect(needsNextAction("p", nodes, [belongsTo("subg", "p")])).toBe(false);
+  });
+
+  it("is false for an archived container", () => {
+    expect(needsNextAction("p", [node("p", "project", "archived")], [])).toBe(false);
+  });
+
+  it("is false for a node id that isn't in the graph", () => {
+    expect(needsNextAction("does-not-exist", [node("p", "project")], [])).toBe(false);
   });
 });

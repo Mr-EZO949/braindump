@@ -65,4 +65,18 @@ describe("classifyTaskSize", () => {
       "ambiguous",
     );
   });
+
+  // Guard the verb Sets — a typo/deletion in PROJECT_VERB_LEADERS or
+  // ACTION_VERBS would otherwise ship green (only build/learn and call/fix
+  // were exercised before).
+  it("promotes non-build/learn project leaders", () => {
+    expect(classifyTaskSize("implement billing system")).toBe("project");
+    expect(classifyTaskSize("launch the beta")).toBe("project");
+  });
+
+  it("treats non-call/fix short actions as tasks", () => {
+    expect(classifyTaskSize("email the client")).toBe("task");
+    expect(classifyTaskSize("pay the invoice")).toBe("task");
+    expect(classifyTaskSize("book the venue")).toBe("task");
+  });
 });

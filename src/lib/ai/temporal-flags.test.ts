@@ -77,4 +77,31 @@ describe("pickStallingNode", () => {
     ];
     expect(pickStallingNode(rows, NOW, "a")).toBeNull();
   });
+
+  // Pin the recency gate at its exact boundary (latest chat <= 14 days).
+  it("flags when the latest chat is exactly 14 days old", () => {
+    const rows = [session("a", 18, 18), session("a", 14, 14)];
+    expect(pickStallingNode(rows, NOW, "a")?.nodeId).toBe("a");
+  });
+
+  it("does NOT flag when the latest chat is 15 days old (just past recency)", () => {
+    const rows = [session("a", 19, 19), session("a", 15, 15)];
+    expect(pickStallingNode(rows, NOW, "a")).toBeNull();
+  });
+
+  // Pin the span gate at its exact boundary (first→last >= 3 days).
+  it("flags at exactly a 3-day span", () => {
+    const rows = [session("a", 3, 3), session("a", 0, 0)];
+    expect(pickStallingNode(rows, NOW, "a")?.days).toBe(3);
+  });
+
+  // Isolates the last_message_at NaN fallback (the other malformed test
+  // corrupts created_at too, so it can't reach this branch).
+  it("falls back to created_at when only last_message_at is malformed", () => {
+    const rows: SessionRow[] = [
+      { scope_node_id: "a", created_at: daysAgo(5), last_message_at: "garbage", message_count: 2 },
+      { scope_node_id: "a", created_at: daysAgo(1), last_message_at: "garbage", message_count: 2 },
+    ];
+    expect(pickStallingNode(rows, NOW, "a")?.days).toBe(4);
+  });
 });
