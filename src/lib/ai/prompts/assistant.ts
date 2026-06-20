@@ -182,9 +182,15 @@ export function buildAssistantUserPromptParts(params: {
   message: string;
   context: string;
   scope: string;
+  temporalFlag?: string;
 }): { contextBlock: string; messageBlock: string } {
+  const flag = params.temporalFlag?.trim();
+  // The flag lives in the (uncached) message block, never the cached context
+  // block — it changes over time and must not bust the prompt cache.
   return {
     contextBlock: `Scope: ${params.scope}\n\nGraph context:\n${params.context}`,
-    messageBlock: `User question: ${params.message}`,
+    messageBlock: flag
+      ? `${flag}\n\nUser question: ${params.message}`
+      : `User question: ${params.message}`,
   };
 }

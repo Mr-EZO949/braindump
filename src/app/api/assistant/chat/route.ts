@@ -27,6 +27,7 @@ import { hashText, normalizeAIError } from "@/lib/ai/errors";
 import { persistAIRun } from "@/lib/ai/telemetry";
 import { dispatchTool, getToolSchemas, isMutationTool } from "@/lib/ai/tools";
 import { buildHistoryMessages, sanitizeHistory } from "@/lib/ai/chat-memory";
+import { getTemporalFlag } from "@/lib/ai/temporal-flags";
 import type { AssistantMode } from "@/types/ai";
 
 const VALID_MODES: AssistantMode[] = ["explain", "plan", "transform"];
@@ -249,10 +250,20 @@ export async function POST(req: NextRequest) {
   });
 
   const systemPrompt = buildAssistantSystemPrompt(resolvedMode);
+  // Temporal awareness: a cheap, AI-free flag if the user keeps circling a node
+  // across days without finishing it. Injected into the uncached message block.
+  // Only computed on the opening turn of a thread — the signal is stable within
+  // a conversation, so checking once (when history is empty) avoids 1-2 DB
+  // queries on every subsequent turn.
+  const temporalFlag =
+    history.length === 0
+      ? await getTemporalFlag(supabase, user.id, workspace_id, selected_node_id ?? null)
+      : "";
   const { contextBlock, messageBlock } = buildAssistantUserPromptParts({
     message: message.trim(),
     context: ctx.contextString,
     scope: ctx.scopeLabel,
+    temporalFlag,
   });
   // Persisted hash still uses the full prompt string so telemetry matches old rows.
   const userPromptForHash = `${contextBlock}\n\n${messageBlock}`;
