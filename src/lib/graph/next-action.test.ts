@@ -1,0 +1,84 @@
+import { describe, it, expect } from "vitest";
+
+import { needsNextAction } from "./next-action";
+import type { Edge, Node, NodeStatus, NodeType } from "@/types/graph";
+
+function node(
+  id: string,
+  node_type: NodeType,
+  status: NodeStatus = "active",
+): Node {
+  return { id, node_type, status, title: id } as Node;
+}
+
+function belongsTo(child: string, parent: string): Edge {
+  return {
+    id: `${child}->${parent}`,
+    source_node_id: child,
+    target_node_id: parent,
+    edge_type: "belongs_to",
+  } as unknown as Edge;
+}
+
+describe("needsNextAction", () => {
+  it("is true for a childless project", () => {
+    expect(needsNextAction("p", [node("p", "project")], [])).toBe(true);
+  });
+
+  it("is true for a childless class and goal", () => {
+    expect(needsNextAction("c", [node("c", "class")], [])).toBe(true);
+    expect(needsNextAction("g", [node("g", "goal")], [])).toBe(true);
+  });
+
+  it("is false for a non-container (a plain task)", () => {
+    expect(needsNextAction("t", [node("t", "task")], [])).toBe(false);
+  });
+
+  it("is false when an active task child exists (belongs_to)", () => {
+    const nodes = [node("p", "project"), node("t", "task")];
+    expect(needsNextAction("p", nodes, [belongsTo("t", "p")])).toBe(false);
+  });
+
+  it("is false when an active sub-project child exists", () => {
+    const nodes = [node("p", "project"), node("sp", "project")];
+    expect(needsNextAction("p", nodes, [belongsTo("sp", "p")])).toBe(false);
+  });
+
+  it("is true when the only child is completed", () => {
+    const nodes = [node("p", "project"), node("t", "task", "completed")];
+    expect(needsNextAction("p", nodes, [belongsTo("t", "p")])).toBe(true);
+  });
+
+  it("is true when the only child is archived", () => {
+    const nodes = [node("p", "project"), node("t", "task", "archived")];
+    expect(needsNextAction("p", nodes, [belongsTo("t", "p")])).toBe(true);
+  });
+
+  it("is false when the only child is paused (parked work is not a dead-end)", () => {
+    // A paused child counts as live on purpose — the user parked it; don't nag.
+    const nodes = [node("p", "project"), node("t", "task", "paused")];
+    expect(needsNextAction("p", nodes, [belongsTo("t", "p")])).toBe(false);
+  });
+
+  it("treats a child with no status as active (suggests nothing)", () => {
+    const nodes = [node("p", "project"), { id: "t", node_type: "task" } as Node];
+    expect(needsNextAction("p", nodes, [belongsTo("t", "p")])).toBe(false);
+  });
+
+  it("ignores non-workable children (a concept doesn't count as a next step)", () => {
+    const nodes = [node("p", "project"), node("note", "concept")];
+    expect(needsNextAction("p", nodes, [belongsTo("note", "p")])).toBe(true);
+  });
+
+  it("is false for a completed container (nothing to suggest)", () => {
+    expect(needsNextAction("p", [node("p", "project", "completed")], [])).toBe(
+      false,
+    );
+  });
+
+  it("does not treat a child of a DIFFERENT parent as its own", () => {
+    const nodes = [node("p", "project"), node("other", "project"), node("t", "task")];
+    // task belongs to `other`, not `p`
+    expect(needsNextAction("p", nodes, [belongsTo("t", "other")])).toBe(true);
+  });
+});

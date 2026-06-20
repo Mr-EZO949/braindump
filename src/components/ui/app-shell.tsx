@@ -69,6 +69,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
 import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
 import { classifyTaskSize } from "@/lib/ai/sizing";
+import { needsNextAction } from "@/lib/graph/next-action";
 import type { RailTab, ChatMessage, ChatScope, Nudge, PendingAction } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, NodeType, Workspace } from "@/types/graph";
 import type { ProposedNode } from "@/types/ai";
@@ -339,6 +340,10 @@ export function AppShell({ initialUser }: AppShellProps) {
   // Project ids we've already offered a roadmap for this session — so the
   // in-thread "want a roadmap?" prompt never nags about the same project.
   const roadmapPromptedRef = useRef<Set<string>>(new Set());
+  // Container ids we've already auto-suggested a next action for via Focus —
+  // so re-focusing an empty/declined container doesn't re-fire a billable
+  // suggest-steps call each time.
+  const focusSuggestedRef = useRef<Set<string>>(new Set());
 
   // Apply the viewport-derived default for the right panel AFTER hydration.
   // On mobile the rail should start closed; doing this in an effect (not the
@@ -3689,6 +3694,19 @@ export function AppShell({ initialUser }: AppShellProps) {
                 setAppMode("graph");
                 setWhatNowOpen(false);
                 handleSelectNode(nodeId);
+                // If Focus pointed at a container with no actionable child,
+                // generate one light next-action so the user isn't dead-ended.
+                // Fires AI only here (on the explicit focus pick), only when
+                // there's genuinely nothing to do under it, and at most once
+                // per container per session (the dedupe ref) so re-focusing a
+                // declined/empty container doesn't re-bill.
+                if (
+                  !focusSuggestedRef.current.has(nodeId) &&
+                  needsNextAction(nodeId, graphData.nodes, graphData.edges)
+                ) {
+                  focusSuggestedRef.current.add(nodeId);
+                  void handleSuggestStepsForNode(nodeId, "light");
+                }
               }}
               onScheduledToPlanner={() => {
                 setWhatNowOpen(false);
