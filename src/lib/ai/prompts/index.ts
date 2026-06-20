@@ -37,7 +37,7 @@ export const PROMPT_VERSIONS = {
   extract: "extract-v7",
   infer_edge: "infer-edge-v3",
   assistant: "assistant-v2",
-  plan: "plan-v2",
+  plan: "plan-v3",
   merge_check: "merge-check-v1",
   embed: "embed-v1",
   rerank: "rerank-v1",

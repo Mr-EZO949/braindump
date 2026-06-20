@@ -3,7 +3,7 @@
 // Gemini systemInstruction + Anthropic cache_control can fingerprint the
 // rubric across calls.
 
-export const PLAN_PROMPT_VERSION = "plan-v2";
+export const PLAN_PROMPT_VERSION = "plan-v3";
 
 const RUBRIC_BLOCK = `You are a personal planning assistant. Create a realistic time-blocked plan for the session described in the Session block below.
 
@@ -11,7 +11,7 @@ Rules:
 - Fill the full session window. Don't leave gaps.
 - Include at least one break block if the session is 90+ minutes.
 - Add a 10-minute buffer block at the end of every session.
-- Focus blocks should be 25–50 minutes. Break blocks 5–15 minutes.
+- Size each focus block to the ACTUAL work — do not pad everything to one length. Estimate realistically from the item's title, summary, and type: a quick reply, small fix, or admin chore is ~10–15 min; a normal task ~30–45 min; deep or complex work 60–120 min. Short items get short blocks. Break blocks 5–15 minutes.
 - Candidate work items may include planning signals. Treat them as high-confidence hints about urgency, blockers, enabling work, and carry-over.
 - Only include node_id when the block directly corresponds to a work item in the Session block.
 - If the workspace context names manual planner items, you may schedule them with node_id = null. Keep the block title close to the named manual item.

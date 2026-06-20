@@ -88,7 +88,11 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Planner (`plan.ts`)
 
-### plan-v2 (current)
+### plan-v3 (current)
+- Replaced the fixed "focus blocks 25–50 minutes" rule with content-grounded sizing: estimate each block's duration from the item's title/summary/type (quick chore ~10–15m, normal task ~30–45m, deep work 60–120m), and explicitly do not pad everything to one length
+- Why: the planner was inventing uniform durations ungrounded in the actual work — a one-line reply and a multi-hour task got the same block. The planner already has each item's content, so it can estimate per-item without a separate duration service.
+
+### plan-v2
 - Added candidate planning signals (due soon, blocked by, unblocks, carry-over, recently unblocked)
 - Added rule for manual planner items from workspace context to be schedulable with `node_id = null`
 - Why: the planner needed richer backend signals and a way to account for standalone manual tasks without flattening everything into generic blocks
