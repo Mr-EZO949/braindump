@@ -364,7 +364,7 @@ export function validateEdgeInferenceOutput(
 
 const VALID_BLOCK_TYPES = new Set(["focus", "admin", "break", "buffer"]);
 
-export function validatePlanOutput(raw: unknown): PlanOutput {
+export function validatePlanOutput(raw: unknown, totalMinutes?: number): PlanOutput {
   if (!isObject(raw)) throw new Error("Plan output must be an object");
   if (!Array.isArray(raw.blocks))
     throw new Error("Plan output missing blocks array");
@@ -382,11 +382,25 @@ export function validatePlanOutput(raw: unknown): PlanOutput {
     if (!isString(b.block_type) || !VALID_BLOCK_TYPES.has(b.block_type))
       throw new Error(`blocks[${i}] invalid block_type: ${b.block_type}`);
 
+    // duration_minutes feeds an integer-not-null column, so round. And when the
+    // session window is known, a block starting inside it can't extend past it —
+    // the deterministic guard against an LLM proposing, e.g., a 120-min block in
+    // a 60-min window (the plan-v3 prompt allows large blocks; this enforces fit).
+    const startOffset = Math.max(0, b.start_offset as number);
+    let durationMinutes = Math.max(1, Math.round(b.duration_minutes as number));
+    if (
+      typeof totalMinutes === "number" &&
+      totalMinutes > 0 &&
+      startOffset < totalMinutes
+    ) {
+      durationMinutes = Math.min(durationMinutes, totalMinutes - startOffset);
+    }
+
     return {
       node_id: isString(b.node_id) ? (b.node_id as string) : null,
       title: (b.title as string).trim(),
-      start_offset: Math.max(0, b.start_offset as number),
-      duration_minutes: b.duration_minutes as number,
+      start_offset: startOffset,
+      duration_minutes: durationMinutes,
       reason: isString(b.reason) ? b.reason : null,
       block_type: b.block_type as PlanOutput["blocks"][number]["block_type"],
       completion_status: "pending" as const,

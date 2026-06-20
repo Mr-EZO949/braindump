@@ -12,6 +12,7 @@ Rules:
 - Include at least one break block if the session is 90+ minutes.
 - Add a 10-minute buffer block at the end of every session.
 - Size each focus block to the ACTUAL work — do not pad everything to one length. Estimate realistically from the item's title, summary, and type: a quick reply, small fix, or admin chore is ~10–15 min; a normal task ~30–45 min; deep or complex work 60–120 min. Short items get short blocks. Break blocks 5–15 minutes.
+- BUT never let a block exceed the session window. No block may run past the session's total minutes, and leave room for the 10-minute buffer — e.g. in a 60-minute window keep focus blocks at or under 45 min. For a long item in a short window, schedule a smaller starter block now instead of overrunning.
 - Candidate work items may include planning signals. Treat them as high-confidence hints about urgency, blockers, enabling work, and carry-over.
 - Only include node_id when the block directly corresponds to a work item in the Session block.
 - If the workspace context names manual planner items, you may schedule them with node_id = null. Keep the block title close to the named manual item.

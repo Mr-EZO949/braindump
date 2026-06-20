@@ -395,7 +395,7 @@ export class ClaudeProvider {
     let output: PlanOutput;
     try {
       const parsed = JSON.parse(extractJson(text));
-      output = validatePlanOutput(parsed);
+      output = validatePlanOutput(parsed, totalMinutes);
     } catch (error) {
       throw malformedResponse({
         message: error instanceof Error ? error.message : "Plan output was malformed",
