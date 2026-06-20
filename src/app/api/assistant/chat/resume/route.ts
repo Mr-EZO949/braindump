@@ -30,7 +30,8 @@ import {
 import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS } from "@/lib/ai/config";
 import { normalizeAIError } from "@/lib/ai/errors";
 import { persistAIRun } from "@/lib/ai/telemetry";
-import { dispatchTool, getToolSchemas, isMutationTool } from "@/lib/ai/tools";
+import { dispatchTool, getToolSchemas, isReadOnlyTool, isPausingTool } from "@/lib/ai/tools";
+import { resolveChoice } from "@/lib/ai/tools/interactive";
 import type { AssistantMode } from "@/types/ai";
 
 const MAX_TOOL_ROUNDS = 6;
@@ -78,15 +79,16 @@ export async function POST(req: NextRequest) {
     return new Response("Invalid JSON body", { status: 400 });
   }
 
-  const { run_id, decision } = body as {
+  const { run_id, decision, choice } = body as {
     run_id?: string;
     decision?: string;
+    choice?: string;
   };
   if (!run_id || typeof run_id !== "string") {
     return new Response("run_id is required", { status: 400 });
   }
-  if (decision !== "accept" && decision !== "reject") {
-    return new Response("decision must be 'accept' or 'reject'", { status: 400 });
+  if (decision !== "accept" && decision !== "reject" && decision !== "choice") {
+    return new Response("decision must be 'accept', 'reject', or 'choice'", { status: 400 });
   }
 
   // ---------------------------------------------------------------------------
@@ -136,8 +138,24 @@ export async function POST(req: NextRequest) {
   // ---------------------------------------------------------------------------
   const toolResults: ToolResultBlockParam[] = [];
 
-  // Primary (the one the user explicitly accepted/rejected).
-  if (decision === "accept") {
+  // Primary (the one the user explicitly answered).
+  const isChoiceTool = run.pending_tool_name === "ask_choice";
+  if (isChoiceTool) {
+    // ask_choice doesn't run a handler — the user's pick IS the result.
+    // resolveChoice validates it against the options actually offered.
+    const offered = (run.pending_tool_input as { options?: unknown })?.options;
+    const resolution = resolveChoice(offered, choice);
+    if (!resolution.ok) {
+      await supabase.from("pending_chat_runs").delete().eq("id", run.id);
+      return new Response("choice must be one of the offered options", { status: 400 });
+    }
+    toolResults.push({
+      type: "tool_result",
+      tool_use_id: run.pending_tool_use_id as string,
+      content: JSON.stringify({ chosen: resolution.chosen }),
+      is_error: false,
+    });
+  } else if (decision === "accept") {
     const result = await dispatchTool({
       name: run.pending_tool_name as string,
       input: run.pending_tool_input,
@@ -162,17 +180,17 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Deferred — read-only tools run fresh; any other mutation is auto-rejected
-  // because the UI only confirms one action per turn.
+  // Deferred — read-only tools run fresh; any pausing tool (extra mutation or
+  // ask_choice) is auto-rejected because the UI only resolves one card per turn.
   for (const def of deferred) {
-    if (isMutationTool(def.name)) {
+    if (!isReadOnlyTool(def.name)) {
       toolResults.push({
         type: "tool_result",
         tool_use_id: def.id,
         content: JSON.stringify({
           accepted: false,
           reason:
-            "Only one mutation can be confirmed per turn. Re-propose this action if you still want it.",
+            "Only one action can be confirmed per turn. Re-propose this if you still want it.",
         }),
         is_error: false,
       });
@@ -297,11 +315,12 @@ export async function POST(req: NextRequest) {
           if (toolUseBlocks.length === 0) break;
 
           // Same pause logic as the initial chat route — if Claude wants a
-          // mutation again, stash state and emit a new pause marker.
-          const firstMutationIdx = toolUseBlocks.findIndex((b) => isMutationTool(b.name));
-          if (firstMutationIdx >= 0) {
-            const pending = toolUseBlocks[firstMutationIdx];
-            const newDeferred = toolUseBlocks.filter((_, i) => i !== firstMutationIdx);
+          // pausing tool again (mutation or ask_choice), stash state and emit a
+          // new pause marker.
+          const firstPauseIdx = toolUseBlocks.findIndex((b) => isPausingTool(b.name));
+          if (firstPauseIdx >= 0) {
+            const pending = toolUseBlocks[firstPauseIdx];
+            const newDeferred = toolUseBlocks.filter((_, i) => i !== firstPauseIdx);
 
             const { data: runRow, error: pendingErr } = await supabase
               .from("pending_chat_runs")

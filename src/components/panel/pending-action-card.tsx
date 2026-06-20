@@ -9,7 +9,7 @@ import type { PendingAction } from "@/types/chat";
 interface PendingActionCardProps {
   action: PendingAction;
   disabled: boolean;
-  onResolve: (decision: "accept" | "reject") => void;
+  onResolve: (decision: "accept" | "reject" | "choice", choice?: string) => void;
 }
 
 const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
@@ -99,6 +99,56 @@ function isBatchNodeList(value: unknown): value is BatchNode[] {
 }
 
 export function PendingActionCard({ action, disabled, onResolve }: PendingActionCardProps) {
+  // ask_choice renders as a forced-choice question rather than an Accept/Reject
+  // mutation card. The picked option resumes the loop as the tool result.
+  if (action.toolName === "ask_choice") {
+    const question =
+      typeof action.toolInput.question === "string" ? action.toolInput.question : "Which did you mean?";
+    const options = Array.isArray(action.toolInput.options)
+      ? (action.toolInput.options as unknown[]).filter((o): o is string => typeof o === "string")
+      : [];
+    const answered = action.status !== "awaiting";
+    return (
+      <div className="pending-action-card" role="group" aria-label="Clarifying question">
+        <p className="pending-action-question">{question}</p>
+        {action.status === "awaiting" ? (
+          <div className="pending-action-choices">
+            {options.map((opt) => (
+              <button
+                key={opt}
+                className="pending-action-btn pending-action-btn-choice"
+                onClick={() => onResolve("choice", opt)}
+                disabled={disabled}
+                type="button"
+              >
+                {opt}
+              </button>
+            ))}
+            {/* Malformed options (none usable) must not dead-end the turn —
+                always leave a way to dismiss and free the pending run. */}
+            {options.length === 0 ? (
+              <button
+                className="pending-action-btn pending-action-btn-reject"
+                onClick={() => onResolve("reject")}
+                disabled={disabled}
+                type="button"
+              >
+                Dismiss
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {answered && action.status === "error" ? (
+          <div className="pending-action-status pending-action-status-error">
+            {action.errorMessage ?? "Could not record your answer."}
+          </div>
+        ) : answered ? (
+          <div className="pending-action-status pending-action-status-accepted">Answered</div>
+        ) : null}
+      </div>
+    );
+  }
+
   const { verb, noun } = labelFor(action.toolName);
 
   const isBatch = action.toolName === "propose_nodes_batch";

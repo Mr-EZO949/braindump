@@ -57,7 +57,11 @@ type ContextRailProps = {
   onChatInputChange: (value: string) => void;
   onClearChatScope: () => void;
   onRetryChat: () => void;
-  onResolvePendingAction: (messageId: string, decision: "accept" | "reject") => void;
+  onResolvePendingAction: (
+    messageId: string,
+    decision: "accept" | "reject" | "choice",
+    choice?: string,
+  ) => void;
   onCancelChat: () => void;
   pendingActionBusy: boolean;
   nudges: Nudge[];
@@ -390,8 +394,8 @@ export function ContextRail({
                               <PendingActionCard
                                 action={message.pendingAction}
                                 disabled={pendingActionBusy}
-                                onResolve={(decision) =>
-                                  onResolvePendingAction(message.id, decision)
+                                onResolve={(decision, choice) =>
+                                  onResolvePendingAction(message.id, decision, choice)
                                 }
                               />
                             ) : null}

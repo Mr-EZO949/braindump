@@ -8891,6 +8891,33 @@ input[type="search"]::-webkit-search-results-decoration {
   color: var(--color-text-primary);
 }
 
+/* ask_choice clarifying card — question + stacked option buttons */
+.pending-action-question {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-text-primary);
+  margin: 0 0 8px;
+}
+
+.pending-action-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pending-action-btn-choice {
+  width: 100%;
+  text-align: left;
+  background: rgba(107, 140, 239, 0.08);
+  color: var(--color-text-primary);
+  border-color: rgba(107, 140, 239, 0.4);
+}
+
+.pending-action-btn-choice:not(:disabled):hover {
+  background: rgba(107, 140, 239, 0.16);
+  border-color: rgba(107, 140, 239, 0.7);
+}
+
 .pending-action-status {
   font-size: 11px;
   font-weight: 500;

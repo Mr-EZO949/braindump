@@ -1164,7 +1164,8 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   const resolvePendingAction = async (
     messageId: string,
-    decision: "accept" | "reject",
+    decision: "accept" | "reject" | "choice",
+    choice?: string,
   ) => {
     if (pendingActionBusy) return;
 
@@ -1183,7 +1184,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               ...m,
               pendingAction: {
                 ...m.pendingAction,
-                status: decision === "accept" ? "accepted" : "rejected",
+                status: decision === "reject" ? "rejected" : "accepted",
               },
             }
           : m,
@@ -1197,7 +1198,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       const res = await fetch("/api/assistant/chat/resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ run_id: action.runId, decision }),
+        body: JSON.stringify({ run_id: action.runId, decision, choice }),
         signal: abortCtrl.signal,
       });
 
@@ -3182,8 +3183,8 @@ export function AppShell({ initialUser }: AppShellProps) {
           onChatInputChange={setRailChatInput}
           onClearChatScope={() => setChatScope(createWorkspaceScope(workspaceName))}
           onRetryChat={retryLastMessage}
-          onResolvePendingAction={(messageId, decision) => {
-            void resolvePendingAction(messageId, decision);
+          onResolvePendingAction={(messageId, decision, choice) => {
+            void resolvePendingAction(messageId, decision, choice);
           }}
           onCancelChat={cancelChat}
           pendingActionBusy={pendingActionBusy}

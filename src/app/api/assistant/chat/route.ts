@@ -25,7 +25,7 @@ import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS, AI_RATE_LIMITS } from
 import { checkAIRunRateLimit } from "@/lib/ai/rate-limit";
 import { hashText, normalizeAIError } from "@/lib/ai/errors";
 import { persistAIRun } from "@/lib/ai/telemetry";
-import { dispatchTool, getToolSchemas, isMutationTool } from "@/lib/ai/tools";
+import { dispatchTool, getToolSchemas, isPausingTool } from "@/lib/ai/tools";
 import { buildHistoryMessages, sanitizeHistory } from "@/lib/ai/chat-memory";
 import { getTemporalFlag } from "@/lib/ai/temporal-flags";
 import type { AssistantMode } from "@/types/ai";
@@ -413,17 +413,17 @@ export async function POST(req: NextRequest) {
             break;
           }
 
-          // If Claude proposed any mutation, pause the loop. Persist the
-          // current history + the pending + deferred tool_use blocks so the
-          // resume endpoint can pick up where we left off once the user
-          // decides via the inline card.
-          const firstMutationIdx = toolUseBlocks.findIndex((b: ToolUseBlock) =>
-            isMutationTool(b.name),
+          // If Claude proposed a pausing tool (a mutation to confirm, or an
+          // ask_choice question), pause the loop. Persist the current history +
+          // the pending + deferred tool_use blocks so the resume endpoint can
+          // pick up where we left off once the user responds via the inline card.
+          const firstPauseIdx = toolUseBlocks.findIndex((b: ToolUseBlock) =>
+            isPausingTool(b.name),
           );
-          if (firstMutationIdx >= 0) {
-            const pending = toolUseBlocks[firstMutationIdx];
+          if (firstPauseIdx >= 0) {
+            const pending = toolUseBlocks[firstPauseIdx];
             const deferred = toolUseBlocks.filter(
-              (_: ToolUseBlock, i: number) => i !== firstMutationIdx,
+              (_: ToolUseBlock, i: number) => i !== firstPauseIdx,
             );
 
             const { data: runRow, error: pendingErr } = await supabase
