@@ -5,17 +5,15 @@
 //   - today_schedule: plan_tasks scheduled for today
 //   - yesterday_wins: nodes completed in the last 24h
 //   - weekly_pulse: rolling 7-day stats (completed, created, scheduled, rate)
-//   - headline: 1-2 sentence AI debrief on the morning
+//   - headline: always null (the Focus redesign dropped it; kept for shape)
 //
 // Single endpoint avoids the 2-3 round trips the old DailyBriefOverlay was
-// doing. Headline runs on Haiku — ~$0.001/call, fires once per user per day.
+// doing. NO AI runs here — everything is SQL, so opening Focus costs $0.
 
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { buildPlannerCandidates } from "@/lib/ai/planner";
-import { AI_MODELS, AI_TEMPERATURE } from "@/lib/ai/config";
 import type { Nudge } from "@/types/chat";
 
 const RECENT_COMPLETION_WINDOW_HOURS = 24;
@@ -49,45 +47,6 @@ function thisWeekMondayISO(now = new Date()): string {
   const diff = (dow + 6) % 7;
   d.setUTCDate(d.getUTCDate() - diff);
   return d.toISOString().slice(0, 10);
-}
-
-async function generateHeadline(stats: {
-  topTitle: string | null;
-  scheduledToday: number;
-  yesterdayWins: number;
-  weeklyCompleted: number;
-  weeklyRate: number | null;
-}): Promise<string | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-
-  const ratePart =
-    stats.weeklyRate !== null ? ` (${Math.round(stats.weeklyRate * 100)}% completion rate this week)` : "";
-
-  const prompt = `Write a 1-2 sentence morning brief for a user opening their planning app. Plain text, no markdown, no greetings. Stats:
-- Top focus right now: ${stats.topTitle ?? "nothing active"}
-- Tasks scheduled for today: ${stats.scheduledToday}
-- Things completed yesterday: ${stats.yesterdayWins}
-- This week so far: ${stats.weeklyCompleted} completions${ratePart}
-
-Tone: a sharp morning anchor — observational, specific, brief. Reference one concrete thing from the stats. Don't be saccharine. End with momentum, not advice.`;
-
-  try {
-    const client = new Anthropic({ apiKey });
-    const r = await client.messages.create({
-      model: AI_MODELS.CLAUDE_HAIKU,
-      max_tokens: 160,
-      temperature: AI_TEMPERATURE.ASSISTANT,
-      system:
-        "You are a daily brief writer. Be direct, specific, and brief. Never use markdown. Never use bullet points. Maximum 2 sentences.",
-      messages: [{ role: "user", content: prompt }],
-    });
-    const block = r.content[0];
-    return block?.type === "text" ? block.text.trim() : null;
-  } catch (err) {
-    console.error("[daily-brief] headline generation failed", err);
-    return null;
-  }
 }
 
 export async function POST(req: NextRequest) {
@@ -317,17 +276,10 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ── AI headline ──────────────────────────────────────────────────────────
-  const headline = await generateHeadline({
-    topTitle: top[0]?.title ?? null,
-    scheduledToday: today_schedule.length,
-    yesterdayWins: yesterday_wins.length,
-    weeklyCompleted: weekly_completed,
-    weeklyRate: weekly_completion_rate,
-  });
-
+  // No AI headline: the Focus redesign no longer displays it, so generating one
+  // per open was pure wasted token spend. Focus-open is now $0 (all SQL).
   return NextResponse.json({
-    headline,
+    headline: null,
     top,
     today_schedule,
     yesterday_wins,
