@@ -3,7 +3,7 @@
 // Gemini systemInstruction + Anthropic cache_control can fingerprint the
 // rubric across calls.
 
-export const PLAN_PROMPT_VERSION = "plan-v3";
+export const PLAN_PROMPT_VERSION = "plan-v4";
 
 const RUBRIC_BLOCK = `You are a personal planning assistant. Create a realistic time-blocked plan for the session described in the Session block below.
 
@@ -11,8 +11,9 @@ Rules:
 - Fill the full session window. Don't leave gaps.
 - Include at least one break block if the session is 90+ minutes.
 - Add a 10-minute buffer block at the end of every session.
-- Size each focus block to the ACTUAL work — do not pad everything to one length. Estimate realistically from the item's title, summary, and type: a quick reply, small fix, or admin chore is ~10–15 min; a normal task ~30–45 min; deep or complex work 60–120 min. Short items get short blocks. Break blocks 5–15 minutes.
-- BUT never let a block exceed the session window. No block may run past the session's total minutes, and leave room for the 10-minute buffer — e.g. in a 60-minute window keep focus blocks at or under 45 min. For a long item in a short window, schedule a smaller starter block now instead of overrunning.
+- Size each focus block to the ACTUAL work — do not pad everything to one length, and do NOT under-size. Estimate from the item's title, summary, and type: a quick reply/small fix/admin chore ~10–15 min; a normal task ~30–45 min; focused learning, coding, problem-solving, writing, or studying is deep work ~60–120 min. If a title names a countable amount ("2 problems", "3 chapters", "5 emails"), size for that whole amount, not one unit (e.g. "2 medium LeetCode problems" is ~60–90 min, not 40). Break blocks 5–15 minutes.
+- Prefer FEWER items done properly over many crammed in. In a short window (≤90 min) schedule only the 1–2 most important items at realistic durations — do NOT cram five items into tiny slices. It's fine to leave a big item for a future, longer session rather than hand it an unrealistic stub now.
+- Never let the plan exceed the session window. No block may run past the total minutes, and leave room for the 10-minute end buffer (so in a 60-minute window usable focus time is ~50 min). If a substantial item won't fully fit, schedule a realistic starter block (≥45 min) and say in the reason that it's a start — don't shrink it to an absurd stub.
 - Candidate work items may include planning signals. Treat them as high-confidence hints about urgency, blockers, enabling work, and carry-over.
 - Only include node_id when the block directly corresponds to a work item in the Session block.
 - If the workspace context names manual planner items, you may schedule them with node_id = null. Keep the block title close to the named manual item.

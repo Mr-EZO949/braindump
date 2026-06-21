@@ -1178,6 +1178,7 @@ export function AssistantMode({
 
   // AI plan state
   const [plannerState, setPlannerState] = useState<PlannerState>(INITIAL_PLANNER_STATE);
+  const planAbortRef = useRef<AbortController | null>(null);
 
   const [taskError, setTaskError] = useState<string | null>(null);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
@@ -1613,6 +1614,9 @@ export function AssistantMode({
 
   const handlePlanGenerate = async (window: PlanningWindow) => {
     if (!workspaceId) return;
+    planAbortRef.current?.abort(); // cancel any in-flight plan first
+    const ac = new AbortController();
+    planAbortRef.current = ac;
     setPlannerState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
@@ -1620,6 +1624,7 @@ export function AssistantMode({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ workspace_id: workspaceId, planning_window: window, ...clientDayHints() }),
+        signal: ac.signal,
       });
 
       const data = await res.json() as {
@@ -1646,13 +1651,20 @@ export function AssistantMode({
         error: null,
         finalised: false,
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return; // user cancelled
       setPlannerState((prev) => ({
         ...prev,
         loading: false,
         error: "Network error. Try again.",
       }));
     }
+  };
+
+  const handlePlanCancel = () => {
+    planAbortRef.current?.abort();
+    planAbortRef.current = null;
+    setPlannerState((prev) => ({ ...prev, loading: false, error: null }));
   };
 
   const handlePlanDeleteBlock = (blockId: string) => {
@@ -1848,6 +1860,7 @@ export function AssistantMode({
               onAccept={(ids) => void handlePlanAccept(ids)}
               onReject={() => void handlePlanReject()}
               onReset={handlePlanReset}
+              onCancel={handlePlanCancel}
             />
           ) : (
             <>

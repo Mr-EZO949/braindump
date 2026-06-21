@@ -58,6 +58,7 @@ type PlannerPanelProps = {
   onAccept: (finalBlockIds: string[]) => void;
   onReject: () => void;
   onReset: () => void;
+  onCancel: () => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -203,6 +204,7 @@ export function PlannerPanel({
   onAccept,
   onReject,
   onReset,
+  onCancel,
 }: PlannerPanelProps) {
   const [selectedWindow, setSelectedWindow] = useState<PlanningWindow>("2h");
   const sensors = useSensors(
@@ -290,6 +292,9 @@ export function PlannerPanel({
         <span className="text-[12px] font-medium text-[var(--color-text-secondary)]">
           Building your plan…
         </span>
+        <button className="planner-loading-cancel" onClick={onCancel} type="button">
+          Cancel
+        </button>
       </div>
     );
   }
