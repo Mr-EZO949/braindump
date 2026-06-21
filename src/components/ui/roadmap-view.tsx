@@ -24,6 +24,16 @@ type Bucket = {
   items: RoadmapItem[];
 };
 
+// Urgency tier for an item, used both for the rail dot and the card accent.
+type RiskTier = "overdue" | "soon" | "ontrack" | "done";
+
+function riskFor(days: number, completed: boolean): RiskTier {
+  if (completed) return "done";
+  if (days < 0) return "overdue";
+  if (days <= 7) return "soon";
+  return "ontrack";
+}
+
 function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -135,6 +145,11 @@ export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
   if (buckets.length === 0) {
     return (
       <div className="roadmap-empty">
+        <div className="roadmap-empty-preview" aria-hidden="true">
+          <span className="roadmap-empty-bar" data-fill="long" />
+          <span className="roadmap-empty-bar" data-fill="mid" />
+          <span className="roadmap-empty-bar" data-fill="short" />
+        </div>
         <h2 className="roadmap-empty-title">No deadlined items yet</h2>
         <p className="roadmap-empty-body">
           Add a target date to a goal or project (in the create / edit form, or by
@@ -147,11 +162,41 @@ export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
 
   return (
     <div className="roadmap-view">
-      {buckets.map((bucket) => (
-        <section className="roadmap-bucket" key={bucket.key} data-overdue={bucket.key === "0000-overdue"}>
+      {buckets.map((bucket) => {
+        // Aggregate completion for the bucket header: each item's own status,
+        // bucket length as the total. Mirrors the per-card progress signal at
+        // the group level so each month reads as a single at-a-glance ratio.
+        const bucketDone = bucket.items.filter(
+          (it) => it.node.status === "completed",
+        ).length;
+        const bucketTotal = bucket.items.length;
+        const bucketRatio = bucketTotal > 0 ? bucketDone / bucketTotal : 0;
+        return (
+        <section
+          className="roadmap-bucket"
+          key={bucket.key}
+          data-overdue={bucket.key === "0000-overdue"}
+          data-completed={bucket.key === "9999-done"}
+        >
           <header className="roadmap-bucket-header">
             <h3 className="roadmap-bucket-label">{bucket.label}</h3>
             <span className="roadmap-bucket-count">{bucket.items.length}</span>
+            <div className="roadmap-bucket-progress">
+              <div
+                className="roadmap-progress-bar"
+                data-state={
+                  bucketRatio >= 1 ? "done" : bucketRatio === 0 ? "empty" : "partial"
+                }
+              >
+                <div
+                  className="roadmap-progress-fill"
+                  style={{ width: `${Math.round(bucketRatio * 100)}%` }}
+                />
+              </div>
+              <span className="roadmap-bucket-progress-label">
+                {bucketDone}/{bucketTotal}
+              </span>
+            </div>
           </header>
           <ol className="roadmap-bucket-list">
             {bucket.items.map((item) => {
@@ -161,6 +206,7 @@ export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
               const ratio = item.progress.total > 0 ? item.progress.done / item.progress.total : 0;
               const completed = item.node.status === "completed";
               const overdue = !completed && days < 0;
+              const risk = riskFor(days, completed);
               return (
                 <li key={item.node.id}>
                   <button
@@ -168,10 +214,12 @@ export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
                     className="roadmap-item"
                     data-overdue={overdue || undefined}
                     data-completed={completed || undefined}
+                    data-risk={risk}
                     data-type={item.node.node_type}
                     onClick={() => onSelectNode(item.node.id)}
                   >
                     <div className="roadmap-item-head">
+                      <span className="roadmap-item-rail" aria-hidden="true" />
                       <span className="roadmap-item-type">{item.node.node_type}</span>
                       <span className="roadmap-item-title">{item.node.title}</span>
                       <span className="roadmap-item-date">{dateDisplay}</span>
@@ -212,7 +260,8 @@ export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
             })}
           </ol>
         </section>
-      ))}
+        );
+      })}
     </div>
   );
 }
