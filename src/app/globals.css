@@ -5339,6 +5339,8 @@ input[type="search"]::-webkit-search-results-decoration {
   line-height: 1.28;
   letter-spacing: -0.02em;
   color: var(--color-text-primary);
+  /* break long unbroken tokens (pasted URLs/paths) instead of overflowing the card */
+  overflow-wrap: anywhere;
 }
 
 .lockin-hero-signal {
