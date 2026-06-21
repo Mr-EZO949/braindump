@@ -465,11 +465,13 @@ export async function POST(req: NextRequest) {
         const hasBreak = blockTypes.includes("break");
         const hasBuffer = blockTypes.includes("buffer");
 
-        // The plan should fit its window (the regression plan-v3 + the
-        // validatePlanOutput clamp guard against). 15m slack for buffer/rounding.
-        const windowMinutes: Record<string, number> = { "1h": 60, "2h": 120, day: 480 };
-        const windowCap = windowMinutes[fixture.planning_window] ?? 60;
-        const fitsWindow = totalMinutes <= windowCap + 15;
+        // The plan should fit its window: the LAST block must end by the window
+        // (validatePlanOutput already clamps each block; this catches a plan that
+        // overflows in aggregate). Measure the schedule SPAN — max end offset —
+        // not the duration sum, so a trailing in-window buffer doesn't misfire.
+        const windowCap = fixture.total_minutes;
+        const span = blocks.reduce((m, b) => Math.max(m, b.start_offset + b.duration_minutes), 0);
+        const fitsWindow = span <= windowCap;
 
         const checks = [
           blocks.length >= fixture.min_blocks,
