@@ -2456,7 +2456,14 @@ export function GraphCanvas({
   };
 
   if (loading) {
-    return null;
+    return (
+      <div className="graph-loading" role="status" aria-label="Loading your graph">
+        <div className="graph-loading-orbit">
+          <span className="graph-loading-dot" />
+        </div>
+        <p className="graph-loading-label">Loading your brain…</p>
+      </div>
+    );
   }
 
   const worldTransform = `translate(${viewport.width / 2 + view.panX} ${viewport.height / 2 + view.panY}) scale(${view.zoom})`;
