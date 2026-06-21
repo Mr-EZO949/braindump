@@ -371,7 +371,7 @@ export function validatePlanOutput(raw: unknown, totalMinutes?: number): PlanOut
   if (!isString(raw.prompt_version))
     throw new Error("Plan output missing prompt_version");
 
-  const blocks = raw.blocks.map((b: unknown, i: number) => {
+  const parsed = raw.blocks.map((b: unknown, i: number) => {
     if (!isObject(b)) throw new Error(`blocks[${i}] is not an object`);
     if (!isString(b.title) || !b.title.trim())
       throw new Error(`blocks[${i}] missing title`);
@@ -382,30 +382,35 @@ export function validatePlanOutput(raw: unknown, totalMinutes?: number): PlanOut
     if (!isString(b.block_type) || !VALID_BLOCK_TYPES.has(b.block_type))
       throw new Error(`blocks[${i}] invalid block_type: ${b.block_type}`);
 
-    // duration_minutes feeds an integer-not-null column, so round. And when the
-    // session window is known, a block starting inside it can't extend past it —
-    // the deterministic guard against an LLM proposing, e.g., a 120-min block in
-    // a 60-min window (the plan-v3 prompt allows large blocks; this enforces fit).
-    const startOffset = Math.max(0, b.start_offset as number);
-    let durationMinutes = Math.max(1, Math.round(b.duration_minutes as number));
-    if (
-      typeof totalMinutes === "number" &&
-      totalMinutes > 0 &&
-      startOffset < totalMinutes
-    ) {
-      durationMinutes = Math.min(durationMinutes, totalMinutes - startOffset);
-    }
-
     return {
       node_id: isString(b.node_id) ? (b.node_id as string) : null,
       title: (b.title as string).trim(),
-      start_offset: startOffset,
-      duration_minutes: durationMinutes,
+      start_offset: Math.max(0, b.start_offset as number),
+      duration_minutes: Math.max(1, Math.round(b.duration_minutes as number)),
       reason: isString(b.reason) ? b.reason : null,
       block_type: b.block_type as PlanOutput["blocks"][number]["block_type"],
       completion_status: "pending" as const,
     };
   });
+
+  // Re-sequence so blocks NEVER overlap or overflow. The LLM uses start_offset
+  // as an intended ORDER but sometimes collides blocks (e.g. a break and a
+  // buffer both at offset 50 in a 1h plan) or overruns the window. Sort by the
+  // intended start, then pack contiguously from 0, trimming/dropping anything
+  // that won't fit the session window. Result: gap-free, overlap-free, in-window.
+  parsed.sort((a, b) => a.start_offset - b.start_offset);
+  const blocks: typeof parsed = [];
+  let cursor = 0;
+  for (const block of parsed) {
+    let durationMinutes = block.duration_minutes;
+    if (typeof totalMinutes === "number" && totalMinutes > 0) {
+      const room = totalMinutes - cursor;
+      if (room <= 0) continue; // window already full — drop the remainder
+      durationMinutes = Math.min(durationMinutes, room);
+    }
+    blocks.push({ ...block, start_offset: cursor, duration_minutes: durationMinutes });
+    cursor += durationMinutes;
+  }
 
   return { blocks, prompt_version: raw.prompt_version as string };
 }

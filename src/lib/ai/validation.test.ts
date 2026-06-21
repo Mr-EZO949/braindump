@@ -58,9 +58,29 @@ describe("validatePlanOutput", () => {
     expect(out.blocks[0].duration_minutes).toBe(60);
   });
 
-  it("caps relative to start_offset so the block ends by the window", () => {
-    const out = validatePlanOutput(planRaw([block({ start_offset: 40, duration_minutes: 60 })]), 60);
-    expect(out.blocks[0].duration_minutes).toBe(20);
+  it("re-sequences overlapping blocks so they never collide (the 1h-plan bug)", () => {
+    // A break and a buffer both at offset 50 in a 60-min window — the exact
+    // collision the planner produced. Should pack contiguously, dropping what
+    // doesn't fit.
+    const out = validatePlanOutput(
+      planRaw([
+        block({ title: "Work", start_offset: 0, duration_minutes: 50, block_type: "focus" }),
+        block({ title: "Break", start_offset: 50, duration_minutes: 10, block_type: "break" }),
+        block({ title: "Buffer", start_offset: 50, duration_minutes: 10, block_type: "buffer" }),
+      ]),
+      60,
+    );
+    // Work 0–50, Break 50–60, Buffer dropped (no room left).
+    expect(out.blocks.map((b) => [b.start_offset, b.duration_minutes])).toEqual([
+      [0, 50],
+      [50, 10],
+    ]);
+    // No block starts before the previous one ends — zero overlap.
+    for (let i = 1; i < out.blocks.length; i++) {
+      expect(out.blocks[i].start_offset).toBe(
+        out.blocks[i - 1].start_offset + out.blocks[i - 1].duration_minutes,
+      );
+    }
   });
 
   it("does not clamp when no window is given (back-compat)", () => {
