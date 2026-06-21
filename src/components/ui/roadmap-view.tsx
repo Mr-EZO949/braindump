@@ -9,8 +9,6 @@ type RoadmapViewProps = {
   onSelectNode: (nodeId: string) => void;
 };
 
-const ROADMAP_TYPES = new Set(["goal", "project"]);
-
 type RoadmapItem = {
   node: Node;
   daysFromNow: number;
@@ -95,9 +93,11 @@ function progressFor(
 export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
   const buckets = useMemo<Bucket[]>(() => {
     const today = todayISO();
+    // The roadmap is "everything with a deadline, on a timeline" — ANY node
+    // type with a target_date qualifies (tasks, projects, goals, classes…),
+    // not just goals/projects. The type pill on each card distinguishes them.
     const dated = graphData.nodes.filter(
       (n) =>
-        ROADMAP_TYPES.has(n.node_type) &&
         typeof n.target_date === "string" &&
         /^\d{4}-\d{2}-\d{2}$/.test(n.target_date) &&
         n.status !== "archived",
