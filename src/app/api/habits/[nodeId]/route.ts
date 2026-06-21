@@ -64,18 +64,30 @@ async function buildResponse(
   startedOn: string | null = null,
 ) {
   const since = dateMinusDaysISO(todayISO, days);
-  const { data: rows } = await supabase
-    .from("habit_completions")
-    .select("completed_on, source")
-    .eq("node_id", nodeId)
-    .eq("user_id", userId)
-    .gte("completed_on", since)
-    .order("completed_on", { ascending: false });
+  const [completionsRes, nodeRes] = await Promise.all([
+    supabase
+      .from("habit_completions")
+      .select("completed_on, source")
+      .eq("node_id", nodeId)
+      .eq("user_id", userId)
+      .gte("completed_on", since)
+      .order("completed_on", { ascending: false }),
+    supabase
+      .from("nodes")
+      .select("habit_target_per_week")
+      .eq("id", nodeId)
+      .eq("user_id", userId)
+      .maybeSingle(),
+  ]);
 
-  const dates = (rows ?? []).map((r) => r.completed_on as string);
+  const dates = (completionsRes.data ?? []).map((r) => r.completed_on as string);
   const streak = computeStreak(dates, todayISO);
   const history = lastNDays(dates, todayISO, days);
-  return { streak, history, started_on: startedOn };
+  // target_per_week may be absent on un-migrated DBs → null (graceful).
+  const targetPerWeek =
+    (nodeRes.data as { habit_target_per_week?: number | null } | null)
+      ?.habit_target_per_week ?? null;
+  return { streak, history, started_on: startedOn, target_per_week: targetPerWeek };
 }
 
 export async function GET(

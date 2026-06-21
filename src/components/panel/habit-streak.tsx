@@ -16,11 +16,21 @@ type HistoryDay = {
 type HabitData = {
   streak: StreakState;
   history: HistoryDay[];
+  target_per_week: number | null;
 };
 
 type HabitStreakProps = {
   nodeId: string;
 };
+
+// How often the user wants to do this habit. Maps to nodes.habit_target_per_week
+// (completions per ISO week; 7 = daily). Drives the Focus cadence boost.
+const CADENCE_OPTIONS: { label: string; value: number | null }[] = [
+  { label: "Off", value: null },
+  { label: "Daily", value: 7 },
+  { label: "3×/wk", value: 3 },
+  { label: "Weekly", value: 1 },
+];
 
 // How many days of history we pull from the API. Scroll exposes the older
 // half — default view still anchors to the most recent ~14 days.
@@ -30,6 +40,7 @@ export function HabitStreak({ nodeId }: HabitStreakProps) {
   const [data, setData] = useState<HabitData | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
+  const [savingCadence, setSavingCadence] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -90,6 +101,29 @@ export function HabitStreak({ nodeId }: HabitStreakProps) {
     }
   };
 
+  const handleSetCadence = async (value: number | null) => {
+    if (savingCadence || !data || data.target_per_week === value) return;
+    setSavingCadence(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/habits/${nodeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_per_week: value }),
+      });
+      if (res.ok) {
+        setData((await res.json()) as HabitData);
+      } else {
+        const json = await res.json().catch(() => ({}));
+        setError(json?.error ?? "Could not update cadence");
+      }
+    } catch {
+      setError("Could not update cadence");
+    } finally {
+      setSavingCadence(false);
+    }
+  };
+
   if (loading) {
     return <div className="habit-streak-loading">Loading streak…</div>;
   }
@@ -124,6 +158,24 @@ export function HabitStreak({ nodeId }: HabitStreakProps) {
         >
           {data.streak.doneToday ? "Done today ✓" : "Mark today"}
         </button>
+      </div>
+
+      <div className="habit-cadence">
+        <span className="habit-cadence-label">How often?</span>
+        <div className="habit-cadence-options" role="group" aria-label="Habit cadence">
+          {CADENCE_OPTIONS.map((opt) => (
+            <button
+              key={opt.label}
+              type="button"
+              className="habit-cadence-btn"
+              data-active={data.target_per_week === opt.value}
+              onClick={() => handleSetCadence(opt.value)}
+              disabled={savingCadence}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <HabitStreakHistory history={data.history} />

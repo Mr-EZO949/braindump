@@ -1885,6 +1885,55 @@ input[type="search"]::-webkit-search-results-decoration {
   cursor: not-allowed;
 }
 
+/* Cadence selector — how often the user wants to do this habit. */
+.habit-cadence {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.habit-cadence-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.habit-cadence-options {
+  display: inline-flex;
+  gap: 3px;
+  padding: 2px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.habit-cadence-btn {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.habit-cadence-btn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+.habit-cadence-btn[data-active="true"] {
+  background: rgba(213, 58, 71, 0.85);
+  color: #fff;
+}
+
+.habit-cadence-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .habit-streak-grid {
   display: flex;
   align-items: center;
