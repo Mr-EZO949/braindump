@@ -49,10 +49,18 @@ export const INITIAL_PLANNER_STATE: PlannerState = {
   finalised: false,
 };
 
+export type GeneratePlanOptions = {
+  window: PlanningWindow;
+  // "HH:MM" to anchor the plan at a specific clock time, or null = start now.
+  start_time: string | null;
+  // Total minutes when window === "custom" (clamped 15–600); null otherwise.
+  custom_minutes: number | null;
+};
+
 type PlannerPanelProps = {
   graphData: GraphData;
   plannerState: PlannerState;
-  onGenerate: (window: PlanningWindow) => void;
+  onGenerate: (options: GeneratePlanOptions) => void;
   onDeleteBlock: (blockId: string) => void;
   onReorderBlocks: (blockIds: string[]) => void;
   onAccept: (finalBlockIds: string[]) => void;
@@ -65,11 +73,21 @@ type PlannerPanelProps = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const WINDOW_OPTIONS: { value: PlanningWindow; label: string; minutes: number }[] = [
-  { value: "1h", label: "1 hour", minutes: 60 },
-  { value: "2h", label: "2 hours", minutes: 120 },
-  { value: "day", label: "Full day", minutes: 480 },
+const WINDOW_OPTIONS: { value: PlanningWindow; label: string }[] = [
+  { value: "1h", label: "1 hour" },
+  { value: "2h", label: "2 hours" },
+  { value: "day", label: "Full day" },
+  { value: "custom", label: "Custom" },
 ];
+
+const CUSTOM_MINUTES_MIN = 15;
+const CUSTOM_MINUTES_MAX = 600;
+const CUSTOM_MINUTES_DEFAULT = 90;
+
+function clampCustomMinutes(value: number): number {
+  if (!Number.isFinite(value)) return CUSTOM_MINUTES_DEFAULT;
+  return Math.max(CUSTOM_MINUTES_MIN, Math.min(CUSTOM_MINUTES_MAX, Math.round(value)));
+}
 
 const BLOCK_TYPE_LABEL: Record<string, string> = {
   focus: "Focus",
@@ -207,6 +225,9 @@ export function PlannerPanel({
   onCancel,
 }: PlannerPanelProps) {
   const [selectedWindow, setSelectedWindow] = useState<PlanningWindow>("2h");
+  const [startMode, setStartMode] = useState<"now" | "at">("now");
+  const [startTime, setStartTime] = useState<string>("09:00");
+  const [customMinutes, setCustomMinutes] = useState<string>(String(CUSTOM_MINUTES_DEFAULT));
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -252,18 +273,71 @@ export function PlannerPanel({
           AI picks your highest-priority work and schedules a realistic time-blocked plan.
         </p>
 
-        <div className="planner-window-strip" role="group" aria-label="Planning window">
-          {WINDOW_OPTIONS.map(({ value, label }) => (
-            <button
-              key={value}
-              className="planner-window-btn"
-              data-active={selectedWindow === value}
-              onClick={() => setSelectedWindow(value)}
-              type="button"
-            >
-              {label}
-            </button>
-          ))}
+        <div className="planner-config-group">
+          <span className="planner-config-label">Start</span>
+          <div className="planner-config-row">
+            <div className="planner-window-strip" role="group" aria-label="Plan start">
+              <button
+                className="planner-window-btn"
+                data-active={startMode === "now"}
+                onClick={() => setStartMode("now")}
+                type="button"
+              >
+                Now
+              </button>
+              <button
+                className="planner-window-btn"
+                data-active={startMode === "at"}
+                onClick={() => setStartMode("at")}
+                type="button"
+              >
+                At a time
+              </button>
+            </div>
+            {startMode === "at" ? (
+              <input
+                aria-label="Start time"
+                className="planner-config-input planner-config-time"
+                onChange={(e) => setStartTime(e.target.value)}
+                type="time"
+                value={startTime}
+              />
+            ) : null}
+          </div>
+        </div>
+
+        <div className="planner-config-group">
+          <span className="planner-config-label">Length</span>
+          <div className="planner-window-strip" role="group" aria-label="Planning window">
+            {WINDOW_OPTIONS.map(({ value, label }) => (
+              <button
+                key={value}
+                className="planner-window-btn"
+                data-active={selectedWindow === value}
+                onClick={() => setSelectedWindow(value)}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {selectedWindow === "custom" ? (
+            <div className="planner-config-row planner-custom-duration">
+              <input
+                aria-label="Custom duration in minutes"
+                className="planner-config-input planner-config-minutes"
+                max={CUSTOM_MINUTES_MAX}
+                min={CUSTOM_MINUTES_MIN}
+                onBlur={() => setCustomMinutes(String(clampCustomMinutes(Number(customMinutes))))}
+                onChange={(e) => setCustomMinutes(e.target.value)}
+                step={5}
+                type="number"
+                value={customMinutes}
+              />
+              <span className="planner-config-unit">min</span>
+              <span className="planner-config-hint">{CUSTOM_MINUTES_MIN}–{CUSTOM_MINUTES_MAX}</span>
+            </div>
+          ) : null}
         </div>
 
         {error ? (
@@ -273,7 +347,14 @@ export function PlannerPanel({
         <button
           className="planner-generate-btn"
           disabled={loading}
-          onClick={() => onGenerate(selectedWindow)}
+          onClick={() =>
+            onGenerate({
+              window: selectedWindow,
+              start_time: startMode === "at" ? startTime : null,
+              custom_minutes:
+                selectedWindow === "custom" ? clampCustomMinutes(Number(customMinutes)) : null,
+            })
+          }
           type="button"
         >
           Generate plan
@@ -308,7 +389,10 @@ export function PlannerPanel({
       <div className="planner-plan-header">
         <div>
           <p className="planner-plan-window-label">
-            {WINDOW_OPTIONS.find((w) => w.value === session?.planning_window)?.label ?? session?.planning_window}
+            {session?.planning_window === "custom" && session.custom_minutes
+              ? formatDuration(session.custom_minutes)
+              : WINDOW_OPTIONS.find((w) => w.value === session?.planning_window)?.label ??
+                session?.planning_window}
             {" · "}
             {formatDuration(totalPlanned)} scheduled
           </p>

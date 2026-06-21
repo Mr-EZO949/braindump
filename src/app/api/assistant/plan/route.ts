@@ -107,6 +107,12 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+    if (custom_minutes > 600) {
+      return NextResponse.json(
+        { error: "custom_minutes must not exceed 600" },
+        { status: 400 },
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -187,6 +193,7 @@ export async function POST(req: NextRequest) {
   try {
     planResult = await provider.buildPlan({
       planning_window: resolvedWindow,
+      custom_minutes: resolvedWindow === "custom" ? custom_minutes : null,
       candidate_nodes: candidates.map((c) => ({
         id: c.id,
         title: c.title,

@@ -11,6 +11,7 @@ import {
 import {
   PlannerPanel,
   INITIAL_PLANNER_STATE,
+  type GeneratePlanOptions,
   type PlannerState,
 } from "@/components/panel/planner-panel";
 import type { PlanBlock, PlanSession, PlanningWindow } from "@/types/ai";
@@ -53,6 +54,15 @@ type TaskDraft = {
 type TaskComposerPlacement =
   | { kind: "inline" }
   | { kind: "timeline-overlay"; top: number; left: number };
+
+// Pending state for the replan clarifying modal: the plan tasks waiting to be
+// written, the day they target, and the ids of that day's existing plan tasks
+// (deleted on REPLACE).
+type ReplanPrompt = {
+  targetDate: string;
+  newTasks: PlanTask[];
+  existingTaskIds: string[];
+};
 
 type TaskEditorState =
   | {
@@ -200,11 +210,17 @@ function getPlanTaskAnchorMinutes(
   planningWindow: PlanningWindow | null | undefined,
   date: string,
   totalMinutes: number,
+  startTime?: string | null,
 ): number {
+  // An explicit clock start ("At a time") always wins over the window default.
+  const explicitStartMinutes = parseTimeToMinutes(startTime ?? null);
+
   const preferredStartMinutes =
-    planningWindow === "day"
-      ? DEFAULT_DAY_PLAN_START_MINUTES
-      : parseTimeToMinutes(getDefaultStartTime(date)) ?? DEFAULT_DAY_PLAN_START_MINUTES;
+    explicitStartMinutes !== null
+      ? explicitStartMinutes
+      : planningWindow === "day"
+        ? DEFAULT_DAY_PLAN_START_MINUTES
+        : parseTimeToMinutes(getDefaultStartTime(date)) ?? DEFAULT_DAY_PLAN_START_MINUTES;
 
   return clampTaskStartMinutes(preferredStartMinutes, totalMinutes);
 }
@@ -254,6 +270,18 @@ function normalizeTaskList(rawTasks: unknown[]): PlanTask[] {
     .map(normalizeTask)
     .filter((task): task is PlanTask => Boolean(task))
     .sort(compareTasks);
+}
+
+// Tasks created from an AI plan are tagged two ways depending on the storage
+// path: local/legacy tasks keep their "plan-" id prefix, while DB-backed tasks
+// get a fresh UUID but carry the source block's node_id (see PlanTask.node_id).
+// Either signal marks a task as plan-derived for a given day, which is how we
+// detect "this day already has a plan" at accept time.
+function findPlanTasksForDate(allTasks: PlanTask[], date: string): PlanTask[] {
+  return allTasks.filter(
+    (task) =>
+      task.date === date && (task.id.startsWith("plan-") || task.node_id != null),
+  );
 }
 
 function toPlanTaskInsert(
@@ -1179,6 +1207,14 @@ export function AssistantMode({
   // AI plan state
   const [plannerState, setPlannerState] = useState<PlannerState>(INITIAL_PLANNER_STATE);
   const planAbortRef = useRef<AbortController | null>(null);
+  // Chosen clock start ("HH:MM") for the in-flight/current plan, or null = now.
+  // Kept here (not on the session row) because anchoring is a UI-only choice
+  // the accept handler reads when converting blocks into scheduled tasks.
+  const planStartTimeRef = useRef<string | null>(null);
+
+  // Set when accepting a plan for a day that already has plan-derived tasks;
+  // drives the replan clarifying modal (replace / add / cancel).
+  const [replanPrompt, setReplanPrompt] = useState<ReplanPrompt | null>(null);
 
   const [taskError, setTaskError] = useState<string | null>(null);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
@@ -1612,18 +1648,25 @@ export function AssistantMode({
 
   // ── AI planner operations ──────────────────────────────────────────────────
 
-  const handlePlanGenerate = async (window: PlanningWindow) => {
+  const handlePlanGenerate = async (options: GeneratePlanOptions) => {
     if (!workspaceId) return;
+    const { window, start_time, custom_minutes } = options;
     planAbortRef.current?.abort(); // cancel any in-flight plan first
     const ac = new AbortController();
     planAbortRef.current = ac;
+    planStartTimeRef.current = isValidTimeString(start_time ?? "") ? start_time : null;
     setPlannerState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
       const res = await fetch("/api/assistant/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: workspaceId, planning_window: window, ...clientDayHints() }),
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          planning_window: window,
+          ...(window === "custom" && custom_minutes ? { custom_minutes } : {}),
+          ...clientDayHints(),
+        }),
         signal: ac.signal,
       });
 
@@ -1683,6 +1726,44 @@ export function AssistantMode({
     });
   };
 
+  // Inserts freshly-built plan tasks into the task list/store. Any ids passed in
+  // replaceTaskIds are deleted first (REPLACE), so the new plan supersedes the
+  // old one instead of stacking on top of it; pass [] to add alongside (ADD).
+  // Returns false if persistence failed (caller surfaces the error).
+  const commitPlanTasks = useCallback(
+    async (newTasks: PlanTask[], replaceTaskIds: string[]): Promise<boolean> => {
+      if (newTasks.length === 0) return true;
+
+      const replaceIdSet = new Set(replaceTaskIds);
+      const survivingTasks = tasks.filter((task) => !replaceIdSet.has(task.id));
+
+      if (!supabase || !workspaceId || !authUserId) {
+        persistTasks([...survivingTasks, ...newTasks].sort(compareTasks));
+        return true;
+      }
+
+      if (replaceTaskIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from("plan_tasks")
+          .delete()
+          .in("id", replaceTaskIds)
+          .eq("workspace_id", workspaceId);
+        if (deleteError) return false;
+      }
+
+      const { data, error } = await supabase
+        .from("plan_tasks")
+        .insert(newTasks.map((task) => toPlanTaskInsert(task, workspaceId, authUserId)))
+        .select(planTaskSelectClause);
+
+      if (error || !data) return false;
+
+      persistTasks([...survivingTasks, ...normalizeTaskList(data)].sort(compareTasks));
+      return true;
+    },
+    [authUserId, persistTasks, planTaskSelectClause, supabase, tasks, workspaceId],
+  );
+
   const handlePlanAccept = async (finalBlockIds: string[]) => {
     const sessionId = plannerState.session?.id;
     if (!sessionId) return;
@@ -1712,6 +1793,7 @@ export function AssistantMode({
         plannerState.session?.planning_window,
         targetDate,
         totalScheduledMinutes,
+        planStartTimeRef.current,
       );
       const createdAt = new Date().toISOString();
       let nextOffset = 0;
@@ -1741,25 +1823,25 @@ export function AssistantMode({
         });
       }
 
-      if (newTasks.length > 0) {
-        if (!supabase || !workspaceId || !authUserId) {
-          persistTasks([...tasks, ...newTasks].sort(compareTasks));
-        } else {
-          const { data, error } = await supabase
-            .from("plan_tasks")
-            .insert(newTasks.map((task) => toPlanTaskInsert(task, workspaceId, authUserId)))
-            .select(planTaskSelectClause);
+      // If this day already holds plan-derived tasks, ask before stacking a new
+      // plan on top. Defer the actual write to the modal's choice (replace/add).
+      const existingPlanTasks = findPlanTasksForDate(tasks, targetDate);
+      if (newTasks.length > 0 && existingPlanTasks.length > 0) {
+        setReplanPrompt({
+          targetDate,
+          newTasks,
+          existingTaskIds: existingPlanTasks.map((task) => task.id),
+        });
+        return;
+      }
 
-          if (error || !data) {
-            setPlannerState((prev) => ({
-              ...prev,
-              error: "Plan was accepted, but tasks could not be saved.",
-            }));
-            return;
-          }
-
-          persistTasks([...tasks, ...normalizeTaskList(data)].sort(compareTasks));
-        }
+      const ok = await commitPlanTasks(newTasks, []);
+      if (!ok) {
+        setPlannerState((prev) => ({
+          ...prev,
+          error: "Plan was accepted, but tasks could not be saved.",
+        }));
+        return;
       }
 
       // Switch to task view at the date these tasks were scheduled onto.
@@ -1769,6 +1851,40 @@ export function AssistantMode({
       setPlannerState((prev) => ({ ...prev, error: "Could not accept the plan. Try again." }));
     }
   };
+
+  // ── Replan clarifying modal ────────────────────────────────────────────────
+  // Resolves the replace-vs-add choice for the pending plan. REPLACE deletes the
+  // day's existing plan tasks first; ADD stacks alongside; CANCEL keeps the draft.
+  const finishReplan = async (replaceTaskIds: string[]) => {
+    if (!replanPrompt) return;
+    const { targetDate, newTasks } = replanPrompt;
+    const ok = await commitPlanTasks(newTasks, replaceTaskIds);
+    if (!ok) {
+      setReplanPrompt(null);
+      setPlannerState((prev) => ({
+        ...prev,
+        error: "Plan was accepted, but tasks could not be saved.",
+      }));
+      return;
+    }
+    setReplanPrompt(null);
+    setSelectedDate(targetDate);
+    setPlannerState(INITIAL_PLANNER_STATE);
+  };
+
+  const handleReplanReplace = () => void finishReplan(replanPrompt?.existingTaskIds ?? []);
+  const handleReplanAdd = () => void finishReplan([]);
+  const handleReplanCancel = () => setReplanPrompt(null);
+
+  // Escape closes the replan modal (cancel), matching the rest of the app.
+  useEffect(() => {
+    if (!replanPrompt) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setReplanPrompt(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [replanPrompt]);
 
   const handlePlanReject = async () => {
     const sessionId = plannerState.session?.id;
@@ -1832,7 +1948,9 @@ export function AssistantMode({
               <button
                 className="assistant-quick-chip"
                 key={label}
-                onClick={() => void handlePlanGenerate(window)}
+                onClick={() =>
+                  void handlePlanGenerate({ window, start_time: null, custom_minutes: null })
+                }
                 type="button"
               >
                 {label}
@@ -2075,6 +2193,50 @@ export function AssistantMode({
           ) : null}
         </div>
       </div>
+
+      {/* Replan clarifying modal — shown when accepting a plan for a day that
+          already has plan-derived tasks. */}
+      {replanPrompt ? (
+        <div
+          className="replan-backdrop"
+          onClick={handleReplanCancel}
+          role="presentation"
+        >
+          <div
+            className="replan-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="replan-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="replan-modal-header">
+              <h2 className="replan-modal-title" id="replan-modal-title">
+                You already have a plan for this day
+              </h2>
+              <p className="replan-modal-sub">
+                Replace the {replanPrompt.existingTaskIds.length} existing plan{" "}
+                {replanPrompt.existingTaskIds.length === 1 ? "task" : "tasks"} for this day,
+                or add this one alongside?
+              </p>
+            </div>
+            <div className="replan-modal-actions">
+              <button
+                className="replan-btn replan-btn--primary"
+                onClick={handleReplanReplace}
+                type="button"
+              >
+                Replace
+              </button>
+              <button className="replan-btn" onClick={handleReplanAdd} type="button">
+                Add
+              </button>
+              <button className="replan-btn replan-btn--ghost" onClick={handleReplanCancel} type="button">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

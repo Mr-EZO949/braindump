@@ -479,9 +479,11 @@ export class GeminiProvider implements AIProvider {
       "1h": 60,
       "2h": 120,
       day: 480,
-      custom: 60,
     };
-    const totalMinutes = windowMinutes[input.planning_window] ?? 60;
+    const totalMinutes =
+      input.planning_window === "custom"
+        ? Math.max(15, Math.min(600, Math.round(input.custom_minutes ?? 60)))
+        : windowMinutes[input.planning_window] ?? 60;
 
     const { rubricBlock, variableBlock } = buildPlanPromptParts({
       planning_window: input.planning_window,

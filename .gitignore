@@ -52,3 +52,9 @@ scripts/verify-embeddings.ts
 
 # Local test reports (kept off GitHub)
 tmp/
+
+# Hackathon project — private, not part of BrainDump
+corporate/
+
+# Private reference notes (not for GitHub)
+GRAPH_PORTING_NOTES.md

@@ -300,6 +300,8 @@ export interface PlanSession {
   workspace_id: string;
   user_id: string;
   planning_window: PlanningWindow;
+  // Set only when planning_window === "custom"; the chosen total length.
+  custom_minutes: number | null;
   scope: string | null;
   status: string;
   created_at: string;
@@ -419,6 +421,9 @@ export interface AssistantOutput {
 
 export interface PlanInput {
   planning_window: PlanningWindow;
+  // Total minutes to fill when planning_window === "custom". Clamped to
+  // 15–600 by the provider; ignored for the fixed 1h/2h/day windows.
+  custom_minutes?: number | null;
   candidate_nodes: Array<{
     id: string;
     title: string;

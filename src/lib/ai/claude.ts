@@ -362,7 +362,9 @@ export class ClaudeProvider {
           ? 120
           : input.planning_window === "day"
             ? 480
-            : 60;
+            : input.planning_window === "custom"
+              ? Math.max(15, Math.min(600, Math.round(input.custom_minutes ?? 60)))
+              : 60;
 
     const prompt = buildPlanPrompt({
       planning_window: input.planning_window,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, type Variants } from "framer-motion";
 import { CloseIcon, TargetIcon } from "@/components/ui/icons";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
@@ -36,6 +36,35 @@ type LockInData = {
   top: TopNode[];
   weekly_pulse: WeeklyPulse;
   nudges: Nudge[];
+};
+
+// Mount choreography: the card settles in, then its contents stagger up just
+// behind it. Framer-variants keep the timing declarative; the parent wrapper in
+// app-shell still owns the outer fade/slide + exit, so this is purely the
+// "premium settle" on top. Respects prefers-reduced-motion via the transition
+// being trivially small — the values themselves are subtle by design.
+const CARD_VARIANTS: Variants = {
+  hidden: { opacity: 0, scale: 0.985 },
+  show: {
+    opacity: 1,
+    scale: 1,
+    transition: {
+      duration: 0.22,
+      ease: [0.16, 1, 0.3, 1],
+      when: "beforeChildren",
+      staggerChildren: 0.05,
+      delayChildren: 0.04,
+    },
+  },
+};
+
+const ITEM_VARIANTS: Variants = {
+  hidden: { opacity: 0, y: 8 },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.28, ease: [0.16, 1, 0.3, 1] },
+  },
 };
 
 type WhatNowDialogProps = {
@@ -204,15 +233,17 @@ export function WhatNowDialog({
 
   const top = data?.top ?? [];
   const nudges = data?.nudges ?? [];
+  const backups = top.slice(1, 3);
 
   return (
     <motion.div
       className="lockin-card"
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 6 }}
-      initial={{ opacity: 0, y: 6 }}
-      transition={{ duration: 0.14 }}
+      animate="show"
+      initial="hidden"
+      variants={CARD_VARIANTS}
     >
+      <div className="lockin-glow" aria-hidden="true" />
+
       <div className="lockin-header">
         <div className="lockin-title">
           <TargetIcon className="h-[14px] w-[14px]" />
@@ -239,38 +270,50 @@ export function WhatNowDialog({
       ) : (
         <>
           {/* The one thing — pick #1, the obvious move. Whole card is the action. */}
-          <button
+          <motion.button
             className="lockin-hero"
             onClick={() => onFocusNode(top[0].id)}
             type="button"
+            variants={ITEM_VARIANTS}
           >
-            <span className="lockin-hero-eyebrow">Start here</span>
+            <span className="lockin-hero-eyebrow">
+              <span className="lockin-hero-pip" aria-hidden="true" />
+              Start here
+            </span>
             <span className="lockin-hero-title">{top[0].title}</span>
             {top[0].planning_signals[0] ? (
               <span className="lockin-hero-signal">{top[0].planning_signals[0]}</span>
             ) : null}
-            <span className="lockin-hero-go">Focus this →</span>
-          </button>
+            <span className="lockin-hero-go">
+              Focus this
+              <span className="lockin-hero-go-arrow" aria-hidden="true">
+                →
+              </span>
+            </span>
+          </motion.button>
 
           {/* Quiet backups — only if there are any */}
-          {top.length > 1 ? (
-            <div className="lockin-backups">
+          {backups.length > 0 ? (
+            <motion.div className="lockin-backups" variants={ITEM_VARIANTS}>
               <span className="lockin-or">or</span>
-              {top.slice(1, 3).map((node) => (
+              {backups.map((node, i) => (
                 <button
                   className="lockin-backup"
                   key={node.id}
                   onClick={() => onFocusNode(node.id)}
                   type="button"
                 >
-                  {node.title}
+                  <span className="lockin-backup-index" aria-hidden="true">
+                    {i + 2}
+                  </span>
+                  <span className="lockin-backup-title">{node.title}</span>
                 </button>
               ))}
-            </div>
+            </motion.div>
           ) : null}
 
           {/* Quiet footer — plan the day, and at most one nudge */}
-          <div className="lockin-footer">
+          <motion.div className="lockin-footer" variants={ITEM_VARIANTS}>
             <button
               className="lockin-plan-link"
               onClick={handleAddToPlanner}
@@ -293,7 +336,7 @@ export function WhatNowDialog({
                   : `${nudges[0].title} · +${nudges.length - 1} more`}
               </button>
             ) : null}
-          </div>
+          </motion.div>
         </>
       )}
     </motion.div>

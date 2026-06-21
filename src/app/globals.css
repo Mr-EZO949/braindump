@@ -371,32 +371,60 @@
     0 2px 4px rgba(20, 20, 24, 0.06);
 }
 
-/* Focus (Lock In) dialog — surfaces use rgba(255,255,255,…) tints + white
-   text, both invisible on light. */
+/* Focus (Lock In) dialog — dark uses rgba(255,255,255,…) tints + white text,
+   both wrong on light. The scarlet accent carries through; surfaces and shadows
+   are re-toned for the white card. */
 :root[data-theme="light"] .lockin-card {
   background: #ffffff;
   border-color: var(--color-border-subtle);
   box-shadow:
-    0 12px 40px rgba(20, 20, 24, 0.14),
-    0 4px 10px rgba(20, 20, 24, 0.06);
+    0 22px 60px rgba(20, 20, 24, 0.16),
+    0 6px 16px rgba(20, 20, 24, 0.07),
+    0 0 0 1px rgba(213, 58, 71, 0.04);
+}
+
+:root[data-theme="light"] .lockin-glow {
+  background: radial-gradient(
+    60% 100% at 50% 0%,
+    rgba(213, 58, 71, 0.12),
+    rgba(213, 58, 71, 0) 72%
+  );
 }
 
 :root[data-theme="light"] .lockin-hero {
-  background: linear-gradient(
-    180deg,
-    rgba(213, 58, 71, 0.07),
-    rgba(213, 58, 71, 0.02)
-  );
-  border-color: rgba(213, 58, 71, 0.28);
+  background:
+    radial-gradient(
+      120% 90% at 0% 0%,
+      rgba(213, 58, 71, 0.1),
+      rgba(213, 58, 71, 0) 60%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(213, 58, 71, 0.08),
+      rgba(213, 58, 71, 0.02)
+    );
+  border-color: rgba(213, 58, 71, 0.3);
+  box-shadow:
+    0 10px 26px rgba(213, 58, 71, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 :root[data-theme="light"] .lockin-hero:hover {
-  border-color: rgba(213, 58, 71, 0.5);
-  background: linear-gradient(
-    180deg,
-    rgba(213, 58, 71, 0.12),
-    rgba(213, 58, 71, 0.04)
-  );
+  border-color: rgba(213, 58, 71, 0.52);
+  box-shadow:
+    0 14px 34px rgba(213, 58, 71, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  background:
+    radial-gradient(
+      120% 90% at 0% 0%,
+      rgba(213, 58, 71, 0.15),
+      rgba(213, 58, 71, 0) 60%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(213, 58, 71, 0.13),
+      rgba(213, 58, 71, 0.04)
+    );
 }
 
 :root[data-theme="light"] .lockin-hero-eyebrow,
@@ -404,8 +432,23 @@
   color: rgba(180, 36, 50, 0.95);
 }
 
+:root[data-theme="light"] .lockin-backup {
+  background: rgba(20, 20, 24, 0.018);
+  border-color: rgba(20, 20, 24, 0.06);
+}
+
+:root[data-theme="light"] .lockin-backup-index {
+  background: rgba(20, 20, 24, 0.05);
+}
+
 :root[data-theme="light"] .lockin-backup:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(20, 20, 24, 0.04);
+  border-color: rgba(20, 20, 24, 0.1);
+}
+
+:root[data-theme="light"] .lockin-backup:hover .lockin-backup-index {
+  background: rgba(213, 58, 71, 0.16);
+  color: rgba(180, 36, 50, 0.95);
 }
 
 :root[data-theme="light"] .lockin-state {
@@ -5327,94 +5370,181 @@ input[type="search"]::-webkit-search-results-decoration {
 /* ─── Lock In Dialog ─────────────────────────────────────── */
 
 .lockin-card {
+  position: relative;
   background: var(--color-bg-surface-elevated);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 18px;
-  padding: 16px 18px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  padding: 20px 22px 22px;
   box-shadow:
-    0 18px 56px rgba(0, 0, 0, 0.52),
-    0 4px 12px rgba(0, 0, 0, 0.22),
-    inset 0 1px 0 rgba(255, 255, 255, 0.022);
-  width: min(372px, 92vw);
-  max-height: 80vh;
+    0 28px 80px rgba(0, 0, 0, 0.58),
+    0 8px 24px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(213, 58, 71, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  width: min(416px, 92vw);
+  max-height: 84vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
+}
+
+/* Ambient scarlet halo bleeding from behind the hero — pure depth, no clutter.
+   Sits under the content (z below), masked to the top of the card. */
+.lockin-glow {
+  position: absolute;
+  inset: -40% 8% auto 8%;
+  height: 220px;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    60% 100% at 50% 0%,
+    rgba(213, 58, 71, 0.16),
+    rgba(213, 58, 71, 0) 72%
+  );
+  filter: blur(8px);
+}
+
+.lockin-card > *:not(.lockin-glow) {
+  position: relative;
+  z-index: 1;
 }
 
 /* Hero — the one obvious thing to do. The whole card is the action. */
 .lockin-hero {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 9px;
   width: 100%;
   text-align: left;
-  padding: 18px 18px 16px;
-  border-radius: 14px;
-  background: linear-gradient(
-    180deg,
-    rgba(213, 58, 71, 0.07),
-    rgba(213, 58, 71, 0.02)
-  );
-  border: 1px solid rgba(213, 58, 71, 0.22);
+  padding: 22px 22px 20px;
+  border-radius: 18px;
+  background:
+    radial-gradient(
+      120% 90% at 0% 0%,
+      rgba(213, 58, 71, 0.14),
+      rgba(213, 58, 71, 0) 60%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(213, 58, 71, 0.1),
+      rgba(213, 58, 71, 0.02)
+    );
+  border: 1px solid rgba(213, 58, 71, 0.28);
+  box-shadow:
+    0 10px 30px rgba(213, 58, 71, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
   cursor: pointer;
   transition:
     border-color var(--motion-fast),
     background var(--motion-fast),
+    box-shadow var(--motion-fast),
     transform var(--motion-fast);
 }
 
 .lockin-hero:hover {
-  border-color: rgba(213, 58, 71, 0.42);
-  background: linear-gradient(
-    180deg,
-    rgba(213, 58, 71, 0.11),
-    rgba(213, 58, 71, 0.03)
-  );
+  border-color: rgba(213, 58, 71, 0.55);
+  box-shadow:
+    0 14px 40px rgba(213, 58, 71, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  background:
+    radial-gradient(
+      120% 90% at 0% 0%,
+      rgba(213, 58, 71, 0.2),
+      rgba(213, 58, 71, 0) 60%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(213, 58, 71, 0.16),
+      rgba(213, 58, 71, 0.04)
+    );
 }
 
 .lockin-hero:active {
-  transform: scale(0.992);
+  transform: scale(0.99);
+}
+
+.lockin-hero:focus-visible {
+  outline: none;
+  border-color: rgba(213, 58, 71, 0.7);
+  box-shadow:
+    0 0 0 3px rgba(213, 58, 71, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
 .lockin-hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: rgba(232, 140, 150, 0.92);
+  color: rgba(238, 150, 159, 0.95);
+}
+
+/* The aim pip — a small, slow scarlet pulse. The one memorable touch. */
+.lockin-hero-pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgb(213, 58, 71);
+  box-shadow: 0 0 0 0 rgba(213, 58, 71, 0.5);
+  animation: lockin-pip-pulse 2.6s ease-out infinite;
+}
+
+@keyframes lockin-pip-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(213, 58, 71, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(213, 58, 71, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(213, 58, 71, 0);
+  }
 }
 
 .lockin-hero-title {
-  font-size: 18px;
-  font-weight: 550;
-  line-height: 1.28;
-  letter-spacing: -0.02em;
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.22;
+  letter-spacing: -0.025em;
   color: var(--color-text-primary);
   /* break long unbroken tokens (pasted URLs/paths) instead of overflowing the card */
   overflow-wrap: anywhere;
 }
 
 .lockin-hero-signal {
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--color-text-muted);
   letter-spacing: -0.005em;
+  line-height: 1.4;
 }
 
 .lockin-hero-go {
-  margin-top: 5px;
-  font-size: 12px;
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 650;
   letter-spacing: -0.005em;
-  color: rgba(232, 140, 150, 0.95);
+  color: rgba(238, 150, 159, 0.98);
+}
+
+.lockin-hero-go-arrow {
+  transition: transform var(--motion-fast);
+}
+
+.lockin-hero:hover .lockin-hero-go-arrow {
+  transform: translateX(3px);
 }
 
 /* Quiet backups — the other two, de-emphasized under an "or" */
 .lockin-backups {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
 }
 
 .lockin-or {
@@ -5423,38 +5553,70 @@ input[type="search"]::-webkit-search-results-decoration {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  padding: 0 2px 5px;
+  padding: 0 2px 6px;
 }
 
 .lockin-backup {
+  display: flex;
+  align-items: center;
+  gap: 11px;
   width: 100%;
   text-align: left;
-  padding: 9px 10px;
-  border-radius: 9px;
-  background: transparent;
-  border: 1px solid transparent;
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.018);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   color: var(--color-text-secondary);
-  font-size: 13px;
-  letter-spacing: -0.01em;
   cursor: pointer;
+  transition:
+    background var(--motion-fast),
+    border-color var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.lockin-backup-index {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.lockin-backup-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background var(--motion-fast), color var(--motion-fast);
 }
 
 .lockin-backup:hover {
-  background: rgba(255, 255, 255, 0.045);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.09);
   color: var(--color-text-primary);
+}
+
+.lockin-backup:hover .lockin-backup-index {
+  background: rgba(213, 58, 71, 0.22);
+  color: rgba(238, 150, 159, 0.98);
 }
 
 /* Quiet footer — plan the day + at most one nudge, both low-key */
 .lockin-footer {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  gap: 9px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .lockin-plan-link {
@@ -5463,8 +5625,8 @@ input[type="search"]::-webkit-search-results-decoration {
   border: none;
   padding: 0;
   color: var(--color-text-secondary);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 12.5px;
+  font-weight: 550;
   letter-spacing: -0.005em;
   cursor: pointer;
   transition: color var(--motion-fast);
@@ -5486,7 +5648,7 @@ input[type="search"]::-webkit-search-results-decoration {
   border: none;
   padding: 0;
   color: var(--color-text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   letter-spacing: -0.005em;
   cursor: pointer;
   transition: color var(--motion-fast);
@@ -5497,7 +5659,7 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .lockin-foot-note {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--color-text-muted);
   line-height: 1.4;
 }
@@ -5516,8 +5678,8 @@ input[type="search"]::-webkit-search-results-decoration {
 .lockin-title {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 12.5px;
+  gap: 8px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--color-text-primary);
@@ -5527,10 +5689,10 @@ input[type="search"]::-webkit-search-results-decoration {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
+  padding: 5px;
   border: none;
   background: transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--color-text-muted);
   cursor: pointer;
   transition: color var(--motion-fast), background var(--motion-fast);
@@ -5538,17 +5700,28 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .lockin-close:hover {
   color: var(--color-text-primary);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .lockin-state {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--color-text-muted);
-  padding: 8px 2px;
+  padding: 10px 2px;
 }
 
 .lockin-error {
   color: #e88;
+}
+
+/* Honor reduced-motion: kill the pip pulse and arrow nudge. The framer mount
+   variants stay subtle but the looping pulse is the part worth disabling. */
+@media (prefers-reduced-motion: reduce) {
+  .lockin-hero-pip {
+    animation: none;
+  }
+  .lockin-hero:hover .lockin-hero-go-arrow {
+    transform: none;
+  }
 }
 
 /* ─── Brain Dump Overlay ─────────────────────────────────── */
@@ -6684,6 +6857,116 @@ input[type="search"]::-webkit-search-results-decoration {
 .per-modal-sub {
   font-size: 13px;
   color: var(--color-text-muted);
+}
+
+/* ─── Replan clarifying modal ────────────────────────────────
+   Shown when accepting a plan for a day that already has plan tasks.
+   Solid panel background + backdrop, mirroring .per-modal / .per-backdrop. */
+
+.replan-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 70;
+  padding: 20px;
+}
+
+.replan-modal {
+  width: min(420px, 92vw);
+  background: var(--color-bg-panel);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.replan-modal-header {
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.replan-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.replan-modal-sub {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+  margin: 8px 0 0;
+}
+
+.replan-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 18px 18px;
+}
+
+.replan-btn {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface-elevated);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
+}
+
+.replan-btn:hover {
+  background: var(--color-bg-surface-hover);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.replan-btn--primary {
+  background: rgb(213, 58, 71);
+  border-color: rgb(213, 58, 71);
+  color: #fff;
+}
+
+.replan-btn--primary:hover {
+  background: var(--color-accent-primary-hover);
+  border-color: var(--color-accent-primary-hover);
+}
+
+.replan-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-muted);
+}
+
+.replan-btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-secondary);
+}
+
+/* Light-theme overrides — the dark white-on-dark borders/shadows are invisible
+   on light. Backgrounds already use theme-aware vars. */
+:root[data-theme="light"] .replan-modal {
+  border-color: var(--color-border-subtle);
+  box-shadow: 0 16px 48px rgba(20, 20, 24, 0.18);
+}
+
+:root[data-theme="light"] .replan-btn {
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+:root[data-theme="light"] .replan-btn:hover {
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+:root[data-theme="light"] .replan-btn--ghost:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.08);
 }
 
 /* List */
@@ -10278,6 +10561,68 @@ input[type="search"]::-webkit-search-results-decoration {
 .planner-window-btn:hover:not([data-active="true"]) {
   background: rgba(255, 255, 255, 0.07);
   color: var(--color-text-primary);
+}
+
+/* Start-time + custom-length config groups */
+.planner-config-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planner-config-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.planner-config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.planner-config-input {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 540;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface-elevated);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  transition: border-color 0.12s;
+}
+
+.planner-config-input:focus {
+  outline: none;
+  border-color: rgba(213, 58, 71, 0.4);
+}
+
+.planner-config-time {
+  flex: 1;
+}
+
+.planner-config-minutes {
+  width: 84px;
+}
+
+.planner-custom-duration {
+  margin-top: 2px;
+}
+
+.planner-config-unit {
+  font-size: 12px;
+  font-weight: 540;
+  color: var(--color-text-secondary);
+}
+
+.planner-config-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 
 /* Generate button */
