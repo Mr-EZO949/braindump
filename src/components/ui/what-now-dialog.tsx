@@ -2,16 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { CloseIcon, InfoIcon, TargetIcon } from "@/components/ui/icons";
+import { CloseIcon, TargetIcon } from "@/components/ui/icons";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
-  BREAK_MINUTES,
   minutesToHHMM,
   parseHHMM,
   planSchedule,
   todayIsoDate,
 } from "@/lib/planner/auto-schedule";
-import { getQuoteOfTheDay } from "@/lib/planner/quotes";
 import type { NodeType } from "@/types/graph";
 import type { Nudge } from "@/types/chat";
 
@@ -61,8 +59,6 @@ export function WhatNowDialog({
   const [data, setData] = useState<LockInData | null>(null);
   const [scheduling, setScheduling] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
-
-  const quote = getQuoteOfTheDay();
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -231,124 +227,72 @@ export function WhatNowDialog({
         </button>
       </div>
 
-      {/* Productivity quote — stable per day */}
-      <blockquote className="lockin-quote">
-        <p className="lockin-quote-text">&ldquo;{quote.text}&rdquo;</p>
-        <footer className="lockin-quote-author">— {quote.author}</footer>
-      </blockquote>
-
       {loading ? (
-        <div className="lockin-state">Loading your focus…</div>
+        <div className="lockin-state">Finding your next move…</div>
       ) : error ? (
         <div className="lockin-state lockin-error">{error}</div>
+      ) : top.length === 0 ? (
+        <div className="lockin-state">
+          Nothing active yet — brain dump a goal or task first.
+        </div>
       ) : (
         <>
-          {/* AI summary headline */}
-          {data?.headline ? (
-            <p className="lockin-summary">{data.headline}</p>
-          ) : null}
+          {/* The one thing — pick #1, the obvious move. Whole card is the action. */}
+          <button
+            className="lockin-hero"
+            onClick={() => onFocusNode(top[0].id)}
+            type="button"
+          >
+            <span className="lockin-hero-eyebrow">Start here</span>
+            <span className="lockin-hero-title">{top[0].title}</span>
+            {top[0].planning_signals[0] ? (
+              <span className="lockin-hero-signal">{top[0].planning_signals[0]}</span>
+            ) : null}
+            <span className="lockin-hero-go">Focus this →</span>
+          </button>
 
-          {/* Plan-rate pulse — only render if there's any scheduled history */}
-          {data && data.weekly_pulse.scheduled > 0 ? (
-            <div className="lockin-pulse">
-              <span className="lockin-pulse-label">Plan rate this week</span>
-              <span className="lockin-pulse-value">
-                {data.weekly_pulse.completion_rate !== null
-                  ? `${Math.round(data.weekly_pulse.completion_rate * 100)}%`
-                  : "—"}
-                <span className="lockin-pulse-sub">
-                  {" "}
-                  ({data.weekly_pulse.scheduled_done}/{data.weekly_pulse.scheduled})
-                </span>
-              </span>
-              <span
-                className="lockin-pulse-info"
-                tabIndex={0}
-                aria-label="Resets every Monday. Today's tasks are excluded."
-                title="Resets every Monday. Today's tasks are excluded."
-              >
-                <InfoIcon className="h-[11px] w-[11px]" />
-              </span>
+          {/* Quiet backups — only if there are any */}
+          {top.length > 1 ? (
+            <div className="lockin-backups">
+              <span className="lockin-or">or</span>
+              {top.slice(1, 3).map((node) => (
+                <button
+                  className="lockin-backup"
+                  key={node.id}
+                  onClick={() => onFocusNode(node.id)}
+                  type="button"
+                >
+                  {node.title}
+                </button>
+              ))}
             </div>
           ) : null}
 
-          {/* Top 3 — empty state if no candidates */}
-          {top.length === 0 ? (
-            <div className="lockin-state">
-              Nothing active yet. Brain dump some goals or tasks first.
-            </div>
-          ) : (
-            <section className="lockin-section">
-              <h3 className="lockin-section-title">
-                <TargetIcon className="h-[12px] w-[12px]" />
-                Top 3 right now
-              </h3>
-              <ol className="lockin-list">
-                {top.map((node, i) => (
-                  <li key={node.id}>
-                    <button
-                      className="lockin-item"
-                      onClick={() => onFocusNode(node.id)}
-                      type="button"
-                    >
-                      <span className="lockin-rank">{i + 1}</span>
-                      <span className="lockin-body">
-                        <span className="lockin-item-title">{node.title}</span>
-                        <span className="lockin-meta">
-                          <span className="lockin-type">{node.node_type}</span>
-                          {node.planning_signals.slice(0, 2).map((sig) => (
-                            <span key={sig} className="lockin-signal">
-                              {sig}
-                            </span>
-                          ))}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          )}
-
-          {/* Worth a look — nudges */}
-          {nudges.length > 0 ? (
-            <section className="lockin-section">
-              <h3 className="lockin-section-title">Worth a look</h3>
-              <div className="lockin-nudge-list">
-                {nudges.map((nudge) => (
-                  <button
-                    className="lockin-nudge"
-                    key={nudge.id}
-                    onClick={() => onSelectNudge?.(nudge)}
-                    type="button"
-                  >
-                    {nudge.title}
-                  </button>
-                ))}
-              </div>
-            </section>
-          ) : null}
-
-          {/* Schedule action */}
-          {top.length > 0 ? (
-            <div className="lockin-actions">
+          {/* Quiet footer — plan the day, and at most one nudge */}
+          <div className="lockin-footer">
+            <button
+              className="lockin-plan-link"
+              onClick={handleAddToPlanner}
+              type="button"
+              disabled={scheduling}
+            >
+              {scheduling ? "Planning…" : "Plan my day →"}
+            </button>
+            {scheduleError ? (
+              <span className="lockin-foot-note lockin-error">{scheduleError}</span>
+            ) : null}
+            {nudges.length > 0 ? (
               <button
-                className="lockin-schedule-btn"
-                onClick={handleAddToPlanner}
+                className="lockin-nudge-line"
+                onClick={() => onSelectNudge?.(nudges[0])}
                 type="button"
-                disabled={scheduling}
               >
-                {scheduling ? "Scheduling…" : "Add to planner"}
+                {nudges.length === 1
+                  ? nudges[0].title
+                  : `${nudges[0].title} · +${nudges.length - 1} more`}
               </button>
-              {scheduleError ? (
-                <p className="lockin-schedule-error">{scheduleError}</p>
-              ) : (
-                <p className="lockin-schedule-hint">
-                  Auto-fills the next free slots, with {BREAK_MINUTES}-min breaks. Durations estimated by AI.
-                </p>
-              )}
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </>
       )}
     </motion.div>
