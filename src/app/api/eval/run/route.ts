@@ -73,6 +73,8 @@ type PlannerResult = {
   missing_titles: string[];
   has_break: boolean;
   has_buffer: boolean;
+  fits_window?: boolean;
+  window_minutes?: number;
   total_minutes_planned: number;
   block_titles: string[];
   error?: string;
@@ -463,11 +465,18 @@ export async function POST(req: NextRequest) {
         const hasBreak = blockTypes.includes("break");
         const hasBuffer = blockTypes.includes("buffer");
 
+        // The plan should fit its window (the regression plan-v3 + the
+        // validatePlanOutput clamp guard against). 15m slack for buffer/rounding.
+        const windowMinutes: Record<string, number> = { "1h": 60, "2h": 120, day: 480 };
+        const windowCap = windowMinutes[fixture.planning_window] ?? 60;
+        const fitsWindow = totalMinutes <= windowCap + 15;
+
         const checks = [
           blocks.length >= fixture.min_blocks,
           missingTitles.length === 0,
           !fixture.expect_break || hasBreak,
           !fixture.expect_buffer || hasBuffer,
+          fitsWindow,
         ];
 
         const passed = checks.every(Boolean);
@@ -479,6 +488,8 @@ export async function POST(req: NextRequest) {
           missing_titles: missingTitles,
           has_break: hasBreak,
           has_buffer: hasBuffer,
+          fits_window: fitsWindow,
+          window_minutes: windowCap,
           total_minutes_planned: totalMinutes,
           block_titles: blocks.map((b) => `${b.title} (${b.block_type}, ${b.duration_minutes}m)`),
         });

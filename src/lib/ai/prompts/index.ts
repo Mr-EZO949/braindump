@@ -2,43 +2,44 @@
 // Central index of all prompt builders and their current versions.
 // Import from here instead of individual files to keep prompt usage traceable.
 
-export {
-  EXTRACT_PROMPT_VERSION,
-  buildExtractionPrompt,
-} from "./extract";
-
-export {
-  INFER_EDGE_PROMPT_VERSION,
-  buildEdgeInferencePrompt,
-} from "./infer-edge";
-
-export {
+import { EXTRACT_PROMPT_VERSION, buildExtractionPrompt } from "./extract";
+import { INFER_EDGE_PROMPT_VERSION, buildEdgeInferencePrompt } from "./infer-edge";
+import {
   ASSISTANT_PROMPT_VERSION,
   buildAssistantSystemPrompt,
   buildAssistantUserPrompt,
 } from "./assistant";
+import { PLAN_PROMPT_VERSION, buildPlanPrompt } from "./plan";
+import { MERGE_CHECK_PROMPT_VERSION, buildMergeCheckPrompt } from "./merge-check";
 
 export {
+  EXTRACT_PROMPT_VERSION,
+  buildExtractionPrompt,
+  INFER_EDGE_PROMPT_VERSION,
+  buildEdgeInferencePrompt,
+  ASSISTANT_PROMPT_VERSION,
+  buildAssistantSystemPrompt,
+  buildAssistantUserPrompt,
   PLAN_PROMPT_VERSION,
   buildPlanPrompt,
-} from "./plan";
-
-export {
   MERGE_CHECK_PROMPT_VERSION,
   buildMergeCheckPrompt,
-} from "./merge-check";
+};
 
 // ---------------------------------------------------------------------------
-// Version map — single source of truth for all prompt versions
-// Used by eval harness to tag results and by observability for cost tracking.
+// Version map — single source of truth for all prompt versions.
+// DERIVED from each prompt's own *_PROMPT_VERSION constant so it can never
+// drift out of sync (it used to: was extract-v7 while the real one was v13).
+// Used by the eval harness and observability for cost tracking. (embed/rerank
+// have no builder module, so they stay literal.)
 // ---------------------------------------------------------------------------
 
 export const PROMPT_VERSIONS = {
-  extract: "extract-v7",
-  infer_edge: "infer-edge-v3",
-  assistant: "assistant-v2",
-  plan: "plan-v3",
-  merge_check: "merge-check-v1",
+  extract: EXTRACT_PROMPT_VERSION,
+  infer_edge: INFER_EDGE_PROMPT_VERSION,
+  assistant: ASSISTANT_PROMPT_VERSION,
+  plan: PLAN_PROMPT_VERSION,
+  merge_check: MERGE_CHECK_PROMPT_VERSION,
   embed: "embed-v1",
   rerank: "rerank-v1",
 } as const;

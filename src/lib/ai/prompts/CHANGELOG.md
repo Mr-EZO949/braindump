@@ -60,7 +60,15 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Assistant (`assistant.ts`)
 
-### assistant-v4 (current)
+> Note: this changelog drifted (entries jump v4 → v10; the live constant is the
+> source of truth, now mirrored by the derived `PROMPT_VERSIONS` map). The
+> intermediate v5–v9 changes predate this entry and weren't logged here.
+
+### assistant-v10 (current)
+- Removed the `<plan>` time-block instruction + JSON example. It had no client consumer (app-shell parses only `<nodes>`/`<graph_edit>`/`<recompute_scores/>`), so asking the chat to "plan my afternoon" dumped raw JSON into the reply. Multi-block planning now routes to the dedicated Planner; single items use add_task_to_calendar.
+- Why: dead, token-wasting instruction that produced unconsumed output (found in v1.5 review).
+
+### assistant-v4
 - Added full mutation tool vocabulary: propose_node, propose_nodes_batch, propose_edge, update_node, archive_node, complete_node, add_task_to_calendar, reschedule_task, mark_task_done
 - Every mutation tool pauses the agent loop and surfaces an Accept/Reject card via the M2 confirmation gate
 - Added "ONE mutation per turn" rule (server auto-rejects extras) with guidance to call propose_nodes_batch for multi-item asks
