@@ -10,6 +10,7 @@ import {
   planSchedule,
   todayIsoDate,
 } from "@/lib/planner/auto-schedule";
+import { clientDayHints } from "@/lib/habits/streak";
 import type { NodeType } from "@/types/graph";
 import type { Nudge } from "@/types/chat";
 
@@ -70,7 +71,7 @@ export function WhatNowDialog({
     fetch("/api/assistant/daily-brief", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspace_id: workspaceId }),
+      body: JSON.stringify({ workspace_id: workspaceId, ...clientDayHints() }),
       signal: ac.signal,
     })
       .then(async (res) => {

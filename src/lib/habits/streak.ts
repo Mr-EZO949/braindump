@@ -14,6 +14,19 @@ export function todayLocalISO(now: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+/**
+ * Day hints to POST to the planner endpoints (top-now / daily-brief / plan) so
+ * it computes "today" and "this week" in the USER's timezone — not the server's
+ * (UTC on hosted deploys), which would be a day off for non-UTC users. Spread
+ * into the request body alongside workspace_id.
+ */
+export function clientDayHints(now: Date = new Date()): {
+  client_today: string;
+  client_tz_offset: number;
+} {
+  return { client_today: todayLocalISO(now), client_tz_offset: now.getTimezoneOffset() };
+}
+
 export function yesterdayLocalISO(now: Date = new Date()): string {
   const d = new Date(now);
   d.setDate(now.getDate() - 1);

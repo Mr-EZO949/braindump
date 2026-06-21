@@ -16,6 +16,7 @@ import {
 import type { PlanBlock, PlanSession, PlanningWindow } from "@/types/ai";
 import type { GraphData, NodeStatus } from "@/types/graph";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { clientDayHints } from "@/lib/habits/streak";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1618,7 +1619,7 @@ export function AssistantMode({
       const res = await fetch("/api/assistant/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: workspaceId, planning_window: window }),
+        body: JSON.stringify({ workspace_id: workspaceId, planning_window: window, ...clientDayHints() }),
       });
 
       const data = await res.json() as {

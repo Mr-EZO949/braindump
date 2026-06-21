@@ -78,11 +78,15 @@ export async function POST(req: NextRequest) {
     planning_window = "2h",
     scope = null,
     custom_minutes = null,
+    client_today,
+    client_tz_offset,
   } = body as {
     workspace_id: string;
     planning_window?: string;
     scope?: string | null;
     custom_minutes?: number | null;
+    client_today?: string;
+    client_tz_offset?: number;
   };
 
   if (!workspace_id || typeof workspace_id !== "string") {
@@ -132,7 +136,13 @@ export async function POST(req: NextRequest) {
   // Build candidates + workspace context in parallel
   // -------------------------------------------------------------------------
   const [candidateBundle, profileCtx] = await Promise.all([
-    buildPlannerCandidates({ workspaceId: workspace_id, userId: user.id, supabase }),
+    buildPlannerCandidates({
+      workspaceId: workspace_id,
+      userId: user.id,
+      supabase,
+      clientToday: client_today,
+      clientTzOffsetMinutes: client_tz_offset,
+    }),
     buildWorkspaceProfileContext({ workspaceId: workspace_id, userId: user.id, supabase }),
   ]);
 

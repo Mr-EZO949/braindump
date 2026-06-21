@@ -28,7 +28,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { workspace_id } = body as { workspace_id?: string };
+  const { workspace_id, client_today, client_tz_offset } = body as {
+    workspace_id?: string;
+    client_today?: string;
+    client_tz_offset?: number;
+  };
   if (!workspace_id || typeof workspace_id !== "string") {
     return NextResponse.json({ error: "workspace_id is required" }, { status: 400 });
   }
@@ -48,6 +52,8 @@ export async function POST(req: NextRequest) {
     workspaceId: workspace_id,
     userId: user.id,
     supabase,
+    clientToday: client_today,
+    clientTzOffsetMinutes: client_tz_offset,
   });
 
   return NextResponse.json({

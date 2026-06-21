@@ -305,9 +305,10 @@ function importanceContribution(score: number | null): number {
  * - Already done today → never due (don't re-surface what you just did).
  * - No cadence target → not a tracked-cadence habit, never boosted here.
  * - Daily (target ≥ 7) → due whenever it's not yet done today.
- * - N-per-week → due only once you're behind pace, so a 3×/week habit doesn't
- *   nag from Monday morning. It surfaces when the days left this week (incl.
- *   today) are about to run short for the sessions you still owe.
+ * - N-per-week → surfaces once you're behind pace: when the days left this week
+ *   (incl. today) are about to run short for the sessions you still owe. So a
+ *   3×/week habit stays quiet early in the week and nudges from mid-week; a
+ *   high-frequency target (5–6/week) is naturally near-daily by design.
  *
  * dayOfWeek is ISO: 1 = Monday … 7 = Sunday.
  */
@@ -393,6 +394,12 @@ export async function buildPlannerCandidates(params: {
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
+  /** The user's local date (YYYY-MM-DD) — see the rhythm-window note below.
+   *  Falls back to the server's local date when absent. */
+  clientToday?: string;
+  /** The user's Date.getTimezoneOffset() (minutes; UTC−local). Falls back to
+   *  the server's offset. */
+  clientTzOffsetMinutes?: number;
 }): Promise<PlannerCandidateBundle> {
   const unblockedAfter = new Date(
     Date.now() - RECENTLY_UNBLOCKED_WINDOW_HOURS * 60 * 60 * 1000,
@@ -405,23 +412,34 @@ export async function buildPlannerCandidates(params: {
   ).toISOString();
   const dueSoonCutoff = isoDateDaysFromNow(DUE_SOON_WINDOW_DAYS);
 
-  // Rhythm windows. todayStart / yesterdayStart are instants (for timestamp
-  // columns); todayDate / weekMonday are date strings (for date columns).
-  const todayStartDate = new Date();
-  todayStartDate.setHours(0, 0, 0, 0);
-  const todayStart = todayStartDate.toISOString();
-  const yesterdayStart = new Date(
-    todayStartDate.getTime() - 24 * 60 * 60 * 1000,
-  ).toISOString();
-  // habit_completions.completed_on is a LOCAL date string (stored via
-  // todayLocalISO), so compare against local dates — NOT isoDateDaysFromNow,
-  // which is UTC-derived and would be off by a day in non-UTC timezones.
-  const todayDate = todayLocalISO(todayStartDate);
-  // ISO weekday: Mon=1 … Sun=7 (JS getDay is Sun=0).
-  const isoDayOfWeek = todayStartDate.getDay() === 0 ? 7 : todayStartDate.getDay();
-  const weekMonday = todayLocalISO(
-    new Date(todayStartDate.getTime() - (isoDayOfWeek - 1) * 24 * 60 * 60 * 1000),
-  );
+  // Rhythm windows — all anchored to the USER's timezone, not the server's.
+  // habit_completions.completed_on is the user's LOCAL date, and hosted servers
+  // run in UTC, so using the server clock would be a full day off for non-UTC
+  // users. The client passes its local date + tz offset; we fall back to the
+  // server's local time only when they're absent.
+  const tzOffsetMin =
+    typeof params.clientTzOffsetMinutes === "number" &&
+    Number.isFinite(params.clientTzOffsetMinutes)
+      ? params.clientTzOffsetMinutes
+      : new Date().getTimezoneOffset();
+  const todayDate =
+    typeof params.clientToday === "string" && /^\d{4}-\d{2}-\d{2}$/.test(params.clientToday)
+      ? params.clientToday
+      : todayLocalISO();
+  // User's local midnight today, as a UTC instant (for the timestamp columns
+  // lifecycle_events.created_at / chat_sessions.last_message_at).
+  const todayStartMs = Date.parse(`${todayDate}T00:00:00.000Z`) + tzOffsetMin * 60_000;
+  const todayStart = new Date(todayStartMs).toISOString();
+  const yesterdayStart = new Date(todayStartMs - 24 * 60 * 60 * 1000).toISOString();
+  // ISO weekday from the date string (parsed at noon UTC to dodge any edge):
+  // Mon=1 … Sun=7.
+  const rawDow = new Date(`${todayDate}T12:00:00.000Z`).getUTCDay();
+  const isoDayOfWeek = rawDow === 0 ? 7 : rawDow;
+  const weekMonday = new Date(
+    Date.parse(`${todayDate}T12:00:00.000Z`) - (isoDayOfWeek - 1) * 24 * 60 * 60 * 1000,
+  )
+    .toISOString()
+    .slice(0, 10);
 
   const [
     nodesResult,
