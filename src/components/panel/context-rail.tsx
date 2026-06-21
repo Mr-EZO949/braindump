@@ -695,15 +695,19 @@ export function ContextRail({
                         state. Full-width, filled, scarlet. Only one shows
                         at a time, so the user always knows the "do this"
                         button by its position. */}
-                    {(!selectedNode.status || selectedNode.status === "active") && (
-                      <button
-                        className="detail-action-primary detail-action-primary--complete"
-                        onClick={() => onStatusChange(selectedNode.id, "completed")}
-                        type="button"
-                      >
-                        Mark complete
-                      </button>
-                    )}
+                    {/* Habits don't "complete" — the streak panel's "Mark today"
+                        logs a recurring completion. Showing a generic complete
+                        button here would archive the whole habit. */}
+                    {(!selectedNode.status || selectedNode.status === "active") &&
+                      selectedNode.node_type !== "habit" && (
+                        <button
+                          className="detail-action-primary detail-action-primary--complete"
+                          onClick={() => onStatusChange(selectedNode.id, "completed")}
+                          type="button"
+                        >
+                          Mark complete
+                        </button>
+                      )}
                     {(selectedNode.status === "completed" || selectedNode.status === "paused") && (
                       <button
                         className="detail-action-primary detail-action-primary--reopen"

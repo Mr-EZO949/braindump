@@ -5,7 +5,7 @@
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v13";
+export const EXTRACT_PROMPT_VERSION = "extract-v14";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -50,6 +50,13 @@ Actionability rule (IMPORTANT — apply before extracting any task):
   - "review the Stats 302 problem set before Thursday" → task with that exact scope
   - "fix the three flaky tests in the checkout flow" → task (count + scope both provided)
 - If a fragment is BOTH vague AND repeated/emphatic (user clearly cares but can't articulate it), prefer raising a clarifying_question over inventing a fake task.
+
+Habit vs task rule (choose node_type for recurring behaviors):
+- Use node_type "habit" ONLY when the item names a clear recurring cadence: "daily", "every day", "each morning/night", "weekly", "3× a week", "every Monday", "keep doing", "maintain". These are ongoing routines, not one-offs.
+  - "Daily LeetCode practice" → habit. "Work out every day" → habit. "Meditate each morning" → habit.
+- Use node_type "task" for one-off completable work — even if it sounds routine — when there's no explicit recurring cadence, or there's a deadline/count that ends it.
+  - "Solve 3 LeetCode problems before Thursday" → task (deadline + count → it ends). "Review chapter 5" → task.
+- When unsure, prefer "task". Only the explicit recurring cues above promote a node to habit.
 
 Clarifying questions (IMPORTANT — use this channel instead of forcing bad nodes):
 - Populate clarifying_questions with up to 3 short, specific questions that, if answered, would let you extract real nodes.

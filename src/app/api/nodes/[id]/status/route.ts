@@ -126,7 +126,7 @@ export async function PATCH(
   // Fetch current node
   const { data: node, error: fetchError } = await supabase
     .from("nodes")
-    .select("id, status, workspace_id, completed_at")
+    .select("id, status, node_type, workspace_id, completed_at")
     .eq("id", id)
     .eq("user_id", user.id)
     .single();
@@ -136,6 +136,25 @@ export async function PATCH(
   }
 
   const previousStatus = ((node.status as NodeStatus) ?? "active") as NodeStatus;
+
+  // Habits recur — they don't "complete". Marking a habit complete logs today's
+  // completion (idempotent) and leaves the node ACTIVE, instead of archiving the
+  // whole habit. This guards every caller (Details button, complete_node tool…).
+  if ((node.node_type as string) === "habit" && newStatus === "completed") {
+    const today = new Date().toISOString().slice(0, 10);
+    await supabase
+      .from("habit_completions")
+      .upsert(
+        { user_id: user.id, node_id: id, completed_on: today, source: "manual" },
+        { onConflict: "node_id,completed_on", ignoreDuplicates: true },
+      );
+    return NextResponse.json({
+      node_id: id,
+      status: previousStatus, // unchanged — the habit stays active
+      changed: false,
+      habit_logged: true,
+    });
+  }
 
   if (previousStatus === newStatus) {
     return NextResponse.json({ node_id: id, status: newStatus, changed: false });
