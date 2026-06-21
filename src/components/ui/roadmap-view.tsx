@@ -34,6 +34,17 @@ function riskFor(days: number, completed: boolean): RiskTier {
   return "ontrack";
 }
 
+// The loud, color-coded countdown that leads each roadmap card. `num` is the
+// big figure, `word` the small caption under it.
+function countdownFor(days: number, completed: boolean): { num: string; word: string } {
+  if (completed) return { num: "✓", word: "done" };
+  if (days < 0) return { num: `${Math.abs(days)}d`, word: "late" };
+  if (days === 0) return { num: "today", word: "" };
+  if (days <= 14) return { num: `${days}d`, word: "left" };
+  if (days <= 90) return { num: `${Math.ceil(days / 7)}w`, word: "left" };
+  return { num: `${Math.round(days / 30)}mo`, word: "left" };
+}
+
 function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -202,11 +213,11 @@ export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
             {bucket.items.map((item) => {
               const date = item.node.target_date as string;
               const days = item.daysFromNow;
-              const dateDisplay = formatDateDisplay(date, days);
               const ratio = item.progress.total > 0 ? item.progress.done / item.progress.total : 0;
               const completed = item.node.status === "completed";
               const overdue = !completed && days < 0;
               const risk = riskFor(days, completed);
+              const countdown = countdownFor(days, completed);
               return (
                 <li key={item.node.id}>
                   <button
@@ -218,42 +229,41 @@ export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
                     data-type={item.node.node_type}
                     onClick={() => onSelectNode(item.node.id)}
                   >
-                    <div className="roadmap-item-head">
-                      <span className="roadmap-item-rail" aria-hidden="true" />
-                      <span className="roadmap-item-type">{item.node.node_type}</span>
-                      <span className="roadmap-item-title">{item.node.title}</span>
-                      <span className="roadmap-item-date">{dateDisplay}</span>
-                    </div>
-                    {item.node.summary ? (
-                      <p className="roadmap-item-summary">{item.node.summary}</p>
-                    ) : null}
-                    {item.progress.total > 0 ? (
-                      <div className="roadmap-progress">
-                        <div
-                          className="roadmap-progress-bar"
-                          data-state={
-                            ratio >= 1
-                              ? "done"
-                              : ratio === 0
-                                ? "empty"
-                                : "partial"
-                          }
-                        >
-                          <div
-                            className="roadmap-progress-fill"
-                            style={{ width: `${Math.round(ratio * 100)}%` }}
-                          />
-                        </div>
-                        <span className="roadmap-progress-label">
-                          <span className="roadmap-progress-pct">
-                            {Math.round(ratio * 100)}%
-                          </span>
-                          <span className="roadmap-progress-fraction">
-                            {item.progress.done}/{item.progress.total} done
-                          </span>
-                        </span>
+                    <span className="roadmap-deadline" data-risk={risk} aria-hidden="true">
+                      <span className="roadmap-deadline-num">{countdown.num}</span>
+                      {countdown.word ? (
+                        <span className="roadmap-deadline-word">{countdown.word}</span>
+                      ) : null}
+                      <span className="roadmap-deadline-date">{shortDate(date)}</span>
+                    </span>
+                    <span className="roadmap-item-body">
+                      <div className="roadmap-item-head">
+                        <span className="roadmap-item-type">{item.node.node_type}</span>
+                        <span className="roadmap-item-title">{item.node.title}</span>
                       </div>
-                    ) : null}
+                      {item.node.summary ? (
+                        <p className="roadmap-item-summary">{item.node.summary}</p>
+                      ) : null}
+                      {item.progress.total > 0 ? (
+                        <div className="roadmap-progress">
+                          <div
+                            className="roadmap-progress-bar"
+                            data-state={ratio >= 1 ? "done" : ratio === 0 ? "empty" : "partial"}
+                          >
+                            <div
+                              className="roadmap-progress-fill"
+                              style={{ width: `${Math.round(ratio * 100)}%` }}
+                            />
+                          </div>
+                          <span className="roadmap-progress-label">
+                            <span className="roadmap-progress-pct">{Math.round(ratio * 100)}%</span>
+                            <span className="roadmap-progress-fraction">
+                              {item.progress.done}/{item.progress.total} done
+                            </span>
+                          </span>
+                        </div>
+                      ) : null}
+                    </span>
                   </button>
                 </li>
               );
@@ -266,18 +276,11 @@ export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
   );
 }
 
-function formatDateDisplay(iso: string, days: number): string {
+function shortDate(iso: string): string {
   const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
-  const date = new Date(Date.UTC(y, m - 1, d));
-  const formatted = date.toLocaleDateString(undefined, {
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     timeZone: "UTC",
   });
-  if (days === 0) return `${formatted} · today`;
-  if (days === 1) return `${formatted} · tomorrow`;
-  if (days === -1) return `${formatted} · yesterday`;
-  if (days > 0 && days <= 14) return `${formatted} · ${days}d`;
-  if (days < 0) return `${formatted} · ${Math.abs(days)}d late`;
-  return formatted;
 }

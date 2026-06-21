@@ -12608,20 +12608,23 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .list-view-row {
   display: grid;
-  grid-template-columns: 8px 1fr auto;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 14px;
+  gap: 13px;
   width: 100%;
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--color-border-faint);
-  background: var(--color-bg-surface);
-  /* Tier-colored left border gives priority a visual cue at a glance.
+  padding: 10px 15px;
+  border-radius: 11px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface-elevated);
+  /* Tier-colored left edge gives priority a visual cue at a glance.
      Width is constant; the color (set by [data-tier]) does the work. */
   border-left: 3px solid var(--list-view-row-tier-color, transparent);
   cursor: pointer;
   text-align: left;
-  transition: border-color var(--motion-fast), background var(--motion-fast);
+  transition:
+    border-color var(--motion-fast),
+    transform var(--motion-fast),
+    box-shadow var(--motion-fast);
 }
 
 .list-view-row[data-tier="critical"] {
@@ -12645,7 +12648,9 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .list-view-row:hover {
-  border-color: rgba(213, 58, 71, 0.32);
+  border-color: rgba(255, 255, 255, 0.14);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.26);
 }
 
 .list-view-row[data-completed="true"] {
@@ -12723,20 +12728,31 @@ input[type="search"]::-webkit-search-results-decoration {
   border-color: rgba(95, 201, 160, 0.45);
 }
 
-.list-view-row-date,
 .list-view-row-children {
   font-variant-numeric: tabular-nums;
 }
 
+.list-view-row-date {
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-surface-hover);
+  padding: 2px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
 .list-view-row-score {
+  font-size: 13px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--color-text-primary);
-  min-width: 28px;
-  padding: 2px 8px;
+  color: var(--color-text-secondary);
+  min-width: 38px;
+  padding: 5px 6px;
   text-align: center;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  background: var(--color-bg-surface-hover);
 }
 
 .list-view-row-score[data-tier="critical"] {
@@ -12925,63 +12941,117 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .roadmap-item {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: stretch;
   width: 100%;
   text-align: left;
-  padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--color-border-faint);
-  background: var(--color-bg-surface);
+  border-radius: 13px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface-elevated);
+  overflow: hidden;
   cursor: pointer;
-  transition: border-color var(--motion-fast), background var(--motion-fast);
+  transition:
+    border-color var(--motion-fast),
+    transform var(--motion-fast),
+    box-shadow var(--motion-fast);
 }
 
 .roadmap-item:hover {
-  border-color: rgba(213, 58, 71, 0.36);
-}
-
-.roadmap-item[data-overdue="true"] {
-  border-color: rgba(213, 58, 71, 0.45);
-  background: rgba(213, 58, 71, 0.04);
+  border-color: rgba(255, 255, 255, 0.14);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
 }
 
 .roadmap-item[data-completed="true"] {
-  opacity: 0.6;
+  opacity: 0.5;
+}
+
+/* ── The loud countdown badge — the focal deadline element ── */
+.roadmap-deadline {
+  --dl: var(--color-text-secondary);
+  flex-shrink: 0;
+  width: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 14px 6px;
+  border-right: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--dl) 13%, transparent);
+  color: var(--dl);
+}
+
+.roadmap-deadline[data-risk="overdue"] {
+  --dl: rgb(233, 92, 102);
+}
+.roadmap-deadline[data-risk="soon"] {
+  --dl: #e3a73f;
+}
+.roadmap-deadline[data-risk="ontrack"] {
+  --dl: #4db38a;
+}
+.roadmap-deadline[data-risk="done"] {
+  --dl: var(--color-text-muted);
+}
+
+.roadmap-deadline-num {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--dl);
+  font-variant-numeric: tabular-nums;
+}
+
+.roadmap-deadline-word {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dl);
+}
+
+.roadmap-deadline-date {
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.roadmap-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 13px 15px;
 }
 
 .roadmap-item-head {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
 }
 
 .roadmap-item-type {
-  font-size: 10px;
+  flex-shrink: 0;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--color-text-muted);
+  background: var(--color-bg-surface-hover);
+  padding: 2px 7px;
+  border-radius: 5px;
 }
 
 .roadmap-item-title {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 600;
   color: var(--color-text-primary);
   letter-spacing: -0.01em;
-}
-
-.roadmap-item-date {
-  margin-left: auto;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-muted);
-}
-
-.roadmap-item[data-overdue="true"] .roadmap-item-date {
-  color: rgba(180, 36, 50, 1);
-  font-weight: 600;
+  line-height: 1.3;
 }
 
 .roadmap-item-summary {
@@ -13075,53 +13145,7 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 /* Per-item urgency rail dot + vertical spine connecting them. */
-.roadmap-item {
-  position: relative;
-  padding-left: 20px;
-}
-
-.roadmap-item-rail {
-  position: absolute;
-  left: 8px;
-  top: 16px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-text-secondary);
-}
-
-.roadmap-item[data-risk="overdue"] .roadmap-item-rail {
-  background: var(--color-accent-primary);
-  box-shadow: 0 0 0 3px var(--color-accent-glow);
-}
-
-.roadmap-item[data-risk="soon"] .roadmap-item-rail {
-  background: #e0a13a;
-}
-
-.roadmap-item[data-risk="ontrack"] .roadmap-item-rail {
-  background: #3a9d6e;
-}
-
-.roadmap-item[data-risk="done"] .roadmap-item-rail {
-  background: var(--color-text-secondary);
-  opacity: 0.5;
-}
-
-/* Vertical spine connecting the dots down the left edge of a bucket. */
-.roadmap-bucket-list {
-  position: relative;
-}
-
-.roadmap-bucket-list::before {
-  content: "";
-  position: absolute;
-  left: 11px;
-  top: 8px;
-  bottom: 8px;
-  width: 1px;
-  background: var(--color-border-subtle);
-}
+/* (the old rail-dot + spine were replaced by the countdown badge) */
 
 /* Completed bucket: faded + a distinct surface behind its list. */
 .roadmap-bucket[data-completed="true"] {
@@ -13807,7 +13831,7 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .todos-row-wrap > .list-view-row {
   flex: 1;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
 }
 
 .todos-row-check {

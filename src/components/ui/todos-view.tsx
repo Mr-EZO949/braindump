@@ -59,6 +59,16 @@ function groupStatus(status: string | null | undefined): GroupStatus {
   }
 }
 
+function formatShortDate(iso: string): string {
+  const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
+  if (!y || !m || !d) return iso;
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 const GROUP_ORDER: GroupStatus[] = ["active", "paused", "completed", "archived"];
 
 const GROUP_LABEL: Record<GroupStatus, string> = {
@@ -343,23 +353,21 @@ export function TodosView({ graphData, onSelectNode, onToggleStatus }: TodosView
                             title={node.importance_reason ?? undefined}
                             onClick={() => onSelectNode(node.id)}
                           >
+                            <span
+                              className="list-view-row-score"
+                              data-tier={scoreTier(score)}
+                            >
+                              {score}
+                            </span>
                             <span className="list-view-row-main">
                               <span className="list-view-row-title">{node.title}</span>
                               {parent ? (
                                 <span className="list-view-row-parent">{parent.title}</span>
                               ) : null}
                             </span>
-                            <span className="list-view-row-meta">
-                              {node.target_date ? (
-                                <span className="list-view-row-date">{node.target_date}</span>
-                              ) : null}
-                              <span
-                                className="list-view-row-score"
-                                data-tier={scoreTier(score)}
-                              >
-                                {score}
-                              </span>
-                            </span>
+                            {node.target_date ? (
+                              <span className="list-view-row-date">{formatShortDate(node.target_date)}</span>
+                            ) : null}
                           </button>
                         </li>
                       );
