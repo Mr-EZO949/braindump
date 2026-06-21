@@ -299,30 +299,59 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const requested = (body as { started_on?: unknown })?.started_on;
-  let startedOn: string | null;
-  if (requested === null || requested === "") {
-    startedOn = null;
-  } else if (isISODate(requested)) {
-    startedOn = requested;
-  } else {
-    return NextResponse.json(
-      { error: "started_on must be YYYY-MM-DD or null" },
-      { status: 400 },
-    );
+  const bodyObj = (body ?? {}) as {
+    started_on?: unknown;
+    target_per_week?: unknown;
+  };
+  const todayISO = todayLocalISO();
+  const updates: Record<string, unknown> = {};
+
+  // Effective habit_started_on — kept as-is unless this request changes it.
+  let startedOn: string | null =
+    (node as { habit_started_on?: string | null }).habit_started_on ?? null;
+
+  if ("started_on" in bodyObj) {
+    const requested = bodyObj.started_on;
+    if (requested === null || requested === "") {
+      startedOn = null;
+    } else if (isISODate(requested)) {
+      startedOn = requested;
+    } else {
+      return NextResponse.json(
+        { error: "started_on must be YYYY-MM-DD or null" },
+        { status: 400 },
+      );
+    }
+    if (startedOn !== null && startedOn > todayISO) {
+      return NextResponse.json(
+        { error: "started_on cannot be in the future" },
+        { status: 400 },
+      );
+    }
+    updates.habit_started_on = startedOn;
   }
 
-  const todayISO = todayLocalISO();
-  if (startedOn !== null && startedOn > todayISO) {
-    return NextResponse.json(
-      { error: "started_on cannot be in the future" },
-      { status: 400 },
-    );
+  if ("target_per_week" in bodyObj) {
+    const t = bodyObj.target_per_week;
+    if (t === null) {
+      updates.habit_target_per_week = null;
+    } else if (typeof t === "number" && Number.isInteger(t) && t >= 1 && t <= 7) {
+      updates.habit_target_per_week = t;
+    } else {
+      return NextResponse.json(
+        { error: "target_per_week must be an integer 1–7 or null" },
+        { status: 400 },
+      );
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
   const { error: updateError } = await supabase
     .from("nodes")
-    .update({ habit_started_on: startedOn })
+    .update(updates)
     .eq("id", nodeId)
     .eq("user_id", user.id);
 

@@ -65,6 +65,10 @@ export interface Node {
   // Stats (% done, missed) are computed from this day forward. Null = no
   // anchor set; UI falls back to the earliest completion or fetched window.
   habit_started_on?: string | null;
+  // Habit-only: cadence target — completions wanted per ISO week (1–7).
+  // 7 = daily, 3 = "3× a week", 1 = weekly. Null = no cadence tracked.
+  // Drives the planner's CADENCE_DUE boost (Focus surfaces it when due).
+  habit_target_per_week?: number | null;
 }
 
 export interface Edge {

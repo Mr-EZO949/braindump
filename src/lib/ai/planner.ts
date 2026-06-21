@@ -3,6 +3,7 @@
 // hints learned from recent plan edits/rejections.
 
 import type { NodeType } from "@/types/graph";
+import { todayLocalISO } from "@/lib/habits/streak";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any;
@@ -52,6 +53,9 @@ const PLANNER_BONUSES = {
   RECENTLY_UNBLOCKED: 300,
   /** target_date within 7 days. */
   DUE_SOON: 240,
+  /** A committed-cadence habit (daily / N-per-week) that's due this period —
+   *  you said you'd do this and haven't yet. Just under a dated deadline. */
+  CADENCE_DUE: 220,
   /** User previously planned this and didn't get to it. */
   CARRIED_OVER: 170,
   /** Has downstream dependents — completing this unlocks more work. */
@@ -75,6 +79,15 @@ const PLANNER_PENALTIES = {
   BLOCKER_BASE: 42,
   BLOCKER_PER_EXTRA: 8,
   BLOCKER_MAX_PENALTY: 24,
+  /**
+   * This node's project cluster was already worked yesterday AND there's an
+   * untouched cluster available — demote so Focus rotates to neglected work
+   * instead of repeating yesterday. Smaller than the urgency bonuses on
+   * purpose: a genuinely due item (deadline, ready-to-start) from yesterday's
+   * project still outranks a fresh-but-idle task elsewhere. Rotation nudges,
+   * it doesn't override urgency.
+   */
+  ROTATION: 130,
 } as const;
 
 /**
@@ -91,9 +104,14 @@ if (PLANNER_BONUSES.RECENTLY_UNBLOCKED <= PLANNER_BONUSES.DUE_SOON) {
     "[planner] RECENTLY_UNBLOCKED must outrank DUE_SOON — newly-actionable work is the strongest signal",
   );
 }
-if (PLANNER_BONUSES.DUE_SOON <= PLANNER_BONUSES.CARRIED_OVER) {
+if (PLANNER_BONUSES.DUE_SOON <= PLANNER_BONUSES.CADENCE_DUE) {
   throw new Error(
-    "[planner] DUE_SOON must outrank CARRIED_OVER — a deadline beats a leftover",
+    "[planner] DUE_SOON must outrank CADENCE_DUE — a dated deadline beats a cadence commitment",
+  );
+}
+if (PLANNER_BONUSES.CADENCE_DUE <= PLANNER_BONUSES.CARRIED_OVER) {
+  throw new Error(
+    "[planner] CADENCE_DUE must outrank CARRIED_OVER — a due habit beats a leftover",
   );
 }
 
@@ -131,6 +149,7 @@ type NodeRow = {
   status: string | null;
   summary: string | null;
   title: string;
+  habit_target_per_week: number | null;
 };
 
 type EdgeRow = {
@@ -281,6 +300,47 @@ function importanceContribution(score: number | null): number {
 }
 
 /**
+ * Is a cadence habit "due" right now? Pure + unit-tested.
+ *
+ * - Already done today → never due (don't re-surface what you just did).
+ * - No cadence target → not a tracked-cadence habit, never boosted here.
+ * - Daily (target ≥ 7) → due whenever it's not yet done today.
+ * - N-per-week → due only once you're behind pace, so a 3×/week habit doesn't
+ *   nag from Monday morning. It surfaces when the days left this week (incl.
+ *   today) are about to run short for the sessions you still owe.
+ *
+ * dayOfWeek is ISO: 1 = Monday … 7 = Sunday.
+ */
+export function cadenceDue(params: {
+  targetPerWeek: number | null;
+  completionsThisWeek: number;
+  doneToday: boolean;
+  dayOfWeek: number;
+}): boolean {
+  const { targetPerWeek, completionsThisWeek, doneToday, dayOfWeek } = params;
+  if (doneToday) return false;
+  if (targetPerWeek == null) return false;
+  const remaining = targetPerWeek - completionsThisWeek;
+  if (remaining <= 0) return false; // already hit this week's target
+  if (targetPerWeek >= 7) return true; // daily — due any day it's not yet done
+  const daysLeftIncludingToday = 8 - dayOfWeek; // Mon → 7 … Sun → 1
+  // Nudge once you're within a day of needing every remaining day this week.
+  return daysLeftIncludingToday <= remaining + 1;
+}
+
+/**
+ * Should this candidate be demoted for rotation? Pure. True only when its
+ * project cluster was worked yesterday AND there's an untouched cluster to
+ * offer instead — so a single-project user is never demoted into emptiness.
+ */
+export function rotationDemoted(params: {
+  clusterTouchedYesterday: boolean;
+  untouchedClusterAvailable: boolean;
+}): boolean {
+  return params.clusterTouchedYesterday && params.untouchedClusterAvailable;
+}
+
+/**
  * Combine signals into a single priority number for ranking planner
  * candidates. Higher = more deserving of a slot in today's plan.
  *
@@ -290,6 +350,7 @@ function importanceContribution(score: number | null): number {
  */
 export function computePlannerPriority(params: {
   dueSoon: boolean;
+  cadenceDue: boolean;
   carriedOver: boolean;
   currentImportanceScore: number | null;
   recentlyUnblocked: boolean;
@@ -297,15 +358,18 @@ export function computePlannerPriority(params: {
   blockerCount: number;
   prerequisiteCount: number;
   unlocksCount: number;
+  rotationDemoted: boolean;
 }): number {
   return (
     nodeTypeBasePriority(params.nodeType) +
     (params.recentlyUnblocked ? PLANNER_BONUSES.RECENTLY_UNBLOCKED : 0) +
     (params.dueSoon ? PLANNER_BONUSES.DUE_SOON : 0) +
+    (params.cadenceDue ? PLANNER_BONUSES.CADENCE_DUE : 0) +
     (params.carriedOver ? PLANNER_BONUSES.CARRIED_OVER : 0) +
     unlocksBonus(params.unlocksCount) -
     prerequisitePenalty(params.prerequisiteCount) -
-    blockerPenalty(params.blockerCount) +
+    blockerPenalty(params.blockerCount) -
+    (params.rotationDemoted ? PLANNER_PENALTIES.ROTATION : 0) +
     importanceContribution(params.currentImportanceScore)
   );
 }
@@ -341,6 +405,24 @@ export async function buildPlannerCandidates(params: {
   ).toISOString();
   const dueSoonCutoff = isoDateDaysFromNow(DUE_SOON_WINDOW_DAYS);
 
+  // Rhythm windows. todayStart / yesterdayStart are instants (for timestamp
+  // columns); todayDate / weekMonday are date strings (for date columns).
+  const todayStartDate = new Date();
+  todayStartDate.setHours(0, 0, 0, 0);
+  const todayStart = todayStartDate.toISOString();
+  const yesterdayStart = new Date(
+    todayStartDate.getTime() - 24 * 60 * 60 * 1000,
+  ).toISOString();
+  // habit_completions.completed_on is a LOCAL date string (stored via
+  // todayLocalISO), so compare against local dates — NOT isoDateDaysFromNow,
+  // which is UTC-derived and would be off by a day in non-UTC timezones.
+  const todayDate = todayLocalISO(todayStartDate);
+  // ISO weekday: Mon=1 … Sun=7 (JS getDay is Sun=0).
+  const isoDayOfWeek = todayStartDate.getDay() === 0 ? 7 : todayStartDate.getDay();
+  const weekMonday = todayLocalISO(
+    new Date(todayStartDate.getTime() - (isoDayOfWeek - 1) * 24 * 60 * 60 * 1000),
+  );
+
   const [
     nodesResult,
     edgesResult,
@@ -348,10 +430,15 @@ export async function buildPlannerCandidates(params: {
     recentPlanBlocksResult,
     planTasksResult,
     planFeedbackEventsResult,
+    lifecycleSinceYesterdayResult,
+    habitCompletionsThisWeekResult,
+    chatSessionsSinceYesterdayResult,
   ] = await Promise.all([
     params.supabase
       .from("nodes")
-      .select("id, title, summary, node_type, status, current_importance_score")
+      .select(
+        "id, title, summary, node_type, status, current_importance_score, habit_target_per_week",
+      )
       .eq("workspace_id", params.workspaceId)
       .eq("user_id", params.userId)
       .or("status.eq.active,status.is.null")
@@ -408,6 +495,30 @@ export async function buildPlannerCandidates(params: {
       .eq("entity_type", "plan_session")
       .in("event_type", ["accept_node", "reject_node"])
       .gte("created_at", feedbackAfter),
+
+    // Rhythm: status changes since yesterday → today-done filter + rotation.
+    // lifecycle_events has user_id but no workspace_id; activeIds scopes it.
+    params.supabase
+      .from("lifecycle_events")
+      .select("node_id, new_status, created_at")
+      .eq("user_id", params.userId)
+      .gte("created_at", yesterdayStart),
+
+    // Rhythm: this week's habit completions → cadence-due + today-done.
+    params.supabase
+      .from("habit_completions")
+      .select("node_id, completed_on")
+      .eq("user_id", params.userId)
+      .gte("completed_on", weekMonday),
+
+    // Rhythm: chat scope touched yesterday → rotation (a cluster you talked
+    // about yesterday counts as "worked", not just completions).
+    params.supabase
+      .from("chat_sessions")
+      .select("scope_node_id, last_message_at")
+      .eq("workspace_id", params.workspaceId)
+      .eq("user_id", params.userId)
+      .gte("last_message_at", yesterdayStart),
   ]);
 
   const rawNodes = (nodesResult.data ?? []) as NodeRow[];
@@ -429,6 +540,67 @@ export async function buildPlannerCandidates(params: {
   for (const row of (recentPlanBlocksResult.data ?? []) as Array<{ node_id: string }>) {
     if (row.node_id && activeIds.has(row.node_id)) {
       carriedOverNodeIds.add(row.node_id);
+    }
+  }
+
+  // ─── Rhythm signals (all derived in-memory, no AI) ──────────────────────
+  const lifecycleRows = (lifecycleSinceYesterdayResult.data ?? []) as Array<{
+    node_id: string;
+    new_status: string;
+    created_at: string;
+  }>;
+  const habitRows = (habitCompletionsThisWeekResult.data ?? []) as Array<{
+    node_id: string;
+    completed_on: string;
+  }>;
+  const chatRows = (chatSessionsSinceYesterdayResult.data ?? []) as Array<{
+    scope_node_id: string | null;
+    last_message_at: string | null;
+  }>;
+
+  // Done today: a completed status-change today, or a habit logged today.
+  const doneTodayIds = new Set<string>();
+  for (const row of lifecycleRows) {
+    if (
+      row.new_status === "completed" &&
+      row.created_at >= todayStart &&
+      activeIds.has(row.node_id)
+    ) {
+      doneTodayIds.add(row.node_id);
+    }
+  }
+  // This week's habit completions per node (habit_completions is one row per
+  // (node, date), so the count is distinct days done this week).
+  const habitCompletionsThisWeekByNode = new Map<string, number>();
+  for (const row of habitRows) {
+    if (!activeIds.has(row.node_id)) continue;
+    if (row.completed_on === todayDate) doneTodayIds.add(row.node_id);
+    habitCompletionsThisWeekByNode.set(
+      row.node_id,
+      (habitCompletionsThisWeekByNode.get(row.node_id) ?? 0) + 1,
+    );
+  }
+  // Nodes touched *yesterday* (strictly) — a completion/status change or a chat
+  // scoped to them. Used for rotation: rotate away from yesterday's cluster.
+  const touchedYesterdayNodeIds = new Set<string>();
+  for (const row of lifecycleRows) {
+    if (
+      row.created_at >= yesterdayStart &&
+      row.created_at < todayStart &&
+      activeIds.has(row.node_id)
+    ) {
+      touchedYesterdayNodeIds.add(row.node_id);
+    }
+  }
+  for (const row of chatRows) {
+    if (
+      row.scope_node_id &&
+      row.last_message_at &&
+      row.last_message_at >= yesterdayStart &&
+      row.last_message_at < todayStart &&
+      activeIds.has(row.scope_node_id)
+    ) {
+      touchedYesterdayNodeIds.add(row.scope_node_id);
     }
   }
 
@@ -491,12 +663,34 @@ export async function buildPlannerCandidates(params: {
   // wrapper around its tasks/exams; the course itself isn't actionable).
   const NON_ACTIONABLE_TYPES = new Set<NodeType>(["class"]);
 
-  const candidates = rawNodes
-    .filter((node) => {
-      if (NON_ACTIONABLE_TYPES.has(node.node_type)) return false;
-      if (isClusterAnchor.has(node.id)) return false;
-      return true;
-    })
+  // Resolve a node's project cluster: its belongs_to parent, else itself.
+  const belongsToParentOf = (nodeId: string): string => {
+    const out = outgoingEdgesByNode.get(nodeId) ?? [];
+    const parentEdge = out.find(
+      (e) => e.edge_type === "belongs_to" && activeIds.has(e.target_node_id),
+    );
+    return parentEdge ? parentEdge.target_node_id : nodeId;
+  };
+  // Which clusters were worked yesterday (map each touched node to its cluster).
+  const clustersTouchedYesterday = new Set<string>();
+  for (const nodeId of touchedYesterdayNodeIds) {
+    clustersTouchedYesterday.add(belongsToParentOf(nodeId));
+  }
+
+  // Surfaceable actionable nodes: not a container, not a class, not done today.
+  const actionableNodes = rawNodes.filter((node) => {
+    if (NON_ACTIONABLE_TYPES.has(node.node_type)) return false;
+    if (isClusterAnchor.has(node.id)) return false;
+    if (doneTodayIds.has(node.id)) return false; // today-awareness: hide what's done
+    return true;
+  });
+  // Only rotate-demote when there's somewhere else to send the user — never
+  // demote a single-project user's only cluster into emptiness.
+  const untouchedClusterAvailable = actionableNodes.some(
+    (node) => !clustersTouchedYesterday.has(belongsToParentOf(node.id)),
+  );
+
+  const candidates = actionableNodes
     .map((node) => {
       const incoming = incomingEdgesByNode.get(node.id) ?? [];
       const outgoing = outgoingEdgesByNode.get(node.id) ?? [];
@@ -529,6 +723,19 @@ export async function buildPlannerCandidates(params: {
       const dueSoon = Boolean(dueSoonDate);
       const carriedOver = carriedOverNodeIds.has(node.id);
       const recentlyUnblocked = recentlyUnblockedIds.has(node.id);
+      const completionsThisWeek = habitCompletionsThisWeekByNode.get(node.id) ?? 0;
+      const cadenceIsDue = cadenceDue({
+        targetPerWeek: node.habit_target_per_week,
+        completionsThisWeek,
+        doneToday: doneTodayIds.has(node.id),
+        dayOfWeek: isoDayOfWeek,
+      });
+      const isRotationDemoted = rotationDemoted({
+        clusterTouchedYesterday: clustersTouchedYesterday.has(
+          belongsToParentOf(node.id),
+        ),
+        untouchedClusterAvailable,
+      });
 
       if (recentlyUnblocked) {
         planningSignals.push("Ready to start");
@@ -536,6 +743,15 @@ export async function buildPlannerCandidates(params: {
 
       if (dueSoon && dueSoonDate) {
         planningSignals.push(`Due soon (${dueSoonDate})`);
+      }
+
+      if (cadenceIsDue) {
+        const target = node.habit_target_per_week;
+        planningSignals.push(
+          target != null && target >= 7
+            ? "Daily — not done yet today"
+            : `Due this week (${completionsThisWeek}/${target ?? 0} done)`,
+        );
       }
 
       if (carriedOver) {
@@ -553,6 +769,7 @@ export async function buildPlannerCandidates(params: {
 
       const priority = computePlannerPriority({
         dueSoon,
+        cadenceDue: cadenceIsDue,
         carriedOver,
         currentImportanceScore: node.current_importance_score,
         recentlyUnblocked,
@@ -560,6 +777,7 @@ export async function buildPlannerCandidates(params: {
         blockerCount: blockerTitles.length,
         prerequisiteCount: prerequisiteTitles.length,
         unlocksCount: unlocksTitles.length,
+        rotationDemoted: isRotationDemoted,
       });
 
       return {

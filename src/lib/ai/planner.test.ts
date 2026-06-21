@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { computePlannerPriority } from "./planner";
+import { cadenceDue, computePlannerPriority, rotationDemoted } from "./planner";
 
 // Minimal "do nothing" baseline. Lets each test toggle exactly one signal
 // to verify its isolated contribution.
 const BASE = {
   dueSoon: false,
+  cadenceDue: false,
   carriedOver: false,
   currentImportanceScore: 0,
   recentlyUnblocked: false,
@@ -13,6 +14,7 @@ const BASE = {
   blockerCount: 0,
   prerequisiteCount: 0,
   unlocksCount: 0,
+  rotationDemoted: false,
 };
 
 describe("computePlannerPriority", () => {
@@ -128,5 +130,108 @@ describe("computePlannerPriority", () => {
       blockerCount: 99,
     });
     expect(result).toBe(-52);
+  });
+
+  // ── Cadence + rotation contributions ───────────────────────────────────
+  describe("cadence + rotation", () => {
+    it("adds CADENCE_DUE bonus (+220)", () => {
+      expect(computePlannerPriority({ ...BASE, cadenceDue: true })).toBe(340);
+    });
+
+    it("subtracts ROTATION penalty (-130) when demoted", () => {
+      expect(computePlannerPriority({ ...BASE, rotationDemoted: true })).toBe(-10);
+    });
+
+    it("ranks due_soon > cadence_due > carried_over", () => {
+      const due = computePlannerPriority({ ...BASE, dueSoon: true });
+      const cadence = computePlannerPriority({ ...BASE, cadenceDue: true });
+      const carried = computePlannerPriority({ ...BASE, carriedOver: true });
+      expect(due).toBeGreaterThan(cadence);
+      expect(cadence).toBeGreaterThan(carried);
+    });
+
+    it("rotation nudges but doesn't override urgency: a due item from yesterday's project still beats a fresh idle task elsewhere", () => {
+      const dueButDemoted = computePlannerPriority({
+        ...BASE,
+        dueSoon: true,
+        rotationDemoted: true,
+      }); // 120 + 240 - 130 = 230
+      const freshIdle = computePlannerPriority({ ...BASE }); // 120
+      expect(dueButDemoted).toBeGreaterThan(freshIdle);
+    });
+  });
+});
+
+describe("cadenceDue", () => {
+  it("is never due once done today", () => {
+    expect(
+      cadenceDue({ targetPerWeek: 7, completionsThisWeek: 0, doneToday: true, dayOfWeek: 3 }),
+    ).toBe(false);
+  });
+
+  it("is not due for a node with no cadence target", () => {
+    expect(
+      cadenceDue({ targetPerWeek: null, completionsThisWeek: 0, doneToday: false, dayOfWeek: 3 }),
+    ).toBe(false);
+  });
+
+  it("a daily habit is due any day it's not yet done", () => {
+    expect(
+      cadenceDue({ targetPerWeek: 7, completionsThisWeek: 0, doneToday: false, dayOfWeek: 1 }),
+    ).toBe(true);
+    expect(
+      cadenceDue({ targetPerWeek: 7, completionsThisWeek: 3, doneToday: false, dayOfWeek: 5 }),
+    ).toBe(true);
+  });
+
+  it("a 3x/week habit does NOT nag early in the week when on pace", () => {
+    // Mon: 7 days left, only need 3 → not behind → not due
+    expect(
+      cadenceDue({ targetPerWeek: 3, completionsThisWeek: 0, doneToday: false, dayOfWeek: 1 }),
+    ).toBe(false);
+    // Wed: 5 days left, need 3 → still fine
+    expect(
+      cadenceDue({ targetPerWeek: 3, completionsThisWeek: 0, doneToday: false, dayOfWeek: 3 }),
+    ).toBe(false);
+  });
+
+  it("a 3x/week habit becomes due once behind pace late in the week", () => {
+    // Thu: 4 days left, need 3 → getting tight → due
+    expect(
+      cadenceDue({ targetPerWeek: 3, completionsThisWeek: 0, doneToday: false, dayOfWeek: 4 }),
+    ).toBe(true);
+    // Sat: 2 days left, 1 done, 2 to go → due
+    expect(
+      cadenceDue({ targetPerWeek: 3, completionsThisWeek: 1, doneToday: false, dayOfWeek: 6 }),
+    ).toBe(true);
+  });
+
+  it("is not due once the weekly target is already met", () => {
+    expect(
+      cadenceDue({ targetPerWeek: 3, completionsThisWeek: 3, doneToday: false, dayOfWeek: 7 }),
+    ).toBe(false);
+    expect(
+      cadenceDue({ targetPerWeek: 3, completionsThisWeek: 5, doneToday: false, dayOfWeek: 7 }),
+    ).toBe(false);
+  });
+});
+
+describe("rotationDemoted", () => {
+  it("demotes only when the cluster was touched yesterday AND an untouched cluster is available", () => {
+    expect(
+      rotationDemoted({ clusterTouchedYesterday: true, untouchedClusterAvailable: true }),
+    ).toBe(true);
+  });
+
+  it("does not demote a single-cluster user (no alternative to rotate to)", () => {
+    expect(
+      rotationDemoted({ clusterTouchedYesterday: true, untouchedClusterAvailable: false }),
+    ).toBe(false);
+  });
+
+  it("does not demote a cluster that wasn't touched yesterday", () => {
+    expect(
+      rotationDemoted({ clusterTouchedYesterday: false, untouchedClusterAvailable: true }),
+    ).toBe(false);
   });
 });
