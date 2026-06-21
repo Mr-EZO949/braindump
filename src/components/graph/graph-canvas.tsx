@@ -74,6 +74,7 @@ type IdleOffset = {
 type GraphNode = Node &
   SimulationNodeDatum &
   LabelLayout & {
+    __autoPinned?: boolean;
     categoryColor: string;
     driftAngle: number;
     depth: number;
@@ -1540,6 +1541,7 @@ export function GraphCanvas({
   const returningNodeRef = useRef<GraphNode | null>(null);
   const viewAnimationRef = useRef<number | null>(null);
   const focusFollowUpTimeoutRef = useRef<number | null>(null);
+  const pendingFocusRequestRef = useRef<number | null>(null);
   const focusNodeIdRef = useRef(focusNodeId);
   const suppressInitialFocusAnimationRef = useRef(suppressInitialFocusAnimation);
   const lastHandledFocusRequestRef = useRef(focusRequestKey);
@@ -1936,6 +1938,33 @@ export function GraphCanvas({
     };
   }, [requestRender, scene]);
 
+  // When a node is selected, freeze the layout so the simulation can't drift
+  // neighbors out from under the user. Pin every unpinned node at its current
+  // position; clear the pins when selection is released so the layout breathes.
+  useEffect(() => {
+    const sim = simulationRef.current;
+    if (!sim) return;
+    if (focusNodeId) {
+      scene.nodes.forEach((node) => {
+        if (node.manual_position) return; // already user-pinned
+        if (node.fx == null) {
+          node.fx = node.x ?? node.restX;
+          node.fy = node.y ?? node.restY;
+          node.__autoPinned = true;
+        }
+      });
+    } else {
+      scene.nodes.forEach((node) => {
+        if (node.__autoPinned) {
+          node.fx = null;
+          node.fy = null;
+          node.__autoPinned = false;
+        }
+      });
+      sim.alpha(0.12).restart(); // gentle re-settle after release
+    }
+  }, [focusNodeId, scene]);
+
   useEffect(() => {
     idleOffsetsRef.current = new Map(
       scene.nodes.map((node) => [node.id, { x: 0, y: 0 } satisfies IdleOffset]),
@@ -2112,19 +2141,26 @@ export function GraphCanvas({
   }, [scene, viewport.width, viewport.height]);
 
   useEffect(() => {
-    if (!focusNodeId || viewport.width === 0 || viewport.height === 0) {
-      return;
-    }
+    if (!focusNodeId) return;
 
     const hasExplicitFocusRequest = focusRequestKey !== lastHandledFocusRequestRef.current;
 
     // Only re-center the camera on EXPLICIT focus requests. Without this gate,
     // every scene update (status change, completion, edge add) would re-fire
     // this effect and snap the viewport back to the focused node — which felt
-    // like the camera was randomly jumping after every action.
-    if (!hasExplicitFocusRequest) {
+    // like the camera was randomly jumping after every action. The pending ref
+    // lets a request that arrived before the viewport was measured still run
+    // once the ResizeObserver reports real dimensions (the cold-load recenter
+    // bug, where focusRequestKey has already been marked handled by now).
+    if (!hasExplicitFocusRequest && pendingFocusRequestRef.current === null) return;
+
+    // Viewport not measured yet — stash the request and bail; the
+    // viewport.width/height deps re-run this effect once ResizeObserver fires.
+    if (viewport.width === 0 || viewport.height === 0) {
+      pendingFocusRequestRef.current = focusRequestKey;
       return;
     }
+    pendingFocusRequestRef.current = null;
 
     if (suppressInitialFocusAnimationRef.current) {
       suppressInitialFocusAnimationRef.current = false;
