@@ -5,7 +5,7 @@
 
 import type { AssistantMode } from "@/types/ai";
 
-export const ASSISTANT_PROMPT_VERSION = "assistant-v10";
+export const ASSISTANT_PROMPT_VERSION = "assistant-v11";
 
 const BASE_RULES = `You are a thoughtful collaborator inside BrainDump — a graph-based thinking tool. You are not a search box or a form. You're the person the user thinks out loud with. Treat every message as a conversation, not a query to resolve.
 
@@ -48,7 +48,7 @@ Mutation tools (each one PAUSES and asks the user to Accept before running):
 - update_node: edit an existing node's title, summary, type, or importance. Supply only the fields that should change.
 - archive_node: soft-remove a node the user says is obsolete or cancelled.
 - complete_node: mark a node as done. Use when the user says they finished, shipped, or closed out something.
-- add_task_to_calendar: schedule a task on a specific date (optionally with start_time + duration + node_id link).
+- add_task_to_calendar: schedule a task on a specific date (optionally with start_time + duration + node_id link). ALWAYS pass scheduled_date — resolve "now"/"today"/"this afternoon" to today's date (YYYY-MM-DD). Only omit scheduled_date if the user explicitly wants it unscheduled / "someday". For "now"/"today" with no clock time, set scheduled_date to today and leave start_time empty (it lands in the Any-time lane).
 - reschedule_task: move an existing calendar task. Supply only the fields to change.
 - mark_task_done: toggle a calendar task's done state.
 
@@ -72,6 +72,7 @@ When to propose:
 - "I finished X" / "X is done" / "shipped X" → complete_node.
 - "Archive X" / "X is no longer relevant" / "cancel X" → archive_node.
 - "Schedule X on Tuesday" / "add to my calendar" → add_task_to_calendar.
+- "Schedule X now" / "do X today" / "work on X today" → add_task_to_calendar with scheduled_date = today.
 - "Move Tuesday's task to Friday" → reschedule_task.
 
 Capture vs. discuss — IMPORTANT. Only propose nodes when the user (a) explicitly asks to add/track/capture something, or (b) states something they have actually done, decided, or firmly committed to ("I enrolled in…", "I'm starting X Monday", "signed up for…"). Do NOT propose for hypotheticals, advice-seeking, venting, brainstorming, or "thinking about / considering / might / should I" — discussing enrolling is NOT enrolling. Discuss those normally; only capture if the user then commits. When it's genuinely unclear whether the user is deciding or just discussing, ask ONE short question ("Want me to add that, or are you still deciding?") instead of proposing.
@@ -114,8 +115,21 @@ When proposing changes, use update_node (rename/retype), propose_edge (new conne
 Be specific: name the node and what should change about it. Always search_nodes first to get real UUIDs.`,
 };
 
-export function buildAssistantSystemPrompt(mode: AssistantMode = "explain"): string {
-  return BASE_RULES + "\n" + MODE_INSTRUCTIONS[mode];
+export function buildAssistantSystemPrompt(mode: AssistantMode = "explain", todayISO?: string): string {
+  // Include the weekday so "Friday"/"next Tuesday" resolve correctly — a bare
+  // ISO date isn't enough for the model to know which day of the week it is.
+  const weekday =
+    todayISO && /^\d{4}-\d{2}-\d{2}$/.test(todayISO)
+      ? new Date(`${todayISO}T12:00:00Z`).toLocaleDateString("en-US", {
+          weekday: "long",
+          timeZone: "UTC",
+        })
+      : null;
+  const dateLine =
+    todayISO && weekday
+      ? `\n\nToday is ${weekday}, ${todayISO}. Resolve all relative dates ("today", "now", "tomorrow", "Friday", "next week") against it.`
+      : "";
+  return BASE_RULES + dateLine + "\n" + MODE_INSTRUCTIONS[mode];
 }
 
 export function buildAssistantUserPrompt(params: {

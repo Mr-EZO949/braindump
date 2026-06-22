@@ -28,6 +28,8 @@ import { NudgeRibbon } from "@/components/nudges/nudge-ribbon";
 import { WorkspaceBootstrapWizard } from "@/components/ui/workspace-bootstrap-wizard";
 import { WelcomeScreen, shouldShowWelcome, markWelcomeDone } from "@/components/ui/onboarding-tutorial";
 import { GuidedTour } from "@/components/ui/guided-tour";
+import { FocusTimerPill } from "@/components/ui/focus-timer-pill";
+import { useFocusTimer } from "@/hooks/use-focus-timer";
 import type { ProposedEdgeWithNodes } from "@/lib/ai/connection";
 import type { MergeCandidate } from "@/lib/ai/merge";
 import {
@@ -385,6 +387,19 @@ export function AppShell({ initialUser }: AppShellProps) {
     useState<(typeof importanceFilterOptions)[number]["value"]>("all");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+  // Focus timer — one persistent Pomodoro per workspace, backed by localStorage
+  // so it survives mode/view switches and reloads. Lives at the shell so the
+  // pill renders above every view.
+  const focusTimer = useFocusTimer(selectedWorkspaceId);
+  // Minimal hand-rolled toast (no library). Cleared after ~3s.
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    },
+    [],
+  );
   const [cameraView, setCameraView] = useState<LocalGraphCameraView | null>(null);
   // initialCameraView removed — graph-canvas now always computes a fresh fitted view
   const [pendingRestoredSelectionId, setPendingRestoredSelectionId] = useState<
@@ -1225,6 +1240,13 @@ export function AppShell({ initialUser }: AppShellProps) {
         if (newNodeIds.length > 0) {
           void analyzeNodes(newNodeIds, targetWorkspaceId);
         }
+
+        // If the accepted tool mutated calendar tasks, the planner's persisted
+        // tasks are now stale — bump the refresh key so AssistantMode re-fetches.
+        const PLANNER_TOOLS = ["add_task_to_calendar", "reschedule_task", "mark_task_done"];
+        if (action.toolName && PLANNER_TOOLS.includes(action.toolName)) {
+          setPlannerRefreshKey((v) => v + 1);
+        }
       }
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") {
@@ -1261,6 +1283,64 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
 
     void submitMessage(lastUserMessage.body, false);
+  };
+
+  const showToast = (message: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(message);
+    toastTimerRef.current = setTimeout(() => setToast(null), 3000);
+  };
+
+  // Start a focus session on a node. Duration = the linked plan_task's
+  // duration_minutes for today if one exists, else 25m. No AI estimate call —
+  // keep "Start working" free and instant (v1).
+  const handleStartFocus = async (nodeId: string) => {
+    const node = graphData.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    let durationMinutes = 25;
+    if (supabase && selectedWorkspaceId && authUser?.id) {
+      const today = new Date().toISOString().slice(0, 10);
+      const { data } = await supabase
+        .from("plan_tasks")
+        .select("duration_minutes")
+        .eq("user_id", authUser.id)
+        .eq("workspace_id", selectedWorkspaceId)
+        .eq("node_id", nodeId)
+        .eq("scheduled_date", today)
+        .limit(1)
+        .maybeSingle();
+      const linked = data?.duration_minutes;
+      if (typeof linked === "number" && linked > 0) durationMinutes = linked;
+    }
+    // Starting a new timer while one is already running for a different node
+    // silently replaces it — surface that so it isn't a surprise.
+    const prev = focusTimer.timer;
+    if (prev && prev.nodeId !== nodeId) {
+      showToast(`Switched focus to "${node.title}".`);
+    }
+    focusTimer.start({ nodeId, title: node.title, durationMinutes });
+  };
+
+  // Complete a focus session: stop the timer, confirm via toast, and — if a
+  // linked plan_task exists for today — mark it done and refresh the planner.
+  const handleFocusDone = async () => {
+    const active = focusTimer.timer;
+    focusTimer.stop();
+    showToast("Nice work — focus session done.");
+    if (!active || !supabase || !selectedWorkspaceId || !authUser?.id) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const { data } = await supabase
+      .from("plan_tasks")
+      .update({ done: true })
+      .eq("user_id", authUser.id)
+      .eq("workspace_id", selectedWorkspaceId)
+      .eq("node_id", active.nodeId)
+      .eq("scheduled_date", today)
+      .eq("done", false)
+      .select("id");
+    if (data && data.length > 0) {
+      setPlannerRefreshKey((v) => v + 1);
+    }
   };
 
   const handleSelectNode = (nodeId: string | null) => {
@@ -3199,6 +3279,9 @@ export function AppShell({ initialUser }: AppShellProps) {
           onStatusChange={(nodeId, status) => {
             void handleStatusChange(nodeId, status);
           }}
+          onStartFocusSession={(nodeId) => {
+            void handleStartFocus(nodeId);
+          }}
           onFindConnections={(nodeId) => {
             if (!selectedWorkspaceId) return;
             void analyzeNodes([nodeId]);
@@ -3695,6 +3778,9 @@ export function AppShell({ initialUser }: AppShellProps) {
                 setAppMode("graph");
                 setWhatNowOpen(false);
                 handleSelectNode(nodeId);
+                // "Pick something to work on" is the focus intent — start the
+                // timer on the chosen node.
+                void handleStartFocus(nodeId);
                 // If Focus pointed at a container with no actionable child,
                 // generate one light next-action so the user isn't dead-ended.
                 // Fires AI only here (on the explicit focus pick), only when
@@ -3836,6 +3922,21 @@ export function AppShell({ initialUser }: AppShellProps) {
       {showTour && (
         <GuidedTour onDone={() => setShowTour(false)} />
       )}
+
+      {/* Focus timer pill — persistent across every mode/view */}
+      {focusTimer.timer && (
+        <FocusTimerPill
+          timer={focusTimer.timer}
+          remainingSeconds={focusTimer.remainingSeconds}
+          onPause={focusTimer.pause}
+          onResume={focusTimer.resume}
+          onStop={focusTimer.stop}
+          onDone={() => {
+            void handleFocusDone();
+          }}
+        />
+      )}
+      {toast && <div className="app-toast">{toast}</div>}
     </div>
   );
 }

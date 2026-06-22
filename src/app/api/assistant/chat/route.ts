@@ -249,7 +249,8 @@ export async function POST(req: NextRequest) {
     message: message.trim(),
   });
 
-  const systemPrompt = buildAssistantSystemPrompt(resolvedMode);
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const systemPrompt = buildAssistantSystemPrompt(resolvedMode, todayISO);
   // Temporal awareness: a cheap, AI-free flag if the user keeps circling a node
   // across days without finishing it. Injected into the uncached message block.
   // Only computed on the opening turn of a thread — the signal is stable within

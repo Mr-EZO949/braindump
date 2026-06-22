@@ -71,6 +71,7 @@ type ContextRailProps = {
   onSuggestSteps?: (nodeId: string, mode: "light" | "full") => void;
   suggestStepsBusy?: boolean;
   onStatusChange: (nodeId: string, status: NodeStatus) => void;
+  onStartFocusSession?: (nodeId: string) => void;
   onSelectLinkedNode: (nodeId: string) => void;
   onSetActiveTab: (tab: RailTab) => void;
   onSubmitChatInput: (message: string) => void;
@@ -121,6 +122,7 @@ export function ContextRail({
   onSuggestSteps,
   suggestStepsBusy,
   onStatusChange,
+  onStartFocusSession,
   onRetryChat,
   onResolvePendingAction,
   onCancelChat,
@@ -729,6 +731,16 @@ export function ContextRail({
 
                     {/* Secondary row — AI tools. Compact neutral pills. */}
                     <div className="detail-actions-secondary">
+                      {onStartFocusSession &&
+                        (!selectedNode.status || selectedNode.status === "active") && (
+                          <button
+                            className="detail-action-pill"
+                            onClick={() => onStartFocusSession(selectedNode.id)}
+                            type="button"
+                          >
+                            Start working
+                          </button>
+                        )}
                       <button
                         className="detail-action-pill"
                         onClick={() => onFindConnections(selectedNode.id)}

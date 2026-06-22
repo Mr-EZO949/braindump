@@ -233,7 +233,7 @@ export async function POST(req: NextRequest) {
   const systemPromptBlocks: TextBlockParam[] = [
     {
       type: "text",
-      text: buildAssistantSystemPrompt(resolvedMode),
+      text: buildAssistantSystemPrompt(resolvedMode, new Date().toISOString().slice(0, 10)),
       cache_control: { type: "ephemeral" },
     },
   ];
