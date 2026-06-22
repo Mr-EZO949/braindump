@@ -14,9 +14,10 @@ import {
   FlameIcon,
   CheckSquareIcon,
   ChevronDownIcon,
+  TimerIcon,
 } from "@/components/ui/icons";
 
-export type AppMode = "graph" | "assistant" | "todos" | "habits" | "roadmap";
+export type AppMode = "graph" | "assistant" | "todos" | "habits" | "roadmap" | "pomodoro";
 
 const LISTS_MODES = new Set<AppMode>(["todos", "habits", "roadmap"]);
 
@@ -237,6 +238,18 @@ export function ModeDock({
             </>
           ) : null}
         </AnimatePresence>
+
+        <button
+          aria-pressed={mode === "pomodoro"}
+          className="mode-dock-btn"
+          data-active={mode === "pomodoro"}
+          onClick={() => onSetMode("pomodoro")}
+          type="button"
+          title="Pomodoro focus timer"
+        >
+          <TimerIcon className="h-[13px] w-[13px]" />
+          Pomodoro
+        </button>
 
         <div className="mode-dock-sep" aria-hidden="true" />
 

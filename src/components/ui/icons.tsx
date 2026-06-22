@@ -302,6 +302,17 @@ export function CheckSquareIcon(props: IconProps) {
   );
 }
 
+export function TimerIcon(props: IconProps) {
+  return (
+    <BaseIcon {...props}>
+      <circle cx="12" cy="13" r="8" />
+      <path d="M12 13V8.5" />
+      <path d="M12 13l3 2" />
+      <path d="M9.5 3h5" />
+    </BaseIcon>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <BaseIcon {...props}>

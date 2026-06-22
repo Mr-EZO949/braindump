@@ -9,6 +9,7 @@ import { AssistantMode as AssistantModeView } from "@/components/assistant/assis
 import { TodosView } from "@/components/ui/todos-view";
 import { HabitsView } from "@/components/ui/habits-view";
 import { RoadmapView } from "@/components/ui/roadmap-view";
+import { PomodoroView } from "@/components/ui/pomodoro-view";
 import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
 import { WhatNowDialog } from "@/components/ui/what-now-dialog";
@@ -3233,7 +3234,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 }}
               />
             </motion.div>
-          ) : (
+          ) : appMode === "roadmap" ? (
             <motion.div
               key="roadmap"
               className="flex min-w-0 flex-1 lists-bg"
@@ -3249,6 +3250,17 @@ export function AppShell({ initialUser }: AppShellProps) {
                   handleSelectNode(nodeId);
                 }}
               />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="pomodoro"
+              className="flex min-w-0 flex-1 lists-bg"
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }}
+              transition={{ duration: 0.14, ease: "easeOut" }}
+            >
+              <PomodoroView graphData={graphData} focusTimer={focusTimer} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -3923,8 +3935,9 @@ export function AppShell({ initialUser }: AppShellProps) {
         <GuidedTour onDone={() => setShowTour(false)} />
       )}
 
-      {/* Focus timer pill — persistent across every mode/view */}
-      {focusTimer.timer && (
+      {/* Focus timer pill — persistent across every mode/view, except the
+          dedicated Pomodoro view which owns the full-size countdown. */}
+      {focusTimer.timer && appMode !== "pomodoro" && (
         <FocusTimerPill
           timer={focusTimer.timer}
           remainingSeconds={focusTimer.remainingSeconds}
