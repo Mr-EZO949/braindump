@@ -373,34 +373,47 @@ export class ClaudeProvider {
       workspace_context: input.workspace_context,
     });
 
-    // Planner runs on Haiku — time-blocking a candidate list doesn't need
-    // Sonnet-level reasoning; Haiku handles the structured JSON fine at ~1/3
-    // the input cost and ~1/3 the output cost.
-    const plannerModel = AI_MODELS.CLAUDE_HAIKU;
+    // Planner runs on Sonnet: the strict time-block JSON + realistic per-task
+    // durations need it — Haiku produced malformed output (the user-facing
+    // "AI returned an invalid response") and weak durations. Planning is a
+    // low-volume call (a few per day), so the cost is negligible. One auto-retry
+    // absorbs a rare JSON hiccup so the user never sees a malformed-response error.
+    const plannerModel = AI_MODELS.CLAUDE_SONNET;
     const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt, plannerModel);
     const start = Date.now();
 
-    const response = await this.client.messages.create({
-      model: plannerModel,
-      max_tokens: 4096,
-      temperature: AI_TEMPERATURE.PLANNER,
-      system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
-      messages: [{ role: "user", content: prompt }],
-    });
+    let text = "{}";
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let output: PlanOutput | null = null;
+    let lastError: unknown;
 
-    const text = response.content[0].type === "text" ? response.content[0].text : "{}";
-    const inputTokens = response.usage.input_tokens;
-    const outputTokens = response.usage.output_tokens;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await this.client.messages.create({
+        model: plannerModel,
+        max_tokens: 4096,
+        temperature: AI_TEMPERATURE.PLANNER,
+        system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
+        messages: [{ role: "user", content: prompt }],
+      });
+      text = response.content[0].type === "text" ? response.content[0].text : "{}";
+      inputTokens += response.usage.input_tokens;
+      outputTokens += response.usage.output_tokens;
+      try {
+        const parsed = JSON.parse(extractJson(text));
+        output = validatePlanOutput(parsed, totalMinutes);
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateHaikuCost(inputTokens, outputTokens);
+    const estimatedCost = estimateCost(inputTokens, outputTokens);
 
-    let output: PlanOutput;
-    try {
-      const parsed = JSON.parse(extractJson(text));
-      output = validatePlanOutput(parsed, totalMinutes);
-    } catch (error) {
+    if (!output) {
       throw malformedResponse({
-        message: error instanceof Error ? error.message : "Plan output was malformed",
+        message: lastError instanceof Error ? lastError.message : "Plan output was malformed",
         rawOutput: text,
         runType: "plan",
         promptVersion: PLAN_PROMPT_VERSION,
@@ -411,7 +424,7 @@ export class ClaudeProvider {
         outputTokens,
         latencyMs,
         estimatedCost,
-        cause: error,
+        cause: lastError,
       });
     }
 

@@ -597,12 +597,8 @@ function HabitCard({
             <strong>{isLoading ? "—" : `${stats?.pct ?? 0}%`}</strong>
             <span className="habit-card-stat-soft">of last 30 days</span>
           </span>
-          {atRisk ? (
-            <>
-              <span className="habit-card-stat-sep" aria-hidden="true">·</span>
-              <span className="habit-card-stat habit-card-stat-risk">needs today</span>
-            </>
-          ) : null}
+          {/* "needs today" text removed per request — the card's red outline
+              (driven by atRisk) already signals it. */}
         </div>
       </header>
 
