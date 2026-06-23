@@ -223,6 +223,42 @@ function Grain() {
   );
 }
 
+// ── FrostParticles (hero ambient — drifting frost specks) ─
+// Fixed (deterministic) so SSR + client markup match — no hydration mismatch.
+const FROST_SPECKS = [
+  { l: "6%", s: 2, d: 0, t: 16 },
+  { l: "14%", s: 1, d: 5, t: 21 },
+  { l: "23%", s: 2.5, d: 9, t: 14 },
+  { l: "32%", s: 1.5, d: 2, t: 18 },
+  { l: "41%", s: 1, d: 12, t: 23 },
+  { l: "49%", s: 2, d: 6, t: 15 },
+  { l: "57%", s: 1.5, d: 10, t: 19 },
+  { l: "65%", s: 1, d: 3, t: 22 },
+  { l: "73%", s: 2.5, d: 14, t: 17 },
+  { l: "81%", s: 1.5, d: 7, t: 20 },
+  { l: "88%", s: 1, d: 11, t: 16 },
+  { l: "94%", s: 2, d: 4, t: 23 },
+];
+function FrostParticles() {
+  return (
+    <div className={styles.heroFrost} aria-hidden="true">
+      {FROST_SPECKS.map((p, i) => (
+        <span
+          key={i}
+          className={styles.frostParticle}
+          style={{
+            left: p.l,
+            width: p.s,
+            height: p.s,
+            animationDelay: `${p.d}s`,
+            animationDuration: `${p.t}s`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 // ── Marquee ───────────────────────────────────────────────
 
 function MarqueeRow({ items, reverse }: { items: typeof MARQUEE_R1; reverse?: boolean }) {
@@ -1171,20 +1207,24 @@ export default function LandingPage() {
         <section className={styles.hero}>
           <div className={styles.heroGlow} aria-hidden="true" />
           <div className={styles.heroDots} aria-hidden="true" />
+          <FrostParticles />
           <div className={styles.heroInner}>
             <motion.div className={styles.heroText}
               initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}>
-              <div className={styles.badge}>
-                <span className={styles.badgeDot} />
-                Your AI second brain
+              <div className={styles.heroEyebrow}>
+                <span className={styles.heroEyebrowMark} aria-hidden="true" />
+                Built for ADHD minds
               </div>
               <h1 className={styles.heroH1}>
-                Out of your head.{" "}
-                <span className={styles.gradient}>Into motion.</span>
+                Dump it.{" "}
+                <span className={styles.gradientThaw}>Unfreeze your brain.</span>
               </h1>
               <p className={styles.heroSub}>
-                BrainDump turns the chaos in your head into a clear map of your goals, tasks, and ideas — then tells you exactly what to work on now. The productivity app for people with too much on their mind.
+                Overplanning, brain-freeze, twelve half-made decisions — the stuff
+                that keeps you from starting. Dump it all here and BrainDump thaws
+                the frozen pile into a map, then points at the one thing to do next.
+                The last productivity app you&apos;ll need.
               </p>
               <div className={styles.heroActions}>
                 <a href="#pricing" className={styles.navCta}>See pricing</a>
@@ -1214,14 +1254,19 @@ export default function LandingPage() {
             <FadeUp className={styles.centered}>
               <span className={styles.label}>The problem</span>
               <h2 className={styles.h2}>
-                Planning is eating your day.
+                Your brain didn&apos;t quit.{" "}
+                <span className={styles.gradient}>It froze.</span>
               </h2>
+              <p className={styles.problemDeck}>
+                Too many open loops, too many half-made decisions — and the whole
+                pile locks up. You&apos;re not lazy. You&apos;re stuck mid-thought.
+              </p>
             </FadeUp>
 
             <div className={styles.problemSnippets}>
               <FadeUp delay={0.05} className={styles.problemSnippet}>
                 <span className={styles.problemSnippetNum}>01</span>
-                <p>You open your list. Fifteen things stare back. Where do you even start?</p>
+                <p>You open your list. Fifteen things stare back. Your brain just&hellip; stops.</p>
               </FadeUp>
               <FadeUp delay={0.12} className={styles.problemSnippet}>
                 <span className={styles.problemSnippetNum}>02</span>
@@ -1340,40 +1385,38 @@ export default function LandingPage() {
         {/* ── Habits deep dive ── */}
         <section className={styles.section}>
           <div className={styles.inner}>
-            <div className={styles.assistantLayout}>
-              <FadeUp className={styles.assistantInfo}>
-                <span className={styles.label}>Habits</span>
-                <h2 className={styles.h2}>
-                  Streaks with{" "}
-                  <span className={styles.gradient}>a destination.</span>
-                </h2>
-                <p className={styles.habitsLede}>
-                  Every habit points at a real goal you wrote down. So a streak isn&apos;t a vanity number — it&apos;s a milestone counter.
-                </p>
+            <FadeUp className={styles.habitsHead}>
+              <span className={styles.label}>Habits</span>
+              <h2 className={styles.h2}>
+                Streaks with{" "}
+                <span className={styles.gradient}>a destination.</span>
+              </h2>
+              <p className={styles.habitsLede}>
+                Every habit points at a real goal you wrote down. So a streak isn&apos;t a vanity number — it&apos;s a milestone counter.
+              </p>
+            </FadeUp>
 
-                <div className={styles.habitLinks}>
-                  <div className={styles.habitLinkRow}>
-                    <span className={styles.habitLinkFrom}>Spanish &middot; 10m/day</span>
-                    <span className={styles.habitLinkArrow} aria-hidden="true">→</span>
-                    <span className={styles.habitLinkTo}>Mexico City trip</span>
-                  </div>
-                  <div className={styles.habitLinkRow}>
-                    <span className={styles.habitLinkFrom}>Leetcode &middot; 1/day</span>
-                    <span className={styles.habitLinkArrow} aria-hidden="true">→</span>
-                    <span className={styles.habitLinkTo}>Job hunt (started Feb)</span>
-                  </div>
-                  <div className={styles.habitLinkRow}>
-                    <span className={styles.habitLinkFrom}>Read &middot; 20 pages</span>
-                    <span className={styles.habitLinkArrow} aria-hidden="true">→</span>
-                    <span className={styles.habitLinkTo}>Finish 6 books · Q3</span>
-                  </div>
-                </div>
-              </FadeUp>
+            <FadeUp delay={0.12} className={styles.habitsStage}>
+              <HabitsCalendar />
+            </FadeUp>
 
-              <FadeUp delay={0.15} className={styles.assistantChatWrap}>
-                <HabitsCalendar />
-              </FadeUp>
-            </div>
+            <FadeUp delay={0.2} className={styles.habitLinks}>
+              <div className={styles.habitLinkRow}>
+                <span className={styles.habitLinkFrom}>Spanish &middot; 10m/day</span>
+                <span className={styles.habitLinkArrow} aria-hidden="true">→</span>
+                <span className={styles.habitLinkTo}>Mexico City trip</span>
+              </div>
+              <div className={styles.habitLinkRow}>
+                <span className={styles.habitLinkFrom}>Leetcode &middot; 1/day</span>
+                <span className={styles.habitLinkArrow} aria-hidden="true">→</span>
+                <span className={styles.habitLinkTo}>Job hunt (started Feb)</span>
+              </div>
+              <div className={styles.habitLinkRow}>
+                <span className={styles.habitLinkFrom}>Read &middot; 20 pages</span>
+                <span className={styles.habitLinkArrow} aria-hidden="true">→</span>
+                <span className={styles.habitLinkTo}>Finish 6 books · Q3</span>
+              </div>
+            </FadeUp>
           </div>
         </section>
 
