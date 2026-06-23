@@ -223,41 +223,18 @@ function Grain() {
   );
 }
 
-// ── FrostParticles (hero ambient — drifting frost specks) ─
-// Fixed (deterministic) so SSR + client markup match — no hydration mismatch.
-const FROST_SPECKS = [
-  { l: "6%", s: 2, d: 0, t: 16 },
-  { l: "14%", s: 1, d: 5, t: 21 },
-  { l: "23%", s: 2.5, d: 9, t: 14 },
-  { l: "32%", s: 1.5, d: 2, t: 18 },
-  { l: "41%", s: 1, d: 12, t: 23 },
-  { l: "49%", s: 2, d: 6, t: 15 },
-  { l: "57%", s: 1.5, d: 10, t: 19 },
-  { l: "65%", s: 1, d: 3, t: 22 },
-  { l: "73%", s: 2.5, d: 14, t: 17 },
-  { l: "81%", s: 1.5, d: 7, t: 20 },
-  { l: "88%", s: 1, d: 11, t: 16 },
-  { l: "94%", s: 2, d: 4, t: 23 },
+// ── Snowflakes that orbit "Unfreeze your brain." then melt ─
+// Anchored around the phrase (top/left relative to it). Each floats in a small
+// orbit while frozen, then melts (drips + fades) in sync with the colour thaw.
+const SNOWFLAKES: ReadonlyArray<{ g: string; top: string; left: string; size: number; delay: number }> = [
+  { g: "❅", top: "-20px", left: "4%", size: 13, delay: 0 },
+  { g: "❆", top: "-26px", left: "33%", size: 10, delay: 1.1 },
+  { g: "❅", top: "-16px", left: "68%", size: 12, delay: 0.5 },
+  { g: "❆", top: "108%", left: "15%", size: 10, delay: 1.7 },
+  { g: "❅", top: "112%", left: "56%", size: 13, delay: 0.8 },
+  { g: "❆", top: "28%", left: "-3%", size: 11, delay: 2 },
+  { g: "❅", top: "16%", left: "97%", size: 10, delay: 1.4 },
 ];
-function FrostParticles() {
-  return (
-    <div className={styles.heroFrost} aria-hidden="true">
-      {FROST_SPECKS.map((p, i) => (
-        <span
-          key={i}
-          className={styles.frostParticle}
-          style={{
-            left: p.l,
-            width: p.s,
-            height: p.s,
-            animationDelay: `${p.d}s`,
-            animationDuration: `${p.t}s`,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
 
 // ── Marquee ───────────────────────────────────────────────
 
@@ -1207,7 +1184,6 @@ export default function LandingPage() {
         <section className={styles.hero}>
           <div className={styles.heroGlow} aria-hidden="true" />
           <div className={styles.heroDots} aria-hidden="true" />
-          <FrostParticles />
           <div className={styles.heroInner}>
             <motion.div className={styles.heroText}
               initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
@@ -1218,7 +1194,25 @@ export default function LandingPage() {
               </div>
               <h1 className={styles.heroH1}>
                 Dump it.{" "}
-                <span className={styles.gradientThaw}>Unfreeze your brain.</span>
+                <span className={styles.thawPhrase}>
+                  <span className={styles.snowLayer} aria-hidden="true">
+                    {SNOWFLAKES.map((f, i) => (
+                      <span
+                        key={i}
+                        className={styles.snowflake}
+                        style={{
+                          top: f.top,
+                          left: f.left,
+                          fontSize: f.size,
+                          animationDelay: `${f.delay}s, 2.2s`,
+                        }}
+                      >
+                        {f.g}
+                      </span>
+                    ))}
+                  </span>
+                  <span className={styles.gradientThaw}>Unfreeze your brain.</span>
+                </span>
               </h1>
               <p className={styles.heroSub}>
                 Overplanning, brain-freeze, twelve half-made decisions — the stuff

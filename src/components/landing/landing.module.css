@@ -25,25 +25,16 @@
   max-width: 820px;
   max-height: 820px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(213, 58, 71, 0.06) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(213, 58, 71, 0.03) 0%, transparent 70%);
   filter: blur(90px);
   pointer-events: none;
   z-index: 0;
 }
 
+/* orbB was a page-wide teal wash (the "weird blue shades"). Removed — keeping the
+   page darker + flatter with a single faint scarlet orb (orbA) for brand warmth. */
 .orbB {
-  position: fixed;
-  bottom: -22%;
-  left: -10%;
-  width: 50vw;
-  height: 50vw;
-  max-width: 720px;
-  max-height: 720px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(92, 122, 110, 0.04) 0%, transparent 70%);
-  filter: blur(90px);
-  pointer-events: none;
-  z-index: 0;
+  display: none;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -183,54 +174,51 @@
   z-index: 0;
 }
 
-/* Ambient frost specks drifting down the hero — slow, sparse, subtle. */
-.heroFrost {
+/* "Unfreeze your brain." — snowflakes orbit the phrase, then melt as it thaws. */
+.thawPhrase {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.snowLayer {
   position: absolute;
   inset: 0;
-  overflow: hidden;
   pointer-events: none;
-  z-index: 0;
 }
 
-.frostParticle {
+.snowflake {
   position: absolute;
-  top: -8px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(205, 238, 250, 0.95) 0%,
-    rgba(140, 200, 230, 0.45) 55%,
-    transparent 100%
-  );
-  box-shadow: 0 0 7px rgba(180, 225, 245, 0.6);
-  opacity: 0;
-  animation-name: frostDrift;
-  animation-timing-function: ease-in-out;
-  animation-iteration-count: infinite;
+  line-height: 1;
+  color: #c6edf9;
+  text-shadow: 0 0 9px rgba(150, 215, 240, 0.65);
+  opacity: 0.85;
+  will-change: transform, opacity;
+  animation-name: floatOrbit, snowMelt;
+  animation-duration: 5s, 1.7s;
+  animation-timing-function: ease-in-out, ease-in;
+  animation-iteration-count: infinite, 1;
+  animation-fill-mode: none, forwards;
+  animation-delay: 0s, 2.2s; /* per-flake delays set inline */
 }
 
-@keyframes frostDrift {
-  0% {
-    transform: translate(0, 0) scale(0.6);
-    opacity: 0;
-  }
-  14% {
-    opacity: 0.85;
-  }
-  50% {
-    transform: translate(12px, 300px) scale(1);
-  }
-  86% {
-    opacity: 0.55;
-  }
-  100% {
-    transform: translate(-8px, 620px) scale(0.7);
-    opacity: 0;
-  }
+/* gentle circling-in-place while frozen */
+@keyframes floatOrbit {
+  0%   { transform: translate(0, -5px); }
+  25%  { transform: translate(5px, 0); }
+  50%  { transform: translate(0, 5px); }
+  75%  { transform: translate(-5px, 0); }
+  100% { transform: translate(0, -5px); }
+}
+
+/* then it melts — drips down, shrinks, fades (synced with the colour thaw) */
+@keyframes snowMelt {
+  0%   { opacity: 0.85; transform: translate(0, 0) scale(1); }
+  100% { opacity: 0; transform: translate(0, 18px) scale(0.35); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .heroFrost {
+  .snowflake {
     display: none;
   }
 }
@@ -349,25 +337,22 @@
   filter: drop-shadow(0 1px 24px rgba(213, 58, 71, 0.18));
   font-weight: 700;
   letter-spacing: -0.035em;
-  /* slow organic thaw on load, then a gentle living "breath" so it never feels dead */
+  /* frozen → melt: hold the icy state while the snowflakes circle (~2.2s), then
+     thaw to warm scarlet in sync with them melting; then a faint living breath. */
   animation:
-    thaw 4.6s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both,
-    frostBreath 6s ease-in-out 5.4s infinite;
+    thaw 3.6s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both,
+    frostBreath 6s ease-in-out 4.3s infinite;
 }
 
 @keyframes thaw {
   0%,
-  34% {
-    /* hold the frozen/cyan state long enough to read it as ice … */
+  47% {
+    /* frozen — icy cyan held while the snowflakes orbit */
     background-position: 0% 0;
     filter: drop-shadow(0 0 26px rgba(125, 214, 240, 0.45));
   }
-  70% {
-    /* mid-thaw shimmer */
-    filter: drop-shadow(0 0 30px rgba(150, 180, 210, 0.4));
-  }
   100% {
-    /* … then settle on the warm brand scarlet */
+    /* melted — warm brand scarlet */
     background-position: 100% 0;
     filter: drop-shadow(0 1px 24px rgba(213, 58, 71, 0.2));
   }
