@@ -1,14 +1,55 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import styles from "@/components/auth/auth-experience.module.css";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
+type OAuthProvider = "google";
+
+function GoogleIcon() {
+  return (
+    <svg aria-hidden="true" height="18" viewBox="0 0 24 24" width="18">
+      <path
+        d="M21.6 12.227c0-.66-.06-1.293-.17-1.9H12v3.595h5.38a4.6 4.6 0 0 1-1.995 3.018v2.51h3.23c1.89-1.74 2.985-4.305 2.985-7.223Z"
+        fill="currentColor"
+        opacity="0.95"
+      />
+      <path
+        d="M12 22c2.7 0 4.965-.895 6.62-2.42l-3.23-2.51c-.895.6-2.04.955-3.39.955-2.605 0-4.81-1.76-5.6-4.125H2.965v2.59A9.997 9.997 0 0 0 12 22Z"
+        fill="currentColor"
+        opacity="0.72"
+      />
+      <path
+        d="M6.4 13.9A6.01 6.01 0 0 1 6.08 12c0-.66.115-1.3.32-1.9V7.51H2.965A9.997 9.997 0 0 0 2 12c0 1.615.385 3.14 1.065 4.49L6.4 13.9Z"
+        fill="currentColor"
+        opacity="0.5"
+      />
+      <path
+        d="M12 5.975c1.47 0 2.785.505 3.82 1.495l2.865-2.865C16.96 2.99 14.695 2 12 2A9.997 9.997 0 0 0 2.965 7.51L6.4 10.1C7.19 7.735 9.395 5.975 12 5.975Z"
+        fill="currentColor"
+        opacity="0.85"
+      />
+    </svg>
+  );
+}
+
+// Adding a provider later (Apple, GitHub, Microsoft, …) is a one-line addition
+// here, once it's enabled in the Supabase dashboard. Add the matching id to the
+// OAuthProvider union above. Apple/Microsoft are omitted for now (heavier config:
+// Apple needs a paid developer account).
+const OAUTH_PROVIDERS: ReadonlyArray<{
+  id: OAuthProvider;
+  label: string;
+  icon: React.ReactNode;
+}> = [
+  { id: "google", label: "Continue with Google", icon: <GoogleIcon /> },
+];
+
 export function LoginForm() {
   const router = useRouter();
-  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const supabase = getSupabaseBrowserClient();
   const [authMode, setAuthMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,11 +61,49 @@ export function LoginForm() {
   const [resending, setResending] = useState(false);
   const [resendSent, setResendSent] = useState(false);
   const [resendError, setResendError] = useState<string | null>(null);
+  // Which OAuth provider has a redirect in flight (disables that one button).
+  const [oauthPending, setOauthPending] = useState<OAuthProvider | null>(null);
   // Synchronous in-flight guard: `resending` is async state, so two clicks in
   // the same tick can both clear the disabled guard before React re-renders.
   const resendInFlightRef = useRef(false);
 
+  // A failed/cancelled OAuth bounces to /login?error=... — surface it (the
+  // callback redirects server-side, so this form mounts fresh with the param).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get("error");
+    if (err) {
+      setErrorMessage(err);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
   const isSignUp = authMode === "sign-up";
+
+  const handleOAuth = async (provider: OAuthProvider) => {
+    if (!supabase || oauthPending) {
+      if (!supabase) {
+        setErrorMessage("Supabase auth is not configured.");
+      }
+      return;
+    }
+
+    setOauthPending(provider);
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
+    });
+
+    // On success the browser is redirected away, so this only runs on failure.
+    if (error) {
+      setErrorMessage(error.message);
+      setOauthPending(null);
+    }
+  };
 
   const handleResend = async () => {
     if (!supabase || !pendingConfirmEmail || resendInFlightRef.current) {
@@ -145,6 +224,27 @@ export function LoginForm() {
         >
           Create account
         </button>
+      </div>
+
+      <div className={styles.oauthRow}>
+        {OAUTH_PROVIDERS.map((provider) => (
+          <button
+            className={styles.oauthButton}
+            disabled={oauthPending !== null}
+            key={provider.id}
+            onClick={() => handleOAuth(provider.id)}
+            type="button"
+          >
+            <span className={styles.oauthIcon}>{provider.icon}</span>
+            <span>
+              {oauthPending === provider.id ? "Redirecting..." : provider.label}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <div className={styles.orDivider}>
+        <span>or</span>
       </div>
 
       <form className={styles.form} onSubmit={handleSubmit}>
