@@ -425,6 +425,11 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [edgeUpdateSubmittingId, setEdgeUpdateSubmittingId] = useState<string | null>(null);
   // Bootstrap wizard — shown when a new empty workspace is created OR loaded empty
   const [bootstrapWorkspaceId, setBootstrapWorkspaceId] = useState<string | null>(null);
+  // Workspaces whose onboarding wizard the user "Skip for now"-ed this session.
+  // We do NOT write bootstrap_completed_at on skip, so the wizard can re-offer
+  // itself on a later still-empty load — but this set stops it from re-opening
+  // immediately when the empty-workspace effect re-runs this same session.
+  const bootstrapSkippedThisSessionRef = useRef<Set<string>>(new Set());
   // Welcome screen — shown once per user on first login
   const [showWelcome, setShowWelcome] = useState(false);
   // Guided tour — shown after workspace wizard during onboarding
@@ -648,7 +653,10 @@ export function AppShell({ initialUser }: AppShellProps) {
       ) {
         if (shouldShowWelcome(authUser.id)) {
           setShowWelcome(true);
-        } else if (!selectedWorkspace?.bootstrap_completed_at) {
+        } else if (
+          !selectedWorkspace?.bootstrap_completed_at &&
+          !bootstrapSkippedThisSessionRef.current.has(selectedWorkspaceId)
+        ) {
           setBootstrapWorkspaceId(selectedWorkspaceId);
         }
       }
@@ -2609,11 +2617,13 @@ export function AppShell({ initialUser }: AppShellProps) {
   };
 
   const requestCloseProposedNodesReview = () => {
-    // Only confirm if there are nodes worth losing — a questions-only review
-    // closing is cheap.
+    // Warn before discarding the dump's payoff — only when there are still
+    // un-actioned proposed nodes worth losing. A questions-only review
+    // closing is cheap, so it skips the confirm.
     if (proposedNodes.length > 0) {
+      const count = proposedNodes.length;
       const confirmed = window.confirm(
-        "Close node review? The extracted nodes will stay pending review and your current selections will be lost.",
+        `Discard ${count} suggested node${count === 1 ? "" : "s"}? They came from your brain dump and won't be saved.`,
       );
       if (!confirmed) {
         return;
@@ -3841,20 +3851,25 @@ export function AppShell({ initialUser }: AppShellProps) {
             // Mirror the first (bootstrap) dump into the chat thread, exactly
             // like every later brain dump does — so the user's most important
             // dump isn't the one missing from their history.
+            // The user submitted a dump but extraction failed/was disabled and
+            // produced nothing — surface it instead of silently dropping it.
+            const extractionFailed = Boolean(handoff?.extraction_error);
             const bootstrapDumpText = handoff?.raw_text?.trim() ?? "";
             if (bootstrapDumpText) {
               const nodeCount = handoff?.proposed_nodes?.length ?? 0;
               const questionCount = handoff?.clarifying_questions?.length ?? 0;
-              const bootstrapSummary = [
-                nodeCount > 0
-                  ? `I analyzed your first dump and proposed ${nodeCount} node${nodeCount === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
-                  : "I went through your dump but didn't find anything new worth proposing yet.",
-                questionCount > 0
-                  ? `I have ${questionCount} quick clarifying question${questionCount === 1 ? "" : "s"} — answer inline when ready.`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" ");
+              const bootstrapSummary = extractionFailed
+                ? "I couldn't process that dump right now — your notes are saved. Try a Brain Dump again in a moment."
+                : [
+                    nodeCount > 0
+                      ? `I analyzed your first dump and proposed ${nodeCount} node${nodeCount === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
+                      : "I went through your dump but didn't find anything new worth proposing yet.",
+                    questionCount > 0
+                      ? `I have ${questionCount} quick clarifying question${questionCount === 1 ? "" : "s"} — answer inline when ready.`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
               const bootstrapNowIso = new Date().toISOString();
               setChatMessages((prev) => [
                 ...prev,
@@ -3892,6 +3907,10 @@ export function AppShell({ initialUser }: AppShellProps) {
               setLastDumpRawText(handoff!.raw_text);
               setProposalsFromBootstrap(true);
               setProposedReviewOpen(true);
+            } else if (extractionFailed) {
+              showToast(
+                "Couldn't process that dump right now — your notes are saved, try a Brain Dump again.",
+              );
             }
             void loadWorkspaceGraphData(
               authUser?.id ?? null,
@@ -3908,6 +3927,18 @@ export function AppShell({ initialUser }: AppShellProps) {
             });
           }}
           onSkip={() => {
+            // "Skip for now" (onboarding): dismiss for this session without
+            // writing bootstrap_completed_at, so the wizard can re-offer
+            // itself on a later still-empty load. The session ref stops it
+            // from immediately re-opening this same session.
+            if (!workspaceCreationFlowRef.current) {
+              if (selectedWorkspaceId) {
+                bootstrapSkippedThisSessionRef.current.add(selectedWorkspaceId);
+              }
+              setBootstrapWorkspaceId(null);
+              return;
+            }
+            // Non-onboarding ("created a workspace by mistake") still discards.
             void handleCancelWorkspaceCreation();
           }}
         />

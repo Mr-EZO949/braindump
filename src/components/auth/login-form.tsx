@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import styles from "@/components/auth/auth-experience.module.css";
@@ -16,8 +16,42 @@ export function LoginForm() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [pendingConfirmEmail, setPendingConfirmEmail] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
+  const [resendSent, setResendSent] = useState(false);
+  const [resendError, setResendError] = useState<string | null>(null);
+  // Synchronous in-flight guard: `resending` is async state, so two clicks in
+  // the same tick can both clear the disabled guard before React re-renders.
+  const resendInFlightRef = useRef(false);
 
   const isSignUp = authMode === "sign-up";
+
+  const handleResend = async () => {
+    if (!supabase || !pendingConfirmEmail || resendInFlightRef.current) {
+      return;
+    }
+    resendInFlightRef.current = true;
+
+    setResending(true);
+    setResendError(null);
+    setResendSent(false);
+
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: pendingConfirmEmail,
+    });
+
+    resendInFlightRef.current = false;
+
+    if (error) {
+      setResendError(error.message);
+      setResending(false);
+      return;
+    }
+
+    setResendSent(true);
+    setResending(false);
+  };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -48,6 +82,9 @@ export function LoginForm() {
     setLoading(true);
     setErrorMessage(null);
     setStatusMessage(null);
+    setPendingConfirmEmail(null);
+    setResendSent(false);
+    setResendError(null);
 
     const authResult = isSignUp
       ? await supabase.auth.signUp({
@@ -73,11 +110,11 @@ export function LoginForm() {
       return;
     }
 
-    setStatusMessage(
-      isSignUp
-        ? "Account created. Confirm your email only if confirmation is enabled in Supabase."
-        : "Signed in successfully.",
-    );
+    if (isSignUp) {
+      setPendingConfirmEmail(trimmedEmail);
+    } else {
+      setStatusMessage("Signed in successfully.");
+    }
     setLoading(false);
   };
 
@@ -90,6 +127,7 @@ export function LoginForm() {
             setAuthMode("sign-in");
             setErrorMessage(null);
             setStatusMessage(null);
+            setPendingConfirmEmail(null);
           }}
           type="button"
         >
@@ -101,6 +139,7 @@ export function LoginForm() {
             setAuthMode("sign-up");
             setErrorMessage(null);
             setStatusMessage(null);
+            setPendingConfirmEmail(null);
           }}
           type="button"
         >
@@ -157,6 +196,26 @@ export function LoginForm() {
 
         {statusMessage ? <p className={styles.status}>{statusMessage}</p> : null}
         {errorMessage ? <p className={styles.error}>{errorMessage}</p> : null}
+
+        {pendingConfirmEmail ? (
+          <div className={styles.confirmNotice}>
+            <p className={styles.status}>
+              Account created — check your inbox to confirm your email, then sign in.
+            </p>
+            <button
+              className={styles.resendButton}
+              disabled={resending}
+              onClick={handleResend}
+              type="button"
+            >
+              {resending ? "Resending..." : "Resend confirmation email"}
+            </button>
+            {resendSent ? (
+              <p className={styles.resendStatus}>Confirmation email sent.</p>
+            ) : null}
+            {resendError ? <p className={styles.error}>{resendError}</p> : null}
+          </div>
+        ) : null}
 
         <div className={styles.submitRow}>
           <button className={styles.submitButton} disabled={loading} type="submit">

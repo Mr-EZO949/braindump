@@ -1177,14 +1177,14 @@ export default function LandingPage() {
               transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}>
               <div className={styles.badge}>
                 <span className={styles.badgeDot} />
-                A second brain for when your brain is frozen
+                The second brain that thinks with you
               </div>
               <h1 className={styles.heroH1}>
-                When you can&apos;t start,{" "}
-                <span className={styles.gradient}>start here.</span>
+                Get everything out of your head —{" "}
+                <span className={styles.gradient}>into motion.</span>
               </h1>
               <p className={styles.heroSub}>
-                Built for ADHD and executive-dysfunction paralysis. Dump the mess in your head as raw text — BrainDump turns it into a map of what matters and tells you the one thing to do next. No blank page. No &ldquo;where do I even begin.&rdquo;
+                BrainDump turns the chaos in your head into a clear map of your goals, tasks, and ideas — then tells you exactly what to work on now. The productivity app for people with too much on their mind.
               </p>
               <div className={styles.heroActions}>
                 <a href="#pricing" className={styles.navCta}>See pricing</a>

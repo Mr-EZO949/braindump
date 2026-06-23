@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import styles from "@/components/auth/auth-experience.module.css";
@@ -23,7 +24,9 @@ export default async function LoginPage() {
         <section className={styles.authColumn}>
           <div className={styles.authInner}>
             <div className={styles.brandRow}>
-              <Image src="/logo_withtext.svg" alt="BrainDump" width={170} height={34} className={styles.brandLogoImg} />
+              <Link href="/" aria-label="BrainDump — back to home">
+                <Image src="/logo_withtext.svg" alt="BrainDump" width={170} height={34} className={styles.brandLogoImg} />
+              </Link>
             </div>
 
             <div className={styles.authHeader}>

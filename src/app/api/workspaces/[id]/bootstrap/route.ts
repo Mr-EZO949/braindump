@@ -500,6 +500,11 @@ export async function POST(
         bootstrapDumpResult.extraction_error = result.error;
       }
     }
+  } else if (bootstrapDump && !AI_FLAGS.EXTRACTION_ENABLED) {
+    // User wrote a dump but extraction is disabled — surface this so the
+    // client can tell them their notes are saved but weren't processed,
+    // rather than silently swallowing the dump.
+    bootstrapDumpResult.extraction_error = "extraction_disabled";
   }
 
   return NextResponse.json({

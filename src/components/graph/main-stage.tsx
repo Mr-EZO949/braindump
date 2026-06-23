@@ -169,6 +169,7 @@ export function MainStage({
   suppressInitialFocusAnimation,
 }: MainStageProps) {
   const filtersActive = graphTypeFilter !== "all" || graphImportanceFilter !== "all";
+  const isGraphEmpty = !graphLoading && graphData.nodes.length === 0;
   const [layoutKey, setLayoutKey] = useState(0);
   const resetLayout = useCallback(() => setLayoutKey((k) => k + 1), []);
 
@@ -205,6 +206,15 @@ export function MainStage({
         searchQuery={graphSearchValue}
         suppressInitialFocusAnimation={suppressInitialFocusAnimation}
       />
+
+      {isGraphEmpty ? (
+        <div className="graph-empty-state" role="status">
+          <p className="graph-empty-state-title">Nothing here yet.</p>
+          <p className="graph-empty-state-subtitle">
+            Hit Brain Dump to get the mess out of your head — we’ll map it.
+          </p>
+        </div>
+      ) : null}
 
       <div className="pointer-events-none absolute bottom-6 left-6 z-20">
         <div className="pointer-events-auto">

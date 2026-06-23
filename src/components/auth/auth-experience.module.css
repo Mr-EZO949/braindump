@@ -236,6 +236,55 @@
   color: var(--color-text-secondary);
 }
 
+.confirmNotice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.confirmNotice .status,
+.confirmNotice .error {
+  margin-top: 0;
+}
+
+.resendButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(213, 58, 71, 0.32);
+  border-radius: 12px;
+  background: rgba(213, 58, 71, 0.08);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition:
+    background-color 180ms ease-out,
+    border-color 180ms ease-out,
+    opacity 180ms ease-out;
+}
+
+.resendButton:hover {
+  border-color: var(--color-accent-primary);
+  background: rgba(213, 58, 71, 0.14);
+}
+
+.resendButton:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.resendStatus {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+
 .submitRow {
   margin-top: 18px;
 }

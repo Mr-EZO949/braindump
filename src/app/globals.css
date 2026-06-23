@@ -669,7 +669,8 @@
 :root[data-theme="light"] .bootstrap-field-label,
 :root[data-theme="light"] .bootstrap-field-meta,
 :root[data-theme="light"] .bootstrap-progress-step,
-:root[data-theme="light"] .bootstrap-progress-workspace {
+:root[data-theme="light"] .bootstrap-progress-workspace,
+:root[data-theme="light"] .bootstrap-skip-reassurance {
   color: var(--color-text-muted);
 }
 
@@ -9766,6 +9767,14 @@ input[type="search"]::-webkit-search-results-decoration {
   letter-spacing: -0.005em;
 }
 
+.bootstrap-skip-reassurance {
+  margin: -12px 0 0;
+  padding: 0 clamp(32px, 4.5vw, 48px) clamp(20px, 3vw, 28px);
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(242, 239, 233, 0.5);
+}
+
 .bootstrap-submit-arrow {
   display: inline-block;
   transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -10858,6 +10867,42 @@ input[type="search"]::-webkit-search-results-decoration {
     opacity: 1;
     transform: scale(1.1);
   }
+}
+
+.graph-empty-state {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 24px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.graph-empty-state-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.graph-empty-state-subtitle {
+  max-width: 320px;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -0.005em;
+  color: var(--color-text-muted);
+}
+
+/* Light theme: ground the title in the accent so the empty canvas still
+   reads as "yours" against the brighter surface. */
+:root[data-theme="light"] .graph-empty-state-title {
+  color: var(--color-accent-primary);
 }
 
 /* Plan view */

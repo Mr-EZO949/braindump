@@ -17,6 +17,10 @@ export interface BootstrapDumpHandoff {
   clarifying_questions: unknown[];
   raw_entry_id: string | null;
   raw_text: string;
+  // Set when the user submitted a dump but extraction failed (or was
+  // disabled) and produced no proposals — lets the parent surface a
+  // "couldn't process that dump" notice instead of silently dropping it.
+  extraction_error: string | null;
 }
 
 interface Props {
@@ -110,19 +114,27 @@ export function WorkspaceBootstrapWizard({
           proposed_nodes?: unknown[];
           clarifying_questions?: unknown[];
           raw_entry_id?: string | null;
+          extraction_error?: string | null;
         };
       };
       const dump = data.bootstrap_dump;
-      if (
+      const hasProposals = Boolean(
         dump &&
-        ((dump.proposed_nodes && dump.proposed_nodes.length > 0) ||
-          (dump.clarifying_questions && dump.clarifying_questions.length > 0))
-      ) {
+          ((dump.proposed_nodes && dump.proposed_nodes.length > 0) ||
+            (dump.clarifying_questions && dump.clarifying_questions.length > 0)),
+      );
+      // Submitted a dump but got nothing back AND extraction failed (or was
+      // disabled): flag it so the parent can surface a non-blocking notice
+      // rather than silently dropping the dump's payoff.
+      const extractionFailed =
+        Boolean(trimmedDump) && !hasProposals && Boolean(dump?.extraction_error);
+      if (hasProposals || extractionFailed) {
         onComplete({
-          proposed_nodes: dump.proposed_nodes ?? [],
-          clarifying_questions: dump.clarifying_questions ?? [],
-          raw_entry_id: dump.raw_entry_id ?? null,
+          proposed_nodes: dump?.proposed_nodes ?? [],
+          clarifying_questions: dump?.clarifying_questions ?? [],
+          raw_entry_id: dump?.raw_entry_id ?? null,
           raw_text: trimmedDump,
+          extraction_error: extractionFailed ? dump?.extraction_error ?? "" : null,
         });
       } else {
         onComplete();
@@ -134,13 +146,14 @@ export function WorkspaceBootstrapWizard({
     }
   }
 
-  // Skip from onboarding still creates the workspace anchor — empty
-  // submission produces just the root node, no goals, no dump. The user
-  // lands in a clean empty workspace instead of a half-baked one with
-  // no nodes (or worse, a deleted workspace).
-  async function handleSkip() {
+  // "Skip for now" from onboarding must NOT permanently lock the wizard.
+  // We dismiss it for this session (onSkip) without creating an anchor or
+  // writing bootstrap_completed_at, so a later still-empty load can re-offer
+  // setup. (Previously this ran handleSubmit, which marked the workspace
+  // bootstrapped forever — the wizard never returned.)
+  function handleSkip() {
     if (isOnboarding) {
-      await handleSubmit();
+      onSkip();
       return;
     }
     // For non-onboarding ("I created a new workspace by mistake") we still
@@ -302,7 +315,7 @@ export function WorkspaceBootstrapWizard({
             onClick={handleSkip}
             disabled={submitting}
           >
-            {isOnboarding ? "Skip" : "Cancel"}
+            {isOnboarding ? "Skip for now" : "Cancel"}
           </button>
           <button
             type="button"
@@ -314,6 +327,12 @@ export function WorkspaceBootstrapWizard({
             {!submitting && <span className="bootstrap-submit-arrow" aria-hidden="true">→</span>}
           </button>
         </footer>
+
+        {isOnboarding ? (
+          <p className="bootstrap-skip-reassurance">
+            You can do this anytime — just Brain Dump.
+          </p>
+        ) : null}
 
         {showCancelConfirm && (
           <div className="bootstrap-confirm-overlay">
