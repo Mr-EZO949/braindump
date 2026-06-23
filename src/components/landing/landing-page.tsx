@@ -1177,11 +1177,11 @@ export default function LandingPage() {
               transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}>
               <div className={styles.badge}>
                 <span className={styles.badgeDot} />
-                The second brain that thinks with you
+                Your AI second brain
               </div>
               <h1 className={styles.heroH1}>
-                Get everything out of your head —{" "}
-                <span className={styles.gradient}>into motion.</span>
+                Out of your head.{" "}
+                <span className={styles.gradient}>Into motion.</span>
               </h1>
               <p className={styles.heroSub}>
                 BrainDump turns the chaos in your head into a clear map of your goals, tasks, and ideas — then tells you exactly what to work on now. The productivity app for people with too much on their mind.
