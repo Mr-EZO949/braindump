@@ -1618,6 +1618,28 @@ export function GraphCanvas({
       setFrameVersion((value) => value + 1);
     });
   }, []);
+  // The single highest-priority active node — the graph paints a "★ Start here"
+  // marker on exactly this one so the user always has an obvious starting point
+  // instead of a flat field of similar nodes. (No scoring change; just points.)
+  const topPriorityNodeId = useMemo(() => {
+    let best: string | null = null;
+    let bestScore = -Infinity;
+    for (const n of graphData.nodes) {
+      if (hiddenNodeIds.has(n.id)) continue;
+      if (n.status === "completed" || n.status === "archived") continue;
+      const s =
+        typeof n.current_importance_score === "number" &&
+        Number.isFinite(n.current_importance_score)
+          ? n.current_importance_score
+          : -Infinity;
+      if (s > bestScore) {
+        bestScore = s;
+        best = n.id;
+      }
+    }
+    return best;
+  }, [graphData.nodes, hiddenNodeIds]);
+
   const scene = useMemo(() => {
     const nextLayout = buildGraphLayout(graphData);
 
@@ -2708,6 +2730,20 @@ export function GraphCanvas({
               ? clamp(node.height * 0.08, 4, 6)
               : clamp(node.height * 0.094, 5, 7.5);
 
+            // A second rank channel: gently dim the low-importance tail so the
+            // eye is pulled toward high-priority nodes. State opacities
+            // (selected / hovered / searchHit / completed / archived / dimmed)
+            // still win — we only reshape the "normal active" band.
+            const priorityOpacity =
+              node.status === "active" &&
+              !selected &&
+              !hovered &&
+              !searchHit &&
+              visual.opacity >= 0.85
+                ? 0.8 + 0.2 * node.sizeScale
+                : visual.opacity;
+            const isTopPriority = node.id === topPriorityNodeId;
+
             return (
               <g
                 data-graph-node="true"
@@ -2728,7 +2764,7 @@ export function GraphCanvas({
                   )
                 }
                 onPointerDown={(event) => handleNodePointerDown(event, node.id)}
-                opacity={visual.opacity}
+                opacity={priorityOpacity}
                 ref={(element) => {
                   if (element) {
                     nodeElementRefs.current.set(node.id, element);
@@ -2739,6 +2775,24 @@ export function GraphCanvas({
                 style={{ cursor: draggingNodeId === node.id ? "grabbing" : nodeChildCount > 0 ? "grab" : "grab" }}
                 transform={`translate(${position.x}, ${position.y})`}
               >
+                {isTopPriority ? (
+                  <g
+                    pointerEvents="none"
+                    transform={`translate(0, ${-node.height / 2 - 17})`}
+                  >
+                    <rect x={-48} y={-11} width={96} height={21} rx={10.5} fill="#f0a755" />
+                    <text
+                      x={0}
+                      y={4}
+                      textAnchor="middle"
+                      fontSize={11}
+                      fontWeight={700}
+                      fill="#1a1207"
+                    >
+                      ★ Start here
+                    </text>
+                  </g>
+                ) : null}
                 <defs>
                   <linearGradient id={topBandId} x1="0" x2="1" y1="0" y2="0">
                     <stop

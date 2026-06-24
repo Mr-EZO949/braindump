@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 
 type Nudge = {
   id: string;
-  kind: "stale" | "newly_ready" | "due_soon";
+  kind: "stale" | "newly_ready" | "due_soon" | "top_priority";
   title: string;
   body: string;
   node_id: string | null;
@@ -22,6 +22,7 @@ const KIND_GLYPH: Record<Nudge["kind"], string> = {
   stale: "✦",
   newly_ready: "→",
   due_soon: "◷",
+  top_priority: "★",
 };
 
 type Props = {

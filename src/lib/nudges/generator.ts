@@ -23,7 +23,7 @@ const PREREQUISITE_EDGE_TYPES = [
   "depends_on",
 ];
 
-export type NudgeKind = "stale" | "newly_ready" | "due_soon";
+export type NudgeKind = "stale" | "newly_ready" | "due_soon" | "top_priority";
 
 export type NudgeCandidate = {
   user_id: string;
@@ -45,6 +45,7 @@ type NodeRow = {
   updated_at: string;
   target_date: string | null;
   completed_at: string | null;
+  current_importance_score?: number | null;
 };
 
 type EdgeRow = {
@@ -270,14 +271,74 @@ async function findDueSoonNoActivity(
   });
 }
 
+// ─── Rule 4: top priority, untouched ────────────────────────────────────
+// The single highest-scored active, actionable node per workspace — but only
+// when it's been sitting untouched for 3+ days. The whole problem we solve is
+// "I don't know what to start"; this points at the ONE thing, and goes quiet
+// the moment the user actually engages with it (so it never nags about work
+// already in progress).
+const TOP_PRIORITY_UNTOUCHED_DAYS = 3;
+
+async function findTopPriority(
+  supabase: SupabaseClient,
+): Promise<NudgeCandidate[]> {
+  const touchedCutoff = daysAgo(TOP_PRIORITY_UNTOUCHED_DAYS);
+
+  const { data: nodes, error } = await supabase
+    .from("nodes")
+    .select(
+      "id, user_id, workspace_id, title, node_type, status, updated_at, current_importance_score",
+    )
+    .eq("status", "active")
+    .in("node_type", ["task", "goal", "project", "habit"])
+    .not("current_importance_score", "is", null)
+    .order("current_importance_score", { ascending: false });
+
+  if (error || !nodes || nodes.length === 0) return [];
+
+  // The real #1 per workspace = first in descending-score order.
+  const topPerWs = new Map<string, NodeRow>();
+  for (const n of nodes as NodeRow[]) {
+    if (!topPerWs.has(n.workspace_id)) topPerWs.set(n.workspace_id, n);
+  }
+
+  // Only nudge a #1 that's itself been untouched — if they're already on it,
+  // stay silent.
+  const tops = [...topPerWs.values()].filter((n) => n.updated_at < touchedCutoff);
+  if (tops.length === 0) return [];
+
+  const { data: recentEvents } = await supabase
+    .from("lifecycle_events")
+    .select("node_id")
+    .in(
+      "node_id",
+      tops.map((n) => n.id),
+    )
+    .gte("created_at", touchedCutoff);
+  const touched = new Set((recentEvents ?? []).map((e) => e.node_id as string));
+
+  return tops
+    .filter((n) => !touched.has(n.id))
+    .map((n) => ({
+      user_id: n.user_id,
+      workspace_id: n.workspace_id,
+      node_id: n.id,
+      kind: "top_priority" as const,
+      title: `Start with "${n.title}"`,
+      body: `This is your top priority right now — and it's been sitting untouched. Make a dent on it, or bump something else up if it's wrong.`,
+      dedup_key: `top_priority:${n.id}`,
+    }));
+}
+
 // ─── Entry point ─────────────────────────────────────────────────────────
 export async function generateNudgeCandidates(
   supabase: SupabaseClient,
 ): Promise<NudgeCandidate[]> {
-  const [stale, ready, due] = await Promise.all([
+  const [stale, ready, due, top] = await Promise.all([
     findStaleGoalsAndProjects(supabase),
     findNewlyReady(supabase),
     findDueSoonNoActivity(supabase),
+    findTopPriority(supabase),
   ]);
-  return [...stale, ...ready, ...due];
+  return [...stale, ...ready, ...due, ...top];
 }
