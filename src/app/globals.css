@@ -14802,3 +14802,54 @@ input[type="search"]::-webkit-search-results-decoration {
   background: transparent;
   color: rgba(150, 175, 255, 0.95);
 }
+
+/* On-load anti-freeze banner — calm, dismissible, opens the selective picker. */
+.freeze-nudge {
+  position: fixed;
+  bottom: 184px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 54;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 11px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(127, 170, 230, 0.24);
+  background: rgba(17, 20, 24, 0.96);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+.freeze-nudge-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.freeze-nudge-btn {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(127, 170, 230, 0.45);
+  background: rgba(107, 140, 239, 0.9);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.freeze-nudge-btn:hover {
+  opacity: 0.9;
+}
+.freeze-nudge-dismiss {
+  padding: 6px 8px;
+  background: transparent;
+  border: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}

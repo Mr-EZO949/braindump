@@ -309,6 +309,8 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [proposalsFromBootstrap, setProposalsFromBootstrap] = useState(false);
   const [stepSuggestionNodes, setStepSuggestionNodes] = useState<Array<{ id: string; title: string; summary: string | null; node_type: string; selected: boolean }>>([]);
   const [stepSuggestionOpen, setStepSuggestionOpen] = useState(false);
+  // On-load anti-freeze nudge — dismissible; resets when the workspace changes.
+  const [freezeNudgeDismissed, setFreezeNudgeDismissed] = useState(false);
   const [stepSuggestionLoading, setStepSuggestionLoading] = useState(false);
   const [graphEditOps, setGraphEditOps] = useState<GraphEditOperation[]>([]);
   const [graphEditReviewOpen, setGraphEditReviewOpen] = useState(false);
@@ -486,6 +488,13 @@ export function AppShell({ initialUser }: AppShellProps) {
     [graphData.nodes],
   );
 
+  // Actionable-but-empty nodes (goal/project/class with no next step) — drives
+  // the on-load anti-freeze nudge so the user sees what's ready to map out.
+  const needsActionNodes = useMemo(
+    () => graphData.nodes.filter((n) => needsNextAction(n.id, graphData.nodes, graphData.edges)),
+    [graphData],
+  );
+
   const filteredGraphData = useMemo(() => {
     const minimumImportance =
       importanceFilter === "all" ? null : Number.parseInt(importanceFilter, 10);
@@ -637,6 +646,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     let active = true;
 
     setGraphLoading(true);
+    setFreezeNudgeDismissed(false);
 
     void loadWorkspaceGraphData(
       authUser?.id ?? null,
@@ -2555,6 +2565,23 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
+  // On-load nudge → open the SELECTIVE picker pre-loaded with the nodes that
+  // look ready for a next step (capped so it never feels like a wall).
+  const handleMapOutNeedsAction = () => {
+    const candidates = needsActionNodes.slice(0, 8);
+    if (candidates.length === 0) return;
+    setStepSuggestionNodes(
+      candidates.map((n) => ({
+        id: n.id,
+        title: n.title,
+        summary: n.summary,
+        node_type: n.node_type,
+        selected: true,
+      })),
+    );
+    setStepSuggestionOpen(true);
+  };
+
   const handleToggleStepNode = (nodeId: string) => {
     setStepSuggestionNodes((prev) =>
       prev.map((n) => (n.id === nodeId ? { ...n, selected: !n.selected } : n)),
@@ -3669,6 +3696,33 @@ export function AppShell({ initialUser }: AppShellProps) {
           }}
         />
       )}
+
+      {/* On-load anti-freeze nudge — proactively surface nodes ready for a
+          next step, opening the SELECTIVE picker so it's never a wall. */}
+      {appMode === "graph" &&
+      !freezeNudgeDismissed &&
+      !stepSuggestionOpen &&
+      needsActionNodes.length > 0 ? (
+        <div className="freeze-nudge" role="status">
+          <span className="freeze-nudge-text">
+            {needsActionNodes.length === 1
+              ? "1 item looks ready for a next step."
+              : `${needsActionNodes.length} items look ready for a next step.`}
+          </span>
+          <div className="freeze-nudge-actions">
+            <button className="freeze-nudge-btn" type="button" onClick={handleMapOutNeedsAction}>
+              Pick what to map out
+            </button>
+            <button
+              className="freeze-nudge-dismiss"
+              type="button"
+              onClick={() => setFreezeNudgeDismissed(true)}
+            >
+              Not now
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* AI reach-out ribbon — top-of-screen nudges */}
       <NudgeRibbon
