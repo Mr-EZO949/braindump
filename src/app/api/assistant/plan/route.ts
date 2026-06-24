@@ -198,6 +198,7 @@ export async function POST(req: NextRequest) {
         id: c.id,
         title: c.title,
         summary: c.summary,
+        body: c.body ? c.body.slice(0, 240) : null,
         node_type: c.node_type,
         planning_signals: c.planning_signals,
       })),
@@ -252,18 +253,16 @@ export async function POST(req: NextRequest) {
     run: {
       run_type: "plan",
       provider: "claude",
-      model_name: AI_MODELS.CLAUDE_HAIKU,
+      // Use the provider's own model_name + cache-aware cost (the planner runs
+      // on Sonnet, not Haiku — recomputing here mislabeled + underpriced it).
+      model_name: runMeta.model_name,
       prompt_version: PLAN_PROMPT_VERSION,
       input_hash: runMeta.input_hash,
       output_hash: runMeta.output_hash,
       input_tokens: runMeta.input_tokens,
       output_tokens: runMeta.output_tokens,
       latency_ms: runMeta.latency_ms,
-      estimated_cost:
-        runMeta.input_tokens != null && runMeta.output_tokens != null
-          ? (runMeta.input_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT +
-            (runMeta.output_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT
-          : null,
+      estimated_cost: runMeta.estimated_cost,
       status: "success",
       error_text: null,
     },

@@ -54,17 +54,40 @@ function shortHash(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
 }
 
-function estimateCost(inputTokens: number, outputTokens: number): number {
-  return (
-    (inputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT +
-    (outputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT
-  );
+// Anthropic returns input in THREE buckets: input_tokens (base rate),
+// cache_creation_input_tokens (billed 1.25×), cache_read_input_tokens (billed
+// 0.1×). Counting only input_tokens undercounts cache writes and overcounts
+// cache reads, so logged COGS drifts from the real invoice. readUsage pulls all
+// buckets; claudeCost prices each at its real rate. (Cost telemetry only — no
+// effect on generation.)
+type ClaudeUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+};
+
+function readUsage(u: ClaudeUsage) {
+  const input = u.input_tokens ?? 0;
+  const cacheWrite = u.cache_creation_input_tokens ?? 0;
+  const cacheRead = u.cache_read_input_tokens ?? 0;
+  const output = u.output_tokens ?? 0;
+  return { input, cacheWrite, cacheRead, output, totalInput: input + cacheWrite + cacheRead };
 }
 
-function estimateHaikuCost(inputTokens: number, outputTokens: number): number {
+function claudeCost(
+  model: "sonnet" | "haiku",
+  t: { input: number; cacheWrite: number; cacheRead: number; output: number },
+): number {
+  const r =
+    model === "haiku"
+      ? { i: AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT, o: AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT }
+      : { i: AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT, o: AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT };
   return (
-    (inputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT +
-    (outputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT
+    (t.input / 1_000_000) * r.i +
+    (t.cacheWrite / 1_000_000) * r.i * 1.25 +
+    (t.cacheRead / 1_000_000) * r.i * 0.1 +
+    (t.output / 1_000_000) * r.o
   );
 }
 
@@ -181,10 +204,11 @@ export class ClaudeProvider {
     }
 
     const text = response.content[0].type === "text" ? response.content[0].text : "{}";
-    const inputTokens = response.usage.input_tokens;
-    const outputTokens = response.usage.output_tokens;
+    const u = readUsage(response.usage);
+    const inputTokens = u.totalInput;
+    const outputTokens = u.output;
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateCost(inputTokens, outputTokens);
+    const estimatedCost = claudeCost("sonnet", u);
 
     let output: ExtractionOutput;
     try {
@@ -272,10 +296,11 @@ export class ClaudeProvider {
     });
 
     const text = response.content[0].type === "text" ? response.content[0].text : "{}";
-    const inputTokens = response.usage.input_tokens;
-    const outputTokens = response.usage.output_tokens;
+    const u = readUsage(response.usage);
+    const inputTokens = u.totalInput;
+    const outputTokens = u.output;
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateHaikuCost(inputTokens, outputTokens);
+    const estimatedCost = claudeCost("haiku", u);
 
     let output: EdgeInferenceOutput;
     try {
@@ -334,8 +359,9 @@ export class ClaudeProvider {
     });
 
     const text = response.content[0].type === "text" ? response.content[0].text : "";
-    const inputTokens = response.usage.input_tokens;
-    const outputTokens = response.usage.output_tokens;
+    const u = readUsage(response.usage);
+    const inputTokens = u.totalInput;
+    const outputTokens = u.output;
 
     return {
       output: { answer: text, prompt_version: ASSISTANT_PROMPT_VERSION },
@@ -345,7 +371,7 @@ export class ClaudeProvider {
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         latency_ms: Date.now() - start,
-        estimated_cost: estimateCost(inputTokens, outputTokens),
+        estimated_cost: claudeCost("sonnet", u),
       },
     };
   }
@@ -385,6 +411,8 @@ export class ClaudeProvider {
     let text = "{}";
     let inputTokens = 0;
     let outputTokens = 0;
+    let cacheWrite = 0;
+    let cacheRead = 0;
     let output: PlanOutput | null = null;
     let lastError: unknown;
 
@@ -397,8 +425,11 @@ export class ClaudeProvider {
         messages: [{ role: "user", content: prompt }],
       });
       text = response.content[0].type === "text" ? response.content[0].text : "{}";
-      inputTokens += response.usage.input_tokens;
-      outputTokens += response.usage.output_tokens;
+      const u = readUsage(response.usage);
+      inputTokens += u.input;
+      outputTokens += u.output;
+      cacheWrite += u.cacheWrite;
+      cacheRead += u.cacheRead;
       try {
         const parsed = JSON.parse(extractJson(text));
         output = validatePlanOutput(parsed, totalMinutes);
@@ -409,7 +440,8 @@ export class ClaudeProvider {
     }
 
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateCost(inputTokens, outputTokens);
+    const estimatedCost = claudeCost("sonnet", { input: inputTokens, cacheWrite, cacheRead, output: outputTokens });
+    inputTokens = inputTokens + cacheWrite + cacheRead; // store total billed input
 
     if (!output) {
       throw malformedResponse({
@@ -474,10 +506,11 @@ export class ClaudeProvider {
     });
 
     const text = response.content[0].type === "text" ? response.content[0].text : "{}";
-    const inputTokens = response.usage.input_tokens;
-    const outputTokens = response.usage.output_tokens;
+    const u = readUsage(response.usage);
+    const inputTokens = u.totalInput;
+    const outputTokens = u.output;
     const latencyMs = Date.now() - start;
-    const estimatedCost = estimateHaikuCost(inputTokens, outputTokens);
+    const estimatedCost = claudeCost("haiku", u);
 
     let output: MergeCheckOutput;
     try {

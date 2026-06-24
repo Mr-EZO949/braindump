@@ -122,6 +122,7 @@ export interface PlannerCandidate {
   id: string;
   title: string;
   summary: string | null;
+  body: string | null;
   node_type: NodeType;
   current_importance_score: number | null;
   recently_unblocked: boolean;
@@ -148,6 +149,7 @@ type NodeRow = {
   node_type: NodeType;
   status: string | null;
   summary: string | null;
+  body: string | null;
   title: string;
   habit_target_per_week: number | null;
 };
@@ -455,7 +457,7 @@ export async function buildPlannerCandidates(params: {
     params.supabase
       .from("nodes")
       .select(
-        "id, title, summary, node_type, status, current_importance_score, habit_target_per_week",
+        "id, title, summary, body, node_type, status, current_importance_score, habit_target_per_week",
       )
       .eq("workspace_id", params.workspaceId)
       .eq("user_id", params.userId)
@@ -803,6 +805,7 @@ export async function buildPlannerCandidates(params: {
           id: node.id,
           title: node.title,
           summary: node.summary,
+          body: node.body,
           node_type: node.node_type,
           current_importance_score: node.current_importance_score,
           recently_unblocked: recentlyUnblocked,

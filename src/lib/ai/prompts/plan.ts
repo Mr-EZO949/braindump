@@ -3,7 +3,7 @@
 // Gemini systemInstruction + Anthropic cache_control can fingerprint the
 // rubric across calls.
 
-export const PLAN_PROMPT_VERSION = "plan-v4";
+export const PLAN_PROMPT_VERSION = "plan-v5";
 
 const RUBRIC_BLOCK = `You are a personal planning assistant. Create a realistic time-blocked plan for the session described in the Session block below.
 
@@ -15,6 +15,8 @@ Rules:
 - Prefer FEWER items done properly over many crammed in. In a short window (≤90 min) schedule only the 1–2 most important items at realistic durations — do NOT cram five items into tiny slices. It's fine to leave a big item for a future, longer session rather than hand it an unrealistic stub now.
 - Never let the plan exceed the session window. No block may run past the total minutes, and leave room for the 10-minute end buffer (so in a 60-minute window usable focus time is ~50 min). If a substantial item won't fully fit, schedule a realistic starter block (≥45 min) and say in the reason that it's a start — don't shrink it to an absurd stub.
 - Candidate work items may include planning signals. Treat them as high-confidence hints about urgency, blockers, enabling work, and carry-over.
+- BLOCKED work: if an item's summary or signals say it is waiting on someone else, a pending decision, or a dependency that isn't ready yet (e.g. "advisor says the analysis isn't ready", "waiting on design sign-off"), do NOT schedule the blocked work itself — you'd be booking time the user can't actually use. Instead schedule the small action that UNBLOCKS it (e.g. "Message advisor to confirm the analysis is ready", ~10–15 min), or leave the blocked item out and note why in another block's reason. Never hand a deep-work block to something that cannot proceed yet.
+- FIXED commitments: if an item has a fixed time or day named in its title/summary/signals (a meeting, class, appointment, shift, or kid's activity), schedule it AT that time — do not move a fixed commitment to the front of the session, and build the rest of the plan around it.
 - Only include node_id when the block directly corresponds to a work item in the Session block.
 - If the workspace context names manual planner items, you may schedule them with node_id = null. Keep the block title close to the named manual item.
 - Admin blocks (emails, comms) and break/buffer blocks have no node_id.
@@ -44,6 +46,7 @@ export interface PlanPromptParams {
     id: string;
     title: string;
     summary: string | null;
+    body?: string | null;
     node_type: string;
     planning_signals?: string[];
   }>;
@@ -58,12 +61,13 @@ function buildVariableBlock(params: PlanPromptParams): string {
   const nodeList = params.candidate_nodes
     .map((n) => {
       const summary = n.summary ? `: ${n.summary}` : "";
+      const context = n.body ? ` [context: ${n.body}]` : "";
       const signals =
         n.planning_signals && n.planning_signals.length > 0
           ? ` Signals: ${n.planning_signals.join("; ")}.`
           : "";
 
-      return `- [${n.node_type}] "${n.title}"${summary}${signals} (id: ${n.id})`;
+      return `- [${n.node_type}] "${n.title}"${summary}${context}${signals} (id: ${n.id})`;
     })
     .join("\n");
 
