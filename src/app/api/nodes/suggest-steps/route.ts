@@ -76,14 +76,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { title, summary, node_type, workspace_id, mode } = body as {
+  const { title, summary, node_type, workspace_id, mode, instructions } = body as {
     title: string;
     summary: string | null;
     node_type: string;
     workspace_id: string;
     mode?: "light" | "full";
+    instructions?: string;
   };
   const stepMode = mode === "light" ? "light" : "full";
+  // Optional user directions to steer the breakdown. Capped so a pasted essay
+  // can't blow the 800-token budget.
+  const cleanInstructions =
+    typeof instructions === "string" ? instructions.trim().slice(0, 500) : "";
 
   if (!title || !workspace_id) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -130,6 +135,9 @@ export async function POST(req: NextRequest) {
   const client = new Anthropic({ apiKey: claudeKey });
   const userPrompt =
     (summary ? `Goal/Project: "${title}"\nDescription: ${summary}` : `Goal/Project: "${title}"`) +
+    (cleanInstructions
+      ? `\n\nUser's directions for this breakdown (follow these): ${cleanInstructions}`
+      : "") +
     contextBlock;
 
   const systemPrompt =

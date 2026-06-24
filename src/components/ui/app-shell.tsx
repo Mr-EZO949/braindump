@@ -28,6 +28,7 @@ import { GraphEditReview } from "@/components/ui/graph-edit-review";
 import { MergeAlert } from "@/components/ui/merge-alert";
 import { NudgeRibbon } from "@/components/nudges/nudge-ribbon";
 import { WorkspaceBootstrapWizard } from "@/components/ui/workspace-bootstrap-wizard";
+import { ClusterSuggestionStack } from "@/components/clustering/cluster-suggestion-stack";
 import { WelcomeScreen, shouldShowWelcome, markWelcomeDone } from "@/components/ui/onboarding-tutorial";
 import { GuidedTour } from "@/components/ui/guided-tour";
 import { FocusTimerPill } from "@/components/ui/focus-timer-pill";
@@ -306,7 +307,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   // the user with three modals + several Sonnet calls. They can still
   // trigger suggest-steps manually from any node's details panel.
   const [proposalsFromBootstrap, setProposalsFromBootstrap] = useState(false);
-  const [stepSuggestionNodes, setStepSuggestionNodes] = useState<Array<{ id: string; title: string; summary: string | null; node_type: string }>>([]);
+  const [stepSuggestionNodes, setStepSuggestionNodes] = useState<Array<{ id: string; title: string; summary: string | null; node_type: string; selected: boolean }>>([]);
   const [stepSuggestionOpen, setStepSuggestionOpen] = useState(false);
   const [stepSuggestionLoading, setStepSuggestionLoading] = useState(false);
   const [graphEditOps, setGraphEditOps] = useState<GraphEditOperation[]>([]);
@@ -316,6 +317,9 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [analyzingConnections, setAnalyzingConnections] = useState(false);
   const [mergeCandidates, setMergeCandidates] = useState<MergeCandidate[]>([]);
   const [aiNotice, setAiNotice] = useState<AINotice | null>(null);
+  // Bumped after a dump-review accept so the cluster-suggestion stack re-polls
+  // (the clustering pass runs server-side inside /api/proposals/nodes/review).
+  const [clusterRefreshKey, setClusterRefreshKey] = useState(0);
   const [lastAnalysisNodeIds, setLastAnalysisNodeIds] = useState<string[]>([]);
   const [lastAnalysisFailedNodeIds, setLastAnalysisFailedNodeIds] = useState<string[]>([]);
   const [lastAnalysisWorkspaceId, setLastAnalysisWorkspaceId] = useState<string | null>(null);
@@ -2346,6 +2350,9 @@ export function AppShell({ initialUser }: AppShellProps) {
       body: JSON.stringify({ actions }),
     });
     const data = await res.json() as { accepted_nodes?: Node[]; accepted_edges?: Edge[] };
+    // The review route runs the clustering pass server-side; re-poll so any new
+    // grouping suggestions surface right after accepting a dump's nodes.
+    setClusterRefreshKey((k) => k + 1);
     if (data.accepted_nodes && data.accepted_nodes.length > 0) {
       const nodes = data.accepted_nodes;
       const acceptedEdges = data.accepted_edges ?? [];
@@ -2493,6 +2500,7 @@ export function AppShell({ initialUser }: AppShellProps) {
             title: n.title,
             summary: n.summary,
             node_type: n.node_type,
+            selected: true,
           })),
         );
         setStepSuggestionOpen(true);
@@ -2511,6 +2519,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const handleSuggestStepsForNode = async (
     nodeId: string,
     mode: "light" | "full" = "full",
+    instructions?: string,
   ) => {
     if (!selectedWorkspaceId || stepSuggestionLoading) return;
     const node = graphData.nodes.find((n) => n.id === nodeId);
@@ -2527,6 +2536,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           node_type: node.node_type,
           workspace_id: selectedWorkspaceId,
           mode,
+          instructions,
         }),
       });
       if (!res.ok) return;
@@ -2545,15 +2555,24 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
+  const handleToggleStepNode = (nodeId: string) => {
+    setStepSuggestionNodes((prev) =>
+      prev.map((n) => (n.id === nodeId ? { ...n, selected: !n.selected } : n)),
+    );
+  };
+
   const handleGenerateSteps = async () => {
-    if (!selectedWorkspaceId || stepSuggestionNodes.length === 0) return;
+    if (!selectedWorkspaceId) return;
+    const selectedNodes = stepSuggestionNodes.filter((n) => n.selected);
+    if (selectedNodes.length === 0) return;
     setStepSuggestionLoading(true);
     setStepSuggestionOpen(false);
 
     try {
-      // Generate steps for each goal/project node, then extract them all
-      const allStepsTexts: string[] = [];
-      for (const node of stepSuggestionNodes) {
+      // Generate steps for each SELECTED node and pin them UNDER that node so
+      // they nest correctly. (The old batch-join extracted with no parent, so
+      // steps floated to the workspace root.)
+      for (const node of selectedNodes) {
         const res = await fetch("/api/nodes/suggest-steps", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2567,13 +2586,11 @@ export function AppShell({ initialUser }: AppShellProps) {
         if (res.ok) {
           const data = await res.json() as { steps_text?: string };
           if (data.steps_text) {
-            allStepsTexts.push(data.steps_text);
+            await handleExtractNodes(data.steps_text, selectedWorkspaceId, {
+              defaultParentNodeId: node.id,
+            });
           }
         }
-      }
-
-      if (allStepsTexts.length > 0) {
-        await handleExtractNodes(allStepsTexts.join("\n\n"), selectedWorkspaceId);
       }
     } catch {
       // Step generation failed silently
@@ -3310,8 +3327,8 @@ export function AppShell({ initialUser }: AppShellProps) {
             if (!selectedWorkspaceId) return;
             void analyzeNodes([nodeId]);
           }}
-          onSuggestSteps={(nodeId, mode) => {
-            void handleSuggestStepsForNode(nodeId, mode);
+          onSuggestSteps={(nodeId, mode, instructions) => {
+            void handleSuggestStepsForNode(nodeId, mode, instructions);
           }}
           suggestStepsBusy={stepSuggestionLoading}
           onSelectLinkedNode={handleSelectNode}
@@ -3459,17 +3476,22 @@ export function AppShell({ initialUser }: AppShellProps) {
                 </svg>
               </div>
               <div className="step-suggest-body">
-                <p className="step-suggest-title">Suggested steps</p>
+                <p className="step-suggest-title">Break these into steps?</p>
                 <p className="step-suggest-desc">
-                  Want me to break down{" "}
-                  {stepSuggestionNodes.map((n, i) => (
-                    <span key={n.id}>
-                      {i > 0 && (i === stepSuggestionNodes.length - 1 ? " and " : ", ")}
-                      <strong>{n.title}</strong>
-                    </span>
-                  ))}{" "}
-                  into actionable steps?
+                  Pick which to map out — skip any you&rsquo;re not ready for.
                 </p>
+                <div className="step-suggest-checklist">
+                  {stepSuggestionNodes.map((n) => (
+                    <label className="step-suggest-check" key={n.id}>
+                      <input
+                        type="checkbox"
+                        checked={n.selected}
+                        onChange={() => handleToggleStepNode(n.id)}
+                      />
+                      <span>{n.title}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
               <div className="step-suggest-actions">
                 <button
@@ -3482,9 +3504,15 @@ export function AppShell({ initialUser }: AppShellProps) {
                 <button
                   className="per-btn-primary"
                   onClick={() => void handleGenerateSteps()}
+                  disabled={stepSuggestionNodes.every((n) => !n.selected)}
                   type="button"
                 >
-                  Generate steps
+                  {(() => {
+                    const c = stepSuggestionNodes.filter((n) => n.selected).length;
+                    return c === stepSuggestionNodes.length || c === 0
+                      ? "Generate steps"
+                      : `Generate steps (${c})`;
+                  })()}
                 </button>
               </div>
             </motion.div>
@@ -3626,6 +3654,21 @@ export function AppShell({ initialUser }: AppShellProps) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Auto-grouping: surface pending cluster suggestions for Accept/Dismiss */}
+      {appMode === "graph" && (
+        <ClusterSuggestionStack
+          workspaceId={selectedWorkspaceId}
+          refreshKey={clusterRefreshKey}
+          onAccepted={() => {
+            void loadWorkspaceGraphData(
+              authUser?.id ?? null,
+              selectedWorkspaceId,
+              selectedWorkspace?.name ?? null,
+            ).then(setGraphData);
+          }}
+        />
+      )}
 
       {/* AI reach-out ribbon — top-of-screen nudges */}
       <NudgeRibbon

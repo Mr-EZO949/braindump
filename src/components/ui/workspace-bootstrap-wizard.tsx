@@ -4,10 +4,17 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { CloseIcon, PlusIcon } from "@/components/ui/icons";
+import type { WorkspaceProfileAreaType } from "@/types/graph";
 
 interface GoalRow {
   id: string;
   title: string;
+}
+
+interface AreaRow {
+  id: string;
+  title: string;
+  area_type: WorkspaceProfileAreaType;
 }
 
 // Slim shape for what bootstrap returns about the dump — we hand this off
@@ -32,6 +39,18 @@ interface Props {
 }
 
 const MAX_GOALS = 6;
+const MAX_AREAS = 6;
+const AREA_TYPE_OPTIONS: Array<{ value: WorkspaceProfileAreaType; label: string }> = [
+  { value: "academic", label: "Academic" },
+  { value: "project", label: "Project" },
+  { value: "career", label: "Career" },
+  { value: "health", label: "Health" },
+  { value: "life_admin", label: "Life admin" },
+  { value: "personal", label: "Personal" },
+];
+const AREA_TYPE_LABEL = Object.fromEntries(
+  AREA_TYPE_OPTIONS.map((o) => [o.value, o.label]),
+) as Record<WorkspaceProfileAreaType, string>;
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -57,6 +76,12 @@ export function WorkspaceBootstrapWizard({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  // Step 2 (the area skeleton): AI proposes life-areas from the dump, user edits.
+  const [step, setStep] = useState<0 | 1>(0);
+  const [areas, setAreas] = useState<AreaRow[]>([]);
+  const [areaTitleDraft, setAreaTitleDraft] = useState("");
+  const [areaTypeDraft, setAreaTypeDraft] = useState<WorkspaceProfileAreaType>("personal");
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
 
   const trimmed = successTitle.trim();
   const trimmedRole = role.trim();
@@ -83,6 +108,53 @@ export function WorkspaceBootstrapWizard({
     setGoals((prev) => prev.filter((g) => g.id !== id));
   }
 
+  // Step 1 → 2: move to the areas step and ask the AI to propose life-areas
+  // from the dump. Show the step immediately (with a spinner) so it feels
+  // responsive; fall soft to manual entry on any error.
+  async function goToAreas() {
+    if (submitting || loadingSuggestions) return;
+    setStep(1);
+    if (!trimmedDump && !trimmed) return; // nothing to infer from → manual entry
+    setLoadingSuggestions(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/suggest-areas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bootstrap_dump: trimmedDump || null,
+          role: trimmedRole || null,
+          success_title: trimmed || null,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        suggested_areas?: Array<{ title: string; area_type: WorkspaceProfileAreaType }>;
+      };
+      setAreas(
+        (data.suggested_areas ?? []).map((a) => ({
+          id: createId("area"),
+          title: a.title,
+          area_type: a.area_type,
+        })),
+      );
+    } catch {
+      setAreas([]);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  }
+
+  function addArea() {
+    const v = areaTitleDraft.trim();
+    if (!v || areas.length >= MAX_AREAS) return;
+    if (areas.some((a) => a.title.toLowerCase() === v.toLowerCase())) return;
+    setAreas((prev) => [...prev, { id: createId("area"), title: v.slice(0, 80), area_type: areaTypeDraft }]);
+    setAreaTitleDraft("");
+  }
+
+  function removeArea(id: string) {
+    setAreas((prev) => prev.filter((a) => a.id !== id));
+  }
+
   async function handleSubmit() {
     if (submitting) return;
     setSubmitting(true);
@@ -99,7 +171,7 @@ export function WorkspaceBootstrapWizard({
           // never sees an empty success_title.
           success_title: trimmed || workspaceName || "My workspace",
           goals: goals.map((g) => ({ title: g.title })),
-          areas: [],
+          areas: areas.map((a) => ({ title: a.title, area_type: a.area_type })),
           bootstrap_dump: trimmedDump || null,
         }),
       });
@@ -174,17 +246,32 @@ export function WorkspaceBootstrapWizard({
 
         <header className="bootstrap-hero-header">
           <span className="bootstrap-eyebrow">
-            {isOnboarding ? "First setup" : "New workspace"}
+            {step === 0 ? (isOnboarding ? "First setup" : "New workspace") : "Step 2 · your areas"}
           </span>
-          <h2 className="bootstrap-hero-heading">
-            What&rsquo;s on your <span className="bootstrap-hero-heading-em">mind</span>?
-          </h2>
-          <p className="bootstrap-hero-sub">
-            Tasks, goals, deadlines, half-ideas. Don&rsquo;t organize — we will.
-          </p>
+          {step === 0 ? (
+            <>
+              <h2 className="bootstrap-hero-heading">
+                What&rsquo;s on your <span className="bootstrap-hero-heading-em">mind</span>?
+              </h2>
+              <p className="bootstrap-hero-sub">
+                Tasks, goals, deadlines, half-ideas. Don&rsquo;t organize — we will.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="bootstrap-hero-heading">
+                Your life <span className="bootstrap-hero-heading-em">areas</span>
+              </h2>
+              <p className="bootstrap-hero-sub">
+                The branches your graph hangs off — edit, remove, or add. Your dump sorts under these.
+              </p>
+            </>
+          )}
         </header>
 
         <div className="bootstrap-hero-body">
+          {step === 0 ? (
+          <>
           <textarea
             className="bootstrap-hero-textarea"
             placeholder="climbing 3x a week, OS project due Nov 8, mom's birthday May 18, half-formed app idea about route logging, want to read more philosophy this year, marathon in september…"
@@ -304,6 +391,77 @@ export function WorkspaceBootstrapWizard({
               </motion.div>
             )}
           </AnimatePresence>
+          </>
+          ) : (
+          <div className="bootstrap-areas">
+            {loadingSuggestions ? (
+              <p className="bootstrap-areas-note">Reading your dump for life-areas…</p>
+            ) : (
+              <>
+                {areas.length === 0 ? (
+                  <p className="bootstrap-areas-note">No areas yet — add your main life-areas below.</p>
+                ) : (
+                  <div className="bootstrap-area-list">
+                    {areas.map((a) => (
+                      <div className="bootstrap-area-row" key={a.id}>
+                        <span className="bootstrap-area-type" data-type={a.area_type}>
+                          {AREA_TYPE_LABEL[a.area_type]}
+                        </span>
+                        <span className="bootstrap-area-title">{a.title}</span>
+                        <button
+                          type="button"
+                          className="bootstrap-goal-chip-v2-x"
+                          onClick={() => removeArea(a.id)}
+                          aria-label={`Remove ${a.title}`}
+                        >
+                          <CloseIcon className="h-[9px] w-[9px]" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="bootstrap-area-add">
+                  <input
+                    className="bootstrap-line-input"
+                    type="text"
+                    placeholder="add an area"
+                    value={areaTitleDraft}
+                    onChange={(e) => setAreaTitleDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addArea();
+                      }
+                    }}
+                    maxLength={80}
+                    autoComplete="off"
+                  />
+                  <select
+                    className="bootstrap-area-type-select"
+                    value={areaTypeDraft}
+                    onChange={(e) => setAreaTypeDraft(e.target.value as WorkspaceProfileAreaType)}
+                    aria-label="Area type"
+                  >
+                    {AREA_TYPE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="bootstrap-line-add"
+                    onClick={addArea}
+                    disabled={!areaTitleDraft.trim() || areas.length >= MAX_AREAS}
+                    aria-label="Add area"
+                  >
+                    <PlusIcon className="h-[12px] w-[12px]" />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+          )}
 
           {error ? <p className="bootstrap-error">{error}</p> : null}
         </div>
@@ -312,20 +470,32 @@ export function WorkspaceBootstrapWizard({
           <button
             type="button"
             className="bootstrap-cancel"
-            onClick={handleSkip}
+            onClick={step === 0 ? handleSkip : () => setStep(0)}
             disabled={submitting}
           >
-            {isOnboarding ? "Skip for now" : "Cancel"}
+            {step === 0 ? (isOnboarding ? "Skip for now" : "Cancel") : "Back"}
           </button>
-          <button
-            type="button"
-            className="bootstrap-submit bootstrap-submit--hero"
-            disabled={submitting}
-            onClick={handleSubmit}
-          >
-            {submitLabel}
-            {!submitting && <span className="bootstrap-submit-arrow" aria-hidden="true">→</span>}
-          </button>
+          {step === 0 ? (
+            <button
+              type="button"
+              className="bootstrap-submit bootstrap-submit--hero"
+              disabled={submitting || loadingSuggestions}
+              onClick={() => void goToAreas()}
+            >
+              Next
+              <span className="bootstrap-submit-arrow" aria-hidden="true">→</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="bootstrap-submit bootstrap-submit--hero"
+              disabled={submitting || loadingSuggestions}
+              onClick={handleSubmit}
+            >
+              {submitLabel}
+              {!submitting && <span className="bootstrap-submit-arrow" aria-hidden="true">→</span>}
+            </button>
+          )}
         </footer>
 
         {isOnboarding ? (

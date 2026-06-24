@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   getChatComposerCue,
   getChatScopeMeta,
@@ -11,6 +12,7 @@ import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { HabitStreak } from "@/components/panel/habit-streak";
 import { useVoiceInput } from "@/components/voice/use-voice-input";
 import { classifyTaskSize } from "@/lib/ai/sizing";
+import { needsNextAction } from "@/lib/graph/next-action";
 import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/types/chat";
 import type { GraphData, NodeStatus } from "@/types/graph";
 import type { ChatSessionMeta } from "@/lib/chat/sessions";
@@ -68,7 +70,7 @@ type ContextRailProps = {
   onSelectNudge: (nudge: Nudge) => void;
   onSelectPrompt: (prompt: string) => void;
   onFindConnections: (nodeId: string) => void;
-  onSuggestSteps?: (nodeId: string, mode: "light" | "full") => void;
+  onSuggestSteps?: (nodeId: string, mode: "light" | "full", instructions?: string) => void;
   suggestStepsBusy?: boolean;
   onStatusChange: (nodeId: string, status: NodeStatus) => void;
   onStartFocusSession?: (nodeId: string) => void;
@@ -149,6 +151,8 @@ export function ContextRail({
   onDeleteChatSession,
 }: ContextRailProps) {
   const promptSuggestions = getSuggestedPrompts(chatScope);
+  const [directionsOpen, setDirectionsOpen] = useState(false);
+  const [directions, setDirections] = useState("");
   const linkedNodes = getLinkedNodePerspectives(graphData, selectedNode?.id ?? null);
   const isHabitNode = selectedNode?.node_type === "habit";
   const linkedGroups = groupLinkedNodes(linkedNodes);
@@ -664,6 +668,41 @@ export function ContextRail({
                     </>
                   ) : null}
 
+                  {/* Anti-freeze nudge — an actionable node with no next step
+                      yet gets one gentle, one-tap way forward (no wall). */}
+                  {onSuggestSteps &&
+                  needsNextAction(selectedNode.id, graphData.nodes, graphData.edges) ? (
+                    <>
+                      <div className="detail-divider" />
+                      <div className="detail-nudge-banner" role="status">
+                        <p className="detail-nudge-text">
+                          This {selectedNode.node_type} doesn&rsquo;t have a next step yet.
+                        </p>
+                        <div className="detail-nudge-actions">
+                          <button
+                            className="detail-nudge-btn"
+                            onClick={() =>
+                              onSuggestSteps(selectedNode.id, "light", directions.trim() || undefined)
+                            }
+                            type="button"
+                            disabled={suggestStepsBusy}
+                          >
+                            {suggestStepsBusy ? "Thinking…" : "Suggest a step"}
+                          </button>
+                          {onStartFocusSession ? (
+                            <button
+                              className="detail-nudge-btn detail-nudge-btn--ghost"
+                              onClick={() => onStartFocusSession(selectedNode.id)}
+                              type="button"
+                            >
+                              Start focus
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+
                   {/* Divider */}
                   <div className="detail-divider" />
 
@@ -758,8 +797,28 @@ export function ContextRail({
                         classifyTaskSize(selectedNode.title) !== "task") ? (
                         <>
                           <button
+                            className="detail-action-pill detail-action-pill--quiet"
+                            onClick={() => setDirectionsOpen((v) => !v)}
+                            type="button"
+                            title="Optionally tell the AI how to break this down"
+                          >
+                            {directionsOpen ? "Hide directions" : "Add directions"}
+                          </button>
+                          {directionsOpen ? (
+                            <textarea
+                              className="detail-directions-input"
+                              value={directions}
+                              onChange={(e) => setDirections(e.target.value)}
+                              placeholder="Optional: e.g. 'focus on the first week' or 'I already have a draft'"
+                              rows={2}
+                              maxLength={500}
+                            />
+                          ) : null}
+                          <button
                             className="detail-action-pill"
-                            onClick={() => onSuggestSteps(selectedNode.id, "light")}
+                            onClick={() =>
+                              onSuggestSteps(selectedNode.id, "light", directions.trim() || undefined)
+                            }
                             type="button"
                             disabled={suggestStepsBusy}
                             title="Just the 1–3 immediate next steps to get unstuck"
@@ -768,7 +827,9 @@ export function ContextRail({
                           </button>
                           <button
                             className="detail-action-pill"
-                            onClick={() => onSuggestSteps(selectedNode.id, "full")}
+                            onClick={() =>
+                              onSuggestSteps(selectedNode.id, "full", directions.trim() || undefined)
+                            }
                             type="button"
                             disabled={suggestStepsBusy}
                             title="A full roadmap of sub-tasks"

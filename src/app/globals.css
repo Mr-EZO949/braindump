@@ -6827,6 +6827,31 @@ input[type="search"]::-webkit-search-results-decoration {
   border-color: rgba(180, 84, 84, 0.36);
 }
 
+.ai-notice--cluster {
+  border-color: rgba(110, 150, 200, 0.32);
+}
+
+/* Stack wrapper so multiple cluster cards column up instead of overlapping
+   (the base .ai-notice is position:fixed; we neutralize that for children). */
+.cluster-suggest-stack {
+  position: fixed;
+  bottom: 132px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(680px, calc(100vw - 32px));
+}
+
+.cluster-suggest-stack .ai-notice {
+  position: static;
+  transform: none;
+  left: auto;
+  bottom: auto;
+}
+
 .ai-notice-dismiss {
   flex-shrink: 0;
   border: 0;
@@ -14630,4 +14655,150 @@ input[type="search"]::-webkit-search-results-decoration {
   -webkit-box-orient: vertical;
   overflow: hidden;
   white-space: pre-wrap;
+}
+
+/* ── Bootstrap wizard step 2: AI-suggested life-areas ─────────────────── */
+.bootstrap-areas {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bootstrap-areas-note {
+  padding: 18px 4px;
+  text-align: center;
+  font-size: 12.5px;
+  color: rgba(242, 239, 233, 0.45);
+}
+/* Override the legacy 4-col grid: badge · title · remove. */
+.bootstrap-area-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 48px;
+  cursor: default;
+}
+.bootstrap-area-type {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: rgba(127, 170, 230, 0.95);
+  background: rgba(110, 150, 200, 0.14);
+  white-space: nowrap;
+}
+.bootstrap-area-title {
+  min-width: 0;
+  color: #f2eee8;
+  font-size: 13px;
+  font-weight: 540;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bootstrap-area-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bootstrap-area-add .bootstrap-line-input {
+  flex: 1;
+  min-width: 0;
+}
+.bootstrap-area-type-select {
+  flex-shrink: 0;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: #f2eee8;
+  font-size: 12px;
+}
+
+/* ── Post-dump anti-freeze: selective checklist · directions · nudge ──── */
+.step-suggest-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.step-suggest-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 9px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-fast);
+}
+.step-suggest-check:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.step-suggest-check input {
+  flex-shrink: 0;
+  accent-color: var(--color-accent-primary);
+  width: 15px;
+  height: 15px;
+}
+.detail-action-pill--quiet {
+  opacity: 0.7;
+  font-size: 11.5px;
+}
+.detail-directions-input {
+  width: 100%;
+  resize: vertical;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+.detail-nudge-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(110, 150, 200, 0.22);
+  background: rgba(110, 150, 200, 0.08);
+}
+.detail-nudge-text {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+.detail-nudge-actions {
+  display: flex;
+  gap: 8px;
+}
+.detail-nudge-btn {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(127, 170, 230, 0.45);
+  background: rgba(107, 140, 239, 0.9);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity var(--motion-fast);
+}
+.detail-nudge-btn:hover {
+  opacity: 0.9;
+}
+.detail-nudge-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.detail-nudge-btn--ghost {
+  background: transparent;
+  color: rgba(150, 175, 255, 0.95);
 }
