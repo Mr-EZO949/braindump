@@ -30,14 +30,20 @@ const STEPS: TourStep[] = [
   },
   {
     target: "context-rail",
-    title: "Node details",
-    body: "Select any node to see its details, connections, and importance — and edit inline. A project with no next step can be broken into steps in one tap.",
+    title: "Side panel & roadmaps",
+    body: "Click any node to open the side panel — see its details, connections, and importance, and turn a project into a step-by-step roadmap in one tap.",
+    position: "center",
+  },
+  {
+    target: "rail-chat",
+    title: "Chat about your graph",
+    body: "Switch to the Chat tab in the side panel to ask anything — how things connect, what to prioritize, or just think out loud. It can capture and reshape your graph as you talk.",
     position: "center",
   },
   {
     target: "assistant-btn",
-    title: "Assistant",
-    body: "An AI that knows your whole workspace. Ask it to plan your day, explain how things connect, prioritize, or capture new things just by chatting.",
+    title: "Planner",
+    body: "Plan your day, time-blocked. Tell the Planner what you want to tackle and it lays your tasks onto a calendar — building, scheduling, and rescheduling blocks for you.",
     position: "above",
   },
   {
@@ -104,7 +110,13 @@ export function GuidedTour({ onDone }: Props) {
     }
   }
 
-  // Compute tooltip style based on position strategy
+  // Compute tooltip style based on position strategy. The tooltip is 320px
+  // wide and centered with translateX(-50%), so its center must stay at least
+  // half-width + margin from each edge — otherwise a corner target (e.g. the
+  // top-left workspace switcher) spills the tooltip off-screen.
+  const ttHalf = Math.min(320, window.innerWidth - 32) / 2;
+  const clampX = (center: number) =>
+    Math.max(ttHalf + 16, Math.min(center, window.innerWidth - ttHalf - 16));
   let tooltipStyle: React.CSSProperties;
   if (current.position === "center" || !spotRect) {
     tooltipStyle = {
@@ -115,14 +127,14 @@ export function GuidedTour({ onDone }: Props) {
   } else if (current.position === "above" && spotRect) {
     tooltipStyle = {
       bottom: window.innerHeight - spotRect.top + 14,
-      left: Math.max(16, Math.min(spotRect.left + spotRect.width / 2, window.innerWidth - 16)),
+      left: clampX(spotRect.left + spotRect.width / 2),
       transform: "translateX(-50%)",
     };
   } else {
     // below
     tooltipStyle = {
       top: spotRect!.bottom + 14,
-      left: Math.max(16, Math.min(spotRect!.left + spotRect!.width / 2, window.innerWidth - 16)),
+      left: clampX(spotRect!.left + spotRect!.width / 2),
       transform: "translateX(-50%)",
     };
   }

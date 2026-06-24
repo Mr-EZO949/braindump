@@ -222,6 +222,7 @@ export function ContextRail({
                 aria-selected={activeTab === "details"}
                 className="rail-tab-button"
                 data-active={activeTab === "details"}
+                data-tour="rail-details"
                 onClick={() => onSetActiveTab("details")}
                 role="tab"
                 type="button"
@@ -232,6 +233,7 @@ export function ContextRail({
                 aria-selected={activeTab === "chat"}
                 className="rail-tab-button"
                 data-active={activeTab === "chat"}
+                data-tour="rail-chat"
                 onClick={() => onSetActiveTab("chat")}
                 role="tab"
                 type="button"
