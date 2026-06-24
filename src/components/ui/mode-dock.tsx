@@ -245,6 +245,7 @@ export function ModeDock({
           aria-pressed={mode === "pomodoro"}
           className="mode-dock-btn"
           data-active={mode === "pomodoro"}
+          data-tour="pomodoro-btn"
           onClick={() => onSetMode("pomodoro")}
           type="button"
           title="Pomodoro focus timer"
@@ -273,6 +274,7 @@ export function ModeDock({
 
         <button
           className="mode-dock-action"
+          data-tour="history-btn"
           onClick={onOpenHistory}
           type="button"
           title="View past brain dumps"

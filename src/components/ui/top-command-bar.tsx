@@ -58,6 +58,7 @@ export function TopCommandBar({
             <button
               aria-expanded={workspaceMenuOpen}
               className="workspace-trigger"
+              data-tour="workspace-switcher"
               data-open={workspaceMenuOpen}
               onClick={onToggleWorkspaceMenu}
               type="button"

@@ -11,28 +11,64 @@ interface TourStep {
 
 const STEPS: TourStep[] = [
   {
+    target: "workspace-switcher",
+    title: "Workspaces",
+    body: "Keep separate parts of your life in separate graphs — school, a side project, the job hunt. Switch or spin up a new one here anytime.",
+    position: "below",
+  },
+  {
     target: "graph-area",
     title: "Your knowledge graph",
-    body: "This is where all your nodes live — goals, tasks, ideas, and more. They're connected in a visual graph you can explore, rearrange, and filter.",
+    body: "Everything lives here as connected nodes — goals, projects, tasks, ideas. Pan, zoom, filter, and rearrange to see how it all fits together.",
     position: "center",
   },
   {
     target: "braindump-btn",
     title: "Brain Dump",
-    body: "Hit this to offload whatever is on your mind. Type or speak freely — the AI breaks it into structured nodes and adds them to your graph.",
-    position: "above",
-  },
-  {
-    target: "assistant-btn",
-    title: "Assistant",
-    body: "An AI that knows your entire workspace. Ask it to plan your day, explain connections, or help you prioritize.",
+    body: "Offload whatever's on your mind — type or speak freely. The AI breaks it into structured nodes, groups them under your life-areas, and adds them to the graph.",
     position: "above",
   },
   {
     target: "context-rail",
     title: "Node details",
-    body: "Select any node on the graph to see its details here — description, connections, status, and importance. You can edit everything inline.",
+    body: "Select any node to see its details, connections, and importance — and edit inline. A project with no next step can be broken into steps in one tap.",
     position: "center",
+  },
+  {
+    target: "assistant-btn",
+    title: "Assistant",
+    body: "An AI that knows your whole workspace. Ask it to plan your day, explain how things connect, prioritize, or capture new things just by chatting.",
+    position: "above",
+  },
+  {
+    target: "lists-btn",
+    title: "Lists",
+    body: "Prefer a list to a graph? See your Todos, Habits, and a Roadmap view of everything — same data, linear layout.",
+    position: "above",
+  },
+  {
+    target: "focus-btn",
+    title: "Focus",
+    body: "Frozen on what to do? Focus surfaces your top priorities right now so you can start on one thing instead of staring at everything.",
+    position: "above",
+  },
+  {
+    target: "pomodoro-btn",
+    title: "Pomodoro",
+    body: "A built-in focus timer for deep-work sprints — pair it with Focus to actually finish the thing.",
+    position: "above",
+  },
+  {
+    target: "weekly-reflection-btn",
+    title: "Weekly Review",
+    body: "Each week, see what you completed, your momentum, and a short reflection — so progress is visible, not just the backlog.",
+    position: "above",
+  },
+  {
+    target: "history-btn",
+    title: "Brain dump history",
+    body: "Every dump you've ever made, kept with its date — revisit your past thinking so nothing gets lost.",
+    position: "above",
   },
 ];
 

@@ -4031,7 +4031,9 @@ export function AppShell({ initialUser }: AppShellProps) {
               // After onboarding wizard, start the guided tour — but only
               // if there's no review modal already grabbing focus, else
               // the tour pops over the proposals which is jarring.
-              if (wasOnboarding && !hasHandoff) {
+              // Run the tour after EVERY new-workspace wizard (not just first
+              // onboarding), unless a review modal is already grabbing focus.
+              if (!hasHandoff) {
                 setShowTour(true);
               }
             });
