@@ -24,6 +24,10 @@ const STEP_SYSTEM_PROMPT_FULL = `You are a task-breakdown assistant for BrainDum
 Given a goal or project, generate 4–8 concrete, actionable steps the user should take to accomplish it. Each step should be a task that can be checked off.
 
 Rules:
+- Read the Description for the CURRENT state — what is already done, in progress, or live. Do NOT propose steps for work that's already complete; start from where things actually stand, not from scratch. (If a survey is described as "already live", don't suggest designing or launching it — pick up at analysis/write-up.)
+- If the Description names a blocker — waiting on a person, a decision, or input that isn't ready — make the unblocking action an EARLY step and sequence the rest after it.
+- Tailor every step to THIS specific situation. Never output a generic textbook sequence that ignores the Description.
+- If the workspace's other active items are listed, do NOT propose steps that duplicate them, and sequence your steps around their deadlines and dependencies — if a step must happen before or is blocked by another item, order it accordingly and say so in its summary.
 - Be specific and practical, not generic. "Take a full-length SAT practice test" is better than "Practice".
 - Order steps logically — what comes first, what depends on what.
 - Include a mix of immediate quick-wins and longer tasks.
@@ -106,10 +110,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "AI not configured" }, { status: 500 });
   }
 
+  // Workspace context so the breakdown fits the bigger picture: sequence around
+  // real deadlines/dependencies and don't duplicate work that already exists.
+  const { data: wsNodes } = await supabase
+    .from("nodes")
+    .select("title, node_type, target_date")
+    .eq("workspace_id", workspace_id)
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .order("target_date", { ascending: true, nullsFirst: false })
+    .limit(40);
+  const contextBlock =
+    wsNodes && wsNodes.length > 0
+      ? `\n\nOther active items already in this workspace — do NOT duplicate these, and sequence your steps around their deadlines and dependencies:\n${wsNodes
+          .map((n) => `- [${n.node_type}] ${n.title}${n.target_date ? ` (due ${n.target_date})` : ""}`)
+          .join("\n")}`
+      : "";
+
   const client = new Anthropic({ apiKey: claudeKey });
-  const userPrompt = summary
-    ? `Goal/Project: "${title}"\nDescription: ${summary}`
-    : `Goal/Project: "${title}"`;
+  const userPrompt =
+    (summary ? `Goal/Project: "${title}"\nDescription: ${summary}` : `Goal/Project: "${title}"`) +
+    contextBlock;
 
   const systemPrompt =
     stepMode === "light" ? STEP_SYSTEM_PROMPT_LIGHT : STEP_SYSTEM_PROMPT_FULL;
