@@ -14864,3 +14864,18 @@ input[type="search"]::-webkit-search-results-decoration {
   cursor: pointer;
   white-space: nowrap;
 }
+
+/* Focus button glow — pulls the indecisive user to their priority list, and
+   stops the moment they hover/open it (data-glow is cleared in JS). */
+.mode-dock-call[data-glow] {
+  animation: focusDockGlow 1.9s ease-in-out infinite;
+}
+@keyframes focusDockGlow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 107, 122, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(239, 107, 122, 0.38);
+  }
+}

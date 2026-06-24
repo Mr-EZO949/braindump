@@ -277,7 +277,27 @@ async function findDueSoonNoActivity(
 // "I don't know what to start"; this points at the ONE thing, and goes quiet
 // the moment the user actually engages with it (so it never nags about work
 // already in progress).
-const TOP_PRIORITY_UNTOUCHED_DAYS = 3;
+const TOP_PRIORITY_UNTOUCHED_DAYS = 2;
+
+// "What to START" priority for the nudge: importance, biased toward things the
+// user can actually start NOW (tasks/projects over abstract goals you can't
+// act on) and toward imminent deadlines. The ranking eval showed raw
+// importance alone points at goals ("Land an Internship") and ignores due
+// dates — useless as a "start here" signal. This is selection-only; it never
+// touches the stored importance score.
+function startPriority(n: NodeRow): number {
+  const score = n.current_importance_score ?? 0;
+  const actionableBonus = n.node_type === "goal" ? 0 : 15;
+  let dueBonus = 0;
+  if (n.target_date) {
+    const days =
+      (new Date(n.target_date).getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+    if (days <= 14) {
+      dueBonus = Math.max(0, Math.min(30, Math.round(((14 - days) / 14) * 30)));
+    }
+  }
+  return score + actionableBonus + dueBonus;
+}
 
 async function findTopPriority(
   supabase: SupabaseClient,
@@ -287,19 +307,21 @@ async function findTopPriority(
   const { data: nodes, error } = await supabase
     .from("nodes")
     .select(
-      "id, user_id, workspace_id, title, node_type, status, updated_at, current_importance_score",
+      "id, user_id, workspace_id, title, node_type, status, updated_at, current_importance_score, target_date",
     )
     .eq("status", "active")
     .in("node_type", ["task", "goal", "project", "habit"])
-    .not("current_importance_score", "is", null)
-    .order("current_importance_score", { ascending: false });
+    .not("current_importance_score", "is", null);
 
   if (error || !nodes || nodes.length === 0) return [];
 
-  // The real #1 per workspace = first in descending-score order.
+  // Highest "start priority" per workspace — deadline + actionable aware.
   const topPerWs = new Map<string, NodeRow>();
   for (const n of nodes as NodeRow[]) {
-    if (!topPerWs.has(n.workspace_id)) topPerWs.set(n.workspace_id, n);
+    const cur = topPerWs.get(n.workspace_id);
+    if (!cur || startPriority(n) > startPriority(cur)) {
+      topPerWs.set(n.workspace_id, n);
+    }
   }
 
   // Only nudge a #1 that's itself been untouched — if they're already on it,
@@ -317,6 +339,10 @@ async function findTopPriority(
     .gte("created_at", touchedCutoff);
   const touched = new Set((recentEvents ?? []).map((e) => e.node_id as string));
 
+  // Re-fire every ~2 days while the #1 stays untouched (the user keeps avoiding
+  // it) — snooze/dismiss still silence it. The 2-day bucket in the dedup key
+  // lets a new nudge through each window without spamming within it.
+  const bucket = Math.floor(Date.now() / (2 * 24 * 60 * 60 * 1000));
   return tops
     .filter((n) => !touched.has(n.id))
     .map((n) => ({
@@ -325,8 +351,8 @@ async function findTopPriority(
       node_id: n.id,
       kind: "top_priority" as const,
       title: `Start with "${n.title}"`,
-      body: `This is your top priority right now — and it's been sitting untouched. Make a dent on it, or bump something else up if it's wrong.`,
-      dedup_key: `top_priority:${n.id}`,
+      body: `This is your highest-priority next move right now, and it's been sitting untouched. Make a dent — or bump something else up if it's wrong.`,
+      dedup_key: `top_priority:${n.id}:${bucket}`,
     }));
 }
 

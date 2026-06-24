@@ -33,6 +33,9 @@ type ModeDockProps = {
   onOpenWeeklyReflection: () => void;
   onOpenHistory: () => void;
   weeklyReflectionLocked: boolean;
+  // Pulse the Focus button (until first hover) to draw the indecisive user to
+  // their prioritized "what to work on now" list. Eligible when there's work.
+  focusGlow?: boolean;
 };
 
 const WEEKLY_LOCKED_NOTICE_MS = 3200;
@@ -57,8 +60,11 @@ export function ModeDock({
   onOpenWeeklyReflection,
   onOpenHistory,
   weeklyReflectionLocked,
+  focusGlow,
 }: ModeDockProps) {
   const [lockedNotice, setLockedNotice] = useState<string | null>(null);
+  // Stops the Focus glow once the user has hovered/opened it this session.
+  const [focusGlowSeen, setFocusGlowSeen] = useState(false);
   const listsActive = isListsMode(mode);
 
   // The Lists pill toggles its own expanded state — independent of which
@@ -299,7 +305,12 @@ export function ModeDock({
         <button
           className="mode-dock-action mode-dock-call"
           data-tour="focus-btn"
-          onClick={onOpenWhatNow}
+          data-glow={focusGlow && !focusGlowSeen ? true : undefined}
+          onMouseEnter={() => setFocusGlowSeen(true)}
+          onClick={() => {
+            setFocusGlowSeen(true);
+            onOpenWhatNow();
+          }}
           type="button"
           title="Focus: today's top priorities, summary, and quick add to planner"
         >

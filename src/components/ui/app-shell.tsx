@@ -3866,6 +3866,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               onOpenWeeklyReflection={() => setWeeklyReflectionOpen(true)}
               onOpenHistory={() => setDumpHistoryOpen(true)}
               weeklyReflectionLocked={!isWeeklyReflectionAvailable()}
+              focusGlow={appMode === "graph" && graphData.nodes.some((n) => n.status === "active")}
             />
           </motion.div>
         )}
