@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   getChatComposerCue,
   getChatScopeMeta,
@@ -6,7 +6,7 @@ import {
   getSuggestedPrompts,
 } from "@/lib/graph/chat";
 import { getLinkedNodePerspectives, type LinkedNodePerspective } from "@/lib/graph/insights";
-import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, MicIcon } from "@/components/ui/icons";
+import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, MicIcon } from "@/components/ui/icons";
 import { ChatRichText } from "@/components/ui/chat-rich-text";
 import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { HabitStreak } from "@/components/panel/habit-streak";
@@ -151,8 +151,21 @@ export function ContextRail({
   onDeleteChatSession,
 }: ContextRailProps) {
   const promptSuggestions = getSuggestedPrompts(chatScope);
-  const [directionsOpen, setDirectionsOpen] = useState(false);
+  // Breakdown UI: pressing Quick/Full sets pendingMode → reveals the directions
+  // box; nudgeDismissed hides the "no next step" hint + button highlight.
+  const [pendingMode, setPendingMode] = useState<"light" | "full" | null>(null);
   const [directions, setDirections] = useState("");
+  const [nudgeDismissed, setNudgeDismissed] = useState(false);
+  useEffect(() => {
+    setPendingMode(null);
+    setDirections("");
+    setNudgeDismissed(false);
+  }, [selectedNode?.id]);
+  const nudgeActive =
+    !!onSuggestSteps &&
+    !nudgeDismissed &&
+    !!selectedNode &&
+    needsNextAction(selectedNode.id, graphData.nodes, graphData.edges);
   const linkedNodes = getLinkedNodePerspectives(graphData, selectedNode?.id ?? null);
   const isHabitNode = selectedNode?.node_type === "habit";
   const linkedGroups = groupLinkedNodes(linkedNodes);
@@ -668,41 +681,6 @@ export function ContextRail({
                     </>
                   ) : null}
 
-                  {/* Anti-freeze nudge — an actionable node with no next step
-                      yet gets one gentle, one-tap way forward (no wall). */}
-                  {onSuggestSteps &&
-                  needsNextAction(selectedNode.id, graphData.nodes, graphData.edges) ? (
-                    <>
-                      <div className="detail-divider" />
-                      <div className="detail-nudge-banner" role="status">
-                        <p className="detail-nudge-text">
-                          This {selectedNode.node_type} doesn&rsquo;t have a next step yet.
-                        </p>
-                        <div className="detail-nudge-actions">
-                          <button
-                            className="detail-nudge-btn"
-                            onClick={() =>
-                              onSuggestSteps(selectedNode.id, "light", directions.trim() || undefined)
-                            }
-                            type="button"
-                            disabled={suggestStepsBusy}
-                          >
-                            {suggestStepsBusy ? "Thinking…" : "Suggest a step"}
-                          </button>
-                          {onStartFocusSession ? (
-                            <button
-                              className="detail-nudge-btn detail-nudge-btn--ghost"
-                              onClick={() => onStartFocusSession(selectedNode.id)}
-                              type="button"
-                            >
-                              Start focus
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    </>
-                  ) : null}
-
                   {/* Divider */}
                   <div className="detail-divider" />
 
@@ -795,48 +773,83 @@ export function ContextRail({
                       (selectedNode.node_type === "project" ||
                         selectedNode.node_type === "goal" ||
                         classifyTaskSize(selectedNode.title) !== "task") ? (
-                        <>
-                          <button
-                            className="detail-action-pill detail-action-pill--quiet"
-                            onClick={() => setDirectionsOpen((v) => !v)}
-                            type="button"
-                            title="Optionally tell the AI how to break this down"
-                          >
-                            {directionsOpen ? "Hide directions" : "Add directions"}
-                          </button>
-                          {directionsOpen ? (
+                        pendingMode ? (
+                          <>
                             <textarea
                               className="detail-directions-input"
                               value={directions}
                               onChange={(e) => setDirections(e.target.value)}
-                              placeholder="Optional: e.g. 'focus on the first week' or 'I already have a draft'"
+                              placeholder="Optional directions — e.g. 'focus on the first week' or 'I already have a draft'"
                               rows={2}
                               maxLength={500}
+                              autoFocus
                             />
-                          ) : null}
-                          <button
-                            className="detail-action-pill"
-                            onClick={() =>
-                              onSuggestSteps(selectedNode.id, "light", directions.trim() || undefined)
-                            }
-                            type="button"
-                            disabled={suggestStepsBusy}
-                            title="Just the 1–3 immediate next steps to get unstuck"
-                          >
-                            Quick steps
-                          </button>
-                          <button
-                            className="detail-action-pill"
-                            onClick={() =>
-                              onSuggestSteps(selectedNode.id, "full", directions.trim() || undefined)
-                            }
-                            type="button"
-                            disabled={suggestStepsBusy}
-                            title="A full roadmap of sub-tasks"
-                          >
-                            {suggestStepsBusy ? "Suggesting…" : "Full roadmap"}
-                          </button>
-                        </>
+                            <div className="detail-action-row">
+                              <button
+                                className="detail-action-pill detail-action-pill--quiet"
+                                onClick={() => setPendingMode(null)}
+                                type="button"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                className="detail-action-pill detail-action-pill--primary"
+                                onClick={() => {
+                                  onSuggestSteps(
+                                    selectedNode.id,
+                                    pendingMode,
+                                    directions.trim() || undefined,
+                                  );
+                                  setPendingMode(null);
+                                }}
+                                type="button"
+                                disabled={suggestStepsBusy}
+                              >
+                                {suggestStepsBusy ? "Suggesting…" : "Generate steps →"}
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            {nudgeActive ? (
+                              <div className="detail-step-hint" role="status">
+                                <span>No next step yet — break it down?</span>
+                                <button
+                                  className="detail-step-hint-x"
+                                  onClick={() => setNudgeDismissed(true)}
+                                  type="button"
+                                  aria-label="Dismiss"
+                                >
+                                  <CloseIcon className="h-[10px] w-[10px]" />
+                                </button>
+                              </div>
+                            ) : null}
+                            <button
+                              className={`detail-action-pill${nudgeActive ? " detail-action-pill--nudge" : ""}`}
+                              onClick={() => setPendingMode("light")}
+                              onMouseEnter={() => {
+                                if (nudgeActive) setNudgeDismissed(true);
+                              }}
+                              type="button"
+                              disabled={suggestStepsBusy}
+                              title="Just the 1–3 immediate next steps to get unstuck"
+                            >
+                              Quick steps
+                            </button>
+                            <button
+                              className={`detail-action-pill${nudgeActive ? " detail-action-pill--nudge" : ""}`}
+                              onClick={() => setPendingMode("full")}
+                              onMouseEnter={() => {
+                                if (nudgeActive) setNudgeDismissed(true);
+                              }}
+                              type="button"
+                              disabled={suggestStepsBusy}
+                              title="A full roadmap of sub-tasks"
+                            >
+                              Full roadmap
+                            </button>
+                          </>
+                        )
                       ) : null}
                     </div>
 

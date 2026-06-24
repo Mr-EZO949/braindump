@@ -14761,46 +14761,57 @@ input[type="search"]::-webkit-search-results-decoration {
   line-height: 1.4;
   color: var(--color-text-secondary);
 }
-.detail-nudge-banner {
+/* "No next step yet" hint — slim + native to the rail (no custom banner). */
+.detail-step-hint {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 11px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(110, 150, 200, 0.22);
-  background: rgba(110, 150, 200, 0.08);
+  padding: 4px 2px 2px;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
 }
-.detail-nudge-text {
-  font-size: 12.5px;
-  line-height: 1.4;
+.detail-step-hint-x {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  transition:
+    background-color var(--motion-fast),
+    color var(--motion-fast);
+}
+.detail-step-hint-x:hover {
+  background: rgba(255, 255, 255, 0.06);
   color: var(--color-text-secondary);
 }
-.detail-nudge-actions {
+.detail-action-row {
   display: flex;
   gap: 8px;
 }
-.detail-nudge-btn {
+.detail-action-pill--primary {
   flex: 1;
-  padding: 7px 10px;
-  border-radius: 9px;
-  border: 1px solid rgba(127, 170, 230, 0.45);
-  background: rgba(107, 140, 239, 0.9);
+  border-color: var(--color-accent-primary);
+  background: var(--color-accent-primary);
   color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity var(--motion-fast);
 }
-.detail-nudge-btn:hover {
-  opacity: 0.9;
+/* Pulse the real breakdown buttons to draw the eye (hover dismisses it). */
+.detail-action-pill--nudge {
+  animation: detailNudgePulse 1.8s ease-in-out infinite;
 }
-.detail-nudge-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.detail-nudge-btn--ghost {
-  background: transparent;
-  color: rgba(150, 175, 255, 0.95);
+@keyframes detailNudgePulse {
+  0%,
+  100% {
+    border-color: rgba(127, 170, 230, 0.28);
+    box-shadow: 0 0 0 0 rgba(127, 170, 230, 0);
+  }
+  50% {
+    border-color: rgba(127, 170, 230, 0.72);
+    box-shadow: 0 0 0 3px rgba(127, 170, 230, 0.14);
+  }
 }
 
 /* On-load anti-freeze banner — calm, dismissible, opens the selective picker. */
