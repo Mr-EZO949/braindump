@@ -5,6 +5,10 @@
 // the "jot one task on my calendar" path that comes up naturally in chat.
 
 import type { ToolContext, ToolDefinition } from "./read-only";
+import { buildPlannerCandidates } from "../planner";
+import { aiProvider } from "../index";
+import { persistAIRun } from "../telemetry";
+import { PLAN_PROMPT_VERSION } from "../prompts/plan";
 
 // YYYY-MM-DD. Postgres `date` parses a broader set, but we want Claude to
 // emit ISO dates consistently so the UI formats them predictably.
@@ -280,6 +284,133 @@ const MARK_TASK_DONE: ToolDefinition = {
 };
 
 // ---------------------------------------------------------------------------
+// plan_day — build a full time-blocked plan from active work items + draft it in
+// the Planner for review. Mirrors /api/assistant/plan (candidates → LLM plan →
+// persist draft) so chat can finally *plan*, not just hand off to the Planner.
+// ---------------------------------------------------------------------------
+
+const PLAN_DAY: ToolDefinition = {
+  schema: {
+    name: "plan_day",
+    description:
+      "Build a time-blocked plan for the user's session from their active work items, and draft it in the Planner for review. Use when the user asks to plan their day/afternoon/next N hours, make a schedule, or time-block their work. Requires Accept.",
+    input_schema: {
+      type: "object",
+      properties: {
+        window: {
+          type: "string",
+          enum: ["1h", "2h", "day", "custom"],
+          description: "Planning window. 'day' = full day; '1h'/'2h' = short sessions; 'custom' requires custom_minutes.",
+        },
+        custom_minutes: {
+          type: "integer",
+          minimum: 15,
+          maximum: 600,
+          description: "Total minutes — only when window is 'custom'.",
+        },
+      },
+      required: ["window"],
+    },
+  },
+  handler: async (input, ctx: ToolContext) => {
+    const args = (input ?? {}) as { window?: string; custom_minutes?: number };
+    const window = (["1h", "2h", "day", "custom"].includes(args.window ?? "")
+      ? args.window
+      : "day") as "1h" | "2h" | "day" | "custom";
+    const customMinutes =
+      window === "custom"
+        ? Math.max(15, Math.min(600, Math.round(args.custom_minutes ?? 60)))
+        : null;
+
+    const bundle = await buildPlannerCandidates({
+      workspaceId: ctx.workspaceId,
+      userId: ctx.userId,
+      supabase: ctx.supabase,
+    });
+    if (!bundle.candidates.length) {
+      return { accepted: false, error: "No active work items to plan — add a few tasks or goals first." };
+    }
+
+    let planResult;
+    try {
+      planResult = await aiProvider().buildPlan({
+        planning_window: window,
+        custom_minutes: customMinutes,
+        candidate_nodes: bundle.candidates.map((c) => ({
+          id: c.id,
+          title: c.title,
+          summary: c.summary,
+          body: c.body ? c.body.slice(0, 240) : null,
+          node_type: c.node_type,
+          planning_signals: c.planning_signals,
+        })),
+      });
+    } catch {
+      return { accepted: false, error: "Couldn't build the plan right now — try again in a moment." };
+    }
+    const { output, run: runMeta } = planResult;
+
+    const aiRunId = await persistAIRun({
+      supabase: ctx.supabase,
+      userId: ctx.userId,
+      workspaceId: ctx.workspaceId,
+      source: "assistant-chat-plan",
+      run: {
+        run_type: "plan",
+        provider: runMeta.provider,
+        model_name: runMeta.model_name,
+        prompt_version: PLAN_PROMPT_VERSION,
+        input_hash: runMeta.input_hash,
+        output_hash: runMeta.output_hash,
+        input_tokens: runMeta.input_tokens,
+        output_tokens: runMeta.output_tokens,
+        latency_ms: runMeta.latency_ms,
+        estimated_cost: runMeta.estimated_cost,
+        status: "success",
+        error_text: null,
+      },
+    });
+
+    const sessionInsert: Record<string, unknown> = {
+      user_id: ctx.userId,
+      workspace_id: ctx.workspaceId,
+      ai_run_id: aiRunId,
+      planning_window: window,
+      scope: null,
+      status: "draft",
+    };
+    if (customMinutes) sessionInsert.custom_minutes = customMinutes;
+
+    const { data: session, error: sessionErr } = await ctx.supabase
+      .from("plan_sessions")
+      .insert(sessionInsert)
+      .select()
+      .single();
+    if (sessionErr || !session) {
+      return { accepted: false, error: "Couldn't save the plan." };
+    }
+
+    const blockRows = output.blocks.map((b) => ({
+      plan_session_id: session.id,
+      node_id: b.node_id ?? null,
+      title: b.title,
+      start_offset: b.start_offset,
+      duration_minutes: b.duration_minutes,
+      reason: b.reason ?? null,
+      block_type: b.block_type,
+      completion_status: "pending" as const,
+    }));
+    await ctx.supabase.from("plan_blocks").insert(blockRows);
+
+    return {
+      accepted: true,
+      planning_window: window,
+      block_count: output.blocks.length,
+      message: `Drafted a ${window === "day" ? "full-day" : window} plan with ${output.blocks.length} blocks. Open the Planner to review and adjust.`,
+    };
+  },
+};
+
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -287,4 +418,5 @@ export const PLANNER_MUTATION_TOOLS: ToolDefinition[] = [
   ADD_TASK_TO_CALENDAR,
   RESCHEDULE_TASK,
   MARK_TASK_DONE,
+  PLAN_DAY,
 ];
