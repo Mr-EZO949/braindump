@@ -14,6 +14,7 @@ import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
 import { WhatNowDialog } from "@/components/ui/what-now-dialog";
 import { WeeklyReflectionModal } from "@/components/ui/weekly-reflection-modal";
+import { DumpHistoryModal } from "@/components/ui/dump-history-modal";
 import {
   listChatSessions,
   loadChatSession,
@@ -285,6 +286,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [brainDumpFailedEntryId, setBrainDumpFailedEntryId] = useState<string | null>(null);
   const [whatNowOpen, setWhatNowOpen] = useState(false);
   const [weeklyReflectionOpen, setWeeklyReflectionOpen] = useState(false);
+  const [dumpHistoryOpen, setDumpHistoryOpen] = useState(false);
   // Bumped whenever the server cascades plan_tasks updates (e.g. graph
   // completion auto-marked a linked task). The planner subscribes via prop
   // and re-loads its tasks list when the key changes — keeps the two views
@@ -3765,6 +3767,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               }}
               onOpenWhatNow={() => setWhatNowOpen((open) => !open)}
               onOpenWeeklyReflection={() => setWeeklyReflectionOpen(true)}
+              onOpenHistory={() => setDumpHistoryOpen(true)}
               weeklyReflectionLocked={!isWeeklyReflectionAvailable()}
             />
           </motion.div>
@@ -3778,6 +3781,16 @@ export function AppShell({ initialUser }: AppShellProps) {
             workspaceId={selectedWorkspaceId}
             workspaceName={workspaceName}
             onClose={() => setWeeklyReflectionOpen(false)}
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {dumpHistoryOpen && selectedWorkspaceId ? (
+          <DumpHistoryModal
+            key="dump-history"
+            workspaceId={selectedWorkspaceId}
+            onClose={() => setDumpHistoryOpen(false)}
           />
         ) : null}
       </AnimatePresence>

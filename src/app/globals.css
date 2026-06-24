@@ -2630,6 +2630,10 @@ input[type="search"]::-webkit-search-results-decoration {
   display: flex;
   flex-direction: column;
   gap: 0;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .workspace-menu-entry {
@@ -14505,4 +14509,125 @@ input[type="search"]::-webkit-search-results-decoration {
   background: var(--color-accent-primary);
   border-color: var(--color-accent-primary);
   color: #fff;
+}
+
+/* ── Brain-dump history modal ─────────────────────────────────────────── */
+.dump-history-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+.dump-history-modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(78vh, 720px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(20, 20, 23, 0.99), rgba(13, 13, 15, 0.995));
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+.dump-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.dump-history-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.62);
+  text-transform: uppercase;
+}
+.dump-history-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  color: rgba(255, 255, 255, 0.55);
+  transition:
+    background-color var(--motion-fast),
+    color var(--motion-fast);
+}
+.dump-history-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.9);
+}
+.dump-history-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px 14px;
+  scrollbar-width: thin;
+}
+.dump-history-empty {
+  padding: 36px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.45);
+}
+.dump-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dump-history-item {
+  padding: 11px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.018);
+}
+.dump-history-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.dump-history-when {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.dump-history-status {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: rgba(127, 201, 135, 0.95);
+  background: rgba(127, 201, 135, 0.12);
+}
+.dump-history-status[data-status="processing"],
+.dump-history-status[data-status="pending"] {
+  color: rgba(107, 140, 239, 0.95);
+  background: rgba(107, 140, 239, 0.12);
+}
+.dump-history-status[data-status="failed"] {
+  color: rgba(239, 107, 122, 0.95);
+  background: rgba(239, 107, 122, 0.12);
+}
+.dump-history-item-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.82);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
 }

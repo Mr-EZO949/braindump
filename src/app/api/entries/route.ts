@@ -16,6 +16,50 @@ const VALID_SOURCE_TYPES: RawEntrySourceType[] = [
   "planner_convert",
 ];
 
+// GET /api/entries/history?workspace_id=<uuid> — list a workspace's past brain
+// dumps, newest first, for the dump-history view. raw_text is stored in full.
+export async function GET(req: NextRequest) {
+  const supabase = await getSupabaseServerClient();
+  if (!supabase) {
+    return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const workspaceId = req.nextUrl.searchParams.get("workspace_id");
+  if (!workspaceId) {
+    return NextResponse.json({ error: "workspace_id is required" }, { status: 400 });
+  }
+
+  // RLS gates user_id; this verifies the workspace belongs to the user too.
+  const { data: workspace } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("id", workspaceId)
+    .eq("user_id", user.id)
+    .single();
+  if (!workspace) {
+    return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  }
+
+  const { data, error } = await supabase
+    .from("raw_entries")
+    .select("id, raw_text, source_type, status, created_at")
+    .eq("workspace_id", workspaceId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) {
+    return NextResponse.json({ error: "Failed to load history" }, { status: 500 });
+  }
+
+  return NextResponse.json({ entries: data ?? [] });
+}
+
 export async function POST(req: NextRequest) {
   // ---------------------------------------------------------------------------
   // Auth

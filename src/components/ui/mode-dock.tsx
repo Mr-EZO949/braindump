@@ -31,6 +31,7 @@ type ModeDockProps = {
   onOpenBrainDump: () => void;
   onOpenWhatNow: () => void;
   onOpenWeeklyReflection: () => void;
+  onOpenHistory: () => void;
   weeklyReflectionLocked: boolean;
 };
 
@@ -54,6 +55,7 @@ export function ModeDock({
   onOpenBrainDump,
   onOpenWhatNow,
   onOpenWeeklyReflection,
+  onOpenHistory,
   weeklyReflectionLocked,
 }: ModeDockProps) {
   const [lockedNotice, setLockedNotice] = useState<string | null>(null);
@@ -267,6 +269,16 @@ export function ModeDock({
             <ChartBarIcon className="h-[12px] w-[12px]" />
           )}
           Weekly Review
+        </button>
+
+        <button
+          className="mode-dock-action"
+          onClick={onOpenHistory}
+          type="button"
+          title="View past brain dumps"
+        >
+          <ListIcon className="h-[12px] w-[12px]" />
+          History
         </button>
 
         <div className="mode-dock-sep" aria-hidden="true" />
