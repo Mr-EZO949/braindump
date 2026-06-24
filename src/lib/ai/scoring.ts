@@ -7,7 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { recomputeWorkspaceEdgeDecay } from "@/lib/ai/lifecycle";
 import { getImportanceLabel } from "@/lib/graph/importance";
 
-export const SCORE_VERSION = "v7";
+export const SCORE_VERSION = "v8";
 
 // ---------------------------------------------------------------------------
 // Formula weights — must sum to 1.0 (remainder is blocker bonus headroom)
@@ -55,6 +55,7 @@ export interface NodeRow {
   created_at: string;
   workspace_id: string;
   manual_weight: number | null;
+  target_date?: string | null;
 }
 
 export interface EdgeRow {
@@ -118,7 +119,19 @@ export function urgency(node: NodeRow): number {
   const base = typeBase[node.node_type] ?? 40;
   const daysSince = (Date.now() - new Date(node.created_at).getTime()) / 86_400_000;
   const recencyBurst = clamp(((21 - daysSince) / 21) * 14, 0, 14);
-  return clamp(base + recencyBurst, 0, 100);
+  // Bounded deadline term, parallel to the recency burst (same 0–14 shape so
+  // it can't dominate the 26%-weighted urgency signal). Due today/past → +14,
+  // in 7 days → +7, ≥14 days away or no date → 0. Without this, the importance
+  // score is deadline-blind — a task due today ties a no-deadline reading
+  // (ranking eval, v8). Deliberately small (~+3.6 to the final score) so it
+  // breaks urgency ties without flipping the v7 goal-vs-task spread.
+  let dueSoonBurst = 0;
+  if (node.target_date) {
+    const daysUntilDue =
+      (new Date(node.target_date).getTime() - Date.now()) / 86_400_000;
+    dueSoonBurst = clamp(((14 - daysUntilDue) / 14) * 14, 0, 14);
+  }
+  return clamp(base + recencyBurst + dueSoonBurst, 0, 100);
 }
 
 /**
@@ -382,7 +395,7 @@ export async function computeWorkspaceScores(params: {
   // 1. Fetch all non-archived nodes
   const { data: nodes } = await supabase
     .from("nodes")
-    .select("id, node_type, status, created_at, workspace_id, manual_weight")
+    .select("id, node_type, status, created_at, workspace_id, manual_weight, target_date")
     .eq("workspace_id", workspaceId)
     .eq("user_id", userId)
     .neq("status", "archived");

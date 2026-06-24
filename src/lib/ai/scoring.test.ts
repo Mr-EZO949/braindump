@@ -10,6 +10,7 @@ import {
   type FeedbackRow,
   type NodeRow,
   plannerScore,
+  urgency,
 } from "./scoring";
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,44 @@ function makeFeedbackEvent(
 // ---------------------------------------------------------------------------
 // dependencyPressure
 // ---------------------------------------------------------------------------
+
+describe("urgency — deadline term (v8)", () => {
+  const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
+  const created = new Date().toISOString();
+
+  it("adds nothing without a target_date", () => {
+    expect(urgency(makeNode("a", { created_at: created }))).toBe(
+      urgency(makeNode("b", { created_at: created, target_date: null })),
+    );
+  });
+
+  it("a task due today outranks an identical no-deadline task (fixes the eval inversion)", () => {
+    const dueToday = urgency(
+      makeNode("due", { created_at: created, target_date: inDays(0) }),
+    );
+    const noDeadline = urgency(makeNode("none", { created_at: created }));
+    expect(dueToday).toBeGreaterThan(noDeadline);
+  });
+
+  it("tapers with distance and is bounded (~+14 today → +7 at 7d → 0 at ≥14d)", () => {
+    const u = (d: number | null) =>
+      urgency(
+        makeNode("n", {
+          node_type: "concept",
+          created_at: created,
+          target_date: d === null ? null : inDays(d),
+        }),
+      );
+    const today = u(0);
+    const week = u(7);
+    const far = u(20);
+    const none = u(null);
+    expect(today).toBeGreaterThan(week);
+    expect(week).toBeGreaterThan(far);
+    expect(far).toBe(none); // ≥14 days away adds nothing
+    expect(today - none).toBeLessThanOrEqual(14); // bounded — can't dominate
+  });
+});
 
 describe("dependencyPressure", () => {
   it("returns 1.0 when there are no prerequisite edges", () => {
