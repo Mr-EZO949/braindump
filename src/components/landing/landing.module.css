@@ -146,7 +146,7 @@
 
 .hero {
   position: relative;
-  padding: 108px 32px 88px;
+  padding: 84px 32px 92px;
   overflow: hidden;
 }
 
@@ -174,52 +174,69 @@
   z-index: 0;
 }
 
-/* "Unfreeze your brain." — snowflakes orbit the phrase, then melt as it thaws. */
-.thawPhrase {
-  position: relative;
-  display: inline-block;
-  white-space: nowrap;
+/* ── Hero display type ──
+   Editorial serif against the mono microtype. One solid accent word with a
+   hand-drawn thaw underline that draws itself in — a permanent detail, not a
+   transient gimmick. */
+.heroH1Kicker {
+  display: block;
+  font-style: italic;
+  font-size: 0.44em;
+  letter-spacing: 0.002em;
+  color: rgba(242, 238, 232, 0.56);
+  margin-bottom: 10px;
 }
 
-.snowLayer {
+.heroBrainWord {
+  position: relative;
+  display: inline-block;
+  font-style: italic;
+  color: #ea5261;
+  text-shadow: 0 1px 30px rgba(213, 58, 71, 0.28);
+  padding-right: 0.02em;
+}
+
+.heroScribble {
   position: absolute;
-  inset: 0;
+  left: -5%;
+  bottom: -0.14em;
+  width: 110%;
+  height: 0.34em;
+  overflow: visible;
   pointer-events: none;
 }
 
-.snowflake {
-  position: absolute;
-  line-height: 1;
-  color: #c6edf9;
-  text-shadow: 0 0 9px rgba(150, 215, 240, 0.65);
-  opacity: 0.85;
-  will-change: transform, opacity;
-  animation-name: floatOrbit, snowMelt;
-  animation-duration: 5s, 1.7s;
-  animation-timing-function: ease-in-out, ease-in;
-  animation-iteration-count: infinite, 1;
-  animation-fill-mode: none, forwards;
-  animation-delay: 0s, 2.2s; /* per-flake delays set inline */
+.heroScribble path {
+  fill: none;
+  stroke: var(--color-accent-primary);
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: scribbleDraw 0.9s cubic-bezier(0.65, 0, 0.35, 1) forwards;
 }
 
-/* gentle circling-in-place while frozen */
-@keyframes floatOrbit {
-  0%   { transform: translate(0, -5px); }
-  25%  { transform: translate(5px, 0); }
-  50%  { transform: translate(0, 5px); }
-  75%  { transform: translate(-5px, 0); }
-  100% { transform: translate(0, -5px); }
+.heroScribble path:first-child {
+  stroke-width: 5;
+  opacity: 0.9;
+  animation-delay: 0.55s;
 }
 
-/* then it melts — drips down, shrinks, fades (synced with the colour thaw) */
-@keyframes snowMelt {
-  0%   { opacity: 0.85; transform: translate(0, 0) scale(1); }
-  100% { opacity: 0; transform: translate(0, 18px) scale(0.35); }
+.heroScribble path:last-child {
+  stroke-width: 3.5;
+  opacity: 0.45;
+  animation-delay: 0.85s;
+}
+
+@keyframes scribbleDraw {
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .snowflake {
-    display: none;
+  .heroScribble path {
+    animation: none;
+    stroke-dashoffset: 0;
   }
 }
 
@@ -229,8 +246,8 @@
   max-width: 1280px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 1fr 540px;
-  gap: 56px;
+  grid-template-columns: 1.08fr 500px;
+  gap: 72px;
   align-items: center;
 }
 
@@ -294,14 +311,14 @@
 }
 
 .heroH1 {
-  font-size: clamp(30px, 3.2vw, 46px);
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  line-height: 1.1;
-  margin: 0 0 22px;
+  font-family: var(--font-display), Georgia, "Times New Roman", serif;
+  font-size: clamp(42px, 4.8vw, 66px);
+  font-weight: 400;
+  letter-spacing: -0.012em;
+  line-height: 1.02;
+  margin: 0 0 24px;
   color: var(--color-text-primary);
   text-wrap: balance;
-  white-space: nowrap;
 }
 
 .gradient {
@@ -319,65 +336,35 @@
   letter-spacing: -0.035em;
 }
 
-/* Hero accent that THAWS on load: icy cyan → scarlet sweeps left-to-right once,
-   resting on the warm brand scarlet. Visualizes "unfreeze your brain". */
-.gradientThaw {
-  background: linear-gradient(
-    100deg,
-    #9fe8f5 0%,
-    #57b6d4 20%,
-    #d53a47 56%,
-    #ef5a68 100%
-  );
-  background-size: 240% 100%;
-  background-position: 0% 0;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  filter: drop-shadow(0 1px 24px rgba(213, 58, 71, 0.18));
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  /* frozen → melt: hold the icy state while the snowflakes circle (~2.2s), then
-     thaw to warm scarlet in sync with them melting; then a faint living breath. */
-  animation:
-    thaw 3.6s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both,
-    frostBreath 6s ease-in-out 4.3s infinite;
-}
-
-@keyframes thaw {
-  0%,
-  47% {
-    /* frozen — icy cyan held while the snowflakes orbit */
-    background-position: 0% 0;
-    filter: drop-shadow(0 0 26px rgba(125, 214, 240, 0.45));
-  }
-  100% {
-    /* melted — warm brand scarlet */
-    background-position: 100% 0;
-    filter: drop-shadow(0 1px 24px rgba(213, 58, 71, 0.2));
-  }
-}
-
-/* subtle warm glow that breathes — keeps the thawed headline feeling alive */
-@keyframes frostBreath {
-  0%,
-  100% { filter: drop-shadow(0 1px 22px rgba(213, 58, 71, 0.16)); }
-  50%  { filter: drop-shadow(0 1px 32px rgba(239, 90, 104, 0.34)); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .gradientThaw {
-    animation: none;
-    background-position: 100% 0;
-  }
-}
-
 .heroSub {
   font-size: 17px;
   line-height: 1.65;
   color: var(--color-text-secondary);
-  margin: 0 0 40px;
-  max-width: 480px;
+  margin: 0 0 34px;
+  max-width: 460px;
+}
+
+.heroFootnote {
+  margin: 16px 0 0;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.heroFig {
+  margin: 14px 6px 0 0;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  text-align: right;
+  opacity: 0.75;
+}
+
+.btnHero {
+  padding: 15px 27px;
+  font-size: 15px;
 }
 
 .heroActions {
@@ -394,15 +381,15 @@
 
 .demoGlow {
   position: absolute;
-  top: 50%;
-  left: 50%;
+  top: 46%;
+  left: 54%;
   transform: translate(-50%, -50%);
-  width: 130%;
-  height: 160%;
+  width: 135%;
+  height: 165%;
   background: radial-gradient(
     ellipse 50% 50% at 50% 50%,
-    rgba(213, 58, 71, 0.1) 0%,
-    rgba(213, 58, 71, 0.03) 40%,
+    rgba(213, 58, 71, 0.13) 0%,
+    rgba(213, 58, 71, 0.04) 42%,
     transparent 70%
   );
   pointer-events: none;
@@ -724,14 +711,14 @@
 
 .thoughtDemo {
   border-radius: var(--radius-xl);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   background: rgba(11, 11, 13, 0.85);
   backdrop-filter: blur(16px);
   overflow: hidden;
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.03),
-    0 32px 80px rgba(0, 0, 0, 0.5),
-    0 0 100px rgba(213, 58, 71, 0.05);
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 32px 80px rgba(0, 0, 0, 0.55),
+    0 0 110px rgba(213, 58, 71, 0.07);
 }
 
 .demoChrome {
