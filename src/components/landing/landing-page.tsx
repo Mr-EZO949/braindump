@@ -226,6 +226,16 @@ function Grain() {
 // ── Snowflakes that orbit "Unfreeze your brain." then melt ─
 // Anchored around the phrase (top/left relative to it). Each floats in a small
 // orbit while frozen, then melts (drips + fades) in sync with the colour thaw.
+const SNOWFLAKES: ReadonlyArray<{ g: string; top: string; left: string; size: number; delay: number }> = [
+  { g: "❅", top: "-20px", left: "4%", size: 13, delay: 0 },
+  { g: "❆", top: "-26px", left: "33%", size: 10, delay: 1.1 },
+  { g: "❅", top: "-16px", left: "68%", size: 12, delay: 0.5 },
+  { g: "❆", top: "108%", left: "15%", size: 10, delay: 1.7 },
+  { g: "❅", top: "112%", left: "56%", size: 13, delay: 0.8 },
+  { g: "❆", top: "28%", left: "-3%", size: 11, delay: 2 },
+  { g: "❅", top: "16%", left: "97%", size: 10, delay: 1.4 },
+];
+
 // ── Marquee ───────────────────────────────────────────────
 
 function MarqueeRow({ items, reverse }: { items: typeof MARQUEE_R1; reverse?: boolean }) {
@@ -861,7 +871,7 @@ function ReviewShowcase() {
 
 function MiniGraph({ visibleNodes, visibleEdges }: { visibleNodes: number; visibleEdges: number }) {
   return (
-    <svg viewBox="0 0 370 200" className={styles.miniGraphSvg} aria-hidden="true">
+    <svg viewBox="0 0 370 185" className={styles.miniGraphSvg} aria-hidden="true">
       {MINI_EDGES.map(([ai, bi], i) => {
         const a = MINI_NODES[ai], b = MINI_NODES[bi];
         return (
@@ -1183,43 +1193,37 @@ export default function LandingPage() {
                 Built for ADHD minds
               </div>
               <h1 className={styles.heroH1}>
-                <span className={styles.heroH1Kicker}>Dump it all.</span>
-                Unfreeze your{" "}
-                <span className={styles.heroBrainWord}>
-                  brain
-                  <svg
-                    className={styles.heroScribble}
-                    viewBox="0 0 220 32"
-                    preserveAspectRatio="none"
-                    aria-hidden="true"
-                  >
-                    <path
-                      pathLength={1}
-                      d="M6 21 C 52 11, 116 8, 158 12 C 184 15, 205 19, 214 15"
-                    />
-                    <path
-                      pathLength={1}
-                      d="M12 27 C 58 21, 104 18, 142 20"
-                    />
-                  </svg>
+                Dump it.{" "}
+                <span className={styles.thawPhrase}>
+                  <span className={styles.snowLayer} aria-hidden="true">
+                    {SNOWFLAKES.map((f, i) => (
+                      <span
+                        key={i}
+                        className={styles.snowflake}
+                        style={{
+                          top: f.top,
+                          left: f.left,
+                          fontSize: f.size,
+                          animationDelay: `${f.delay}s, 2.2s`,
+                        }}
+                      >
+                        {f.g}
+                      </span>
+                    ))}
+                  </span>
+                  <span className={styles.gradientThaw}>Unfreeze your brain.</span>
                 </span>
-                .
               </h1>
               <p className={styles.heroSub}>
-                Overplanning, brain-freeze, twelve half-made decisions. Dump the
-                whole pile — BrainDump maps it, then points at the one thing to
-                do next.
+                Overplanning, brain-freeze, twelve half-made decisions — the stuff
+                that keeps you from starting. Dump it all here and BrainDump thaws
+                the frozen pile into a map, then points at the one thing to do next.
+                The last productivity app you&apos;ll need.
               </p>
               <div className={styles.heroActions}>
-                <a href="/login" className={`${styles.btnPrimary} ${styles.btnHero}`}>
-                  Start dumping
-                  <span className={styles.btnArrow} aria-hidden="true">→</span>
-                </a>
+                <a href="#pricing" className={styles.navCta}>See pricing</a>
                 <a href="#lenses" className={styles.btnGhost}>See what&apos;s inside</a>
               </div>
-              <p className={styles.heroFootnote}>
-                Free to start &middot; your first dump takes 60 seconds
-              </p>
             </motion.div>
 
             <motion.div className={styles.heroVisual}
@@ -1227,9 +1231,6 @@ export default function LandingPage() {
               transition={{ duration: 0.7, delay: 0.14, ease: [0.22, 1, 0.36, 1] }}>
               <div className={styles.demoGlow} aria-hidden="true" />
               <ThoughtDemo />
-              <p className={styles.heroFig} aria-hidden="true">
-                fig. 01 — a brain dump becoming a map
-              </p>
             </motion.div>
           </div>
         </section>
