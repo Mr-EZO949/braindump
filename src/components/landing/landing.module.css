@@ -174,63 +174,16 @@
   z-index: 0;
 }
 
-/* "Unfreeze your brain." — snowflakes orbit the phrase, then melt as it thaws. */
-.thawPhrase {
-  position: relative;
-  display: inline-block;
-  white-space: nowrap;
-}
-
-.snowLayer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.snowflake {
-  position: absolute;
-  line-height: 1;
-  color: #c6edf9;
-  text-shadow: 0 0 9px rgba(150, 215, 240, 0.65);
-  opacity: 0.85;
-  will-change: transform, opacity;
-  animation-name: floatOrbit, snowMelt;
-  animation-duration: 5s, 1.7s;
-  animation-timing-function: ease-in-out, ease-in;
-  animation-iteration-count: infinite, 1;
-  animation-fill-mode: none, forwards;
-  animation-delay: 0s, 2.2s; /* per-flake delays set inline */
-}
-
-/* gentle circling-in-place while frozen */
-@keyframes floatOrbit {
-  0%   { transform: translate(0, -5px); }
-  25%  { transform: translate(5px, 0); }
-  50%  { transform: translate(0, 5px); }
-  75%  { transform: translate(-5px, 0); }
-  100% { transform: translate(0, -5px); }
-}
-
-/* then it melts — drips down, shrinks, fades (synced with the colour thaw) */
-@keyframes snowMelt {
-  0%   { opacity: 0.85; transform: translate(0, 0) scale(1); }
-  100% { opacity: 0; transform: translate(0, 18px) scale(0.35); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .snowflake {
-    display: none;
-  }
-}
-
 .heroInner {
   position: relative;
   z-index: 1;
-  max-width: 1280px;
+  /* tighter cluster: the old 1280 / 540 split left ~250px of dead air
+     inside the text column on wide screens, so the two halves drifted apart */
+  max-width: 1120px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 1fr 540px;
-  gap: 56px;
+  grid-template-columns: minmax(0, 1fr) 520px;
+  gap: 40px;
   align-items: center;
 }
 
@@ -285,22 +238,50 @@
   color: var(--color-text-muted);
 }
 
+/* a drawn rule reads calmer than a glowing diamond */
 .heroEyebrowMark {
-  width: 7px;
-  height: 7px;
-  transform: rotate(45deg);
+  width: 20px;
+  height: 1px;
   background: var(--color-accent-primary);
-  box-shadow: 0 0 10px rgba(213, 58, 71, 0.5);
 }
 
 .heroH1 {
-  font-size: clamp(30px, 3.2vw, 46px);
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  line-height: 1.1;
-  margin: 0 0 22px;
+  font-family: var(--font-display), Georgia, "Times New Roman", serif;
+  font-size: clamp(42px, 5.4vw, 66px);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.04;
+  margin: 0 0 24px;
   color: var(--color-text-primary);
   text-wrap: balance;
+}
+
+/* the payoff drops to its own line in italic scarlet — one accent moment,
+   no gradient sweep, no decorative glyphs */
+.heroH1Accent {
+  display: block;
+  font-style: italic;
+  color: #ec5d68;
+}
+
+/* quiet reassurance strip under the hero actions */
+.heroTrust {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  max-width: 440px;
+}
+
+.heroTrust span {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
   white-space: nowrap;
 }
 
@@ -319,72 +300,46 @@
   letter-spacing: -0.035em;
 }
 
-/* Hero accent that THAWS on load: icy cyan → scarlet sweeps left-to-right once,
-   resting on the warm brand scarlet. Visualizes "unfreeze your brain". */
-.gradientThaw {
-  background: linear-gradient(
-    100deg,
-    #9fe8f5 0%,
-    #57b6d4 20%,
-    #d53a47 56%,
-    #ef5a68 100%
-  );
-  background-size: 240% 100%;
-  background-position: 0% 0;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  filter: drop-shadow(0 1px 24px rgba(213, 58, 71, 0.18));
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  /* frozen → melt: hold the icy state while the snowflakes circle (~2.2s), then
-     thaw to warm scarlet in sync with them melting; then a faint living breath. */
-  animation:
-    thaw 3.6s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both,
-    frostBreath 6s ease-in-out 4.3s infinite;
-}
-
-@keyframes thaw {
-  0%,
-  47% {
-    /* frozen — icy cyan held while the snowflakes orbit */
-    background-position: 0% 0;
-    filter: drop-shadow(0 0 26px rgba(125, 214, 240, 0.45));
-  }
-  100% {
-    /* melted — warm brand scarlet */
-    background-position: 100% 0;
-    filter: drop-shadow(0 1px 24px rgba(213, 58, 71, 0.2));
-  }
-}
-
-/* subtle warm glow that breathes — keeps the thawed headline feeling alive */
-@keyframes frostBreath {
-  0%,
-  100% { filter: drop-shadow(0 1px 22px rgba(213, 58, 71, 0.16)); }
-  50%  { filter: drop-shadow(0 1px 32px rgba(239, 90, 104, 0.34)); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .gradientThaw {
-    animation: none;
-    background-position: 100% 0;
-  }
-}
-
-.heroSub {
+/* Hero copy: two beats. The problem (muted, airy) sits apart from the fix
+   (brighter, tighter) — the gap between them is the pause before relief. */
+.heroProblem {
   font-size: 17px;
-  line-height: 1.65;
-  color: var(--color-text-secondary);
-  margin: 0 0 40px;
-  max-width: 480px;
+  line-height: 1.75;
+  color: var(--color-text-muted);
+  margin: 0 0 20px;
+  max-width: 500px;
+}
+
+.heroFix {
+  font-size: 17.5px;
+  line-height: 1.6;
+  color: var(--color-text-primary);
+  margin: 0 0 38px;
+  max-width: 510px;
+}
+
+/* the payoff echoes the headline: italic display serif in warm scarlet */
+.heroFix em {
+  font-family: var(--font-display), Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-size: 1.16em;
+  color: #ec5d68;
+  filter: drop-shadow(0 1px 18px rgba(213, 58, 71, 0.25));
 }
 
 .heroActions {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 14px;
   flex-wrap: wrap;
+}
+
+/* both hero buttons share one width so the pair reads as a unit */
+.heroActions > a {
+  flex: 0 0 auto;
+  min-width: 186px;
+  justify-content: center;
+  text-align: center;
 }
 
 .heroVisual {
@@ -1021,15 +976,15 @@
 ───────────────────────────────────────────────────────────── */
 
 .marquee {
-  padding: 32px 0;
+  padding: 14px 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 10px;
   mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.012);
 }
 
 .marqueeRow {
@@ -1038,9 +993,9 @@
 
 .marqueeTrack {
   display: flex;
-  gap: 12px;
+  gap: 0;
   width: max-content;
-  animation: scrollLeft 40s linear infinite;
+  animation: scrollLeft 64s linear infinite;
 }
 
 .marqueeReverse {
@@ -1057,26 +1012,16 @@
   100% { transform: translateX(0); }
 }
 
-.marqueePill {
+/* one quiet line of real thoughts, separated by hairlines — no chips */
+.marqueeItem {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.02);
-  font-size: 13px;
-  color: var(--color-text-secondary);
+  padding: 0 22px;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 13.5px;
+  color: var(--color-text-muted);
   white-space: nowrap;
   flex-shrink: 0;
-}
-
-.marqueeType {
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  font-family: var(--font-geist-mono), monospace;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1084,7 +1029,7 @@
 ───────────────────────────────────────────────────────────── */
 
 .section {
-  padding: 112px 32px;
+  padding: 92px 32px;
 }
 
 .sectionAlt {
@@ -1102,6 +1047,44 @@
 .centered {
   text-align: center;
   margin-bottom: 72px;
+}
+
+/* ── Section heads ────────────────────────────────────────────
+   Centred, as before — the numeral replaces the old mono eyebrow
+   so the sections are told apart by a feature count, not by seven
+   different labels all doing the same job.
+──────────────────────────────────────────────────────────────── */
+
+.secHeadCenter {
+  text-align: center;
+  margin-bottom: 64px;
+}
+
+.secNumCenter {
+  display: block;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: var(--color-accent-primary);
+  margin-bottom: 18px;
+}
+
+/* same numeral where the head isn't centred (the planner's split layout) */
+.secNumBlock {
+  display: block;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: var(--color-accent-primary);
+  margin-bottom: 14px;
+}
+
+@media (max-width: 900px) {
+  .secHeadCenter {
+    margin-bottom: 44px;
+  }
 }
 
 .sectionDesc {
@@ -1263,22 +1246,14 @@
   padding: 8px 0;
 }
 
-.reviewAccentLine {
-  width: 32px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--color-accent-primary);
-  margin-bottom: 24px;
-  opacity: 0.6;
-}
-
-.reviewH3 {
-  font-size: 26px;
+/* this section carries the section-level headline itself */
+.reviewH2 {
+  font-size: clamp(28px, 3.2vw, 40px);
   font-weight: 700;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.03em;
   color: var(--color-text-primary);
-  margin: 0 0 16px;
-  line-height: 1.2;
+  margin: 0 0 18px;
+  line-height: 1.12;
 }
 
 .reviewP {
@@ -1707,29 +1682,6 @@
    Graph section
 ───────────────────────────────────────────────────────────── */
 
-.graphSection {
-  padding: 112px 32px;
-  background: rgba(255, 255, 255, 0.015);
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.graphWrap {
-  margin-top: 48px;
-  border-radius: var(--radius-xl);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(11, 11, 13, 0.7);
-  overflow: hidden;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
-  padding: 8px;
-}
-
-.graphSvg {
-  width: 100%;
-  height: auto;
-  display: block;
-}
-
 /* ─────────────────────────────────────────────────────────────
    Control hub — radial "one input, every action" section
 ───────────────────────────────────────────────────────────── */
@@ -2120,12 +2072,36 @@
   user-select: none;
 }
 
+/* The three beats descend like steps — you can see the slide into
+   paralysis instead of reading three equal boxes in a row. */
 .problemSnippets {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
-  max-width: 820px;
-  margin: 56px auto 48px;
+  gap: 20px;
+  align-items: start;
+  max-width: none;
+  margin: 56px 0 76px;
+}
+
+/* margin, not transform — FadeUp animates transform inline and would win */
+.problemSnippets > *:nth-child(2) {
+  margin-top: 40px;
+}
+
+.problemSnippets > *:nth-child(3) {
+  margin-top: 80px;
+}
+
+@media (max-width: 860px) {
+  .problemSnippets {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin: 40px 0 44px;
+  }
+  .problemSnippets > *:nth-child(2),
+  .problemSnippets > *:nth-child(3) {
+    margin-top: 0;
+  }
 }
 
 .problemSnippet {
@@ -2266,6 +2242,57 @@
   gap: 8px;
   position: sticky;
   top: 84px;
+}
+
+/* Phones only — the rail collapses into a tab bar in the panel chrome. */
+.lensesBar {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.lensesSeg {
+  padding: 7px 15px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.lensesSeg:hover {
+  color: var(--color-text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.lensesSegActive,
+.lensesSegActive:hover {
+  color: var(--color-text-primary);
+  background: rgba(213, 58, 71, 0.12);
+  border-color: rgba(213, 58, 71, 0.35);
+}
+
+.lensesHint {
+  margin-left: auto;
+  padding-right: 4px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  white-space: nowrap;
 }
 
 .lensesTab {
@@ -3041,17 +3068,6 @@
    Substrate (slim) — caption only
 ───────────────────────────────────────────────────────────── */
 
-.graphCaption {
-  margin: 18px auto 0;
-  max-width: 520px;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--color-text-muted);
-  text-align: center;
-  font-style: italic;
-  letter-spacing: -0.005em;
-}
-
 /* ─────────────────────────────────────────────────────────────
    Weekly reflection (single card)
 ───────────────────────────────────────────────────────────── */
@@ -3205,7 +3221,8 @@
     padding: 80px 24px 64px;
   }
 
-  .heroSub {
+  .heroProblem,
+  .heroFix {
     max-width: 100%;
   }
 
@@ -3294,10 +3311,6 @@
     padding: 80px 24px;
   }
 
-  .graphSection {
-    padding: 80px 24px;
-  }
-
   .cta {
     padding: 96px 24px;
   }
@@ -3345,7 +3358,8 @@
     padding: 64px 20px 52px;
   }
 
-  .heroSub {
+  .heroProblem,
+  .heroFix {
     font-size: 16px;
   }
 
@@ -3354,10 +3368,6 @@
   }
 
   .sectionAlt {
-    padding: 64px 20px;
-  }
-
-  .graphSection {
     padding: 64px 20px;
   }
 
@@ -3450,5 +3460,149 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 12px;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Phone pass — the demos are scaled down so each section fits
+   the screen instead of running on for pages.
+───────────────────────────────────────────────────────────── */
+
+@media (max-width: 700px) {
+  /* the scarlet half of a headline gets its own line rather than
+     breaking mid-phrase ("…quit. It / froze.") */
+  .h2 .gradient,
+  .ctaH2 .gradient {
+    display: block;
+  }
+
+  /* hero buttons stack full width instead of two odd sizes */
+  .heroActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .heroActions > a {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* "Approve what sticks" — the queue is the desktop showpiece;
+     on a phone the words carry it alone */
+  .reviewPanel {
+    display: none;
+  }
+
+  .reviewGrid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  /* "Whatever you'd click, just type" — six cards stacked full width ran
+     to ~660px. Two compact columns, label only, no ring. */
+  .hubDemo {
+    margin-top: 28px;
+    padding: 24px 0 0;
+  }
+
+  .hubCards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 28px;
+  }
+
+  .hubCard {
+    padding: 12px 12px;
+    border-radius: var(--radius-md);
+    gap: 8px;
+  }
+
+  .hubCardIcon {
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+  }
+
+  .hubCardLabel {
+    font-size: 13px;
+  }
+
+  .hubCardExample {
+    display: none;
+  }
+
+  .hubRing,
+  .hubAmbient {
+    display: none;
+  }
+
+  /* "We plan. You do." — tighter timeline rows */
+  .plannerBlock {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .plannerBlockLabel {
+    font-size: 13.5px;
+  }
+
+  .plannerBlockMeta {
+    font-size: 11px;
+  }
+
+  .plannerBlockDuration {
+    font-size: 11px;
+  }
+
+  .plannerActionBtn {
+    font-size: 12.5px;
+    padding: 9px 14px;
+  }
+
+  /* "Streaks with a destination." — smaller calendar cells */
+  .habitCalendarGrid {
+    gap: 4px;
+  }
+
+  .habitCell {
+    border-radius: 3px;
+  }
+
+  .habitCalendarBody {
+    padding: 14px;
+  }
+
+  /* rail out, compact switcher in */
+  .lensesWrap {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .lensesTabs {
+    display: none;
+  }
+
+  .lensesBar {
+    display: flex;
+    overflow-x: auto;
+    padding: 8px 10px;
+    scrollbar-width: none;
+  }
+
+  .lensesBar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .lensesHint {
+    display: none;
+  }
+
+  .lensesSeg {
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  .lensesPane {
+    padding: 20px 16px;
   }
 }

@@ -182,34 +182,6 @@ const REVIEW_ITEMS = [
   { type: "journal",  title: "Roadmap clarity",        status: "accepted" as const },
 ];
 
-// Graph: SaaS project with related classes, tasks, ideas
-const GRAPH_NODES = [
-  { id: "n1", x: 320, y: 52,  type: "project",  label: "Analytics SaaS" },
-  { id: "n2", x: 120, y: 145, type: "class",     label: "MIT 6.824" },
-  { id: "n3", x: 310, y: 170, type: "task",      label: "Build ingestion API" },
-  { id: "n4", x: 510, y: 140, type: "class",     label: "Stanford CS229" },
-  { id: "n5", x:  70, y: 290, type: "concept",   label: "Distributed consensus" },
-  { id: "n6", x: 220, y: 310, type: "idea",      label: "Use RAFT for sync" },
-  { id: "n7", x: 410, y: 290, type: "task",      label: "Implement dashboard" },
-  { id: "n8", x: 540, y: 300, type: "idea",      label: "Anomaly detection" },
-  { id: "n9", x: 160, y: 400, type: "question",  label: "Postgres or Clickhouse?" },
-  { id: "n10",x: 370, y: 400, type: "goal",      label: "Launch by Q3" },
-];
-
-const GRAPH_EDGES = [
-  { from: "n1", to: "n3" },  // project → task
-  { from: "n1", to: "n7" },  // project → task
-  { from: "n2", to: "n5" },  // class → concept
-  { from: "n5", to: "n6" },  // concept → idea
-  { from: "n6", to: "n3" },  // idea → task
-  { from: "n4", to: "n8" },  // class → idea
-  { from: "n8", to: "n7" },  // idea → task
-  { from: "n3", to: "n9" },  // task → question
-  { from: "n7", to: "n10" }, // task → goal
-  { from: "n6", to: "n9" },  // idea → question
-  { from: "n1", to: "n10" }, // project → goal
-];
-
 // ── Grain overlay ─────────────────────────────────────────
 
 function Grain() {
@@ -226,16 +198,6 @@ function Grain() {
 // ── Snowflakes that orbit "Unfreeze your brain." then melt ─
 // Anchored around the phrase (top/left relative to it). Each floats in a small
 // orbit while frozen, then melts (drips + fades) in sync with the colour thaw.
-const SNOWFLAKES: ReadonlyArray<{ g: string; top: string; left: string; size: number; delay: number }> = [
-  { g: "❅", top: "-20px", left: "4%", size: 13, delay: 0 },
-  { g: "❆", top: "-26px", left: "33%", size: 10, delay: 1.1 },
-  { g: "❅", top: "-16px", left: "68%", size: 12, delay: 0.5 },
-  { g: "❆", top: "108%", left: "15%", size: 10, delay: 1.7 },
-  { g: "❅", top: "112%", left: "56%", size: 13, delay: 0.8 },
-  { g: "❆", top: "28%", left: "-3%", size: 11, delay: 2 },
-  { g: "❅", top: "16%", left: "97%", size: 10, delay: 1.4 },
-];
-
 // ── Marquee ───────────────────────────────────────────────
 
 function MarqueeRow({ items, reverse }: { items: typeof MARQUEE_R1; reverse?: boolean }) {
@@ -244,9 +206,7 @@ function MarqueeRow({ items, reverse }: { items: typeof MARQUEE_R1; reverse?: bo
     <div className={styles.marqueeRow}>
       <div className={`${styles.marqueeTrack} ${reverse ? styles.marqueeReverse : ""}`}>
         {doubled.map((item, i) => (
-          <span key={`${item.t}-${i}`} className={styles.marqueePill}
-            style={{ borderColor: `${NC[item.type]}35` }}>
-            <span className={styles.marqueeType} style={{ color: NC[item.type] }}>{item.type}</span>
+          <span key={`${item.t}-${i}`} className={styles.marqueeItem}>
             {item.t}
           </span>
         ))}
@@ -419,6 +379,7 @@ function LensesShowcase() {
 
   return (
     <div ref={ref} className={styles.lensesWrap}>
+      {/* Desktop: the rail of four cards beside the stage. */}
       <div className={styles.lensesTabs} role="tablist" aria-label="Views">
         {LENSES.map((lens, i) => (
           <motion.button
@@ -440,6 +401,26 @@ function LensesShowcase() {
       </div>
 
       <div className={styles.lensesStage}>
+        {/* Phones only: the same switcher collapsed into the panel chrome,
+            so the section doesn't open with four stacked cards. */}
+        <div className={styles.lensesBar} role="tablist" aria-label="Views">
+          {LENSES.map((lens) => (
+            <button
+              key={lens.key}
+              type="button"
+              role="tab"
+              aria-selected={active === lens.key}
+              className={`${styles.lensesSeg} ${active === lens.key ? styles.lensesSegActive : ""}`}
+              onClick={() => setActive(lens.key)}
+            >
+              {lens.label}
+            </button>
+          ))}
+          <span className={styles.lensesHint}>
+            {LENSES.find((l) => l.key === active)?.hint}
+          </span>
+        </div>
+
         <AnimatePresence mode="wait">
           <motion.div
             key={active}
@@ -843,10 +824,13 @@ function ReviewShowcase() {
 
       {/* Right: explanation */}
       <div className={styles.reviewExplain}>
-        <div className={styles.reviewAccentLine} />
-        <h3 className={styles.reviewH3}>You approve every node.</h3>
+        <span className={styles.secNumBlock}>02</span>
+        <h2 className={styles.reviewH2}>
+          Dump freely.<br />Approve what sticks.
+        </h2>
         <p className={styles.reviewP}>
-          Dump freely — nothing enters your workspace until you say so. No second-guessing what you wrote.
+          Nothing enters your workspace until you say so. Every node waits for a
+          yes, so you can dump as messy as you like.
         </p>
         <div className={styles.reviewStats}>
           <div className={styles.statItem}>
@@ -1058,46 +1042,6 @@ function ThoughtDemo() {
   );
 }
 
-// ── GraphPreview ──────────────────────────────────────────
-
-function GraphPreview() {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const inView = useInView(svgRef, { once: true, margin: "-80px" });
-  const nodeMap = Object.fromEntries(GRAPH_NODES.map(n => [n.id, n]));
-
-  return (
-    <svg ref={svgRef} viewBox="0 0 640 430" className={styles.graphSvg} aria-hidden="true">
-      {GRAPH_EDGES.map((e, i) => {
-        const a = nodeMap[e.from], b = nodeMap[e.to];
-        return (
-          <motion.path key={`e${i}`} d={`M ${a.x} ${a.y} L ${b.x} ${b.y}`}
-            stroke="rgba(255,255,255,0.07)" strokeWidth="1.5" fill="none" strokeLinecap="round"
-            initial={{ pathLength: 0, opacity: 0 }}
-            animate={inView ? { pathLength: 1, opacity: 1 } : {}}
-            transition={{ duration: 0.7, delay: 0.25 + i * 0.1, ease: "easeInOut" }} />
-        );
-      })}
-      {GRAPH_NODES.map((nd, i) => {
-        const c = NC[nd.type];
-        return (
-          <motion.g key={nd.id} initial={{ opacity: 0 }}
-            animate={inView ? { opacity: 1 } : {}}
-            transition={{ duration: 0.45, delay: 0.08 + i * 0.07, ease: [0.22, 1, 0.36, 1] }}>
-            <circle cx={nd.x} cy={nd.y} r={27} fill={`${c}08`} stroke={`${c}22`} strokeWidth="1" />
-            <circle cx={nd.x} cy={nd.y} r={18} fill={`${c}18`} stroke={c} strokeWidth="1.5" strokeOpacity="0.62" />
-            <text x={nd.x} y={nd.y + 4} textAnchor="middle" fill={c}
-              fontSize="8" fontWeight="700" fontFamily="ui-monospace, monospace" opacity="0.88">
-              {nd.type.toUpperCase().slice(0, 4)}
-            </text>
-            <text x={nd.x} y={nd.y + 40} textAnchor="middle" fill="rgba(255,255,255,0.3)"
-              fontSize="9.5" fontFamily="ui-sans-serif, system-ui, sans-serif">{nd.label}</text>
-          </motion.g>
-        );
-      })}
-    </svg>
-  );
-}
-
 // ── FloatingThoughts (problem section ambient) ───────────
 
 const FLOATING_THOUGHTS = [
@@ -1193,36 +1137,25 @@ export default function LandingPage() {
                 Built for ADHD minds
               </div>
               <h1 className={styles.heroH1}>
-                Dump it.{" "}
-                <span className={styles.thawPhrase}>
-                  <span className={styles.snowLayer} aria-hidden="true">
-                    {SNOWFLAKES.map((f, i) => (
-                      <span
-                        key={i}
-                        className={styles.snowflake}
-                        style={{
-                          top: f.top,
-                          left: f.left,
-                          fontSize: f.size,
-                          animationDelay: `${f.delay}s, 2.2s`,
-                        }}
-                      >
-                        {f.g}
-                      </span>
-                    ))}
-                  </span>
-                  <span className={styles.gradientThaw}>Unfreeze your brain.</span>
-                </span>
+                Dump it.
+                <span className={styles.heroH1Accent}>Unfreeze your brain.</span>
               </h1>
-              <p className={styles.heroSub}>
-                Overplanning, brain-freeze, twelve half-made decisions — the stuff
-                that keeps you from starting. Dump it all here and BrainDump thaws
-                the frozen pile into a map, then points at the one thing to do next.
-                The last productivity app you&apos;ll need.
+              <p className={styles.heroProblem}>
+                Twenty things to do, each one tangled in the next — so you
+                re-read the list, re-plan the plan, and start nothing.
+              </p>
+              <p className={styles.heroFix}>
+                Dump it all here. BrainDump untangles the pile and hands you{" "}
+                <em>the one thing to start now.</em>
               </p>
               <div className={styles.heroActions}>
-                <a href="#pricing" className={styles.navCta}>See pricing</a>
+                <a href="#pricing" className={styles.navCta}>Start free</a>
                 <a href="#lenses" className={styles.btnGhost}>See what&apos;s inside</a>
+              </div>
+              <div className={styles.heroTrust}>
+                <span>No credit card</span>
+                <span>Cancel anytime</span>
+                <span>Exportable graph</span>
               </div>
             </motion.div>
 
@@ -1237,22 +1170,20 @@ export default function LandingPage() {
 
         {/* ── Marquee ── */}
         <div className={styles.marquee} aria-hidden="true">
-          <MarqueeRow items={MARQUEE_R1} />
-          <MarqueeRow items={MARQUEE_R2} reverse />
+          <MarqueeRow items={[...MARQUEE_R1, ...MARQUEE_R2]} />
         </div>
 
         {/* ── Problem ── */}
         <section className={styles.problem} id="problem">
           <FloatingThoughts />
           <div className={styles.problemInner}>
-            <FadeUp className={styles.centered}>
-              <span className={styles.label}>The problem</span>
+            <FadeUp className={styles.secHeadCenter}>
               <h2 className={styles.h2}>
                 Your brain didn&apos;t quit.{" "}
                 <span className={styles.gradient}>It froze.</span>
               </h2>
               <p className={styles.problemDeck}>
-                Too many open loops, too many half-made decisions — and the whole
+                Too many open loops and too many half-made decisions, and the whole
                 pile locks up. You&apos;re not lazy. You&apos;re stuck mid-thought.
               </p>
             </FadeUp>
@@ -1283,14 +1214,14 @@ export default function LandingPage() {
         {/* ── Four Lenses ── */}
         <section className={styles.section} id="lenses">
           <div className={styles.inner}>
-            <FadeUp className={styles.centered}>
-              <span className={styles.label}>What&apos;s inside</span>
+            <FadeUp className={styles.secHeadCenter}>
+              <span className={styles.secNumCenter}>01</span>
               <h2 className={styles.h2}>
-                The last productivity app<br />
-                <span className={styles.gradient}>you&apos;ll ever need.</span>
+                One graph. Four ways to look at it.
               </h2>
               <p className={styles.sectionDesc}>
-                Tasks, habits, roadmaps, graph — every view the AI reads from when it answers. Hover a tab to peek inside.
+                Not four apps bolted together. Four lenses onto one set of nodes, and
+                every one of them is a view the AI reads from when it answers you.
               </p>
             </FadeUp>
 
@@ -1303,29 +1234,11 @@ export default function LandingPage() {
         {/* ── Review ── */}
         <section className={styles.section} id="how">
           <div className={styles.inner}>
-            <FadeUp className={styles.centered}>
-              <span className={styles.label}>Trust, not magic</span>
-              <h2 className={styles.h2}>
-                Dump freely. Approve what sticks.
-              </h2>
-            </FadeUp>
-
-            <FadeUp delay={0.1}>
+            {/* No head above this one — the headline lives inside the split,
+                beside the queue it's describing. One section that breaks the
+                centred rhythm on purpose. */}
+            <FadeUp>
               <ReviewShowcase />
-            </FadeUp>
-          </div>
-        </section>
-
-        {/* ── Graph structure (the substrate) ── */}
-        <section className={styles.graphSection}>
-          <div className={styles.inner}>
-            <FadeUp delay={0.05}>
-              <div className={styles.graphWrap}>
-                <GraphPreview />
-                <p className={styles.graphCaption}>
-                  Every dot you dump becomes a node. Every node finds its neighbours.
-                </p>
-              </div>
             </FadeUp>
           </div>
         </section>
@@ -1333,14 +1246,15 @@ export default function LandingPage() {
         {/* ── Control everything via chat ── */}
         <section className={styles.hubSection}>
           <div className={styles.inner}>
-            <FadeUp className={styles.centered}>
-              <span className={styles.label}>Control everything via chat</span>
+            <FadeUp className={styles.secHeadCenter}>
+              <span className={styles.secNumCenter}>03</span>
               <h2 className={styles.h2}>
                 Whatever you&apos;d click,{" "}
                 <span className={styles.gradient}>just type.</span>
               </h2>
               <p className={styles.sectionDesc}>
-                Add, link, complete, schedule, merge, plan — the chat does all of it. No menus, no clicking around. Say what you want; review what we propose; tap Accept.
+                Add, link, complete, schedule, merge, plan. No menus, no hunting for
+                the right button. Say what you want, look at what we propose, accept.
               </p>
             </FadeUp>
 
@@ -1355,12 +1269,12 @@ export default function LandingPage() {
           <div className={styles.inner}>
             <div className={styles.assistantLayout}>
               <FadeUp className={styles.assistantInfo}>
-                <span className={styles.label}>Stop planning your day</span>
+                <span className={styles.secNumBlock}>04</span>
                 <h2 className={styles.h2}>
                   We plan. You do.
                 </h2>
                 <p className={styles.assistantDesc}>
-                  Tell us the window — an hour, an afternoon, a whole day. We know what&apos;s urgent, what&apos;s blocked, and what you&apos;ve been avoiding. You just start the timer.
+                  Tell us the window: an hour, an afternoon, a whole day. We know what&apos;s urgent, what&apos;s blocked, and what you&apos;ve been avoiding. You just start the timer.
                 </p>
                 <ul className={styles.assistantList}>
                   <li>1-hour, 2-hour, or full-day windows</li>
@@ -1379,14 +1293,14 @@ export default function LandingPage() {
         {/* ── Habits deep dive ── */}
         <section className={styles.section}>
           <div className={styles.inner}>
-            <FadeUp className={styles.habitsHead}>
-              <span className={styles.label}>Habits</span>
+            <FadeUp className={styles.secHeadCenter}>
+              <span className={styles.secNumCenter}>05</span>
               <h2 className={styles.h2}>
-                Streaks with{" "}
-                <span className={styles.gradient}>a destination.</span>
+                Streaks with a destination.
               </h2>
               <p className={styles.habitsLede}>
-                Every habit points at a real goal you wrote down. So a streak isn&apos;t a vanity number — it&apos;s a milestone counter.
+                Every habit points at a real goal you wrote down, so a streak stops
+                being a vanity number. It&apos;s a milestone counter.
               </p>
             </FadeUp>
 
