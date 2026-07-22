@@ -133,7 +133,7 @@ export async function POST(
 
   const { data: workspace, error: workspaceError } = await supabase
     .from("workspaces")
-    .select("id, name")
+    .select("id, name, bootstrap_root_node_id")
     .eq("id", workspaceId)
     .eq("user_id", user.id)
     .single();
@@ -238,31 +238,62 @@ export async function POST(
   // root stays visually subtle on the canvas no matter how large the
   // graph grows.
   const ROOT_IMPORTANCE = 30;
-  const { data: rootNode, error: rootError } = await supabase
-    .from("nodes")
-    .insert({
-      user_id: user.id,
-      workspace_id: workspaceId,
-      title: rootTitle,
-      summary: rootSummary,
-      raw_text: null,
-      node_type: "goal" as NodeType,
-      importance: getImportanceLabel(ROOT_IMPORTANCE),
-      importance_index: ROOT_IMPORTANCE,
-      manual_weight: ROOT_IMPORTANCE,
-      manual_weight_set_at: new Date().toISOString(),
-      color: NODE_COLOR_BY_TYPE.goal,
-      status: "active",
-    })
-    .select("*")
-    .single();
 
-  if (rootError || !rootNode) {
-    return NextResponse.json(
-      { error: "Failed to create root node", detail: rootError?.message },
-      { status: 500 },
-    );
+  // Workspace creation already seeds a root node. Reuse it — upgrading its
+  // title/summary to the richer wizard values — so completing the wizard never
+  // leaves a second, stray root floating on the canvas with the first one's
+  // children still anchored to it.
+  let resolvedRoot: Record<string, unknown> | null = null;
+  const existingRootId = workspace.bootstrap_root_node_id as string | null | undefined;
+  if (existingRootId) {
+    const { data: reusedRoot } = await supabase
+      .from("nodes")
+      .update({ title: rootTitle, summary: rootSummary })
+      .eq("id", existingRootId)
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .select("*")
+      .maybeSingle();
+    if (reusedRoot) resolvedRoot = reusedRoot;
   }
+
+  if (!resolvedRoot) {
+    const { data: createdRoot, error: rootError } = await supabase
+      .from("nodes")
+      .insert({
+        user_id: user.id,
+        workspace_id: workspaceId,
+        title: rootTitle,
+        summary: rootSummary,
+        raw_text: null,
+        node_type: "goal" as NodeType,
+        importance: getImportanceLabel(ROOT_IMPORTANCE),
+        importance_index: ROOT_IMPORTANCE,
+        manual_weight: ROOT_IMPORTANCE,
+        manual_weight_set_at: new Date().toISOString(),
+        color: NODE_COLOR_BY_TYPE.goal,
+        status: "active",
+      })
+      .select("*")
+      .single();
+
+    if (rootError || !createdRoot) {
+      return NextResponse.json(
+        { error: "Failed to create root node", detail: rootError?.message },
+        { status: 500 },
+      );
+    }
+    resolvedRoot = createdRoot;
+  }
+
+  // Both branches above either assign or return, but Supabase rows come back
+  // as `any`, so TS can't prove it — this guard makes the invariant explicit.
+  // Binding to a const also keeps the narrowing alive inside the .map()
+  // closures below, which would widen a `let` back to nullable.
+  if (!resolvedRoot) {
+    return NextResponse.json({ error: "Failed to create root node" }, { status: 500 });
+  }
+  const rootNode = resolvedRoot;
 
   const goalRows = validGoals.map((goal) => ({
     user_id: user.id,

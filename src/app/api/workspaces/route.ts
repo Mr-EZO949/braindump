@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { ensureWorkspaceRoot } from "@/lib/graph/ensure-workspace-root";
 
 export async function POST(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
@@ -42,5 +43,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(workspace, { status: 201 });
+  // Give the workspace a root immediately. The bootstrap wizard would create a
+  // richer one, but it's skippable — and a rootless workspace silently loses
+  // clustering and leaves every accepted node orphaned. The wizard reuses this
+  // node rather than creating a second root.
+  const rootId = await ensureWorkspaceRoot({
+    supabase,
+    userId: user.id,
+    workspaceId: workspace.id as string,
+  });
+
+  return NextResponse.json(
+    { ...workspace, bootstrap_root_node_id: rootId ?? null },
+    { status: 201 },
+  );
 }

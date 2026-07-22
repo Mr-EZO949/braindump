@@ -11,6 +11,7 @@ import { getImportanceLabel } from "@/lib/graph/importance";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { generateAndStoreEmbedding } from "@/lib/ai/embeddings";
 import { runClusteringPass } from "@/lib/ai/clustering";
+import { ensureWorkspaceRoot } from "@/lib/graph/ensure-workspace-root";
 import { scoreNodesJudgment } from "@/lib/ai/judgment";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import type { NodeType, WorkspaceProfile } from "@/types/graph";
@@ -603,6 +604,20 @@ export async function POST(req: NextRequest) {
           if (row.bootstrap_root_node_id) {
             rootByWorkspace.set(row.id as string, row.bootstrap_root_node_id as string);
           }
+        }
+
+        // Heal workspaces that never got a root — the bootstrap wizard is
+        // skippable, and workspaces created before roots were seeded at
+        // creation have none. Without this the nodes below are left orphaned
+        // and clustering stays permanently disabled for that workspace.
+        for (const workspaceId of workspaceIds) {
+          if (rootByWorkspace.has(workspaceId)) continue;
+          const healedRootId = await ensureWorkspaceRoot({
+            supabase,
+            userId: user.id,
+            workspaceId,
+          });
+          if (healedRootId) rootByWorkspace.set(workspaceId, healedRootId);
         }
         const anchorRows: Array<Record<string, unknown>> = [];
         for (const pair of acceptedPairs) {
