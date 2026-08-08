@@ -1,0 +1,208 @@
+.page {
+  min-height: 100dvh;
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-family: var(--font-geist-sans);
+}
+.wrap {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: clamp(2rem, 6vw, 4rem) 1.4rem 6rem;
+}
+
+.header {
+  margin-bottom: 2rem;
+}
+.eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-accent-primary);
+  margin: 0 0 0.6rem;
+}
+.title {
+  font-size: clamp(1.6rem, 5vw, 2.1rem);
+  font-weight: 640;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0 0 0.7rem;
+}
+.subtitle {
+  font-size: 0.98rem;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+  max-width: 40rem;
+  margin: 0;
+}
+
+.workspaceTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+.workspaceTab {
+  font-size: 0.82rem;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.8rem;
+  transition: background var(--motion-fast, 120ms ease-out), color var(--motion-fast, 120ms ease-out);
+}
+.workspaceTab:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+.workspaceTabActive {
+  color: var(--color-text-primary);
+  border-color: var(--color-accent-soft);
+  background: var(--color-bg-surface-hover);
+}
+
+.empty {
+  color: var(--color-text-muted);
+  font-size: 0.95rem;
+}
+
+/* ---- editor ---- */
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  background: var(--color-bg-base);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.count {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.toolbarRight {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.saveState {
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+  min-width: 6rem;
+  text-align: right;
+}
+.saveButton {
+  font-family: var(--font-geist-sans);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--color-accent-primary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  transition: background var(--motion-fast, 120ms ease-out), opacity var(--motion-fast, 120ms ease-out);
+}
+.saveButton:hover:not(:disabled) {
+  background: var(--color-accent-primary-hover);
+}
+.saveButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  cursor: grab;
+}
+.row:active {
+  cursor: grabbing;
+}
+.rowDragging {
+  opacity: 0.55;
+  border-color: var(--color-accent-primary);
+}
+.handle {
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  line-height: 1;
+  letter-spacing: -2px;
+  user-select: none;
+}
+.position {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  color: var(--color-accent-primary);
+  min-width: 1.5rem;
+  text-align: right;
+}
+.rowMain {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+}
+.rowTitle {
+  font-size: 0.95rem;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rowType {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.rowButtons {
+  display: flex;
+  gap: 0.3rem;
+}
+.moveButton {
+  width: 1.9rem;
+  height: 1.9rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-base);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--motion-fast, 120ms ease-out), color var(--motion-fast, 120ms ease-out);
+}
+.moveButton:hover:not(:disabled) {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+.moveButton:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
