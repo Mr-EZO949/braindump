@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   getChatComposerCue,
   getChatScopeMeta,
@@ -750,6 +751,10 @@ export function ContextRail({
 
                     {/* Secondary row — AI tools. Compact neutral pills. */}
                     <div className="detail-actions-secondary">
+                      {/* Full-screen reading view for this node's write-up. */}
+                      <Link className="detail-action-pill" href={`/n/${selectedNode.id}`}>
+                        Read
+                      </Link>
                       {onStartFocusSession &&
                         (!selectedNode.status || selectedNode.status === "active") && (
                           <button

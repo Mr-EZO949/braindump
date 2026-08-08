@@ -69,6 +69,10 @@ export interface Node {
   // 7 = daily, 3 = "3× a week", 1 = weekly. Null = no cadence tracked.
   // Drives the planner's CADENCE_DUE boost (Focus surfaces it when due).
   habit_target_per_week?: number | null;
+  // Optional narrative position within the workspace (ascending). Drives the
+  // reading view's Prev/Next. Independent of edges — never derived from or
+  // turned into edges. Null = unordered (Next falls back to strongest edge).
+  reading_order?: number | null;
 }
 
 export interface Edge {
@@ -98,6 +102,10 @@ export interface Workspace {
   profile_payload?: WorkspaceProfile | null;
   bootstrap_root_node_id?: string | null;
   bootstrap_completed_at?: string | null;
+  // Public sharing — see 20260808020000_workspace_public_sharing.
+  is_public?: boolean | null;
+  public_slug?: string | null;
+  shared_at?: string | null;
 }
 
 export interface GraphData {
