@@ -1,5 +1,7 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { isOwnerEmail } from "@/lib/auth/owner";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getAIObservabilitySnapshot } from "@/lib/ai/telemetry";
 
@@ -73,6 +75,8 @@ export default async function ObservabilityPage() {
     redirect("/login");
   }
 
+  const isOwner = isOwnerEmail(user.email);
+
   const snapshot = await getAIObservabilitySnapshot({
     supabase,
     userId: user.id,
@@ -94,6 +98,14 @@ export default async function ObservabilityPage() {
                 Recent run health, operator-facing cost tracking, and the core
                 product counters that show whether the graph pipeline is getting
                 better or just getting busier.
+                {isOwner ? (
+                  <>
+                    {" "}
+                    <Link href="/app/observability/users">
+                      View all-user cost →
+                    </Link>
+                  </>
+                ) : null}
               </p>
             </div>
             <div className={styles.windowBadge}>
