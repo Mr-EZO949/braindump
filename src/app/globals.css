@@ -3272,6 +3272,134 @@ input[type="search"]::-webkit-search-results-decoration {
   word-break: break-all;
 }
 
+/* --- About-you profile editor (SystemPanel) --- */
+.sp-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  margin: -4px 0 12px;
+}
+
+.sp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.sp-field-label {
+  font-size: 11px;
+  font-weight: 560;
+  color: var(--color-text-secondary);
+}
+
+.sp-input,
+.sp-textarea {
+  width: 100%;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+.sp-textarea {
+  resize: vertical;
+  min-height: 44px;
+  line-height: 1.5;
+}
+
+.sp-input:focus,
+.sp-textarea:focus {
+  border-color: rgba(213, 58, 71, 0.4);
+  box-shadow: var(--shadow-focus);
+}
+
+.sp-input:disabled,
+.sp-textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sp-goal-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sp-goal-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-bg-surface);
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.sp-goal-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--motion-fast);
+}
+
+.sp-goal-remove:hover {
+  color: var(--color-accent-primary);
+}
+
+.sp-goal-add {
+  display: flex;
+  gap: 6px;
+}
+
+.sp-goal-add-btn {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+}
+
+.sp-error {
+  font-size: 11px;
+  color: var(--color-accent-primary);
+  margin: 0 0 10px;
+}
+
+.sp-save-btn {
+  width: 100%;
+  border: 1px solid rgba(213, 58, 71, 0.4);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 560;
+  padding: 9px 0;
+  cursor: pointer;
+  transition: background var(--motion-fast), opacity var(--motion-fast);
+}
+
+.sp-save-btn:hover:not(:disabled) {
+  background: var(--color-accent-primary-hover);
+}
+
+.sp-save-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .sp-menu-btn {
   background: none;
   border: none;

@@ -3260,6 +3260,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           signingOut={signingOut}
           deletingAccount={deletingAccount}
           userEmail={authUser?.email ?? null}
+          workspaceId={selectedWorkspaceId}
         />
 
         <AnimatePresence mode="wait" initial={false}>

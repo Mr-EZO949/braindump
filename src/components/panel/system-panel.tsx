@@ -16,7 +16,11 @@ type SystemPanelProps = {
   signingOut: boolean;
   deletingAccount: boolean;
   userEmail: string | null;
+  // Active workspace — the "About you" profile is edited per-workspace.
+  workspaceId: string | null;
 };
+
+const MAX_GOALS = 8;
 
 function readDomTheme(): Theme {
   return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
@@ -30,6 +34,7 @@ export function SystemPanel({
   signingOut,
   deletingAccount,
   userEmail,
+  workspaceId,
 }: SystemPanelProps) {
   // Must initialize to the same constant the server renders ("dark"). Reading
   // the DOM/localStorage in the initializer would make the first client
@@ -37,6 +42,18 @@ export function SystemPanel({
   // real theme is synced from the DOM in a mount effect below.
   const [theme, setTheme] = useState<Theme>("dark");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  // "About you" profile — the fields the AI reads to tailor extraction /
+  // planning / chat. Loaded from the active workspace when the panel opens.
+  const [role, setRole] = useState("");
+  const [focus, setFocus] = useState("");
+  const [goals, setGoals] = useState<string[]>([]);
+  const [goalDraft, setGoalDraft] = useState("");
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   // The pre-paint script in layout.tsx already applied the correct theme to
   // <html>. The apply-effect below must skip its first run so it doesn't
   // overwrite that with the SSR default before we've synced.
@@ -69,6 +86,103 @@ export function SystemPanel({
       // localStorage unavailable (private mode, etc.) — theme still applied for session.
     }
   }, [theme]);
+
+  // Load the active workspace's profile whenever the panel opens.
+  useEffect(() => {
+    if (!open || !workspaceId) return;
+    let cancelled = false;
+    setProfileLoading(true);
+    setProfileError(null);
+    setProfileSaved(false);
+    fetch(`/api/workspaces/${workspaceId}/profile`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Couldn't load your profile"))))
+      .then((data: { role: string | null; current_focus: string | null; goals: string[] }) => {
+        if (cancelled) return;
+        setRole(data.role ?? "");
+        setFocus(data.current_focus ?? "");
+        setGoals(Array.isArray(data.goals) ? data.goals : []);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setProfileError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setProfileLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, workspaceId]);
+
+  const trimmedGoalDraft = goalDraft.trim();
+  const canAddGoal =
+    trimmedGoalDraft.length > 0 &&
+    goals.length < MAX_GOALS &&
+    !goals.some((g) => g.toLowerCase() === trimmedGoalDraft.toLowerCase());
+
+  const addGoal = () => {
+    if (!canAddGoal) return;
+    setGoals((prev) => [...prev, trimmedGoalDraft]);
+    setGoalDraft("");
+    setProfileSaved(false);
+  };
+
+  const removeGoal = (goal: string) => {
+    setGoals((prev) => prev.filter((g) => g !== goal));
+    setProfileSaved(false);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!workspaceId) return;
+    setProfileSaving(true);
+    setProfileError(null);
+    setProfileSaved(false);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/profile`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, current_focus: focus, goals }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "Couldn't save your profile");
+      }
+      const data = (await res.json()) as {
+        role: string | null;
+        current_focus: string | null;
+        goals: string[];
+      };
+      setRole(data.role ?? "");
+      setFocus(data.current_focus ?? "");
+      setGoals(Array.isArray(data.goals) ? data.goals : []);
+      setProfileSaved(true);
+    } catch (e) {
+      setProfileError(e instanceof Error ? e.message : "Couldn't save your profile");
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch("/api/account/export");
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `braindump-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Best-effort download; nothing persisted, safe to ignore.
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <aside
       aria-hidden={!open}
@@ -100,6 +214,104 @@ export function SystemPanel({
 
         <div className="sp-divider" />
 
+        {/* About you — profile the AI uses to tailor its help */}
+        <div className="px-5 py-4">
+          <p className="sp-section-label">About you</p>
+          <p className="sp-hint">The AI reads this to tailor how it captures, plans, and answers.</p>
+
+          <div className="sp-field">
+            <label className="sp-field-label" htmlFor="sp-role">Your role</label>
+            <input
+              id="sp-role"
+              className="sp-input"
+              type="text"
+              placeholder="e.g. CS student, founder, parent"
+              value={role}
+              onChange={(e) => {
+                setRole(e.target.value);
+                setProfileSaved(false);
+              }}
+              disabled={profileLoading || !workspaceId}
+            />
+          </div>
+
+          <div className="sp-field">
+            <label className="sp-field-label" htmlFor="sp-focus">Current focus</label>
+            <textarea
+              id="sp-focus"
+              className="sp-textarea"
+              rows={2}
+              placeholder="What are you trying to make progress on right now?"
+              value={focus}
+              onChange={(e) => {
+                setFocus(e.target.value);
+                setProfileSaved(false);
+              }}
+              disabled={profileLoading || !workspaceId}
+            />
+          </div>
+
+          <div className="sp-field">
+            <span className="sp-field-label">Big goals</span>
+            {goals.length > 0 ? (
+              <div className="sp-goal-list">
+                {goals.map((goal) => (
+                  <span key={goal} className="sp-goal-chip">
+                    {goal}
+                    <button
+                      type="button"
+                      className="sp-goal-remove"
+                      aria-label={`Remove ${goal}`}
+                      onClick={() => removeGoal(goal)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {goals.length < MAX_GOALS ? (
+              <div className="sp-goal-add">
+                <input
+                  className="sp-input"
+                  type="text"
+                  placeholder="Add a goal"
+                  value={goalDraft}
+                  onChange={(e) => setGoalDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addGoal();
+                    }
+                  }}
+                  disabled={profileLoading || !workspaceId}
+                />
+                <button
+                  type="button"
+                  className="sp-menu-btn sp-goal-add-btn"
+                  onClick={addGoal}
+                  disabled={!canAddGoal}
+                >
+                  Add
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          {profileError ? <p className="sp-error">{profileError}</p> : null}
+
+          <button
+            type="button"
+            className="sp-save-btn"
+            onClick={handleSaveProfile}
+            disabled={profileSaving || profileLoading || !workspaceId}
+          >
+            {profileSaving ? "Saving…" : profileSaved ? "Saved ✓" : "Save profile"}
+          </button>
+        </div>
+
+        <div className="sp-divider" />
+
         {/* Account actions */}
         <div className="px-5 py-4 flex flex-col gap-1">
           {/* Self-hides on desktop, in-app browsers, or when already
@@ -109,6 +321,15 @@ export function SystemPanel({
 
           <button className="sp-menu-btn" type="button" disabled>
             Manage subscription
+          </button>
+
+          <button
+            className="sp-menu-btn"
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+          >
+            {exporting ? "Preparing…" : "Export my data"}
           </button>
 
           {confirmingDelete ? (
@@ -193,9 +414,9 @@ export function SystemPanel({
           <div className="sp-footer">
             <a href="mailto:support@braindump.app" className="sp-footer-link">Support</a>
             <span className="sp-footer-dot">·</span>
-            <a href="#" className="sp-footer-link">Terms</a>
+            <a href="/terms" className="sp-footer-link" target="_blank" rel="noreferrer">Terms</a>
             <span className="sp-footer-dot">·</span>
-            <a href="#" className="sp-footer-link">Privacy</a>
+            <a href="/privacy" className="sp-footer-link" target="_blank" rel="noreferrer">Privacy</a>
           </div>
         </div>
       </div>
