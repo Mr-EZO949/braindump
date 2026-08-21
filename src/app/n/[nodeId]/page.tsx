@@ -53,5 +53,5 @@ export default async function NodeReadingPage({
     notFound();
   }
 
-  return <ReadingView data={data} />;
+  return <ReadingView data={data} exitHref="/app" />;
 }

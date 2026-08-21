@@ -23,6 +23,7 @@ export function ReadingView({
   editable = true,
   minimapHref = "/app",
   showOrderLink = true,
+  exitHref,
   topSlot,
 }: {
   data: ReadingViewData;
@@ -30,6 +31,7 @@ export function ReadingView({
   editable?: boolean;
   minimapHref?: string;
   showOrderLink?: boolean;
+  exitHref?: string;
   topSlot?: ReactNode;
 }) {
   const { node, workspace, connections, neighbors, prev, next } = data;
@@ -40,6 +42,11 @@ export function ReadingView({
   return (
     <main className={styles.page}>
       {topSlot}
+      {exitHref ? (
+        <Link href={exitHref} className={styles.exitButton} aria-label="Close and return to the graph">
+          <span aria-hidden="true">×</span>
+        </Link>
+      ) : null}
       <div className={styles.wrap}>
         <header>
           <div className={styles.metaTop}>

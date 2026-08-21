@@ -8,6 +8,33 @@
   --measure: 39rem;
 }
 
+/* Fixed exit control — leave the reading view, back to the graph. */
+.exitButton {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 30;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  color: var(--color-text-tertiary);
+  font-size: 20px;
+  line-height: 1;
+  text-decoration: none;
+  transition: background var(--motion-fast, 120ms ease-out), color var(--motion-fast, 120ms ease-out),
+    border-color var(--motion-fast, 120ms ease-out);
+}
+.exitButton:hover {
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  color: #fff;
+}
+
 .wrap {
   max-width: var(--measure);
   margin: 0 auto;
