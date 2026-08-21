@@ -1641,6 +1641,14 @@ export function GraphCanvas({
       // previous sim's settled positions without adding a reactive dependency.
       // eslint-disable-next-line react-hooks/refs
       const prevById = new Map(nodesRef.current.map((n) => [n.id, n]));
+      const freshById = new Map(nextLayout.nodes.map((n) => [n.id, n]));
+      // Structural parent per node (belongs_to: source = child, target = parent).
+      const parentByChild = new Map<string, string>();
+      for (const edge of graphData.edges) {
+        if (edge.edge_type === "belongs_to") {
+          parentByChild.set(edge.source_node_id, edge.target_node_id);
+        }
+      }
       nextLayout.nodes.forEach((node) => {
         if (node.manual_position) return; // fx/fy already pinned
         const prev = prevById.get(node.id);
@@ -1650,6 +1658,25 @@ export function GraphCanvas({
           // Preserve rest positions so forces don't pull to new layout
           node.restX = prev.restX;
           node.restY = prev.restY;
+          return;
+        }
+        // Newly-added node. buildGraphLayout re-centres the whole coordinate
+        // frame every time (subtree widths + component centering shift), so the
+        // fresh absolute position is in a DIFFERENT frame than the restored
+        // existing nodes — which is why a new node used to land displaced and
+        // only snapped right after "reset layout". Anchor it beside its parent's
+        // CURRENT position instead, keeping only the fresh layout's relative
+        // offset. The collide force then eases it in among its siblings.
+        const parentId = parentByChild.get(node.id);
+        const parentPrev = parentId ? prevById.get(parentId) : undefined;
+        const parentFresh = parentId ? freshById.get(parentId) : undefined;
+        if (parentPrev?.x != null && parentPrev?.y != null && parentFresh) {
+          const anchorX = parentPrev.restX ?? parentPrev.x;
+          const anchorY = parentPrev.restY ?? parentPrev.y;
+          node.restX = anchorX + (node.restX - parentFresh.restX);
+          node.restY = anchorY + (node.restY - parentFresh.restY);
+          node.x = node.restX;
+          node.y = node.restY;
         }
       });
     }
