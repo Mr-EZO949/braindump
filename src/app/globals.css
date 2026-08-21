@@ -818,6 +818,97 @@ body {
   z-index: 1;
 }
 
+/* Per-section line-icon watermark — a big, angled illustration of what the
+   section is (checklist / flame / route / timer). Sits behind the glow and the
+   content, faded at the edges so it reads as part of the background, never as a
+   logo. More specific than `.lists-bg > *` so it stays pinned behind content. */
+.lists-bg > .section-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* One glyph anchored to each side gutter, so the content column in the middle
+   never buries it. The right copy is mirrored so the two frame the content. */
+/* One icon stretched across the whole screen, angled, sitting behind the glow
+   and the content. It scales down at tablet / mobile widths (below). */
+.section-backdrop-glyph {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(1180px, 92vw);
+  height: min(1180px, 92vw);
+  /* Tilt the glyph into depth — yawed sideways and pitched back on a perspective
+     so it reads as a plane receding into the background, not a flat 2D icon. */
+  transform: translate(-50%, -50%) perspective(1500px) rotateX(20deg) rotateY(-24deg) rotateZ(7deg);
+  fill: none;
+  stroke: rgba(244, 239, 232, 0.075);
+  stroke-width: 3px;
+  /* Keep the whole glyph legible — only feather the outer edge so the stroke
+     ends dissolve into the background instead of stopping hard. */
+  -webkit-mask-image: radial-gradient(closest-side, #000 66%, transparent 98%);
+  mask-image: radial-gradient(closest-side, #000 66%, transparent 98%);
+}
+
+.section-backdrop-glyph :is(path, circle, line, rect) {
+  vector-effect: non-scaling-stroke;
+}
+
+:root[data-theme="light"] .section-backdrop-glyph {
+  stroke: rgba(28, 22, 20, 0.08);
+}
+
+/* Pomodoro keeps the earlier two-icon layout — a glyph in each side gutter,
+   staggered diagonally — because its controls sit in a centred card. */
+.section-backdrop[data-kind="pomodoro"] .section-backdrop-glyph {
+  width: min(440px, 34vw);
+  height: min(440px, 34vw);
+  stroke: rgba(244, 239, 232, 0.10);
+  -webkit-mask-image: radial-gradient(closest-side, #000 72%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 72%, transparent 100%);
+}
+
+.section-backdrop[data-kind="pomodoro"] .section-backdrop-glyph[data-side="left"] {
+  top: 33%;
+  left: 18%;
+  transform: translate(-50%, -50%) rotate(-12deg);
+}
+
+.section-backdrop[data-kind="pomodoro"] .section-backdrop-glyph[data-side="right"] {
+  top: 67%;
+  left: 82%;
+  transform: translate(-50%, -50%) rotate(-6deg);
+}
+
+:root[data-theme="light"] .section-backdrop[data-kind="pomodoro"] .section-backdrop-glyph {
+  stroke: rgba(28, 22, 20, 0.11);
+}
+
+/* Gradually smaller as the viewport narrows — tablet, then mobile. */
+@media (max-width: 1024px) {
+  .section-backdrop-glyph {
+    width: min(840px, 96vw);
+    height: min(840px, 96vw);
+    stroke-width: 2.6px;
+  }
+
+  /* Pomodoro's side glyphs would sit under the card once the gutters vanish. */
+  .section-backdrop[data-kind="pomodoro"] {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .section-backdrop-glyph {
+    width: min(560px, 104vw);
+    height: min(560px, 104vw);
+    stroke-width: 2.2px;
+    opacity: 0.85;
+  }
+}
+
 button,
 input,
 textarea {
@@ -1654,18 +1745,45 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 /* Redesigned detail panel */
-.detail-panel {
-  padding: 20px 24px 28px;
+.detail-tab {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.detail-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
   gap: 0;
+}
+
+/* Scrollable middle — the node's story. */
+.detail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px 16px;
+}
+
+/* Pinned footer — actions always live here, never scroll away. */
+.detail-footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--color-border-faint);
+  background: var(--color-bg-surface-elevated);
 }
 
 .detail-panel--empty {
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding-top: 80px;
+  padding: 80px 24px 24px;
   gap: 10px;
 }
 
@@ -2047,11 +2165,26 @@ input[type="search"]::-webkit-search-results-decoration {
   border-color: rgba(50, 150, 110, 0.8);
 }
 
+.detail-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin: 4px 0 10px;
+}
+
 .detail-connections {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.detail-connection-items {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .detail-connection-group {
@@ -2070,25 +2203,39 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .detail-connection-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
-  padding: 7px 10px;
+  padding: 8px 11px;
   border-radius: 8px;
-  border: none;
-  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
   font-size: 13px;
   font-weight: 500;
   letter-spacing: -0.01em;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   cursor: pointer;
   transition:
     background-color var(--motion-fast),
+    border-color var(--motion-fast),
     color var(--motion-fast);
 }
 
+.detail-connection-item::before {
+  content: "";
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent-primary);
+  opacity: 0.75;
+}
+
 .detail-connection-item:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--color-bg-surface-hover);
+  border-color: var(--color-accent-soft);
   color: var(--color-text-primary);
 }
 
@@ -2101,6 +2248,158 @@ input[type="search"]::-webkit-search-results-decoration {
   font-size: 12px;
   color: var(--color-text-muted);
   margin: 0;
+}
+
+/* ── Redesigned node-detail action buttons ─────────────────────────────── */
+
+.detail-primary-row {
+  display: flex;
+  gap: 8px;
+}
+.detail-primary-row > button {
+  flex: 1;
+}
+
+/* Start working — the do-this button. Filled red, the visual anchor. */
+.da-start {
+  appearance: none;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--color-accent-primary);
+  background: var(--color-accent-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast),
+    opacity var(--motion-fast), color var(--motion-fast);
+}
+.da-start:hover {
+  background: var(--color-accent-primary-hover);
+}
+/* Disabled/colorless once the node is complete. */
+.da-start--off,
+.da-start--off:hover {
+  background: transparent;
+  border-color: var(--color-border-subtle);
+  color: var(--color-text-muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Mark complete — monochrome until hover, then red; filled red once done. */
+.da-complete {
+  appearance: none;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast),
+    color var(--motion-fast);
+}
+.da-complete:hover {
+  border-color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-primary);
+}
+.da-complete:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.da-complete--done,
+.da-complete--done:hover {
+  border-color: var(--color-accent-primary);
+  background: var(--color-accent-primary);
+  color: #fff;
+}
+
+/* Tools row — icon + plain-text buttons. */
+.detail-tools-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.da-icon {
+  appearance: none;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast),
+    color var(--motion-fast);
+}
+.da-icon:hover {
+  border-color: var(--color-accent-soft);
+  background: var(--color-bg-surface-hover);
+  color: var(--color-accent-primary);
+}
+.da-text {
+  appearance: none;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+.da-text:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+.da-text:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Bottom row — archive (quiet, left) + read (distinct, right). */
+.detail-bottom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+.da-archive {
+  appearance: none;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--motion-fast);
+}
+.da-archive:hover {
+  color: var(--color-accent-primary);
+}
+/* Read full view — a low-key icon button, bottom-right. */
+.da-read-icon {
+  text-decoration: none;
+}
+
+.detail-directions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .detail-actions {
@@ -2149,6 +2448,62 @@ input[type="search"]::-webkit-search-results-decoration {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* Node detail header: title + a close (×) to leave/deselect the node. */
+.detail-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.detail-node-close {
+  appearance: none;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+.detail-node-close:hover {
+  background: var(--color-bg-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Read gets its own right-aligned row, away from the AI-tool pills. */
+.detail-read-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.detail-action-read {
+  text-decoration: none;
+}
+
+/* Drag-to-resize strip on the panel's left edge. */
+.rail-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 8;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+  transition: background var(--motion-fast);
+}
+.rail-resize-handle:hover {
+  background: var(--color-accent-soft);
 }
 
 /* Destructive action — separated, low-emphasis. The visible gap from the
@@ -11791,7 +12146,8 @@ input[type="search"]::-webkit-search-results-decoration {
     opacity: 1;
   }
 
-  .context-rail-responsive .panel-edge-handle {
+  .context-rail-responsive .panel-edge-handle,
+  .context-rail-responsive .rail-resize-handle {
     display: none;
   }
 
@@ -14827,9 +15183,9 @@ input[type="search"]::-webkit-search-results-decoration {
   max-width: min(560px, calc(100vw - 32px));
   padding: 11px 14px;
   border-radius: 14px;
-  border: 1px solid rgba(127, 170, 230, 0.24);
-  background: rgba(17, 20, 24, 0.96);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  backdrop-filter: blur(10px) saturate(1.1);
   font-size: 12.5px;
   line-height: 1.4;
   color: var(--color-text-secondary);
@@ -14844,16 +15200,18 @@ input[type="search"]::-webkit-search-results-decoration {
   flex-shrink: 0;
   padding: 6px 12px;
   border-radius: 9px;
-  border: 1px solid rgba(127, 170, 230, 0.45);
-  background: rgba(107, 140, 239, 0.9);
+  border: 1px solid var(--color-accent-primary);
+  background: var(--color-accent-primary);
   color: #fff;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
 }
 .freeze-nudge-btn:hover {
-  opacity: 0.9;
+  background: var(--color-accent-primary-hover);
+  border-color: var(--color-accent-primary-hover);
 }
 .freeze-nudge-dismiss {
   padding: 6px 8px;
@@ -14863,6 +15221,10 @@ input[type="search"]::-webkit-search-results-decoration {
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
+  transition: color var(--motion-fast);
+}
+.freeze-nudge-dismiss:hover {
+  color: var(--color-accent-primary);
 }
 
 /* Focus button glow — pulls the indecisive user to their priority list, and

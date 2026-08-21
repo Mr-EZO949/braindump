@@ -10,6 +10,7 @@ import { TodosView } from "@/components/ui/todos-view";
 import { HabitsView } from "@/components/ui/habits-view";
 import { RoadmapView } from "@/components/ui/roadmap-view";
 import { PomodoroView } from "@/components/ui/pomodoro-view";
+import { SectionBackdrop } from "@/components/ui/section-backdrop";
 import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
 import { WhatNowDialog } from "@/components/ui/what-now-dialog";
@@ -311,6 +312,28 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [stepSuggestionOpen, setStepSuggestionOpen] = useState(false);
   // On-load anti-freeze nudge — dismissible; resets when the workspace changes.
   const [freezeNudgeDismissed, setFreezeNudgeDismissed] = useState(false);
+  // Occasional, not every-reload: a localStorage snooze timestamp gates it.
+  // Showing it snoozes briefly; dismissing snoozes for weeks (like a "rate us").
+  const [freezeNudgeAllowed, setFreezeNudgeAllowed] = useState(false);
+  const freezeNudgeShownRef = useRef(false);
+  useEffect(() => {
+    try {
+      const until = Number(localStorage.getItem("braindump:freeze-nudge-snooze") ?? 0);
+      setFreezeNudgeAllowed(!(Number.isFinite(until) && Date.now() < until));
+    } catch {
+      setFreezeNudgeAllowed(true);
+    }
+  }, []);
+  const snoozeFreezeNudge = (days: number) => {
+    try {
+      localStorage.setItem(
+        "braindump:freeze-nudge-snooze",
+        String(Date.now() + days * 24 * 60 * 60 * 1000),
+      );
+    } catch {
+      /* localStorage unavailable — nudge just isn't throttled */
+    }
+  };
   const [stepSuggestionLoading, setStepSuggestionLoading] = useState(false);
   const [graphEditOps, setGraphEditOps] = useState<GraphEditOperation[]>([]);
   const [graphEditReviewOpen, setGraphEditReviewOpen] = useState(false);
@@ -494,6 +517,28 @@ export function AppShell({ initialUser }: AppShellProps) {
     () => graphData.nodes.filter((n) => needsNextAction(n.id, graphData.nodes, graphData.edges)),
     [graphData],
   );
+
+  // Once the nudge is actually visible this session, snooze it so it doesn't
+  // greet the user on the next few reloads.
+  useEffect(() => {
+    const visible =
+      appMode === "graph" &&
+      freezeNudgeAllowed &&
+      !freezeNudgeDismissed &&
+      !stepSuggestionOpen &&
+      needsActionNodes.length > 0;
+    if (visible && !freezeNudgeShownRef.current) {
+      freezeNudgeShownRef.current = true;
+      try {
+        localStorage.setItem(
+          "braindump:freeze-nudge-snooze",
+          String(Date.now() + 2 * 24 * 60 * 60 * 1000),
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [appMode, freezeNudgeAllowed, freezeNudgeDismissed, stepSuggestionOpen, needsActionNodes.length]);
 
   const filteredGraphData = useMemo(() => {
     const minimumImportance =
@@ -2570,6 +2615,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const handleMapOutNeedsAction = () => {
     const candidates = needsActionNodes.slice(0, 8);
     if (candidates.length === 0) return;
+    snoozeFreezeNudge(7);
     setStepSuggestionNodes(
       candidates.map((n) => ({
         id: n.id,
@@ -2950,6 +2996,54 @@ export function AppShell({ initialUser }: AppShellProps) {
     const previousNode = graphData.nodes.find((n) => n.id === nodeId);
     if (!previousNode) return;
 
+    // Client mirror of the server's belongs_to cascade so the whole subtree
+    // completes/uncompletes on the SAME click instead of waiting for the
+    // round-trip (which also recomputes scores, so it can lag a beat). Anything
+    // the server doesn't confirm is rolled back when the response lands.
+    const collectBelongsToDescendants = (predicate: (n: Node) => boolean): string[] => {
+      const childrenByParent = new Map<string, string[]>();
+      for (const edge of graphData.edges) {
+        if (edge.edge_type !== "belongs_to") continue;
+        if (edge.status === "orphaned" || edge.status === "user_rejected") continue;
+        const arr = childrenByParent.get(edge.target_node_id) ?? [];
+        arr.push(edge.source_node_id);
+        childrenByParent.set(edge.target_node_id, arr);
+      }
+      const nodeById = new Map(graphData.nodes.map((n) => [n.id, n]));
+      const out: string[] = [];
+      const visited = new Set<string>();
+      const stack = [...(childrenByParent.get(nodeId) ?? [])];
+      while (stack.length > 0) {
+        const id = stack.pop();
+        if (!id || visited.has(id)) continue;
+        visited.add(id);
+        const node = nodeById.get(id);
+        if (node && predicate(node)) out.push(id);
+        for (const childId of childrenByParent.get(id) ?? []) {
+          if (!visited.has(childId)) stack.push(childId);
+        }
+      }
+      return out;
+    };
+    const cascadeStatus: Node["status"] | null =
+      status === "completed"
+        ? "completed"
+        : status === "active" && previousNode.status === "completed"
+          ? "active"
+          : null;
+    const cascadeIds =
+      cascadeStatus === "completed"
+        ? collectBelongsToDescendants((n) => n.status !== "completed" && n.status !== "archived")
+        : cascadeStatus === "active"
+          ? collectBelongsToDescendants((n) => n.status === "completed")
+          : [];
+    const cascadeIdSet = new Set(cascadeIds);
+    const affectedSnapshot = new Map(
+      graphData.nodes
+        .filter((n) => n.id === nodeId || cascadeIdSet.has(n.id))
+        .map((n) => [n.id, { status: n.status ?? null, completed_at: n.completed_at ?? null }] as const),
+    );
+
     // Apply optimistic update immediately so the UI responds on first click.
     function applyStatusLocally(prev: GraphData, targetStatus: Node["status"]): GraphData {
       return {
@@ -2980,7 +3074,19 @@ export function AppShell({ initialUser }: AppShellProps) {
       };
     }
 
-    setGraphData((prev) => applyStatusLocally(prev, status));
+    setGraphData((prev) => {
+      const base = applyStatusLocally(prev, status);
+      if (!cascadeStatus || cascadeIds.length === 0) return base;
+      const cascadeCompletedAt = cascadeStatus === "completed" ? new Date().toISOString() : null;
+      return {
+        ...base,
+        nodes: base.nodes.map((n) =>
+          cascadeIdSet.has(n.id)
+            ? { ...n, status: cascadeStatus, completed_at: cascadeCompletedAt }
+            : n,
+        ),
+      };
+    });
 
     const res = await fetch(`/api/nodes/${nodeId}/status`, {
       method: "PATCH",
@@ -2989,14 +3095,26 @@ export function AppShell({ initialUser }: AppShellProps) {
     });
 
     if (!res.ok) {
-      // Revert optimistic update on failure
-      setGraphData((prev) => applyStatusLocally(prev, previousNode.status));
+      // Revert clicked node + edges, and restore every cascaded descendant.
+      setGraphData((prev) => {
+        const reverted = applyStatusLocally(prev, previousNode.status);
+        if (affectedSnapshot.size === 0) return reverted;
+        return {
+          ...reverted,
+          nodes: reverted.nodes.map((n) => {
+            const snap = affectedSnapshot.get(n.id);
+            return snap ? { ...n, status: snap.status, completed_at: snap.completed_at } : n;
+          }),
+        };
+      });
       return;
     }
 
     const data = await res.json() as {
       updated_node?: Node | null;
       updated_nodes?: Node[];
+      auto_completed_node_ids?: string[];
+      auto_reopened_node_ids?: string[];
       recomputed_scores?: Array<{ id: string; current_importance_score: number; importance_index: number; importance: string }>;
       updated_task_ids?: string[];
     };
@@ -3004,6 +3122,13 @@ export function AppShell({ initialUser }: AppShellProps) {
     const updatedNodeMap = new Map(
       (data.updated_nodes ?? []).map((updated) => [updated.id, updated]),
     );
+    // Cascaded belongs_to descendants: completing a parent auto-completes its
+    // whole subtree server-side. Apply their status explicitly so the children
+    // vanish (hideCompleted) in the same frame — previously they lingered until
+    // a manual reset layout because the update didn't always land client-side.
+    const autoCompletedIds = new Set(data.auto_completed_node_ids ?? []);
+    const autoReopenedIds = new Set(data.auto_reopened_node_ids ?? []);
+    const nowIso = new Date().toISOString();
 
     // If the server cascaded any plan_tasks (linked-task auto-toggle), bump
     // the planner refresh key so AssistantMode re-loads its task list.
@@ -3020,14 +3145,35 @@ export function AppShell({ initialUser }: AppShellProps) {
       nodes: prev.nodes.map((n) => {
         const nextNodeState = updatedNodeMap.get(n.id) ?? (n.id === nodeId ? updatedNode : null);
         const scoreUpdate = scoreMap.get(n.id);
+        const serverCascadeStatus: Node["status"] | null = autoCompletedIds.has(n.id)
+          ? "completed"
+          : autoReopenedIds.has(n.id)
+            ? "active"
+            : null;
+        // We optimistically cascaded this node but the server didn't confirm it
+        // (e.g. a child completed independently of this parent) — roll it back.
+        const rollback =
+          cascadeIdSet.has(n.id) &&
+          !serverCascadeStatus &&
+          !updatedNodeMap.has(n.id) &&
+          n.id !== nodeId
+            ? affectedSnapshot.get(n.id)
+            : undefined;
 
-        if (!nextNodeState && !scoreUpdate) {
+        if (!nextNodeState && !scoreUpdate && !serverCascadeStatus && !rollback) {
           return n;
         }
 
         return {
           ...n,
           ...(nextNodeState ?? {}),
+          ...(serverCascadeStatus && !nextNodeState
+            ? {
+                status: serverCascadeStatus,
+                completed_at: serverCascadeStatus === "completed" ? nowIso : null,
+              }
+            : {}),
+          ...(rollback ? { status: rollback.status, completed_at: rollback.completed_at } : {}),
           ...(scoreUpdate
             ? {
                 current_importance_score: scoreUpdate.current_importance_score,
@@ -3259,6 +3405,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               initial={{ opacity: 0 }}
               transition={{ duration: 0.14, ease: "easeOut" }}
             >
+              <SectionBackdrop kind="todos" />
               <TodosView
                 graphData={graphData}
                 onSelectNode={(nodeId) => {
@@ -3279,6 +3426,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               initial={{ opacity: 0 }}
               transition={{ duration: 0.14, ease: "easeOut" }}
             >
+              <SectionBackdrop kind="habits" />
               <HabitsView
                 graphData={graphData}
                 onSelectNode={(nodeId) => {
@@ -3299,6 +3447,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               initial={{ opacity: 0 }}
               transition={{ duration: 0.14, ease: "easeOut" }}
             >
+              <SectionBackdrop kind="roadmap" />
               <RoadmapView
                 graphData={graphData}
                 onSelectNode={(nodeId) => {
@@ -3316,6 +3465,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               initial={{ opacity: 0 }}
               transition={{ duration: 0.14, ease: "easeOut" }}
             >
+              <SectionBackdrop kind="pomodoro" />
               <PomodoroView graphData={graphData} focusTimer={focusTimer} />
             </motion.div>
           )}
@@ -3700,6 +3850,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       {/* On-load anti-freeze nudge — proactively surface nodes ready for a
           next step, opening the SELECTIVE picker so it's never a wall. */}
       {appMode === "graph" &&
+      freezeNudgeAllowed &&
       !freezeNudgeDismissed &&
       !stepSuggestionOpen &&
       needsActionNodes.length > 0 ? (
@@ -3716,7 +3867,10 @@ export function AppShell({ initialUser }: AppShellProps) {
             <button
               className="freeze-nudge-dismiss"
               type="button"
-              onClick={() => setFreezeNudgeDismissed(true)}
+              onClick={() => {
+                setFreezeNudgeDismissed(true);
+                snoozeFreezeNudge(14);
+              }}
             >
               Not now
             </button>

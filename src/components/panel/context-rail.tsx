@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import {
   getChatComposerCue,
@@ -7,13 +7,12 @@ import {
   getSuggestedPrompts,
 } from "@/lib/graph/chat";
 import { getLinkedNodePerspectives, type LinkedNodePerspective } from "@/lib/graph/insights";
-import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, MicIcon } from "@/components/ui/icons";
+import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, MicIcon, NetworkIcon } from "@/components/ui/icons";
 import { ChatRichText } from "@/components/ui/chat-rich-text";
 import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { HabitStreak } from "@/components/panel/habit-streak";
 import { useVoiceInput } from "@/components/voice/use-voice-input";
 import { classifyTaskSize } from "@/lib/ai/sizing";
-import { needsNextAction } from "@/lib/graph/next-action";
 import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/types/chat";
 import type { GraphData, NodeStatus } from "@/types/graph";
 import type { ChatSessionMeta } from "@/lib/chat/sessions";
@@ -152,21 +151,13 @@ export function ContextRail({
   onDeleteChatSession,
 }: ContextRailProps) {
   const promptSuggestions = getSuggestedPrompts(chatScope);
-  // Breakdown UI: pressing Quick/Full sets pendingMode → reveals the directions
-  // box; nudgeDismissed hides the "no next step" hint + button highlight.
+  // Breakdown UI: pressing Quick/Full sets pendingMode → reveals the directions box.
   const [pendingMode, setPendingMode] = useState<"light" | "full" | null>(null);
   const [directions, setDirections] = useState("");
-  const [nudgeDismissed, setNudgeDismissed] = useState(false);
   useEffect(() => {
     setPendingMode(null);
     setDirections("");
-    setNudgeDismissed(false);
   }, [selectedNode?.id]);
-  const nudgeActive =
-    !!onSuggestSteps &&
-    !nudgeDismissed &&
-    !!selectedNode &&
-    needsNextAction(selectedNode.id, graphData.nodes, graphData.edges);
   const linkedNodes = getLinkedNodePerspectives(graphData, selectedNode?.id ?? null);
   const isHabitNode = selectedNode?.node_type === "habit";
   const linkedGroups = groupLinkedNodes(linkedNodes);
@@ -177,11 +168,62 @@ export function ContextRail({
     onChange: onChatInputChange,
   });
 
+  // Drag-to-resize the panel width (desktop). Persisted so it sticks between
+  // sessions. On tablet/mobile the responsive CSS forces 100% width with
+  // !important, which overrides the inline width below — so this is a no-op there.
+  const RAIL_MIN = 320;
+  const RAIL_MAX = 760;
+  const [railWidth, setRailWidth] = useState(396);
+  const [resizing, setResizing] = useState(false);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem("braindump:rail-width"));
+      if (Number.isFinite(saved) && saved >= RAIL_MIN && saved <= RAIL_MAX) {
+        setRailWidth(saved);
+      }
+    } catch {
+      /* localStorage unavailable — keep the default */
+    }
+  }, []);
+
+  const handleResizeDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    dragRef.current = { startX: event.clientX, startWidth: railWidth };
+    setResizing(true);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  };
+  const handleResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    // Panel is on the right, so dragging its left edge leftward widens it.
+    const next = Math.min(
+      RAIL_MAX,
+      Math.max(RAIL_MIN, drag.startWidth + (drag.startX - event.clientX)),
+    );
+    setRailWidth(next);
+  };
+  const handleResizeUp = () => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setResizing(false);
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
+    try {
+      localStorage.setItem("braindump:rail-width", String(railWidth));
+    } catch {
+      /* ignore */
+    }
+  };
+
   return (
     <div
-      className={`context-rail-responsive relative shrink-0 overflow-visible border-l border-[color:var(--color-border-faint)] bg-[var(--color-bg-surface-elevated)] transition-[width] duration-200 ease-out ${
-        open ? "w-[396px]" : "w-[28px]"
+      className={`context-rail-responsive relative shrink-0 overflow-visible border-l border-[color:var(--color-border-faint)] bg-[var(--color-bg-surface-elevated)] ${
+        resizing ? "" : "transition-[width] duration-200 ease-out"
       }`}
+      style={{ width: open ? railWidth : 28 }}
       data-open={open ? "true" : "false"}
       data-tour="context-rail"
     >
@@ -200,10 +242,21 @@ export function ContextRail({
 
       <aside
         aria-hidden={!open}
-        className={`absolute inset-y-0 right-0 w-[396px] bg-[var(--color-bg-surface-elevated)] transition-[transform,opacity] duration-200 ease-out ${
+        className={`absolute inset-y-0 right-0 bg-[var(--color-bg-surface-elevated)] transition-[transform,opacity] duration-200 ease-out ${
           open ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-6 opacity-0"
         }`}
+        style={{ width: railWidth }}
       >
+        {/* Drag the left edge to resize the panel. */}
+        <div
+          className="rail-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize panel"
+          onPointerDown={handleResizeDown}
+          onPointerMove={handleResizeMove}
+          onPointerUp={handleResizeUp}
+        />
         <div className="flex h-full flex-col">
           {/* Tab strip + header */}
           <div className="border-b border-[color:var(--color-border-faint)] px-5 py-5">
@@ -609,9 +662,10 @@ export function ContextRail({
             </div>
           ) : (
             /* Details tab */
-            <div className="shell-scrollbar flex-1 overflow-y-auto">
+            <div className="detail-tab">
               {selectedNode ? (
                 <div className="detail-panel">
+                  <div className="detail-scroll shell-scrollbar">
                   {/* Summary — "what is this" */}
                   <p className="detail-summary">
                     {selectedNode.summary ?? "No summary yet."}
@@ -684,192 +738,203 @@ export function ContextRail({
                     </>
                   ) : null}
 
-                  {/* Divider */}
+                  {/* Connections — end of the scroll, clearly legible */}
                   <div className="detail-divider" />
-
-                  {/* Connections */}
+                  <div className="detail-section-label">Connections</div>
                   <div className="detail-connections">
                     {linkedGroups.length > 0 ? (
                       linkedGroups.map(({ category, label, nodes }) => (
                         <div className="detail-connection-group" key={category}>
                           <span className="detail-connection-group-label">{label}</span>
-                          {nodes.map(({ node }) => (
-                            <button
-                              className="detail-connection-item"
-                              key={`${selectedNode.id}-${node.id}`}
-                              onClick={() => onSelectLinkedNode(node.id)}
-                              type="button"
-                            >
-                              {node.title}
-                            </button>
-                          ))}
+                          <div className="detail-connection-items">
+                            {nodes.map(({ node }) => (
+                              <button
+                                className="detail-connection-item"
+                                key={`${selectedNode.id}-${node.id}`}
+                                onClick={() => onSelectLinkedNode(node.id)}
+                                type="button"
+                              >
+                                {node.title}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       ))
                     ) : (
                       <p className="detail-empty-text">No connections yet.</p>
                     )}
                   </div>
+                  </div>
+                  {/* /.detail-scroll */}
 
-                  {/* Actions — compact row */}
-                  <div className="detail-divider" />
-                  <div className="detail-actions">
-                    {/* Primary row — the headline action for the current
-                        state. Full-width, filled, scarlet. Only one shows
-                        at a time, so the user always knows the "do this"
-                        button by its position. */}
-                    {/* Habits don't "complete" — the streak panel's "Mark today"
-                        logs a recurring completion. Showing a generic complete
-                        button here would archive the whole habit. */}
-                    {(!selectedNode.status || selectedNode.status === "active") &&
-                      selectedNode.node_type !== "habit" && (
-                        <button
-                          className="detail-action-primary detail-action-primary--complete"
-                          onClick={() => onStatusChange(selectedNode.id, "completed")}
-                          type="button"
-                        >
-                          Mark complete
-                        </button>
-                      )}
-                    {(selectedNode.status === "completed" || selectedNode.status === "paused") && (
-                      <button
-                        className="detail-action-primary detail-action-primary--reopen"
-                        onClick={() => onStatusChange(selectedNode.id, "active")}
-                        type="button"
-                      >
-                        Reopen
-                      </button>
-                    )}
-                    {selectedNode.status === "archived" && (
-                      <button
-                        className="detail-action-primary detail-action-primary--reopen"
-                        onClick={() => onStatusChange(selectedNode.id, "active")}
-                        type="button"
-                      >
-                        Unarchive
-                      </button>
-                    )}
-
-                    {/* Secondary row — AI tools. Compact neutral pills. */}
-                    <div className="detail-actions-secondary">
-                      {/* Full-screen reading view for this node's write-up. */}
-                      <Link className="detail-action-pill" href={`/n/${selectedNode.id}`}>
-                        Read
-                      </Link>
-                      {onStartFocusSession &&
-                        (!selectedNode.status || selectedNode.status === "active") && (
-                          <button
-                            className="detail-action-pill"
-                            onClick={() => onStartFocusSession(selectedNode.id)}
-                            type="button"
-                          >
-                            Start working
+                  {/* Pinned footer — actions always live at the bottom. */}
+                  <div className="detail-footer">
+                    {onSuggestSteps && pendingMode ? (
+                      <div className="detail-directions">
+                        <textarea
+                          className="detail-directions-input"
+                          value={directions}
+                          onChange={(e) => setDirections(e.target.value)}
+                          placeholder="Optional directions — e.g. 'focus on the first week' or 'I already have a draft'"
+                          rows={2}
+                          maxLength={500}
+                          autoFocus
+                        />
+                        <div className="detail-action-row">
+                          <button className="da-text" onClick={() => setPendingMode(null)} type="button">
+                            Cancel
                           </button>
-                        )}
-                      <button
-                        className="detail-action-pill"
-                        onClick={() => onFindConnections(selectedNode.id)}
-                        type="button"
-                      >
-                        Find links
-                      </button>
-                      {/* Breakdown is only offered when the node is actually
-                          worth breaking down — a project/goal, or a title the
-                          sizing heuristic reads as multi-step. No "Suggest
-                          steps" noise on atomic tasks like "call mom". */}
-                      {onSuggestSteps &&
-                      (selectedNode.node_type === "project" ||
-                        selectedNode.node_type === "goal" ||
-                        classifyTaskSize(selectedNode.title) !== "task") ? (
-                        pendingMode ? (
-                          <>
-                            <textarea
-                              className="detail-directions-input"
-                              value={directions}
-                              onChange={(e) => setDirections(e.target.value)}
-                              placeholder="Optional directions — e.g. 'focus on the first week' or 'I already have a draft'"
-                              rows={2}
-                              maxLength={500}
-                              autoFocus
-                            />
-                            <div className="detail-action-row">
-                              <button
-                                className="detail-action-pill detail-action-pill--quiet"
-                                onClick={() => setPendingMode(null)}
-                                type="button"
-                              >
-                                Cancel
+                          <button
+                            className="da-complete da-complete--done"
+                            onClick={() => {
+                              onSuggestSteps(
+                                selectedNode.id,
+                                pendingMode,
+                                directions.trim() || undefined,
+                              );
+                              setPendingMode(null);
+                            }}
+                            type="button"
+                            disabled={suggestStepsBusy}
+                          >
+                            {suggestStepsBusy ? "Suggesting…" : "Generate steps →"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Primary — "Start working" is the do-this button; Mark
+                            complete sits beside it, monochrome until hover/done. */}
+                        <div className="detail-primary-row">
+                          {selectedNode.status === "archived" ? (
+                            <button
+                              className="da-start"
+                              onClick={() => onStatusChange(selectedNode.id, "active")}
+                              type="button"
+                            >
+                              Unarchive
+                            </button>
+                          ) : selectedNode.status === "completed" ? (
+                            <>
+                              <button className="da-start da-start--off" type="button" disabled>
+                                Start working
                               </button>
                               <button
-                                className="detail-action-pill detail-action-pill--primary"
-                                onClick={() => {
-                                  onSuggestSteps(
-                                    selectedNode.id,
-                                    pendingMode,
-                                    directions.trim() || undefined,
-                                  );
-                                  setPendingMode(null);
-                                }}
+                                className="da-complete da-complete--done"
+                                onClick={() => onStatusChange(selectedNode.id, "active")}
+                                type="button"
+                                title="Completed — click to reopen"
+                              >
+                                Completed ✓
+                              </button>
+                            </>
+                          ) : isHabitNode ? (
+                            onStartFocusSession ? (
+                              <button
+                                className="da-start"
+                                onClick={() => onStartFocusSession(selectedNode.id)}
+                                type="button"
+                              >
+                                Start working
+                              </button>
+                            ) : null
+                          ) : (
+                            <>
+                              {onStartFocusSession ? (
+                                <button
+                                  className="da-start"
+                                  onClick={() => onStartFocusSession(selectedNode.id)}
+                                  type="button"
+                                >
+                                  Start working
+                                </button>
+                              ) : null}
+                              <button
+                                className="da-complete"
+                                onClick={() => onStatusChange(selectedNode.id, "completed")}
+                                type="button"
+                              >
+                                Mark complete
+                              </button>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Tools — find links (icon) + breakdown (plain text). */}
+                        <div className="detail-tools-row">
+                          <button
+                            className="da-icon"
+                            onClick={() => onFindConnections(selectedNode.id)}
+                            type="button"
+                            aria-label="Find links"
+                            title="Find hidden links to other nodes"
+                          >
+                            <NetworkIcon className="h-[15px] w-[15px]" />
+                          </button>
+                          {onSuggestSteps &&
+                          (selectedNode.node_type === "project" ||
+                            selectedNode.node_type === "goal" ||
+                            classifyTaskSize(selectedNode.title) !== "task") ? (
+                            <>
+                              <button
+                                className="da-text"
+                                onClick={() => setPendingMode("light")}
                                 type="button"
                                 disabled={suggestStepsBusy}
+                                title="Just the 1–3 immediate next steps"
                               >
-                                {suggestStepsBusy ? "Suggesting…" : "Generate steps →"}
+                                Quick steps
                               </button>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            {nudgeActive ? (
-                              <div className="detail-step-hint" role="status">
-                                <span>No next step yet — break it down?</span>
-                                <button
-                                  className="detail-step-hint-x"
-                                  onClick={() => setNudgeDismissed(true)}
-                                  type="button"
-                                  aria-label="Dismiss"
-                                >
-                                  <CloseIcon className="h-[10px] w-[10px]" />
-                                </button>
-                              </div>
-                            ) : null}
-                            <button
-                              className={`detail-action-pill${nudgeActive ? " detail-action-pill--nudge" : ""}`}
-                              onClick={() => setPendingMode("light")}
-                              onMouseEnter={() => {
-                                if (nudgeActive) setNudgeDismissed(true);
-                              }}
-                              type="button"
-                              disabled={suggestStepsBusy}
-                              title="Just the 1–3 immediate next steps to get unstuck"
-                            >
-                              Quick steps
-                            </button>
-                            <button
-                              className={`detail-action-pill${nudgeActive ? " detail-action-pill--nudge" : ""}`}
-                              onClick={() => setPendingMode("full")}
-                              onMouseEnter={() => {
-                                if (nudgeActive) setNudgeDismissed(true);
-                              }}
-                              type="button"
-                              disabled={suggestStepsBusy}
-                              title="A full roadmap of sub-tasks"
-                            >
-                              Full roadmap
-                            </button>
-                          </>
-                        )
-                      ) : null}
-                    </div>
+                              <button
+                                className="da-text"
+                                onClick={() => setPendingMode("full")}
+                                type="button"
+                                disabled={suggestStepsBusy}
+                                title="A full roadmap of sub-tasks"
+                              >
+                                Full roadmap
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
 
-                    {/* Destructive row — separated and de-emphasized. */}
-                    {selectedNode.status !== "archived" ? (
-                      <button
-                        className="detail-action-destructive"
-                        onClick={() => onStatusChange(selectedNode.id, "archived")}
-                        type="button"
-                      >
-                        Archive
-                      </button>
-                    ) : null}
+                        {/* Bottom — archive (quiet, left) + read (distinct, right). */}
+                        <div className="detail-bottom-row">
+                          {selectedNode.status !== "archived" ? (
+                            <button
+                              className="da-archive"
+                              onClick={() => onStatusChange(selectedNode.id, "archived")}
+                              type="button"
+                            >
+                              Archive
+                            </button>
+                          ) : (
+                            <span />
+                          )}
+                          <Link
+                            className="da-icon da-read-icon"
+                            href={`/n/${selectedNode.id}`}
+                            aria-label="Read full view"
+                            title="Read full view"
+                          >
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.7"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M2 5.5A2.5 2.5 0 0 1 4.5 3H10a2 2 0 0 1 2 2v14a1.5 1.5 0 0 0-1.5-1.5H4.5A2.5 2.5 0 0 1 2 15V5.5Z" />
+                              <path d="M22 5.5A2.5 2.5 0 0 0 19.5 3H14a2 2 0 0 0-2 2v14a1.5 1.5 0 0 1 1.5-1.5h6A2.5 2.5 0 0 0 22 15V5.5Z" />
+                            </svg>
+                          </Link>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               ) : (
