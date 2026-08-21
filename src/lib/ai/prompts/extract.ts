@@ -20,6 +20,9 @@ Rules:
 - Do not split a single coherent idea into multiple nodes.
 - Titles should be concise (3–8 words).
 - Summaries should be 1–2 sentences max — they answer "what is this?".
+- Voice (IMPORTANT): write summaries AND bodies in direct address (second person / imperative) or as a neutral noun phrase — the way the user thinks about their own life. NEVER narrate in the third person about "the user", "the student", or "they".
+  - Good summary: "Reading-heavy course this semester — catch up on last year's material before midterms."
+  - Bad summary: "Student wants to work on academic research papers as part of their broader goals."
 - Bodies are a separate, longer field — see Body rule below.
 - Confidence: 0.0–1.0. Use 0.9+ only if the idea is clearly stated. Use 0.6–0.8 for inferred ideas.
 - source_span: copy the exact phrase or sentence from the input that led to this node. Use null for implied anchor/group nodes.
