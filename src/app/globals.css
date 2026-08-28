@@ -3400,6 +3400,115 @@ input[type="search"]::-webkit-search-results-decoration {
   cursor: not-allowed;
 }
 
+/* --- Personal button + About-you modal (SystemPanel) --- */
+.sp-profile-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--motion-fast), background var(--motion-fast);
+}
+
+.sp-profile-btn:hover {
+  border-color: rgba(213, 58, 71, 0.4);
+  background: var(--color-bg-surface-hover);
+}
+
+.sp-profile-btn-arrow {
+  color: var(--color-text-muted);
+  transition: transform var(--motion-fast), color var(--motion-fast);
+}
+
+.sp-profile-btn:hover .sp-profile-btn-arrow {
+  color: var(--color-accent-primary);
+  transform: translateX(2px);
+}
+
+.sp-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(7, 7, 9, 0.62);
+  backdrop-filter: blur(6px);
+  animation: sp-modal-fade 0.18s ease-out;
+}
+
+@keyframes sp-modal-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.sp-modal {
+  width: 100%;
+  max-width: 480px;
+  max-height: min(86vh, 720px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-panel);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  animation: sp-modal-rise 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes sp-modal-rise {
+  from { opacity: 0; transform: translateY(10px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+.sp-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid var(--color-border-faint);
+  flex-shrink: 0;
+}
+
+.sp-modal-head-text {
+  min-width: 0;
+}
+
+.sp-modal-sub {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  max-width: 380px;
+}
+
+.sp-modal-body {
+  padding: 18px 22px 22px;
+  overflow-y: auto;
+}
+
+.sp-modal-section + .sp-modal-section {
+  margin-top: 4px;
+}
+
+.sp-modal-group-label {
+  margin: 0 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
 .sp-menu-btn {
   background: none;
   border: none;
@@ -3423,6 +3532,225 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .sp-menu-btn--danger {
   color: var(--color-text-muted);
+}
+
+/* --- About-you intake — its labels ("Occupation", "Working hours") are longer
+   than the wizard's ("Focus"/"You"), so widen the label column and let it wrap
+   cleanly. Scoped so the workspace bootstrap wizard is untouched. --- */
+.about-intake .bootstrap-line {
+  grid-template-columns: 116px 1fr;
+  align-items: start;
+}
+
+.about-intake .bootstrap-line-prompt {
+  line-height: 1.3;
+  padding-top: 2px;
+}
+
+/* --- Plan control (SystemPanel) — understated by default, opens a comparison --- */
+.sp-plan {
+  margin: 2px 0;
+}
+
+.sp-plan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sp-plan-row-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sp-plan-badge {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--color-bg-surface);
+}
+
+.sp-plan-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.sp-plan-row-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 560;
+  color: var(--color-accent-primary);
+  transition: color var(--motion-fast);
+}
+
+.sp-plan-row:hover .sp-plan-row-cta {
+  color: var(--color-accent-primary-hover);
+}
+
+.sp-plan-chevron {
+  font-size: 14px;
+  line-height: 1;
+  transition: transform var(--motion-fast);
+}
+
+.sp-plan-row-cta[data-open] .sp-plan-chevron {
+  transform: rotate(90deg);
+}
+
+.sp-plan-compare {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 8px;
+  margin-top: 10px;
+  animation: sp-plan-in 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes sp-plan-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sp-plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  padding: 12px;
+}
+
+.sp-plan-card[data-current="true"] {
+  opacity: 0.66;
+}
+
+.sp-plan-card--pro {
+  border-color: rgba(213, 58, 71, 0.34);
+  background:
+    linear-gradient(180deg, rgba(213, 58, 71, 0.07), transparent 62%),
+    var(--color-bg-surface);
+  transition:
+    transform var(--motion-fast),
+    box-shadow var(--motion-fast);
+}
+
+.sp-plan-card--pro:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px -12px rgba(213, 58, 71, 0.5);
+}
+
+.sp-plan-card-name,
+.sp-plan-card-tag {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.sp-plan-card--pro .sp-plan-card-tag {
+  color: var(--color-accent-primary);
+}
+
+.sp-plan-card-price {
+  font-family: var(--font-mono), monospace;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  line-height: 1;
+}
+
+.sp-plan-card-per {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.sp-plan-card-note {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+
+.sp-plan-card-perks {
+  list-style: none;
+  margin: 3px 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sp-plan-card-perks li {
+  position: relative;
+  padding-left: 15px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+.sp-plan-card-perks li::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  color: var(--color-accent-primary);
+}
+
+.sp-plan-upgrade {
+  margin-top: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid rgba(213, 58, 71, 0.4);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 560;
+  padding: 7px 0;
+  cursor: pointer;
+  transition: background var(--motion-fast);
+}
+
+.sp-plan-upgrade:hover:not(:disabled) {
+  background: var(--color-accent-primary-hover);
+}
+
+.sp-plan-upgrade:disabled {
+  opacity: 0.62;
+  cursor: default;
+}
+
+.sp-plan-soon {
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .sp-theme-toggle {

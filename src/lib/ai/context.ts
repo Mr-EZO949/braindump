@@ -77,7 +77,7 @@ export async function buildAssistantContext(params: {
   }).catch(() => [] as MatchedNode[]);
 
   // Load all workspace data in parallel
-  const [nodesResult, edgesResult, feedbackResult, recentlyCompletedResult, planResult, semanticMatches] = await Promise.all([
+  const [nodesResult, edgesResult, feedbackResult, recentlyCompletedResult, planResult, userProfileResult, semanticMatches] = await Promise.all([
     params.supabase
       .from("nodes")
       .select("id, title, summary, node_type, importance, current_importance_score, status")
@@ -119,6 +119,15 @@ export async function buildAssistantContext(params: {
       .eq("status", "accepted")
       .order("created_at", { ascending: false })
       .limit(1),
+
+    // User-level "about you" identity — small, stable, and always relevant, so
+    // it's pinned near the top of the context (see below). Column-selected so a
+    // missing table fails soft to null instead of breaking the chat.
+    params.supabase
+      .from("profiles")
+      .select("full_name, occupation, paralysis_triggers, working_hours, deadline_cadence")
+      .eq("user_id", params.userId)
+      .maybeSingle(),
 
     semanticMatchPromise,
   ]);
@@ -212,6 +221,47 @@ export async function buildAssistantContext(params: {
     priority: 90,
     tokens: estimateTokens(workspaceSummary),
   });
+
+  // ---------------------------------------------------------------------------
+  // 2b. About you — user-level identity, pinned high so the assistant tailors
+  // how it unblocks the user (esp. "what paralyzes you"). Small and stable, so
+  // it rides just under the selected node and above the node list.
+  // ---------------------------------------------------------------------------
+  const userProfile = (userProfileResult.data ?? null) as {
+    full_name?: string | null;
+    occupation?: string | null;
+    paralysis_triggers?: string | null;
+    working_hours?: string | null;
+    deadline_cadence?: string | null;
+  } | null;
+  if (userProfile) {
+    const who = [userProfile.full_name, userProfile.occupation]
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean)
+      .join(" — ");
+    const aboutLines = [
+      who ? `Who they are: ${who}` : null,
+      userProfile.paralysis_triggers?.trim()
+        ? `What tends to paralyze them: ${userProfile.paralysis_triggers.trim()}`
+        : null,
+      userProfile.working_hours?.trim()
+        ? `Working hours / energy: ${userProfile.working_hours.trim()}`
+        : null,
+      userProfile.deadline_cadence?.trim()
+        ? `How they handle deadlines: ${userProfile.deadline_cadence.trim()}`
+        : null,
+    ].filter(Boolean) as string[];
+    if (aboutLines.length > 0) {
+      const text = `[ABOUT THE USER]\n${aboutLines.join("\n")}`;
+      items.push({
+        kind: "workspace_summary",
+        id: "about-you",
+        text,
+        priority: 95,
+        tokens: estimateTokens(text),
+      });
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // 3. Top important active nodes (up to 30, priority by score tier)

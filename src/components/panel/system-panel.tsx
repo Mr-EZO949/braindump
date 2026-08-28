@@ -42,6 +42,12 @@ export function SystemPanel({
   // real theme is synced from the DOM in a mount effect below.
   const [theme, setTheme] = useState<Theme>("dark");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Plan control — collapsed by default ("kinda hidden"); opens a Free/Pro
+  // comparison. Purely presentational until billing lands (see P0 Payments).
+  const [planOpen, setPlanOpen] = useState(false);
+  // Profile modal — the "About you" questions + answers live in a separate
+  // window, not inline, so the settings panel stays clean.
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
 
   // "About you" profile — the fields the AI reads to tailor extraction /
   // planning / chat. Loaded from the active workspace when the panel opens.
@@ -54,6 +60,20 @@ export function SystemPanel({
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+
+  // Personal — user-level "about you" identity (name, occupation, what
+  // paralyzes you, working hours, deadlines). Separate from the per-workspace
+  // profile above; loaded from and saved to /api/profile. This is the "editable
+  // later" surface for what the first-run intake captures.
+  const [personalName, setPersonalName] = useState("");
+  const [personalOccupation, setPersonalOccupation] = useState("");
+  const [personalParalysis, setPersonalParalysis] = useState("");
+  const [personalHours, setPersonalHours] = useState("");
+  const [personalDeadlines, setPersonalDeadlines] = useState("");
+  const [personalLoading, setPersonalLoading] = useState(false);
+  const [personalSaving, setPersonalSaving] = useState(false);
+  const [personalSaved, setPersonalSaved] = useState(false);
+  const [personalError, setPersonalError] = useState<string | null>(null);
   // The pre-paint script in layout.tsx already applied the correct theme to
   // <html>. The apply-effect below must skip its first run so it doesn't
   // overwrite that with the SSR default before we've synced.
@@ -87,9 +107,9 @@ export function SystemPanel({
     }
   }, [theme]);
 
-  // Load the active workspace's profile whenever the panel opens.
+  // Load the active workspace's profile whenever the profile modal opens.
   useEffect(() => {
-    if (!open || !workspaceId) return;
+    if (!profileModalOpen || !workspaceId) return;
     let cancelled = false;
     setProfileLoading(true);
     setProfileError(null);
@@ -111,7 +131,44 @@ export function SystemPanel({
     return () => {
       cancelled = true;
     };
-  }, [open, workspaceId]);
+  }, [profileModalOpen, workspaceId]);
+
+  // Load the user-level personal profile whenever the profile modal opens. Not
+  // keyed on workspaceId — it's about the person, not the active workspace.
+  useEffect(() => {
+    if (!profileModalOpen) return;
+    let cancelled = false;
+    setPersonalLoading(true);
+    setPersonalError(null);
+    setPersonalSaved(false);
+    fetch("/api/profile")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Couldn't load your details"))))
+      .then(
+        (data: {
+          full_name: string | null;
+          occupation: string | null;
+          paralysis_triggers: string | null;
+          working_hours: string | null;
+          deadline_cadence: string | null;
+        }) => {
+          if (cancelled) return;
+          setPersonalName(data.full_name ?? "");
+          setPersonalOccupation(data.occupation ?? "");
+          setPersonalParalysis(data.paralysis_triggers ?? "");
+          setPersonalHours(data.working_hours ?? "");
+          setPersonalDeadlines(data.deadline_cadence ?? "");
+        },
+      )
+      .catch((e: Error) => {
+        if (!cancelled) setPersonalError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setPersonalLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profileModalOpen]);
 
   const trimmedGoalDraft = goalDraft.trim();
   const canAddGoal =
@@ -162,6 +219,37 @@ export function SystemPanel({
     }
   };
 
+  const handleSavePersonal = async () => {
+    setPersonalSaving(true);
+    setPersonalError(null);
+    setPersonalSaved(false);
+    try {
+      const res = await fetch("/api/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          full_name: personalName,
+          occupation: personalOccupation,
+          paralysis_triggers: personalParalysis,
+          working_hours: personalHours,
+          deadline_cadence: personalDeadlines,
+          // Editing details here also resolves the first-run intake, so it
+          // won't re-prompt someone who filled this out via Settings.
+          intake_done: true,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "Couldn't save your details");
+      }
+      setPersonalSaved(true);
+    } catch (e) {
+      setPersonalError(e instanceof Error ? e.message : "Couldn't save your details");
+    } finally {
+      setPersonalSaving(false);
+    }
+  };
+
   const handleExport = async () => {
     setExporting(true);
     try {
@@ -190,7 +278,7 @@ export function SystemPanel({
         open ? "translate-x-0 opacity-100" : "-translate-x-full opacity-0"
       }`}
     >
-      <div className="flex h-full flex-col">
+      <div className="flex h-full flex-col overflow-y-auto">
         {/* Header with logo */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4">
           <Image src="/logo_withtext.svg" alt="BrainDump" width={180} height={36} style={{ height: 32, width: "auto" }} />
@@ -214,13 +302,153 @@ export function SystemPanel({
 
         <div className="sp-divider" />
 
-        {/* About you — profile the AI uses to tailor its help */}
+        {/* Personal — opens the About-you modal (questions + answers) */}
         <div className="px-5 py-4">
-          <p className="sp-section-label">About you</p>
-          <p className="sp-hint">The AI reads this to tailor how it captures, plans, and answers.</p>
+          <p className="sp-section-label">Personal</p>
+          <p className="sp-hint">Who you are + this workspace — the answers the AI reads to tailor its help.</p>
+          <button
+            type="button"
+            className="sp-profile-btn"
+            onClick={() => setProfileModalOpen(true)}
+          >
+            Edit your details
+            <span className="sp-profile-btn-arrow" aria-hidden="true">→</span>
+          </button>
+        </div>
+
+        {profileModalOpen ? (
+          <div
+            className="sp-modal-overlay"
+            role="presentation"
+            onClick={() => setProfileModalOpen(false)}
+          >
+            <div
+              className="sp-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="About you"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="sp-modal-head">
+                <div className="sp-modal-head-text">
+                  <p className="sp-section-label">About you</p>
+                  <p className="sp-modal-sub">
+                    Your answers tailor how the AI captures, plans, and unblocks you — change them anytime.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="sp-close"
+                  aria-label="Close"
+                  onClick={() => setProfileModalOpen(false)}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="sp-modal-body">
+                <div className="sp-modal-section">
+                  <p className="sp-modal-group-label">Personal · used across all your workspaces</p>
+
+                  <div className="sp-field">
+                    <label className="sp-field-label" htmlFor="sp-name">Name</label>
+            <input
+              id="sp-name"
+              className="sp-input"
+              type="text"
+              placeholder="what should we call you?"
+              value={personalName}
+              onChange={(e) => {
+                setPersonalName(e.target.value);
+                setPersonalSaved(false);
+              }}
+              disabled={personalLoading}
+            />
+          </div>
 
           <div className="sp-field">
-            <label className="sp-field-label" htmlFor="sp-role">Your role</label>
+            <label className="sp-field-label" htmlFor="sp-occupation">Occupation</label>
+            <input
+              id="sp-occupation"
+              className="sp-input"
+              type="text"
+              placeholder="e.g. CS student, founder, designer"
+              value={personalOccupation}
+              onChange={(e) => {
+                setPersonalOccupation(e.target.value);
+                setPersonalSaved(false);
+              }}
+              disabled={personalLoading}
+            />
+          </div>
+
+          <div className="sp-field">
+            <label className="sp-field-label" htmlFor="sp-paralysis">What tends to paralyze you</label>
+            <textarea
+              id="sp-paralysis"
+              className="sp-textarea"
+              rows={2}
+              placeholder="too many options at once, perfectionism, big vague tasks…"
+              value={personalParalysis}
+              onChange={(e) => {
+                setPersonalParalysis(e.target.value);
+                setPersonalSaved(false);
+              }}
+              disabled={personalLoading}
+            />
+          </div>
+
+          <div className="sp-field">
+            <label className="sp-field-label" htmlFor="sp-hours">Working hours / energy</label>
+            <input
+              id="sp-hours"
+              className="sp-input"
+              type="text"
+              placeholder="sharp mornings, second wind at night…"
+              value={personalHours}
+              onChange={(e) => {
+                setPersonalHours(e.target.value);
+                setPersonalSaved(false);
+              }}
+              disabled={personalLoading}
+            />
+          </div>
+
+          <div className="sp-field">
+            <label className="sp-field-label" htmlFor="sp-deadlines">Deadlines</label>
+            <input
+              id="sp-deadlines"
+              className="sp-input"
+              type="text"
+              placeholder="procrastinate then sprint, or steady the whole way?"
+              value={personalDeadlines}
+              onChange={(e) => {
+                setPersonalDeadlines(e.target.value);
+                setPersonalSaved(false);
+              }}
+              disabled={personalLoading}
+            />
+          </div>
+
+          {personalError ? <p className="sp-error">{personalError}</p> : null}
+
+          <button
+            type="button"
+            className="sp-save-btn"
+            onClick={handleSavePersonal}
+            disabled={personalSaving || personalLoading}
+          >
+            {personalSaving ? "Saving…" : personalSaved ? "Saved ✓" : "Save details"}
+          </button>
+        </div>
+
+        <div className="sp-divider" />
+
+                <div className="sp-modal-section">
+                  <p className="sp-modal-group-label">This workspace only</p>
+
+                  <div className="sp-field">
+                    <label className="sp-field-label" htmlFor="sp-role">Your role</label>
             <input
               id="sp-role"
               className="sp-input"
@@ -300,15 +528,19 @@ export function SystemPanel({
 
           {profileError ? <p className="sp-error">{profileError}</p> : null}
 
-          <button
-            type="button"
-            className="sp-save-btn"
-            onClick={handleSaveProfile}
-            disabled={profileSaving || profileLoading || !workspaceId}
-          >
-            {profileSaving ? "Saving…" : profileSaved ? "Saved ✓" : "Save profile"}
-          </button>
-        </div>
+                  <button
+                    type="button"
+                    className="sp-save-btn"
+                    onClick={handleSaveProfile}
+                    disabled={profileSaving || profileLoading || !workspaceId}
+                  >
+                    {profileSaving ? "Saving…" : profileSaved ? "Saved ✓" : "Save profile"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <div className="sp-divider" />
 
@@ -319,9 +551,50 @@ export function SystemPanel({
           <InstallAppButton />
           <PushToggleButton />
 
-          <button className="sp-menu-btn" type="button" disabled>
-            Manage subscription
-          </button>
+          {/* Plan — understated upgrade entry. Wire the Pro CTA to checkout
+              and add a "Manage" link for Pro users once billing lands. */}
+          <div className="sp-plan">
+            <button
+              type="button"
+              className="sp-plan-row"
+              onClick={() => setPlanOpen((v) => !v)}
+              aria-expanded={planOpen}
+            >
+              <span className="sp-plan-row-left">
+                <span className="sp-plan-badge">Free</span>
+                <span className="sp-plan-row-label">Your plan</span>
+              </span>
+              <span className="sp-plan-row-cta" data-open={planOpen || undefined}>
+                {planOpen ? "Hide" : "Upgrade"}
+                <span className="sp-plan-chevron" aria-hidden="true">›</span>
+              </span>
+            </button>
+
+            {planOpen ? (
+              <div className="sp-plan-compare">
+                <div className="sp-plan-card" data-current="true">
+                  <span className="sp-plan-card-name">Free</span>
+                  <span className="sp-plan-card-price">$0</span>
+                  <span className="sp-plan-card-note">Where you are now.</span>
+                </div>
+                <div className="sp-plan-card sp-plan-card--pro">
+                  <span className="sp-plan-card-tag">Pro</span>
+                  <span className="sp-plan-card-price">
+                    $15<span className="sp-plan-card-per"> / mo</span>
+                  </span>
+                  <ul className="sp-plan-card-perks">
+                    <li>Room to dump without hitting a wall</li>
+                    <li>Priority planning &amp; chat</li>
+                    <li>Limits high enough to forget they exist</li>
+                  </ul>
+                  <button type="button" className="sp-plan-upgrade" disabled>
+                    Upgrade
+                    <span className="sp-plan-soon">Soon</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           <button
             className="sp-menu-btn"

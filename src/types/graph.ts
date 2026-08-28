@@ -163,3 +163,21 @@ export interface WorkspaceProfile {
   goals: string[];
   areas: WorkspaceProfileArea[];
 }
+
+// User-level "about you" identity — captured once at sign-up (see the
+// `profiles` table / 20260824000000_user_profiles) and injected into every
+// workspace's AI context. Distinct from WorkspaceProfile, which is
+// workspace-specific. Every field here is read by at least one AI prompt.
+export interface UserProfile {
+  full_name: string | null;
+  occupation: string | null;
+  // What tends to make the user freeze / procrastinate — the assistant reads
+  // this to tailor how it unblocks them.
+  paralysis_triggers: string | null;
+  // Typical working hours / energy pattern — the planner reads this.
+  working_hours: string | null;
+  // How the user relates to deadlines — milder planner signal.
+  deadline_cadence: string | null;
+  // Set once the first-run intake is finished or skipped. Null = not answered.
+  intake_completed_at: string | null;
+}

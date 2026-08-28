@@ -90,7 +90,7 @@ export async function buildWorkspaceProfileContext(params: {
   workspaceContext: string | undefined;
   existingNodes: Array<{ id: string; title: string; summary: string | null; node_type: NodeType }>;
 }> {
-  const [{ data: workspaceRow }, { data: nodeRows }] = await Promise.all([
+  const [{ data: workspaceRow }, { data: nodeRows }, { data: userProfileRow }] = await Promise.all([
     params.supabase
       .from("workspaces")
       .select("*")
@@ -103,6 +103,14 @@ export async function buildWorkspaceProfileContext(params: {
       .eq("workspace_id", params.workspaceId)
       .eq("user_id", params.userId)
       .order("created_at", { ascending: true }),
+    // User-level "about you" identity — reused across every workspace. Selected
+    // by column so a missing table (migration not yet applied) fails soft to
+    // null rather than throwing and breaking extraction.
+    params.supabase
+      .from("profiles")
+      .select("full_name, occupation, paralysis_triggers, working_hours, deadline_cadence")
+      .eq("user_id", params.userId)
+      .maybeSingle(),
   ]);
 
   const workspaceName =
@@ -173,6 +181,34 @@ export async function buildWorkspaceProfileContext(params: {
   }));
 
   const lines = [`Workspace: ${workspaceName}`];
+
+  // User-level identity first — it's about the person, not this workspace, so
+  // it frames everything below. Each field maps to a documented AI use.
+  const userProfile = (userProfileRow ?? null) as {
+    full_name?: string | null;
+    occupation?: string | null;
+    paralysis_triggers?: string | null;
+    working_hours?: string | null;
+    deadline_cadence?: string | null;
+  } | null;
+  if (userProfile) {
+    const who = [userProfile.full_name, userProfile.occupation]
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean)
+      .join(" — ");
+    if (who) {
+      lines.push(`Who you are: ${who}`);
+    }
+    if (typeof userProfile.paralysis_triggers === "string" && userProfile.paralysis_triggers.trim()) {
+      lines.push(`What tends to paralyze you: ${truncate(userProfile.paralysis_triggers.trim(), 300)}`);
+    }
+    if (typeof userProfile.working_hours === "string" && userProfile.working_hours.trim()) {
+      lines.push(`Working hours / energy: ${truncate(userProfile.working_hours.trim(), 200)}`);
+    }
+    if (typeof userProfile.deadline_cadence === "string" && userProfile.deadline_cadence.trim()) {
+      lines.push(`How you handle deadlines: ${truncate(userProfile.deadline_cadence.trim(), 200)}`);
+    }
+  }
 
   if (typeof workspaceRow?.profile_role === "string" && workspaceRow.profile_role.trim()) {
     lines.push(`Identity context: ${workspaceRow.profile_role.trim()}`);

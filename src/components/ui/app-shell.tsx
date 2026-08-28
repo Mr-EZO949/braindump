@@ -29,6 +29,7 @@ import { GraphEditReview } from "@/components/ui/graph-edit-review";
 import { MergeAlert } from "@/components/ui/merge-alert";
 import { NudgeRibbon } from "@/components/nudges/nudge-ribbon";
 import { WorkspaceBootstrapWizard } from "@/components/ui/workspace-bootstrap-wizard";
+import { AboutYouIntake } from "@/components/ui/about-you-intake";
 import { ClusterSuggestionStack } from "@/components/clustering/cluster-suggestion-stack";
 import { WelcomeScreen, shouldShowWelcome, markWelcomeDone } from "@/components/ui/onboarding-tutorial";
 import { GuidedTour } from "@/components/ui/guided-tour";
@@ -454,6 +455,12 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [edgeSubmitting, setEdgeSubmitting] = useState(false);
   const [edgeDeleteSubmittingId, setEdgeDeleteSubmittingId] = useState<string | null>(null);
   const [edgeUpdateSubmittingId, setEdgeUpdateSubmittingId] = useState<string | null>(null);
+  // User-level "about you" intake — a one-time sign-up moment gated on
+  // profiles.intake_completed_at. "loading" until we've checked; "open" shows
+  // the intake; "done" lets the workspace onboarding (welcome/bootstrap) run.
+  const [profileIntakeState, setProfileIntakeState] = useState<"loading" | "open" | "done">(
+    "loading",
+  );
   // Bootstrap wizard — shown when a new empty workspace is created OR loaded empty
   const [bootstrapWorkspaceId, setBootstrapWorkspaceId] = useState<string | null>(null);
   // Workspaces whose onboarding wizard the user "Skip for now"-ed this session.
@@ -706,11 +713,14 @@ export function AppShell({ initialUser }: AppShellProps) {
       setGraphLoading(false);
 
       // For empty workspaces: show welcome for brand-new users,
-      // or go straight to the wizard if welcome was already seen
+      // or go straight to the wizard if welcome was already seen.
+      // Held until the user-level intake is resolved so the two onboarding
+      // overlays never stack on top of each other.
       if (
         nextGraphData.nodes.length === 0 &&
         selectedWorkspaceId &&
-        authUser
+        authUser &&
+        profileIntakeState === "done"
       ) {
         if (shouldShowWelcome(authUser.id)) {
           setShowWelcome(true);
@@ -726,7 +736,29 @@ export function AppShell({ initialUser }: AppShellProps) {
     return () => {
       active = false;
     };
-  }, [authUser?.id, selectedWorkspace?.name, selectedWorkspaceId, selectedWorkspace?.bootstrap_completed_at]);
+  }, [authUser?.id, selectedWorkspace?.name, selectedWorkspaceId, selectedWorkspace?.bootstrap_completed_at, profileIntakeState]);
+
+  // Resolve the user-level "about you" intake once we know who's signed in.
+  // Runs before the workspace onboarding (which is gated on this). Fails soft
+  // to "done" so a profile-endpoint error (e.g. table not migrated) never traps
+  // the user behind the intake.
+  useEffect(() => {
+    if (!authUser?.id) return;
+    let cancelled = false;
+    setProfileIntakeState("loading");
+    fetch("/api/profile")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("profile fetch failed"))))
+      .then((data: { intake_completed_at?: string | null }) => {
+        if (cancelled) return;
+        setProfileIntakeState(data?.intake_completed_at ? "done" : "open");
+      })
+      .catch(() => {
+        if (!cancelled) setProfileIntakeState("done");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.id]);
 
   useEffect(() => {
     if (!supabase) {
@@ -4100,6 +4132,12 @@ export function AppShell({ initialUser }: AppShellProps) {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      {/* User-level "about you" intake — the first-run sign-up moment. Shown
+          once, before any workspace onboarding, and gated on profileIntakeState. */}
+      {profileIntakeState === "open" && authUser && (
+        <AboutYouIntake onDone={() => setProfileIntakeState("done")} />
+      )}
 
       {/* Workspace bootstrap wizard — only shown for an in-progress creation flow */}
       {bootstrapWorkspaceId && bootstrapWorkspaceId === selectedWorkspaceId && (
