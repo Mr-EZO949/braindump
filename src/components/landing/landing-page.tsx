@@ -893,7 +893,7 @@ function MiniGraph({ visibleNodes, visibleEdges }: { visibleNodes: number; visib
 
 // ── ThoughtDemo ───────────────────────────────────────────
 
-function ThoughtDemo() {
+export function ThoughtDemo({ showHead = true }: { showHead?: boolean } = {}) {
   const [phase, setPhase] = useState(0);
 
   useEffect(() => {
@@ -928,23 +928,26 @@ function ThoughtDemo() {
 
   return (
     <div className={styles.thoughtDemo}>
-      <div className={styles.demoChrome}>
-        <span className={styles.chromeDot} />
-        <span className={styles.chromeDot} />
-        <span className={styles.chromeDot} />
-        <AnimatePresence mode="wait">
-          <motion.span key={screen} className={styles.chromeLabel}
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}>
-            {labels[screen]}
-          </motion.span>
-        </AnimatePresence>
-        <div className={styles.screenDots}>
-          {(["input", "extracted", "graph", "whatNow"] as const).map(s => (
-            <span key={s} className={`${styles.screenDot} ${screen === s ? styles.screenDotActive : ""}`} />
-          ))}
+      {showHead && (
+        <div className={styles.demoHead}>
+          <span className={styles.demoHeadIndex}>
+            {String((["input", "extracted", "graph", "whatNow"] as const).indexOf(screen) + 1).padStart(2, "0")}
+            <span className={styles.demoHeadTotal}>/04</span>
+          </span>
+          <AnimatePresence mode="wait">
+            <motion.span key={screen} className={styles.demoHeadLabel}
+              initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.2 }}>
+              {labels[screen]}
+            </motion.span>
+          </AnimatePresence>
+          <div className={styles.demoHeadTicks}>
+            {(["input", "extracted", "graph", "whatNow"] as const).map(s => (
+              <span key={s} className={`${styles.demoHeadTick} ${screen === s ? styles.demoHeadTickActive : ""}`} />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className={styles.demoContent}>
         <AnimatePresence mode="wait">
@@ -1114,55 +1117,50 @@ export default function LandingPage() {
       <div className={styles.orbB} aria-hidden="true" />
 
       <div className={styles.root}>
-        {/* ── Nav ── */}
+        {/* ── Nav — quiet, text-only ── */}
         <header className={styles.nav}>
           <Link href="/" className={styles.navLogo}>
             <Image src="/logo_withtext.svg" alt="BrainDump" width={280} height={52} className={styles.navLogoImg} />
           </Link>
           <nav className={styles.navRight}>
-            <a href="#pricing" className={styles.navCta}>View pricing</a>
+            <a href="#lenses" className={styles.navLink}>Inside</a>
+            <a href="#pricing" className={styles.navLink}>Pricing</a>
+            <a href="#pricing" className={styles.navStart}>
+              Start free <span className={styles.navStartArrow} aria-hidden="true">→</span>
+            </a>
           </nav>
         </header>
 
-        {/* ── Hero — split layout ── */}
+        {/* ── Hero — editorial spine: statement left, live transform right ── */}
         <section className={styles.hero}>
-          <div className={styles.heroGlow} aria-hidden="true" />
-          <div className={styles.heroDots} aria-hidden="true" />
           <div className={styles.heroInner}>
             <motion.div className={styles.heroText}
-              initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}>
-              <div className={styles.heroEyebrow}>
-                <span className={styles.heroEyebrowMark} aria-hidden="true" />
-                Built for ADHD minds
+              initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}>
+              <div className={styles.heroKicker}>
+                <Image src="/logo_icon.svg" alt="" width={22} height={22} className={styles.heroKickerIcon} aria-hidden="true" />
+                for ADHD minds
               </div>
               <h1 className={styles.heroH1}>
-                Dump it.
-                <span className={styles.heroH1Accent}>Unfreeze your brain.</span>
+                <span className={styles.heroH1Lead}>Dump it.</span>
+                <span className={styles.heroH1Accent}>Unfreeze<br />your brain.</span>
               </h1>
-              <p className={styles.heroProblem}>
-                Twenty things to do, each one tangled in the next — so you
-                re-read the list, re-plan the plan, and start nothing.
-              </p>
-              <p className={styles.heroFix}>
-                Dump it all here. BrainDump untangles the pile and hands you{" "}
-                <em>the one thing to start now.</em>
+              <p className={styles.heroBody}>
+                Twenty open loops, each knotted into the next — so you re-read the list,
+                re-rank it, and start nothing. Empty the whole tangle here. BrainDump
+                sorts it and hands back <em>the one thing to start now.</em>
               </p>
               <div className={styles.heroActions}>
-                <a href="#pricing" className={styles.navCta}>Start free</a>
-                <a href="#lenses" className={styles.btnGhost}>See what&apos;s inside</a>
-              </div>
-              <div className={styles.heroTrust}>
-                <span>No credit card</span>
-                <span>Cancel anytime</span>
-                <span>Exportable graph</span>
+                <a href="#pricing" className={styles.heroCta}>
+                  Start free <span className={styles.heroCtaArrow} aria-hidden="true">→</span>
+                </a>
+                <a href="#lenses" className={styles.heroCtaGhost}>See what&apos;s inside</a>
               </div>
             </motion.div>
 
             <motion.div className={styles.heroVisual}
-              initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.14, ease: [0.22, 1, 0.36, 1] }}>
-              <div className={styles.demoGlow} aria-hidden="true" />
+              initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.75, delay: 0.16, ease: [0.22, 1, 0.36, 1] }}>
               <ThoughtDemo />
             </motion.div>
           </div>

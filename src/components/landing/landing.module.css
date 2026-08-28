@@ -48,7 +48,7 @@
   color: var(--color-text-primary);
   min-height: 100vh;
   overflow-x: hidden;
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-family: var(--font-hero-sans), var(--font-geist-sans), system-ui, sans-serif;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -146,7 +146,7 @@
 
 .hero {
   position: relative;
-  padding: 108px 32px 88px;
+  padding: 124px 40px 108px;
   overflow: hidden;
 }
 
@@ -174,21 +174,22 @@
   z-index: 0;
 }
 
+/* Editorial spine: statement | hairline | live transform. Top-aligned so the
+   two columns hang from one baseline rather than floating centred. */
 .heroInner {
   position: relative;
   z-index: 1;
-  /* tighter cluster: the old 1280 / 540 split left ~250px of dead air
-     inside the text column on wide screens, so the two halves drifted apart */
-  max-width: 1120px;
+  max-width: 1200px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 520px;
-  gap: 40px;
-  align-items: center;
+  grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+  gap: 0;
+  align-items: stretch;
 }
 
 .heroText {
   min-width: 0;
+  padding: 4px 56px 4px 0;
 }
 
 /* Badge / eyebrow */
@@ -223,44 +224,58 @@
   50%       { opacity: 0.4; transform: scale(0.6); }
 }
 
-/* Hero eyebrow — mono, in the page's own label language (no pill, no backdrop
-   blur). Marker is a small scarlet crystal/shard (rotated square), not a dot. */
-.heroEyebrow {
+.heroKicker {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 26px;
+  gap: 12px;
+  margin-bottom: 34px;
   font-family: var(--font-geist-mono), monospace;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--color-text-muted);
 }
 
-/* a drawn rule reads calmer than a glowing diamond */
-.heroEyebrowMark {
-  width: 20px;
+.heroKickerRule {
+  width: 30px;
   height: 1px;
   background: var(--color-accent-primary);
 }
 
+.heroKickerIcon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  opacity: 0.92;
+}
+
+/* Headline as a type pairing: a blunt sans command, then a lyrical serif
+   payoff. The scarlet serif is the single loud moment on the page. */
 .heroH1 {
-  font-family: var(--font-display), Georgia, "Times New Roman", serif;
-  font-size: clamp(42px, 5.4vw, 66px);
-  font-weight: 400;
-  letter-spacing: -0.02em;
-  line-height: 1.04;
-  margin: 0 0 24px;
-  color: var(--color-text-primary);
+  margin: 0 0 30px;
   text-wrap: balance;
 }
 
-/* the payoff drops to its own line in italic scarlet — one accent moment,
-   no gradient sweep, no decorative glyphs */
+.heroH1Lead {
+  display: block;
+  font-family: var(--font-hero-sans), system-ui, sans-serif;
+  font-size: clamp(24px, 2.7vw, 34px);
+  font-weight: 620;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  margin-bottom: 12px;
+}
+
 .heroH1Accent {
   display: block;
+  font-family: var(--font-display), Georgia, "Times New Roman", serif;
   font-style: italic;
+  font-weight: 400;
+  font-size: clamp(44px, 5.6vw, 72px);
+  line-height: 0.98;
+  letter-spacing: -0.012em;
   color: #ec5d68;
 }
 
@@ -327,24 +342,138 @@
   filter: drop-shadow(0 1px 18px rgba(213, 58, 71, 0.25));
 }
 
-.heroActions {
-  display: flex;
-  align-items: stretch;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-
-/* both hero buttons share one width so the pair reads as a unit */
-.heroActions > a {
-  flex: 0 0 auto;
-  min-width: 186px;
-  justify-content: center;
-  text-align: center;
-}
-
 .heroVisual {
   min-width: 0;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 6px 0 6px 56px;
+  /* the spine — full column height, demo centred against it */
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ── New hero: body, actions, meta ── */
+.heroBody {
+  font-size: 16px;
+  line-height: 1.72;
+  color: var(--color-text-muted);
+  margin: 0 0 36px;
+  max-width: 430px;
+}
+
+.heroBody em {
+  font-family: var(--font-display), Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-size: 1.16em;
+  color: var(--color-text-primary);
+}
+
+.heroActions {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.heroCta {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 22px;
+  font-size: 14px;
+  font-weight: 560;
+  color: #fff;
+  text-decoration: none;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-primary);
+  transition: background 0.2s ease;
+}
+
+.heroCta:hover {
+  background: var(--color-accent-primary-hover);
+}
+
+.heroCtaArrow {
+  transition: transform 0.2s ease;
+}
+
+.heroCta:hover .heroCtaArrow {
+  transform: translateX(3px);
+}
+
+.heroCtaGhost {
+  position: relative;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.heroCtaGhost:hover {
+  color: var(--color-text-primary);
+}
+
+.heroCtaGhost::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 100%;
+  bottom: -4px;
+  height: 1px;
+  background: currentColor;
+  transition: right 0.28s ease;
+}
+
+.heroCtaGhost:hover::after {
+  right: 0;
+}
+
+.heroMeta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 34px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.heroMetaDot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+/* ── Nav: quiet text CTA (replaces the filled red button) ── */
+.navStart {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-left: 6px;
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--color-accent-primary);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.navStart:hover {
+  color: var(--color-accent-primary-hover);
+}
+
+.navStartArrow {
+  transition: transform 0.2s ease;
+}
+
+.navStart:hover .navStartArrow {
+  transform: translateX(2px);
 }
 
 .demoGlow {
@@ -677,16 +806,68 @@
    Thought Demo card
 ───────────────────────────────────────────────────────────── */
 
+/* Borderless — the live transform sits in open space against the spine, not in
+   a floating window. No chrome, no glow, no traffic-light dots. */
 .thoughtDemo {
-  border-radius: var(--radius-xl);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(11, 11, 13, 0.85);
-  backdrop-filter: blur(16px);
+  background: transparent;
+  border: none;
+  box-shadow: none;
   overflow: hidden;
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.03),
-    0 32px 80px rgba(0, 0, 0, 0.5),
-    0 0 100px rgba(213, 58, 71, 0.05);
+}
+
+.demoHead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.demoHeadIndex {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-accent-primary);
+}
+
+.demoHeadTotal {
+  color: var(--color-text-muted);
+}
+
+.demoHeadLabel {
+  flex: 1;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.demoHeadTicks {
+  display: flex;
+  gap: 5px;
+}
+
+.demoHeadTick {
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 0.3s ease, width 0.3s ease;
+}
+
+.demoHeadTickActive {
+  width: 22px;
+  background: var(--color-accent-primary);
+}
+
+/* borderless content aligns flush-left with the head label */
+.thoughtDemo .demoInput,
+.thoughtDemo .demoNodes {
+  padding-left: 2px;
+  padding-right: 2px;
 }
 
 .demoChrome {
@@ -3214,20 +3395,26 @@
 @media (max-width: 900px) {
   .heroInner {
     grid-template-columns: 1fr;
-    gap: 48px;
+    gap: 44px;
   }
 
   .hero {
-    padding: 80px 24px 64px;
+    padding: 92px 24px 64px;
   }
 
-  .heroProblem,
-  .heroFix {
+  .heroBody {
     max-width: 100%;
   }
 
+  /* stacked: drop the spine + its insets */
+  .heroText {
+    padding: 0;
+  }
+
   .heroVisual {
-    max-width: 540px;
+    max-width: 560px;
+    padding: 0;
+    border-left: none;
   }
 
   .heroH1 {
@@ -3476,15 +3663,8 @@
     display: block;
   }
 
-  /* hero buttons stack full width instead of two odd sizes */
   .heroActions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .heroActions > a {
-    width: 100%;
-    min-width: 0;
+    gap: 20px;
   }
 
   /* "Approve what sticks" — the queue is the desktop showpiece;

@@ -1,17 +1,8 @@
 import { redirect } from "next/navigation";
-import { Instrument_Serif } from "next/font/google";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import LandingPage from "@/components/landing/landing-page";
-
-// Cursive display serif for the hero headline (app UI stays sans).
-const displaySerif = Instrument_Serif({
-  weight: "400",
-  style: ["normal", "italic"],
-  subsets: ["latin"],
-  variable: "--font-display",
-  display: "swap",
-});
+import { landingFontVars } from "@/lib/landing-fonts";
 
 export default async function Home() {
   const supabase = await getSupabaseServerClient();
@@ -22,7 +13,7 @@ export default async function Home() {
   if (user) redirect("/app");
 
   return (
-    <div className={displaySerif.variable}>
+    <div className={landingFontVars}>
       <LandingPage />
     </div>
   );
