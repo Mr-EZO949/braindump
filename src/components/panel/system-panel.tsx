@@ -107,9 +107,10 @@ export function SystemPanel({
     }
   }, [theme]);
 
-  // Load the active workspace's profile whenever the profile modal opens.
+  // Load the active workspace's profile whenever the panel opens (feeds both the
+  // identity card and the modal).
   useEffect(() => {
-    if (!profileModalOpen || !workspaceId) return;
+    if (!open || !workspaceId) return;
     let cancelled = false;
     setProfileLoading(true);
     setProfileError(null);
@@ -131,12 +132,12 @@ export function SystemPanel({
     return () => {
       cancelled = true;
     };
-  }, [profileModalOpen, workspaceId]);
+  }, [open, workspaceId]);
 
-  // Load the user-level personal profile whenever the profile modal opens. Not
-  // keyed on workspaceId — it's about the person, not the active workspace.
+  // Load the user-level personal profile whenever the panel opens (feeds the
+  // identity card). Not keyed on workspaceId — it's about the person.
   useEffect(() => {
-    if (!profileModalOpen) return;
+    if (!open) return;
     let cancelled = false;
     setPersonalLoading(true);
     setPersonalError(null);
@@ -168,7 +169,7 @@ export function SystemPanel({
     return () => {
       cancelled = true;
     };
-  }, [profileModalOpen]);
+  }, [open]);
 
   const trimmedGoalDraft = goalDraft.trim();
   const canAddGoal =
@@ -254,6 +255,25 @@ export function SystemPanel({
     }
   };
 
+  // Personalised identity — what BrainDump surfaces about you at the top.
+  const displayName = personalName.trim();
+  const identityOccupation = personalOccupation.trim();
+  const identityParalysis = personalParalysis.trim();
+  const identityNote = (() => {
+    const article = (word: string) => (/^[aeiou]/i.test(word) ? "an" : "a");
+    if (identityOccupation && identityParalysis) {
+      const par =
+        identityParalysis.length > 48
+          ? `${identityParalysis.slice(0, 47).trimEnd()}…`
+          : identityParalysis;
+      return `BrainDump reads you as ${article(identityOccupation)} ${identityOccupation} who freezes on ${par} — and plans around it.`;
+    }
+    if (identityOccupation) {
+      return `BrainDump reads you as ${article(identityOccupation)} ${identityOccupation} — and tailors every plan and answer to that.`;
+    }
+    return "Add a few details so BrainDump can plan and answer like it actually knows you.";
+  })();
+
   return (
     <aside
       aria-hidden={!open}
@@ -277,18 +297,23 @@ export function SystemPanel({
 
         <div className="sp-divider" />
 
-        {/* Account */}
-        <div className="px-5 py-4">
-          <p className="sp-section-label">Account</p>
-          <p className="sp-email">{userEmail ?? "Not signed in"}</p>
-        </div>
-
-        <div className="sp-divider" />
-
-        {/* Personal — opens the About-you modal (questions + answers) */}
-        <div className="px-5 py-4">
-          <p className="sp-section-label">Personal</p>
-          <p className="sp-hint">Who you are + this workspace — the answers the AI reads to tailor its help.</p>
+        {/* Identity — personalised: BrainDump describing you */}
+        <div className="px-5 pt-5 pb-5">
+          <div className="sp-identity">
+            <span className="sp-identity-avatar" aria-hidden="true">
+              {displayName ? displayName[0].toUpperCase() : "·"}
+            </span>
+            <div className="sp-identity-main">
+              <p className="sp-identity-name">
+                {displayName ? `Hey, ${displayName}` : "Your profile"}
+              </p>
+              {identityOccupation ? (
+                <p className="sp-identity-sub">{identityOccupation}</p>
+              ) : null}
+              <p className="sp-identity-email">{userEmail ?? "Not signed in"}</p>
+            </div>
+          </div>
+          <p className="sp-identity-note">{identityNote}</p>
           <button
             type="button"
             className="sp-profile-btn"
@@ -515,13 +540,9 @@ export function SystemPanel({
 
         <div className="sp-divider" />
 
-        {/* Account actions */}
-        <div className="px-5 py-4 flex flex-col gap-1">
-          {/* Self-hides on desktop, in-app browsers, or when already
-              installed — only shows a real install path on mobile. */}
-          <InstallAppButton />
-          <PushToggleButton />
-
+        {/* Plan */}
+        <div className="px-5 py-4">
+          <p className="sp-section-label">Plan</p>
           {/* Plan — understated upgrade entry. Wire the Pro CTA to checkout
               and add a "Manage" link for Pro users once billing lands. */}
           <div className="sp-plan">
@@ -566,7 +587,17 @@ export function SystemPanel({
               </div>
             ) : null}
           </div>
+        </div>
 
+        <div className="sp-divider" />
+
+        {/* Data & account */}
+        <div className="px-5 py-4 flex flex-col gap-1">
+          <p className="sp-section-label">Data &amp; account</p>
+          {/* Self-hides on desktop, in-app browsers, or when already
+              installed — only shows a real install path on mobile. */}
+          <InstallAppButton />
+          <PushToggleButton />
           <button
             className="sp-menu-btn"
             type="button"
