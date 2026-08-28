@@ -3452,7 +3452,7 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .sp-modal {
   width: 100%;
-  max-width: 480px;
+  max-width: 540px;
   max-height: min(86vh, 720px);
   display: flex;
   flex-direction: column;
@@ -3507,6 +3507,113 @@ input[type="search"]::-webkit-search-results-decoration {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-text-tertiary);
+}
+
+.sp-modal-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+/* grouped sections inside the modal */
+.sp-modal-group + .sp-modal-group {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--color-border-faint);
+}
+
+.sp-modal-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.sp-modal-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.sp-modal-group-scope {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+/* two short fields side by side */
+.sp-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.sp-field-grid .sp-field {
+  margin-bottom: 0;
+}
+
+@media (max-width: 460px) {
+  .sp-field-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .sp-field-grid .sp-field {
+    margin-bottom: 12px;
+  }
+}
+
+.sp-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 15px 22px;
+  border-top: 1px solid var(--color-border-faint);
+  flex-shrink: 0;
+}
+
+.sp-modal-cancel {
+  padding: 9px 16px;
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--motion-fast);
+}
+
+.sp-modal-cancel:hover {
+  color: var(--color-text-primary);
+}
+
+.sp-modal-save {
+  padding: 9px 22px;
+  border: 1px solid rgba(213, 58, 71, 0.4);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 560;
+  cursor: pointer;
+  transition: background var(--motion-fast), opacity var(--motion-fast);
+}
+
+.sp-modal-save:hover:not(:disabled) {
+  background: var(--color-accent-primary-hover);
+}
+
+.sp-modal-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Keep the completed-shelf out of the way while the settings panel is open */
+[data-system-panel-open="true"] .completed-shelf {
+  display: none;
 }
 
 .sp-menu-btn {

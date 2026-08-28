@@ -3219,7 +3219,10 @@ export function AppShell({ initialUser }: AppShellProps) {
   };
 
   return (
-    <div className="flex min-h-screen flex-col overflow-hidden bg-(--color-bg-base) text-(--color-text-primary)">
+    <div
+      className="flex min-h-screen flex-col overflow-hidden bg-(--color-bg-base) text-(--color-text-primary)"
+      data-system-panel-open={systemPanelOpen ? "true" : undefined}
+    >
       <TopCommandBar
         onToggleSystemPanel={() => {
           setWorkspaceMenuOpen(false);

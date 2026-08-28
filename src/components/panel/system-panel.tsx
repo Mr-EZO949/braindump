@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { InstallAppButton } from "@/components/pwa/install-app-button";
 import { PushToggleButton } from "@/components/pwa/push-toggle-button";
@@ -56,10 +57,11 @@ export function SystemPanel({
   const [goals, setGoals] = useState<string[]>([]);
   const [goalDraft, setGoalDraft] = useState("");
   const [profileLoading, setProfileLoading] = useState(false);
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  // One Save for the whole modal — writes both /api/profile and the workspace.
+  const [savingAll, setSavingAll] = useState(false);
+  const [savedAll, setSavedAll] = useState(false);
 
   // Personal — user-level "about you" identity (name, occupation, what
   // paralyzes you, working hours, deadlines). Separate from the per-workspace
@@ -71,8 +73,6 @@ export function SystemPanel({
   const [personalHours, setPersonalHours] = useState("");
   const [personalDeadlines, setPersonalDeadlines] = useState("");
   const [personalLoading, setPersonalLoading] = useState(false);
-  const [personalSaving, setPersonalSaving] = useState(false);
-  const [personalSaved, setPersonalSaved] = useState(false);
   const [personalError, setPersonalError] = useState<string | null>(null);
   // The pre-paint script in layout.tsx already applied the correct theme to
   // <html>. The apply-effect below must skip its first run so it doesn't
@@ -113,7 +113,7 @@ export function SystemPanel({
     let cancelled = false;
     setProfileLoading(true);
     setProfileError(null);
-    setProfileSaved(false);
+    setSavedAll(false);
     fetch(`/api/workspaces/${workspaceId}/profile`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Couldn't load your profile"))))
       .then((data: { role: string | null; current_focus: string | null; goals: string[] }) => {
@@ -140,7 +140,7 @@ export function SystemPanel({
     let cancelled = false;
     setPersonalLoading(true);
     setPersonalError(null);
-    setPersonalSaved(false);
+    setSavedAll(false);
     fetch("/api/profile")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Couldn't load your details"))))
       .then(
@@ -180,73 +180,56 @@ export function SystemPanel({
     if (!canAddGoal) return;
     setGoals((prev) => [...prev, trimmedGoalDraft]);
     setGoalDraft("");
-    setProfileSaved(false);
+    setSavedAll(false);
   };
 
   const removeGoal = (goal: string) => {
     setGoals((prev) => prev.filter((g) => g !== goal));
-    setProfileSaved(false);
+    setSavedAll(false);
   };
 
-  const handleSaveProfile = async () => {
-    if (!workspaceId) return;
-    setProfileSaving(true);
-    setProfileError(null);
-    setProfileSaved(false);
-    try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/profile`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, current_focus: focus, goals }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "Couldn't save your profile");
-      }
-      const data = (await res.json()) as {
-        role: string | null;
-        current_focus: string | null;
-        goals: string[];
-      };
-      setRole(data.role ?? "");
-      setFocus(data.current_focus ?? "");
-      setGoals(Array.isArray(data.goals) ? data.goals : []);
-      setProfileSaved(true);
-    } catch (e) {
-      setProfileError(e instanceof Error ? e.message : "Couldn't save your profile");
-    } finally {
-      setProfileSaving(false);
-    }
-  };
-
-  const handleSavePersonal = async () => {
-    setPersonalSaving(true);
+  // One Save writes both scopes in parallel: user-level /api/profile and the
+  // active workspace's profile. Editing here also resolves the first-run intake.
+  const handleSaveAll = async () => {
+    setSavingAll(true);
+    setSavedAll(false);
     setPersonalError(null);
-    setPersonalSaved(false);
+    setProfileError(null);
     try {
-      const res = await fetch("/api/profile", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          full_name: personalName,
-          occupation: personalOccupation,
-          paralysis_triggers: personalParalysis,
-          working_hours: personalHours,
-          deadline_cadence: personalDeadlines,
-          // Editing details here also resolves the first-run intake, so it
-          // won't re-prompt someone who filled this out via Settings.
-          intake_done: true,
+      const requests: Promise<Response>[] = [
+        fetch("/api/profile", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            full_name: personalName,
+            occupation: personalOccupation,
+            paralysis_triggers: personalParalysis,
+            working_hours: personalHours,
+            deadline_cadence: personalDeadlines,
+            intake_done: true,
+          }),
         }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "Couldn't save your details");
+      ];
+      if (workspaceId) {
+        requests.push(
+          fetch(`/api/workspaces/${workspaceId}/profile`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ role, current_focus: focus, goals }),
+          }),
+        );
       }
-      setPersonalSaved(true);
+      const responses = await Promise.all(requests);
+      const failed = responses.find((r) => !r.ok);
+      if (failed) {
+        const body = (await failed.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "Couldn't save your answers");
+      }
+      setSavedAll(true);
     } catch (e) {
-      setPersonalError(e instanceof Error ? e.message : "Couldn't save your details");
+      setPersonalError(e instanceof Error ? e.message : "Couldn't save your answers");
     } finally {
-      setPersonalSaving(false);
+      setSavingAll(false);
     }
   };
 
@@ -316,231 +299,219 @@ export function SystemPanel({
           </button>
         </div>
 
-        {profileModalOpen ? (
-          <div
-            className="sp-modal-overlay"
-            role="presentation"
-            onClick={() => setProfileModalOpen(false)}
-          >
-            <div
-              className="sp-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-label="About you"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="sp-modal-head">
-                <div className="sp-modal-head-text">
-                  <p className="sp-section-label">About you</p>
-                  <p className="sp-modal-sub">
-                    Your answers tailor how the AI captures, plans, and unblocks you — change them anytime.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="sp-close"
-                  aria-label="Close"
-                  onClick={() => setProfileModalOpen(false)}
+        {profileModalOpen
+          ? createPortal(
+              <div
+                className="sp-modal-overlay"
+                role="presentation"
+                onClick={() => setProfileModalOpen(false)}
+              >
+                <div
+                  className="sp-modal"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="About you"
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  ×
-                </button>
-              </div>
-
-              <div className="sp-modal-body">
-                <div className="sp-modal-section">
-                  <p className="sp-modal-group-label">Personal · used across all your workspaces</p>
-
-                  <div className="sp-field">
-                    <label className="sp-field-label" htmlFor="sp-name">Name</label>
-            <input
-              id="sp-name"
-              className="sp-input"
-              type="text"
-              placeholder="what should we call you?"
-              value={personalName}
-              onChange={(e) => {
-                setPersonalName(e.target.value);
-                setPersonalSaved(false);
-              }}
-              disabled={personalLoading}
-            />
-          </div>
-
-          <div className="sp-field">
-            <label className="sp-field-label" htmlFor="sp-occupation">Occupation</label>
-            <input
-              id="sp-occupation"
-              className="sp-input"
-              type="text"
-              placeholder="e.g. CS student, founder, designer"
-              value={personalOccupation}
-              onChange={(e) => {
-                setPersonalOccupation(e.target.value);
-                setPersonalSaved(false);
-              }}
-              disabled={personalLoading}
-            />
-          </div>
-
-          <div className="sp-field">
-            <label className="sp-field-label" htmlFor="sp-paralysis">What tends to paralyze you</label>
-            <textarea
-              id="sp-paralysis"
-              className="sp-textarea"
-              rows={2}
-              placeholder="too many options at once, perfectionism, big vague tasks…"
-              value={personalParalysis}
-              onChange={(e) => {
-                setPersonalParalysis(e.target.value);
-                setPersonalSaved(false);
-              }}
-              disabled={personalLoading}
-            />
-          </div>
-
-          <div className="sp-field">
-            <label className="sp-field-label" htmlFor="sp-hours">Working hours / energy</label>
-            <input
-              id="sp-hours"
-              className="sp-input"
-              type="text"
-              placeholder="sharp mornings, second wind at night…"
-              value={personalHours}
-              onChange={(e) => {
-                setPersonalHours(e.target.value);
-                setPersonalSaved(false);
-              }}
-              disabled={personalLoading}
-            />
-          </div>
-
-          <div className="sp-field">
-            <label className="sp-field-label" htmlFor="sp-deadlines">Deadlines</label>
-            <input
-              id="sp-deadlines"
-              className="sp-input"
-              type="text"
-              placeholder="procrastinate then sprint, or steady the whole way?"
-              value={personalDeadlines}
-              onChange={(e) => {
-                setPersonalDeadlines(e.target.value);
-                setPersonalSaved(false);
-              }}
-              disabled={personalLoading}
-            />
-          </div>
-
-          {personalError ? <p className="sp-error">{personalError}</p> : null}
-
-          <button
-            type="button"
-            className="sp-save-btn"
-            onClick={handleSavePersonal}
-            disabled={personalSaving || personalLoading}
-          >
-            {personalSaving ? "Saving…" : personalSaved ? "Saved ✓" : "Save details"}
-          </button>
-        </div>
-
-        <div className="sp-divider" />
-
-                <div className="sp-modal-section">
-                  <p className="sp-modal-group-label">This workspace only</p>
-
-                  <div className="sp-field">
-                    <label className="sp-field-label" htmlFor="sp-role">Your role</label>
-            <input
-              id="sp-role"
-              className="sp-input"
-              type="text"
-              placeholder="e.g. CS student, founder, parent"
-              value={role}
-              onChange={(e) => {
-                setRole(e.target.value);
-                setProfileSaved(false);
-              }}
-              disabled={profileLoading || !workspaceId}
-            />
-          </div>
-
-          <div className="sp-field">
-            <label className="sp-field-label" htmlFor="sp-focus">Current focus</label>
-            <textarea
-              id="sp-focus"
-              className="sp-textarea"
-              rows={2}
-              placeholder="What are you trying to make progress on right now?"
-              value={focus}
-              onChange={(e) => {
-                setFocus(e.target.value);
-                setProfileSaved(false);
-              }}
-              disabled={profileLoading || !workspaceId}
-            />
-          </div>
-
-          <div className="sp-field">
-            <span className="sp-field-label">Big goals</span>
-            {goals.length > 0 ? (
-              <div className="sp-goal-list">
-                {goals.map((goal) => (
-                  <span key={goal} className="sp-goal-chip">
-                    {goal}
+                  <div className="sp-modal-head">
+                    <div className="sp-modal-head-text">
+                      <h2 className="sp-modal-title">About you</h2>
+                      <p className="sp-modal-sub">
+                        Your answers tailor how the AI captures, plans, and unblocks you — change them anytime.
+                      </p>
+                    </div>
                     <button
                       type="button"
-                      className="sp-goal-remove"
-                      aria-label={`Remove ${goal}`}
-                      onClick={() => removeGoal(goal)}
+                      className="sp-close"
+                      aria-label="Close"
+                      onClick={() => setProfileModalOpen(false)}
                     >
                       ×
                     </button>
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            {goals.length < MAX_GOALS ? (
-              <div className="sp-goal-add">
-                <input
-                  className="sp-input"
-                  type="text"
-                  placeholder="Add a goal"
-                  value={goalDraft}
-                  onChange={(e) => setGoalDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addGoal();
-                    }
-                  }}
-                  disabled={profileLoading || !workspaceId}
-                />
-                <button
-                  type="button"
-                  className="sp-menu-btn sp-goal-add-btn"
-                  onClick={addGoal}
-                  disabled={!canAddGoal}
-                >
-                  Add
-                </button>
-              </div>
-            ) : null}
-          </div>
+                  </div>
 
-          {profileError ? <p className="sp-error">{profileError}</p> : null}
+                  <div className="sp-modal-body">
+                    <section className="sp-modal-group">
+                      <div className="sp-modal-group-head">
+                        <span className="sp-modal-group-title">You</span>
+                        <span className="sp-modal-group-scope">used across all workspaces</span>
+                      </div>
 
-                  <button
-                    type="button"
-                    className="sp-save-btn"
-                    onClick={handleSaveProfile}
-                    disabled={profileSaving || profileLoading || !workspaceId}
-                  >
-                    {profileSaving ? "Saving…" : profileSaved ? "Saved ✓" : "Save profile"}
-                  </button>
+                      <div className="sp-field-grid">
+                        <div className="sp-field">
+                          <label className="sp-field-label" htmlFor="sp-name">Name</label>
+                          <input
+                            id="sp-name"
+                            className="sp-input"
+                            type="text"
+                            placeholder="what should we call you?"
+                            value={personalName}
+                            onChange={(e) => { setPersonalName(e.target.value); setSavedAll(false); }}
+                            disabled={personalLoading}
+                          />
+                        </div>
+                        <div className="sp-field">
+                          <label className="sp-field-label" htmlFor="sp-occupation">Occupation</label>
+                          <input
+                            id="sp-occupation"
+                            className="sp-input"
+                            type="text"
+                            placeholder="CS student, founder…"
+                            value={personalOccupation}
+                            onChange={(e) => { setPersonalOccupation(e.target.value); setSavedAll(false); }}
+                            disabled={personalLoading}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="sp-field">
+                        <label className="sp-field-label" htmlFor="sp-paralysis">What tends to paralyze you</label>
+                        <textarea
+                          id="sp-paralysis"
+                          className="sp-textarea"
+                          rows={2}
+                          placeholder="too many options at once, perfectionism, big vague tasks…"
+                          value={personalParalysis}
+                          onChange={(e) => { setPersonalParalysis(e.target.value); setSavedAll(false); }}
+                          disabled={personalLoading}
+                        />
+                      </div>
+
+                      <div className="sp-field-grid">
+                        <div className="sp-field">
+                          <label className="sp-field-label" htmlFor="sp-hours">Working hours</label>
+                          <input
+                            id="sp-hours"
+                            className="sp-input"
+                            type="text"
+                            placeholder="sharp mornings, late nights…"
+                            value={personalHours}
+                            onChange={(e) => { setPersonalHours(e.target.value); setSavedAll(false); }}
+                            disabled={personalLoading}
+                          />
+                        </div>
+                        <div className="sp-field">
+                          <label className="sp-field-label" htmlFor="sp-deadlines">Deadlines</label>
+                          <input
+                            id="sp-deadlines"
+                            className="sp-input"
+                            type="text"
+                            placeholder="sprint late, or steady?"
+                            value={personalDeadlines}
+                            onChange={(e) => { setPersonalDeadlines(e.target.value); setSavedAll(false); }}
+                            disabled={personalLoading}
+                          />
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="sp-modal-group">
+                      <div className="sp-modal-group-head">
+                        <span className="sp-modal-group-title">This workspace</span>
+                        <span className="sp-modal-group-scope">just this one</span>
+                      </div>
+
+                      <div className="sp-field">
+                        <label className="sp-field-label" htmlFor="sp-role">Your role</label>
+                        <input
+                          id="sp-role"
+                          className="sp-input"
+                          type="text"
+                          placeholder="e.g. CS student, founder, parent"
+                          value={role}
+                          onChange={(e) => { setRole(e.target.value); setSavedAll(false); }}
+                          disabled={profileLoading || !workspaceId}
+                        />
+                      </div>
+
+                      <div className="sp-field">
+                        <label className="sp-field-label" htmlFor="sp-focus">Current focus</label>
+                        <textarea
+                          id="sp-focus"
+                          className="sp-textarea"
+                          rows={2}
+                          placeholder="What are you trying to make progress on right now?"
+                          value={focus}
+                          onChange={(e) => { setFocus(e.target.value); setSavedAll(false); }}
+                          disabled={profileLoading || !workspaceId}
+                        />
+                      </div>
+
+                      <div className="sp-field">
+                        <span className="sp-field-label">Big goals</span>
+                        {goals.length > 0 ? (
+                          <div className="sp-goal-list">
+                            {goals.map((goal) => (
+                              <span key={goal} className="sp-goal-chip">
+                                {goal}
+                                <button
+                                  type="button"
+                                  className="sp-goal-remove"
+                                  aria-label={`Remove ${goal}`}
+                                  onClick={() => removeGoal(goal)}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                        {goals.length < MAX_GOALS ? (
+                          <div className="sp-goal-add">
+                            <input
+                              className="sp-input"
+                              type="text"
+                              placeholder="Add a goal"
+                              value={goalDraft}
+                              onChange={(e) => setGoalDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  addGoal();
+                                }
+                              }}
+                              disabled={profileLoading || !workspaceId}
+                            />
+                            <button
+                              type="button"
+                              className="sp-menu-btn sp-goal-add-btn"
+                              onClick={addGoal}
+                              disabled={!canAddGoal}
+                            >
+                              Add
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </section>
+
+                    {personalError || profileError ? (
+                      <p className="sp-error">{personalError ?? profileError}</p>
+                    ) : null}
+                  </div>
+
+                  <div className="sp-modal-foot">
+                    <button
+                      type="button"
+                      className="sp-modal-cancel"
+                      onClick={() => setProfileModalOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="sp-modal-save"
+                      onClick={handleSaveAll}
+                      disabled={savingAll || personalLoading || profileLoading}
+                    >
+                      {savingAll ? "Saving…" : savedAll ? "Saved ✓" : "Save changes"}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
+              </div>,
+              document.body,
+            )
+          : null}
 
         <div className="sp-divider" />
 
