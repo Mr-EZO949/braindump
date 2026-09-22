@@ -358,7 +358,9 @@ export class ClaudeProvider {
 
     const response = await this.client.messages.create({
       model: this.modelName,
-      max_tokens: 2048,
+      // Headroom for Sonnet 5's tokenizer (~30% more tokens for the same text).
+      // A pure truncation guard — the model stops at end_turn when done.
+      max_tokens: 3072,
       ...claudeRequestTuning(this.modelName, AI_TEMPERATURE.ASSISTANT),
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
@@ -425,7 +427,10 @@ export class ClaudeProvider {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const response = await this.client.messages.create({
         model: plannerModel,
-        max_tokens: 4096,
+        // Headroom for Sonnet 5's tokenizer (~30% more tokens for the same
+        // text) — a fuller day-plan JSON could otherwise brush the old cap.
+        // Pure truncation guard; the model stops at end_turn when done.
+        max_tokens: 6144,
         ...claudeRequestTuning(plannerModel, AI_TEMPERATURE.PLANNER),
         system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
         messages: [{ role: "user", content: prompt }],
