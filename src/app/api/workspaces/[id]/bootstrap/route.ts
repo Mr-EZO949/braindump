@@ -142,11 +142,21 @@ export async function POST(
     return NextResponse.json({ error: "Workspace not found or access denied" }, { status: 404 });
   }
 
-  const { count } = await supabase
+  // "Empty" means no USER content yet. But workspace creation already seeds a
+  // single root node (ensureWorkspaceRoot), and the reuse logic further down
+  // expects exactly that. Exclude the seeded root from the count — otherwise
+  // the lone root makes count === 1 and bootstrap 409s on every freshly
+  // created workspace, so the wizard could never run.
+  const seededRootId = workspace.bootstrap_root_node_id as string | null | undefined;
+  let nodeCountQuery = supabase
     .from("nodes")
     .select("id", { count: "exact", head: true })
     .eq("workspace_id", workspaceId)
     .eq("user_id", user.id);
+  if (seededRootId) {
+    nodeCountQuery = nodeCountQuery.neq("id", seededRootId);
+  }
+  const { count } = await nodeCountQuery;
 
   if ((count ?? 0) > 0) {
     return NextResponse.json(
