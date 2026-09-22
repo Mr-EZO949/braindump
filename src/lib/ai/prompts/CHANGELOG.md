@@ -7,7 +7,13 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Extraction (`extract.ts`)
 
-### extract-v7 (current)
+### extract-v15 (current)
+- Added intent-framed grouping rule: when the user states a driving intent and lists 2+ items serving it ("it's very important to make money, so I have these projects: A, B, C"), create that intent as a goal cluster and attach the items — even if the umbrella reads slightly generic, because the user supplied the framing.
+- Added goal-with-means rule: don't collapse a stated goal plus its distinct activities ("get in shape → gym/cardio/stretch/creatine") into one node; keep the goal as a parent over its activities.
+- Why: large multi-domain dumps flattened into a wide fan off the "General" root — only topically-tight clusters (courses) nested, while intent-based groupings (money projects) and multi-activity goals (fitness) stayed as loose siblings. Retroactive embedding clustering can't recover these (intent ≠ cosine similarity), so the fix belongs in extraction.
+- Note: entries v8–v14 predate this changelog being kept in sync; the version constant advanced without log entries. v15 resumes tracking.
+
+### extract-v7
 - Added workspace context block (`workspace_context` param)
 - Added existing anchor attachment rule with `existing_parent_node_id`
 - Enforced mutual exclusivity: cannot set both `primary_parent_local_ref` and `existing_parent_node_id`

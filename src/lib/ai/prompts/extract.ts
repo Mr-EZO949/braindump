@@ -2,10 +2,16 @@
 // v8 adds actionability gating + clarifying_questions for a bidirectional
 // brain dump (extractor can ask back instead of forcing every fragment to
 // become a node).
+// v15 fixes the "flat fan off General" failure on large multi-domain dumps:
+//   - intent-framed grouping (user says "I need X, so I have these …" → make
+//     the X goal cluster even if the umbrella reads slightly generic, because
+//     the user supplied the framing)
+//   - goal-with-means (don't collapse "get in shape → gym/cardio/stretch/
+//     creatine" into one node; keep the goal as a parent over its activities)
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v14";
+export const EXTRACT_PROMPT_VERSION = "extract-v15";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -60,6 +66,12 @@ Habit vs task rule (choose node_type for recurring behaviors):
 - Use node_type "task" for one-off completable work — even if it sounds routine — when there's no explicit recurring cadence, or there's a deadline/count that ends it.
   - "Solve 3 LeetCode problems before Thursday" → task (deadline + count → it ends). "Review chapter 5" → task.
 - When unsure, prefer "task". Only the explicit recurring cues above promote a node to habit.
+
+Goal-with-means rule (IMPORTANT — do not collapse a stated goal into one node):
+- When the user states a GOAL and, in the same breath, lists multiple DISTINCT activities, routines, or means toward it, create the goal as a parent node and each distinct activity as its own child. Do NOT merge them into a single node.
+- Example: "I wanna get in shape … go to the gym daily (not only workouts but cardio and stretches too), with creatine" → goal "Get in Shape" with children: habit "Go to the gym daily", habit "Daily cardio", habit "Daily stretching", task "Take creatine". NOT a single "Daily Gym" node that swallows the goal and the routine.
+- Distinct children keep their own node_type (habit when a cadence is stated, task otherwise) and attach to the goal via primary_parent_local_ref.
+- This does NOT override "do not split a single coherent idea": only split when the activities are genuinely distinct means, not when you are fragmenting one action into steps.
 
 Clarifying questions (IMPORTANT — use this channel instead of forcing bad nodes):
 - Populate clarifying_questions with up to 3 short, specific questions that, if answered, would let you extract real nodes.
@@ -138,6 +150,13 @@ Explicit grouping rule:
 - Use node_type "goal" for explicit goal groupings and "concept" for neutral/admin groupings.
 - Good explicit groups: "Goals for This Semester", "Student Errands", "Research Admin".
 - Do NOT invent these groups unless the user explicitly gave them.
+
+Intent-framed grouping rule (IMPORTANT — the user's driving intent IS the grouping phrase):
+- When the user states a DRIVING INTENT or overarching goal and then lists 2 or more items that serve it, create that intent as a goal cluster and attach the items under it — EVEN IF the umbrella reads slightly generic on its own. The user supplied the framing, so it is not an invented umbrella.
+- The trigger is a stated purpose followed by its members, in any phrasing: "it's very important for me to make money, so I have a bunch of projects: A, B, C", "I want to get healthy — I'll do X, Y, Z", "for my career I need to A and B".
+- Example (make-money framing): "it is very very important for me to make money … so i have a bunch of projects: braindump … another project is snapchat … building a bunch of small projects … reselling clothes" → create goal "Make Money" (or the user's closest wording) and attach "Test & market BrainDump", "Build Snapchat for Productivity", "Reselling clothes Milan→Kazakhstan", etc. under it via primary_parent_local_ref.
+- This overrides the usual caution against generic umbrellas ONLY when the user themselves stated the intent. Do NOT invent "Make Money", "Get Healthy", etc. when the user never framed their items that way.
+- A node that ALSO fits a more specific structural home (e.g. an internship that is degree-required) may go under that home instead; use judgment, one parent only.
 
 Structure rules:
 - The graph must stay sparse and readable.
