@@ -170,7 +170,10 @@ export async function POST(req: NextRequest) {
   async function generate(model: string): Promise<string> {
     const response = await client.messages.create({
       model,
-      max_tokens: 800,
+      // Headroom for Sonnet 5's tokenizer (~30% more tokens) plus grouped
+      // breakdowns that emit several sections. Pure truncation guard — the
+      // model stops at end_turn once the steps are complete.
+      max_tokens: 1600,
       ...claudeRequestTuning(model, AI_TEMPERATURE.PLANNER),
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
