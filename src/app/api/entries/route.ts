@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { runExtraction } from "@/lib/ai/extraction";
 import { suggestAreas } from "@/lib/ai/areas";
+import { classifyDumpSize } from "@/lib/ai/dump-size";
 import { AI_INGESTION, AI_FLAGS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { checkEntryRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
 import type { RawEntrySourceType } from "@/types/ai";
@@ -351,5 +352,11 @@ export async function POST(req: NextRequest) {
     // turn into nodes — offered as optional chips in the review so the user can
     // add them as top-level branches (same as the wizard's step 2).
     suggested_areas: clientAreas,
+    // Dump size (by extracted node count) — surfaced to the user and available
+    // for per-plan usage metering later. Detection only; no limits enforced yet.
+    dump_size: {
+      tier: classifyDumpSize(result.proposedNodes.length),
+      node_count: result.proposedNodes.length,
+    },
   });
 }

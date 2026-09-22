@@ -2367,6 +2367,16 @@ input[type="search"]::-webkit-search-results-decoration {
   opacity: 0.4;
   cursor: default;
 }
+/* AI roadmap — the heavier, token-costly action, tinted with the brand red so
+   it reads as distinct from the cheap "Quick tasks" button. */
+.da-text--ai {
+  color: #d53a47;
+  border-color: rgba(213, 58, 71, 0.32);
+}
+.da-text--ai:hover {
+  background: rgba(213, 58, 71, 0.1);
+  color: #d53a47;
+}
 
 /* Bottom row — archive (quiet, left) + read (distinct, right). */
 .detail-bottom-row {
@@ -6974,6 +6984,38 @@ input[type="search"]::-webkit-search-results-decoration {
 .prn-modal-sub {
   font-size: 13px;
   color: var(--color-text-muted);
+}
+.prn-size-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  cursor: help;
+  border: 1px solid transparent;
+}
+.prn-size-badge--small {
+  color: rgba(242, 239, 233, 0.62);
+  background: rgba(242, 239, 233, 0.08);
+}
+.prn-size-badge--medium {
+  color: #e0a75e;
+  background: rgba(224, 167, 94, 0.12);
+  border-color: rgba(224, 167, 94, 0.3);
+}
+.prn-size-badge--big {
+  color: #d53a47;
+  background: rgba(213, 58, 71, 0.14);
+  border-color: rgba(213, 58, 71, 0.4);
+}
+:root[data-theme="light"] .prn-size-badge--small {
+  color: rgba(26, 22, 19, 0.6);
+  background: rgba(26, 22, 19, 0.06);
 }
 
 .prn-modal-header-right {

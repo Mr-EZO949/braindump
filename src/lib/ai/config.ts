@@ -164,6 +164,27 @@ export const AI_COST_PER_1M_TOKENS = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// Dump size tiers
+// A dump's cost is driven mainly by how many NODES it extracts (output tokens),
+// not raw input length — so the authoritative tier keys off node count, with a
+// character estimate used only as a pre-submit hint (before we know the node
+// count). Used to (a) tell the user "that was a big dump" and (b) meter usage
+// per plan later (detection now, enforcement not wired yet).
+// ---------------------------------------------------------------------------
+
+export const DUMP_SIZE = {
+  // Authoritative: number of extracted nodes.
+  MEDIUM_MIN_NODES: 5, // 1-4 = small, 5-12 = medium, 13+ = big
+  BIG_MIN_NODES: 13,
+  // Pre-submit estimate from character count (rough — a dense list of 5 tasks
+  // in 200 chars still bills like a medium dump once extracted).
+  MEDIUM_MIN_CHARS: 220,
+  BIG_MIN_CHARS: 900,
+} as const;
+
+export type DumpSizeTier = "small" | "medium" | "big";
+
+// ---------------------------------------------------------------------------
 // Edge decay
 // Controls how quickly edges lose weight after connected nodes complete
 // ---------------------------------------------------------------------------

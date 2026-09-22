@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { CloseIcon } from "@/components/ui/icons";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
+import { classifyDumpSize, DUMP_SIZE_LABEL } from "@/lib/ai/dump-size";
 import type { NodeType } from "@/types/graph";
 import type { ProposedNode } from "@/types/ai";
 
@@ -315,6 +316,14 @@ export function ProposedNodesReview({
         <div className="prn-modal-header-left">
           <span className="prn-modal-label">From your brain dump</span>
           <span className="prn-modal-sub">
+            {hasProposals ? (
+              <span
+                className={`prn-size-badge prn-size-badge--${classifyDumpSize(proposals.length)}`}
+                title="Dump size is measured by how many nodes it produced — it drives cost and, later, your plan usage."
+              >
+                {DUMP_SIZE_LABEL[classifyDumpSize(proposals.length)]}
+              </span>
+            ) : null}
             {hasProposals
               ? `${proposals.length} node${proposals.length !== 1 ? "s" : ""} extracted`
               : hasQuestions

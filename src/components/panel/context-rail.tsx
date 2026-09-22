@@ -573,7 +573,7 @@ export function ContextRail({
                 ) : pendingSizeBreakdown ? (
                   <div className="flex flex-col gap-2.5">
                     <p className="text-[12.5px] leading-snug text-(--color-text-secondary)">
-                      This looks like more than one sitting. Break it into steps?
+                      This looks like more than one sitting. Have AI break it down?
                     </p>
                     <p className="line-clamp-2 rounded-md border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.025)] px-3 py-2 text-[12px] italic text-(--color-text-muted)">
                       {pendingSizeBreakdown.title}
@@ -582,20 +582,24 @@ export function ContextRail({
                       <button
                         type="button"
                         onClick={() => onResolveSizeBreakdown?.("light")}
-                        className="flex-1 rounded-full border border-[rgba(107,140,239,0.55)] bg-transparent px-3 py-2 text-[12px] font-semibold text-[rgba(150,175,255,0.95)]"
-                        title="Just the 1–3 immediate next steps to get unstuck"
+                        className="flex-1 rounded-full border border-[rgba(242,239,233,0.18)] bg-transparent px-3 py-2 text-[12px] font-semibold text-(--color-text-secondary) hover:border-[rgba(242,239,233,0.3)]"
+                        title="Just the 1–3 immediate next tasks to get unstuck — quick, cheap"
                       >
-                        Quick steps
+                        Quick tasks
                       </button>
                       <button
                         type="button"
                         onClick={() => onResolveSizeBreakdown?.("full")}
-                        className="flex-1 rounded-full border border-[rgba(107,140,239,0.55)] bg-[rgba(107,140,239,0.95)] px-3 py-2 text-[12px] font-semibold text-white"
-                        title="A full roadmap of sub-tasks"
+                        className="flex-1 rounded-full border border-[rgba(213,58,71,0.55)] bg-[rgba(213,58,71,0.95)] px-3 py-2 text-[12px] font-semibold text-white"
+                        title="AI generates a full multi-phase roadmap (a deep tree of sub-tasks). Uses more tokens."
                       >
-                        Full roadmap
+                        AI roadmap
                       </button>
                     </div>
+                    <p className="text-[11px] leading-snug text-(--color-text-muted)">
+                      Quick tasks = a few next actions. AI roadmap = a full multi-phase
+                      breakdown — more thorough, uses more tokens.
+                    </p>
                     <button
                       type="button"
                       onClick={() => onResolveSizeBreakdown?.("keep")}
@@ -900,18 +904,18 @@ export function ContextRail({
                                 onClick={() => setPendingMode("light")}
                                 type="button"
                                 disabled={suggestStepsBusy}
-                                title="Just the 1–3 immediate next steps"
+                                title="Just the 1–3 immediate next tasks to get unstuck — quick, cheap"
                               >
-                                Quick steps
+                                Quick tasks
                               </button>
                               <button
-                                className="da-text"
+                                className="da-text da-text--ai"
                                 onClick={() => setPendingMode("full")}
                                 type="button"
                                 disabled={suggestStepsBusy}
-                                title="A full roadmap of sub-tasks"
+                                title="AI generates a full multi-phase roadmap (a deep tree of sub-tasks). Uses more tokens."
                               >
-                                Full roadmap
+                                AI roadmap
                               </button>
                             </>
                           ) : null}
