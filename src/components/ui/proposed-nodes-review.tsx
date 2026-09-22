@@ -141,12 +141,17 @@ export function ProposedNodesReview({
   const hasQuestions = clarifyingQuestions.length > 0;
   const hasProposals = proposals.length > 0;
 
-  // Only offer areas that don't already exist as a node (case-insensitive) —
-  // no point proposing a "Fitness" branch when one is already there.
+  // Only offer areas that aren't already covered — either an existing canonical
+  // node OR one of the proposals the extractor just created (the two-pass
+  // "areas-first" flow usually turns the induced areas INTO proposed parent
+  // nodes, so those shouldn't also appear as add-a-branch chips).
   const newAreas = useMemo(() => {
     const existing = new Set(
       Object.values(existingNodeTitles).map((t) => t.trim().toLowerCase()),
     );
+    for (const p of proposals) {
+      existing.add(p.proposed_title.trim().toLowerCase());
+    }
     const seen = new Set<string>();
     return suggestedAreas.filter((a) => {
       const key = a.title.trim().toLowerCase();
@@ -154,7 +159,7 @@ export function ProposedNodesReview({
       seen.add(key);
       return true;
     });
-  }, [suggestedAreas, existingNodeTitles]);
+  }, [suggestedAreas, existingNodeTitles, proposals]);
   // Areas start selected — they're high-signal branches from this dump.
   const [areaOn, setAreaOn] = useState<Set<string>>(
     () => new Set(newAreas.map((a) => a.title.toLowerCase())),

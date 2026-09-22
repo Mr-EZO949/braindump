@@ -7,7 +7,12 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Extraction (`extract.ts`)
 
-### extract-v16 (current)
+### extract-v17 (current)
+- Added the **Depth rule**: prefer real area→project→task chains over a flat fan, with an explicit "don't overdo it" guardrail (no filler/invented middle levels, no wrapping a lone child, ≤~4 levels per dump, attach one level up when unsure).
+- Why: user wants deep graphs, not linear ones. Verified on a multi-domain dump → 21 nodes, max depth 3 ("Make Money Fast → BrainDump → Market/Test", "UniMi CS Degree → exams", "Get in Shape → gym/cardio/creatine"). Depth comes from extraction's own structure rules (Depth + v16 project-with-parts + semantic clustering) — NOT from injecting areas, which was tried and reverted because it made extraction emit empty duplicate area shells.
+- Companion (not a prompt change): a normal dump also runs `suggestAreas` (lib/ai/areas.ts) in parallel — an LLM area *inducer* (TnT-LLM-style label induction, not embedding clustering) that infers latent life-domains the user never named — surfaced as optional review chips for domains the dump didn't already structure.
+
+### extract-v16
 - Extended the goal-with-means rule to projects (now "Goal/Project-with-parts"): when the user names a project plus the work it needs ("working on BrainDump, needs marketing and testing"), create the project as a parent node with the work as task children — not loose top-level tasks with no project node, and not one merged node.
 - Added worked examples (BrainDump → Market/Test; Song Spot → Add player/Fix auth) and made the "list parent before children" instruction explicit here too.
 - Why: users reported a named project's sub-work landing as scattered top-level tasks (no project parent), the same flattening v15 fixed for goals.

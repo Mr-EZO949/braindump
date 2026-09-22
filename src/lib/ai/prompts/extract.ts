@@ -11,10 +11,15 @@
 // v16 extends goal-with-means to PROJECTS: "working on BrainDump, needs
 //   marketing and testing" → project "BrainDump" with task children, not
 //   loose top-level tasks with no project node.
+// v17 adds the Depth rule: build real area→project→task chains from the dump's
+//   own structure, with an explicit "don't overdo it" guardrail (no fabricated
+//   filler levels, no wrapping a lone child, ≤~4 levels per dump). Together with
+//   the v16 project-with-parts rule and the semantic-clustering rule, this is
+//   what makes graphs deep instead of a flat fan — no area injection needed.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v16";
+export const EXTRACT_PROMPT_VERSION = "extract-v17";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -78,6 +83,17 @@ Goal/Project-with-parts rule (IMPORTANT — do not collapse a stated goal or pro
 - Example: "building an app called Song Spot — need to add the player and fix auth" → project "Song Spot" with task children "Add the player" and "Fix auth".
 - Distinct children keep their own node_type (habit when a cadence is stated, task otherwise) and attach to the parent via primary_parent_local_ref. List the parent BEFORE its children in the array.
 - This does NOT override "do not split a single coherent idea": only split when the parts are genuinely distinct, not when you are fragmenting one action into steps.
+
+Depth rule (IMPORTANT — build a real tree, but only where real structure exists):
+- Prefer DEPTH over a flat fan. When the dump implies a chain — a life-area holds a project, and the project has concrete tasks — build the whole chain (area → project → tasks), not a flat area → [all tasks].
+- Example: "I need money — my app BrainDump needs marketing and testing, and I want to start reselling clothes from Milan" → goal "Make Money" as parent of: project "BrainDump" (parent of task "Market BrainDump" and task "Test BrainDump") AND project "Clothes Reselling". That is three levels, because the structure is genuinely there.
+- DO NOT overdo it. This is the guardrail:
+  - Never invent an intermediate level that isn't in the dump. No filler parents like "Tasks", "Phase 1", "Misc".
+  - Never wrap a single lone child in its own parent just to add a level.
+  - Keep any single chain to at most ~4 levels deep from one dump.
+  - A real project sitting between an area and its tasks is depth worth having; a fabricated sub-category is noise.
+- When unsure whether a middle layer is real, attach one level up rather than inventing it. Depth must reflect the user's actual structure, never decoration.
+- ONE parent per domain, and NO empty parents. Do not create two parents for the same life-domain — e.g. do NOT emit both a "Health & Fitness" concept cluster AND a "Get in Shape" goal, or both an "Income & Career" cluster AND a "Make Money Fast" goal. Pick the SINGLE best parent (prefer the user's own words — "Get in Shape", "Make Money Fast") and nest everything under it. Every cluster/area/parent node MUST end up with at least 2 children; if it would have fewer, don't create it and attach its would-be children to the next real parent up. A childless grouping node is always wrong.
 
 Clarifying questions (IMPORTANT — use this channel instead of forcing bad nodes):
 - Populate clarifying_questions with up to 3 short, specific questions that, if answered, would let you extract real nodes.

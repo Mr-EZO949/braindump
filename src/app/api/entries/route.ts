@@ -202,10 +202,13 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Run extraction and life-area inference in parallel. Area inference is the
-  // same Haiku call the bootstrap wizard uses — so a NORMAL dump gets the same
-  // "here are your branches" treatment. It's independent of extraction, so
-  // running it concurrently adds no latency. Skipped for suggest-steps
+  // Depth comes from extraction itself: the Depth + project-with-parts +
+  // semantic-clustering rules (prompts/extract.ts) build a real area→project→
+  // task tree from the dump's own structure. We DON'T inject areas into
+  // extraction — doing so made it emit the induced area AND its own parent for
+  // the same domain, leaving empty area shells. Instead we infer areas in
+  // PARALLEL (cheap Haiku, no added latency) purely to offer as optional review
+  // chips for domains the dump didn't structure. Skipped for suggest-steps
   // roadmaps (default_parent_node_id set) — those already have a home.
   const wantAreaSuggestions = !default_parent_node_id;
   const [result, areaResult] = await Promise.all([
@@ -241,6 +244,26 @@ export async function POST(req: NextRequest) {
       .order("local_ref", { ascending: true });
     if (refreshed) {
       result.proposedNodes = refreshed as typeof result.proposedNodes;
+    }
+  }
+
+  // Life-area chips help ONLY when extraction produced a FLAT result — a loose
+  // dump with no parent/child structure that needs grouping. When extraction
+  // already built a hierarchy (any node has a parent), the graph is structured
+  // in the user's own words (e.g. "Get in Shape", "Make Money Fast"), and
+  // offering generic area chips on top would just let the user create empty
+  // duplicate branches ("Health & Fitness" next to "Get in Shape"). So we
+  // suppress the chips whenever the dump already came out with depth.
+  let clientAreas: typeof areaResult.suggested_areas = [];
+  if (result.ok && areaResult.suggested_areas.length > 0) {
+    const hasHierarchy = result.proposedNodes.some((p) => p.primary_parent_local_ref);
+    if (!hasHierarchy) {
+      const createdTitles = new Set(
+        result.proposedNodes.map((p) => p.proposed_title.trim().toLowerCase()),
+      );
+      clientAreas = areaResult.suggested_areas.filter(
+        (a) => !createdTitles.has(a.title.trim().toLowerCase()),
+      );
     }
   }
 
@@ -324,9 +347,9 @@ export async function POST(req: NextRequest) {
     clarifying_questions: result.clarifyingQuestions,
     completed_existing_node_titles: completedExistingTitles,
     auto_complete_local_refs: result.autoCompleteLocalRefs,
-    // Life-area branches inferred from this dump. The review modal shows the
-    // ones that don't already exist so the user can add them as top-level
-    // branches (same as the wizard's step 2).
-    suggested_areas: areaResult.suggested_areas,
+    // Life-area branches inferred from this dump that extraction did NOT already
+    // turn into nodes — offered as optional chips in the review so the user can
+    // add them as top-level branches (same as the wizard's step 2).
+    suggested_areas: clientAreas,
   });
 }

@@ -28,22 +28,29 @@ export interface SuggestedArea {
   area_type: WorkspaceProfileAreaType;
 }
 
-const SYSTEM_PROMPT = `You are a workspace area classifier for an ADHD-focused planning app. Given a brain dump and optional context, suggest 3–6 life/work AREAS the user would organize everything under. These become top-level branches of their graph.
+const SYSTEM_PROMPT = `You are an area INDUCER for an ADHD-focused planning app. Read a brain dump and induce the 3–6 top-level life/work AREAS that everything in it rolls up under. These become the branches of the user's graph, and each concrete item will nest beneath one.
+
+CRUCIAL — infer the area even when the user never named it. Use world knowledge to generalize concrete items into their natural domain. This is the whole point: the user rarely names their areas, so you must recognize them.
+- "go to the gym daily, do cardio, take creatine, want my dream physique" → area "Health & Fitness" (the user never said "fitness")
+- "test my app, market it, build a personal brand, resell clothes from Milan, land an internship" → these are all money/career moves → area "Income & Career"
+- "calculus exam, linear algebra, ML & DL course, fuzzy systems" → area "University" or "Academics"
+- "pray 5 times a day" → area "Faith & Spirituality"
+- "call mom, renew passport, pay rent" → area "Life Admin"
 
 Area types (use exactly these strings):
 - academic: courses, studying, research
-- project: builds, launches, execution
-- career: jobs, internships, portfolio, networking
+- project: a specific build/launch/initiative
+- career: jobs, internships, portfolio, income, networking
 - health: energy, fitness, recovery
-- life_admin: logistics, errands, money, upkeep
-- personal: identity, habits, relationships, hobbies, languages
+- life_admin: logistics, errands, money-upkeep, appointments
+- personal: identity, habits, relationships, hobbies, languages, faith
 
 Rules:
-- Only suggest areas that appear or are clearly implied in the dump/context.
-- Concrete named contexts beat generic umbrellas. Avoid bare "Personal"/"Work"/"Life".
-- Each title is 2–4 words (e.g. "Academics", "Career & Internships", "Health & Fitness").
-- At most 6 areas. Never repeat an area_type.
-- If the input is empty or too vague to infer anything, return [].
+- Induce the FEWEST areas that still cover everything — usually 3–5. Merge items into one area when they share a real-world domain, even across different wordings.
+- Every area MUST be supported by at least one concrete item in the dump. Never invent an area nothing rolls up to.
+- Prefer the natural real-world domain over the literal words. Concrete named contexts ("UniMi Degree") beat bare generics ("School"). Avoid "Personal"/"Work"/"Life" as a title.
+- Each title is 2–4 words. Areas do NOT need distinct types — two "project"-type areas are fine if they're genuinely different domains, but don't split one domain into two.
+- If the dump is truly empty or a single unrelated fragment with no domain, return [].
 
 Respond with valid JSON only — an array: [{"title":"...","area_type":"..."}]. No markdown, no prose.`;
 
@@ -104,8 +111,13 @@ export async function suggestAreas(params: SuggestAreasParams): Promise<{
           AREA_TYPES.has(a.area_type as WorkspaceProfileAreaType),
       )
       .map((a) => ({ title: a.title.trim().slice(0, 80), area_type: a.area_type }))
-      // de-dupe by area_type to honor the prompt's "never repeat" rule
-      .filter((a, i, arr) => arr.findIndex((b) => b.area_type === a.area_type) === i)
+      // de-dupe by title (case-insensitive) — two areas may share a type as
+      // long as they're genuinely different domains, so we no longer collapse
+      // by area_type (that dropped legitimate second projects/domains).
+      .filter(
+        (a, i, arr) =>
+          arr.findIndex((b) => b.title.toLowerCase() === a.title.toLowerCase()) === i,
+      )
       .slice(0, 6);
 
     return { suggested_areas, suggestion_error: null };
