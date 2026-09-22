@@ -32,6 +32,79 @@ export function getStructuralParentCandidate(edge: Edge): StructuralParentCandid
   }
 }
 
+/**
+ * Given a functional parent map (each child points to at most one parent),
+ * returns the set of child IDs whose parent link must be dropped to make the
+ * map acyclic.
+ *
+ * Why this exists: the primary structural tree gives every node a single
+ * parent, but that does NOT guarantee a forest — a dependency/hierarchy loop
+ * (e.g. `A required_for B` and `B required_for A`) produces a map where A's
+ * parent is B and B's parent is A. The recursive layout (`placeNode` /
+ * `computeSubtreeWidth`) walks the derived children map and would recurse
+ * forever on such a loop. We break each cycle at its lowest-priority edge
+ * (tie-break by child id, for determinism) so hierarchy edges survive over
+ * weaker dependency edges, and the demoted edge simply renders as a normal
+ * semantic link instead of a structural parent.
+ */
+export function findStructuralCycleBreaks(
+  parentCandidates: Map<string, { parentId: string; priority: number }>,
+): Set<string> {
+  const drop = new Set<string>();
+  const settled = new Set<string>();
+
+  parentCandidates.forEach((_candidate, startId) => {
+    if (settled.has(startId)) {
+      return;
+    }
+
+    const path: string[] = [];
+    const indexOnPath = new Map<string, number>();
+    let current: string | undefined = startId;
+
+    while (current) {
+      if (drop.has(current) || settled.has(current)) {
+        break;
+      }
+
+      const seenAt = indexOnPath.get(current);
+
+      if (seenAt !== undefined) {
+        // Found a cycle spanning path[seenAt..end]. Drop its weakest edge.
+        const cycle = path.slice(seenAt);
+        let victim = cycle[0];
+        let victimPriority = parentCandidates.get(victim)?.priority ?? 0;
+
+        for (const nodeId of cycle) {
+          const priority = parentCandidates.get(nodeId)?.priority ?? 0;
+
+          if (priority < victimPriority || (priority === victimPriority && nodeId < victim)) {
+            victim = nodeId;
+            victimPriority = priority;
+          }
+        }
+
+        drop.add(victim);
+        break;
+      }
+
+      indexOnPath.set(current, path.length);
+      path.push(current);
+      current = parentCandidates.get(current)?.parentId;
+    }
+
+    // Everything we walked leads into a broken/acyclic chain now — no need to
+    // re-trace it from another start node.
+    path.forEach((nodeId) => {
+      if (!drop.has(nodeId)) {
+        settled.add(nodeId);
+      }
+    });
+  });
+
+  return drop;
+}
+
 export function buildPrimaryStructuralTree(graphData: GraphData) {
   const parentCandidates = new Map<string, StructuralParentCandidate & { edgeId: string }>();
   const childrenByParent = new Map<string, string[]>();
@@ -55,6 +128,11 @@ export function buildPrimaryStructuralTree(graphData: GraphData) {
         edgeId: edge.id,
       });
     }
+  });
+
+  // Demote cycle-closing edges so the primary tree is a true forest.
+  findStructuralCycleBreaks(parentCandidates).forEach((childId) => {
+    parentCandidates.delete(childId);
   });
 
   parentCandidates.forEach(({ parentId }, childId) => {

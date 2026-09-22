@@ -17,23 +17,42 @@ import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/
 import type { GraphData, NodeStatus } from "@/types/graph";
 import type { ChatSessionMeta } from "@/lib/chat/sessions";
 
-type LinkCategory = "parent" | "children" | "dependencies" | "supports" | "related";
+type LinkCategory =
+  | "parent"
+  | "depends_on"
+  | "required_for"
+  | "children"
+  | "supports"
+  | "related";
 
 const CATEGORY_DISPLAY: Record<LinkCategory, string> = {
   parent: "Parent",
+  // What this node needs done first (its blockers/prerequisites).
+  depends_on: "Depends on",
+  // What is waiting on this node (its dependents).
+  required_for: "Required for",
   children: "Children",
-  dependencies: "Dependencies",
   supports: "Supports",
   related: "Related",
 };
 
-const CATEGORY_ORDER: LinkCategory[] = ["parent", "children", "dependencies", "supports", "related"];
+const CATEGORY_ORDER: LinkCategory[] = [
+  "parent",
+  "depends_on",
+  "required_for",
+  "children",
+  "supports",
+  "related",
+];
 
 function getLinkCategory(labels: string[]): LinkCategory {
   for (const label of labels) {
     if (label === "belongs to") return "parent";
     if (label === "contains") return "children";
-    if (label === "required for" || label === "depends on") return "dependencies";
+    // Directionality matters: "depends on" = this node is blocked by the other;
+    // "required for" = the other is blocked by this node. Keep them separate.
+    if (label === "depends on") return "depends_on";
+    if (label === "required for") return "required_for";
     if (label === "supports" || label === "supported by") return "supports";
   }
   return "related";

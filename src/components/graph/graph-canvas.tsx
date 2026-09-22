@@ -21,7 +21,11 @@ import type {
 } from "d3-force";
 
 import { getImportanceIndex } from "@/lib/graph/importance";
-import { buildPrimaryStructuralTree, getStructuralParentCandidate } from "@/lib/graph/structure";
+import {
+  buildPrimaryStructuralTree,
+  findStructuralCycleBreaks,
+  getStructuralParentCandidate,
+} from "@/lib/graph/structure";
 import type { Edge, EdgeType, GraphData, Node, NodeType } from "@/types/graph";
 
 type GraphCanvasProps = {
@@ -520,6 +524,13 @@ function buildGraphLayout(graphData: GraphData) {
     }
   });
 
+  // Demote cycle-closing edges before deriving the children map. Without this a
+  // dependency/hierarchy loop makes `childrenByParent` cyclic and sends the
+  // recursive placement below into infinite recursion (stack overflow).
+  findStructuralCycleBreaks(parentCandidates).forEach((childId) => {
+    parentCandidates.delete(childId);
+  });
+
   const childrenByParent = new Map<string, string[]>();
 
   graphData.nodes.forEach((node) => {
@@ -673,6 +684,8 @@ function buildGraphLayout(graphData: GraphData) {
           );
         });
 
+    const widthInProgress = new Set<string>();
+
     const computeSubtreeWidth = (nodeId: string): number => {
       const cachedWidth = subtreeWidthCache.get(nodeId);
 
@@ -686,7 +699,17 @@ function buildGraphLayout(graphData: GraphData) {
         return 0;
       }
 
-      const children = getSortedChildren(nodeId);
+      // Defensive re-entrancy guard: cycles are already broken above, but never
+      // let an unexpected loop recurse forever.
+      if (widthInProgress.has(nodeId)) {
+        return node.width + 16;
+      }
+
+      widthInProgress.add(nodeId);
+
+      const children = getSortedChildren(nodeId).filter(
+        (childId) => !widthInProgress.has(childId),
+      );
 
       if (children.length === 0) {
         const width = node.width + 16;
@@ -703,12 +726,16 @@ function buildGraphLayout(graphData: GraphData) {
       return width;
     };
 
+    const placedNodes = new Set<string>();
+
     const placeNode = (nodeId: string, leftEdge: number, depth: number) => {
       const node = laidOutNodeMap.get(nodeId);
 
-      if (!node) {
+      if (!node || placedNodes.has(nodeId)) {
         return;
       }
+
+      placedNodes.add(nodeId);
 
       const subtreeWidth = computeSubtreeWidth(nodeId);
       node.depth = depth;
@@ -717,7 +744,9 @@ function buildGraphLayout(graphData: GraphData) {
       node.x = node.restX;
       node.y = node.restY;
 
-      const children = getSortedChildren(nodeId);
+      const children = getSortedChildren(nodeId).filter(
+        (childId) => !placedNodes.has(childId),
+      );
 
       if (children.length === 0) {
         return;
@@ -1145,9 +1174,26 @@ function getLinkEndpoints(
   const startY = startAnchor.y + normalY * semanticSpread * 0.3;
   const endX = endAnchor.x + normalX * semanticSpread * 0.16;
   const endY = endAnchor.y + normalY * semanticSpread * 0.16;
+  // Dependency edges (required_for / prerequisite_for / depends_on) that don't
+  // own the structural tree still carry hierarchy meaning, so they shouldn't
+  // fan out randomly like loose associative links. Bow them consistently to one
+  // side (downward on screen) so a chain of prerequisites reads as clean,
+  // nested arcs instead of a scattered tangle. Other semantic edges keep the
+  // hash-based side so overlapping associative links stay visually separable.
+  const isDependencyLink =
+    link.edge_type === "required_for" ||
+    link.edge_type === "prerequisite_for" ||
+    link.edge_type === "depends_on";
+  const curveSign = isDependencyLink
+    ? normalY >= 0
+      ? 1
+      : -1
+    : hashString(link.id) % 2 === 0
+      ? 1
+      : -1;
   const curveMagnitude =
     Math.min(92, Math.max(20, distance * 0.14 + Math.abs(semanticSpread) * 0.9)) *
-    (hashString(link.id) % 2 === 0 ? 1 : -1);
+    curveSign;
 
   return {
     controlX: midpoint.x + normalX * (curveMagnitude + semanticSpread),
