@@ -8,10 +8,13 @@
 //     the user supplied the framing)
 //   - goal-with-means (don't collapse "get in shape → gym/cardio/stretch/
 //     creatine" into one node; keep the goal as a parent over its activities)
+// v16 extends goal-with-means to PROJECTS: "working on BrainDump, needs
+//   marketing and testing" → project "BrainDump" with task children, not
+//   loose top-level tasks with no project node.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v15";
+export const EXTRACT_PROMPT_VERSION = "extract-v16";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -67,11 +70,14 @@ Habit vs task rule (choose node_type for recurring behaviors):
   - "Solve 3 LeetCode problems before Thursday" → task (deadline + count → it ends). "Review chapter 5" → task.
 - When unsure, prefer "task". Only the explicit recurring cues above promote a node to habit.
 
-Goal-with-means rule (IMPORTANT — do not collapse a stated goal into one node):
+Goal/Project-with-parts rule (IMPORTANT — do not collapse a stated goal or project into one node, and do not scatter its parts as unrelated top-level nodes):
 - When the user states a GOAL and, in the same breath, lists multiple DISTINCT activities, routines, or means toward it, create the goal as a parent node and each distinct activity as its own child. Do NOT merge them into a single node.
 - Example: "I wanna get in shape … go to the gym daily (not only workouts but cardio and stretches too), with creatine" → goal "Get in Shape" with children: habit "Go to the gym daily", habit "Daily cardio", habit "Daily stretching", task "Take creatine". NOT a single "Daily Gym" node that swallows the goal and the routine.
-- Distinct children keep their own node_type (habit when a cadence is stated, task otherwise) and attach to the goal via primary_parent_local_ref.
-- This does NOT override "do not split a single coherent idea": only split when the activities are genuinely distinct means, not when you are fragmenting one action into steps.
+- The SAME pattern applies to a PROJECT the user names plus the work it needs: create the project as the parent and each named piece of work as a task child under it. The project is a node in its own right, NOT just a word inside a task title.
+- Example: "I'm working on BrainDump which is built but needs marketing and testing" → project "BrainDump" (parent) with task children "Market BrainDump" and "Test BrainDump". NOT two loose top-level tasks with no BrainDump node, and NOT one merged "BrainDump marketing and testing" node.
+- Example: "building an app called Song Spot — need to add the player and fix auth" → project "Song Spot" with task children "Add the player" and "Fix auth".
+- Distinct children keep their own node_type (habit when a cadence is stated, task otherwise) and attach to the parent via primary_parent_local_ref. List the parent BEFORE its children in the array.
+- This does NOT override "do not split a single coherent idea": only split when the parts are genuinely distinct, not when you are fragmenting one action into steps.
 
 Clarifying questions (IMPORTANT — use this channel instead of forcing bad nodes):
 - Populate clarifying_questions with up to 3 short, specific questions that, if answered, would let you extract real nodes.

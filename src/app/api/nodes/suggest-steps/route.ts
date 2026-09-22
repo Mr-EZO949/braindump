@@ -8,7 +8,7 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { AI_MODELS, AI_TEMPERATURE } from "@/lib/ai/config";
 
-// Shared output contract — both modes emit the same parseable brain-dump shape.
+// Light mode's output contract — a flat list of immediate next actions.
 const OUTPUT_FORMAT = `Output format — write as a brain dump that the extraction engine can parse:
 
 Under "[parent title]":
@@ -18,23 +18,44 @@ Under "[parent title]":
 
 Only output the brain dump text. No preamble, no explanation, no markdown.`;
 
-// Full roadmap — the whole breakdown.
+// Full mode's output contract — a two-level TREE (phases → tasks) so the
+// roadmap reads as structure the user can navigate, not a flat wall of tasks.
+// The nesting (a "Under [phase]:" block per phase) is what the extraction
+// engine turns into sub-parents beneath the goal.
+const OUTPUT_FORMAT_GROUPED = `Output format — write as a brain dump the extraction engine parses into a TREE. Group the steps under 2–4 short PHASES (logical stages, in order). Each phase is its own heading with its tasks nested under it:
+
+Under "[parent title]":
+- Phase: [phase name]. [one line — what this phase covers]
+- Phase: [phase name]. [one line]
+
+Under "[phase name]":
+- Task: [step title]. [summary]
+- Task: [step title]. [summary]
+
+Under "[phase name]":
+- Task: [step title]. [summary]
+- Task: [step title]. [summary]
+
+Give every phase its own "Under [phase name]:" block. Keep it to 2–4 phases, 2–4 tasks each. Only output the brain dump text. No preamble, no explanation, no markdown.`;
+
+// Full roadmap — the whole breakdown, grouped into phases.
 const STEP_SYSTEM_PROMPT_FULL = `You are a task-breakdown assistant for BrainDump, a graph-based planning tool.
 
-Given a goal or project, generate 4–8 concrete, actionable steps the user should take to accomplish it. Each step should be a task that can be checked off.
+Given a goal or project, generate 4–8 concrete, actionable steps — and ORGANIZE them into 2–4 short phases so the result is a high-level tree, not a flat list. Each step is a task that can be checked off; each phase is a stage that groups related tasks.
 
 Rules:
 - Read the Description for the CURRENT state — what is already done, in progress, or live. Do NOT propose steps for work that's already complete; start from where things actually stand, not from scratch. (If a survey is described as "already live", don't suggest designing or launching it — pick up at analysis/write-up.)
 - If the Description names a blocker — waiting on a person, a decision, or input that isn't ready — make the unblocking action an EARLY step and sequence the rest after it.
 - Tailor every step to THIS specific situation. Never output a generic textbook sequence that ignores the Description.
+- Phases should be natural stages for THIS goal (e.g. "Prep", "Build", "Launch"), named for what they contain — not generic "Phase 1/2/3". Order them so earlier phases unblock later ones.
+- Put each task under the phase it belongs to. Every phase must hold at least one task.
 - If the workspace's other active items are listed, do NOT propose steps that duplicate them, and sequence your steps around their deadlines and dependencies — if a step must happen before or is blocked by another item, order it accordingly and say so in its summary.
 - Be specific and practical, not generic. "Take a full-length SAT practice test" is better than "Practice".
-- Order steps logically — what comes first, what depends on what.
 - Include a mix of immediate quick-wins and longer tasks.
 - Keep titles short (under 60 characters) but descriptive.
 - Include a one-sentence summary for each step explaining why it matters or what it involves.
 
-${OUTPUT_FORMAT}`;
+${OUTPUT_FORMAT_GROUPED}`;
 
 // Light — just enough to get unstuck. For paralysis relief, not planning.
 const STEP_SYSTEM_PROMPT_LIGHT = `You are a task-breakdown assistant for BrainDump, a tool for people who get stuck starting things.
