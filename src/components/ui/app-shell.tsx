@@ -298,6 +298,11 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
   const [proposedNodesSubmitting, setProposedNodesSubmitting] = useState(false);
+  // Life-areas inferred from the dump (same call the wizard uses), surfaced in
+  // the review modal so a normal dump can also spin up top-level branches.
+  const [suggestedAreas, setSuggestedAreas] = useState<
+    Array<{ title: string; area_type: string }>
+  >([]);
   // Clarifying questions returned alongside (or instead of) proposals — the
   // extractor asks back when the dump is vague. Paired with the raw dump
   // text so the chat seed can echo the full context.
@@ -1066,12 +1071,14 @@ export function AppShell({ initialUser }: AppShellProps) {
       const entryData = await entryRes.json() as {
         proposed_nodes?: ProposedNode[];
         clarifying_questions?: string[];
+        suggested_areas?: Array<{ title: string; area_type: string }>;
       };
       const nodes = entryData.proposed_nodes ?? [];
       const questions = entryData.clarifying_questions ?? [];
       if (entryRes.ok && (nodes.length > 0 || questions.length > 0)) {
         setProposedNodes(nodes);
         setClarifyingQuestions(questions);
+        setSuggestedAreas(entryData.suggested_areas ?? []);
         setLastDumpRawText(nodesContent);
         setProposedReviewOpen(true);
       }
@@ -2217,11 +2224,13 @@ export function AppShell({ initialUser }: AppShellProps) {
       proposed_nodes?: ProposedNode[];
       clarifying_questions?: string[];
       completed_existing_node_titles?: string[];
+      suggested_areas?: Array<{ title: string; area_type: string }>;
     },
   ) => {
     const nodes = data.proposed_nodes ?? [];
     const questions = data.clarifying_questions ?? [];
     const completedTitles = data.completed_existing_node_titles ?? [];
+    const areas = data.suggested_areas ?? [];
 
     const summary = [
       nodes.length > 0
@@ -2261,6 +2270,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (nodes.length > 0 || questions.length > 0) {
       setProposedNodes(nodes);
       setClarifyingQuestions(questions);
+      setSuggestedAreas(areas);
       setLastDumpRawText(rawText);
       setProposedReviewOpen(true);
     }
@@ -2388,6 +2398,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       const data = await res.json() as {
         proposed_nodes?: ProposedNode[];
         clarifying_questions?: string[];
+        suggested_areas?: Array<{ title: string; area_type: string }>;
         raw_entry_id?: string;
         error?: string;
       };
@@ -2412,6 +2423,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       if (nodes.length > 0 || questions.length > 0) {
         setProposedNodes(nodes);
         setClarifyingQuestions(questions);
+        setSuggestedAreas(data.suggested_areas ?? []);
         setLastDumpRawText(retriedDumpText);
         setProposedReviewOpen(true);
       }
@@ -2419,6 +2431,31 @@ export function AppShell({ initialUser }: AppShellProps) {
       setBrainDumpError(err instanceof Error ? err.message : "Retry failed.");
     } finally {
       setBrainDumpRetrying(false);
+    }
+  };
+
+  // Create the life-area branches the user selected in the review modal. Runs
+  // BEFORE node acceptance (the modal awaits it first), so the areas exist +
+  // are embedded when the accepted nodes get connection-analyzed and linked
+  // under them. Best-effort — a failure here must never block accepting nodes.
+  const handleAddAreas = async (areas: Array<{ title: string; area_type: string }>) => {
+    if (!selectedWorkspaceId || areas.length === 0) return;
+    try {
+      await fetch(`/api/workspaces/${selectedWorkspaceId}/areas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ areas }),
+      });
+      // Reload so the new branch nodes + their root edges render. The node
+      // acceptance that runs right after appends onto this fresh graph.
+      const next = await loadWorkspaceGraphData(
+        authUser?.id ?? null,
+        selectedWorkspaceId,
+        selectedWorkspace?.name ?? null,
+      );
+      setGraphData(next);
+    } catch {
+      // Best-effort — area creation failing shouldn't block node acceptance.
     }
   };
 
@@ -2552,13 +2589,18 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
 
     // First-dump shortcut: if these proposals came from the bootstrap
-    // wizard, skip BOTH the suggest-steps modal and the post-acceptance
-    // connection-analysis call. A first dump already produces enough nodes
-    // and the user just spent time reviewing them — don't dogpile them
-    // with two more modals and a stack of Sonnet calls. Suggest-steps is
-    // still available manually from any node's details panel.
+    // wizard, skip the suggest-steps modal — a first dump already produces
+    // enough nodes and the user just spent time reviewing them; don't dogpile
+    // them with another modal + a stack of Sonnet calls. Suggest-steps stays
+    // available manually from any node's details panel. We DO still run
+    // connection analysis, though: the wizard builds the initial graph and the
+    // user expects edges between their nodes (and to the life-areas) to appear.
     if (proposalsFromBootstrap) {
       setProposalsFromBootstrap(false);
+      if (data.accepted_nodes && data.accepted_nodes.length > 0 && selectedWorkspaceId) {
+        const bootstrapNodeIds = (data.accepted_nodes as Node[]).map((n) => n.id);
+        void analyzeNodes(bootstrapNodeIds, selectedWorkspaceId);
+      }
     } else if (data.accepted_nodes && data.accepted_nodes.length > 0 && selectedWorkspaceId) {
       const acceptedNodes = data.accepted_nodes as Node[];
       const nodeIds = acceptedNodes.map((n) => n.id);
@@ -2733,6 +2775,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     setProposedReviewOpen(false);
     setProposedNodes([]);
     setClarifyingQuestions([]);
+    setSuggestedAreas([]);
     setLastDumpRawText("");
 
     if (questionsToAsk.length > 0) {
@@ -3633,6 +3676,8 @@ export function AppShell({ initialUser }: AppShellProps) {
             <ProposedNodesReview
               existingNodeTitles={existingNodeTitleMap}
               proposals={proposedNodes}
+              suggestedAreas={suggestedAreas}
+              onAddAreas={handleAddAreas}
               onAccept={handleProposalReview}
               onClose={requestCloseProposedNodesReview}
               submitting={proposedNodesSubmitting}
@@ -4211,6 +4256,9 @@ export function AppShell({ initialUser }: AppShellProps) {
               setClarifyingQuestions(
                 (handoff!.clarifying_questions ?? []) as typeof clarifyingQuestions,
               );
+              // The wizard already created the user's life-areas, so don't
+              // re-offer area branches in the first-dump review.
+              setSuggestedAreas([]);
               setLastDumpRawText(handoff!.raw_text);
               setProposalsFromBootstrap(true);
               setProposedReviewOpen(true);
@@ -4245,6 +4293,11 @@ export function AppShell({ initialUser }: AppShellProps) {
                 bootstrapSkippedThisSessionRef.current.add(selectedWorkspaceId);
               }
               setBootstrapWorkspaceId(null);
+              // Skipping setup must NOT dead-end onboarding — the user still
+              // gets the guided tour of the UI (previously the tour only ran
+              // after completing the wizard, so a skip left them staring at an
+              // empty graph with no walkthrough).
+              setShowTour(true);
               return;
             }
             // Non-onboarding ("created a workspace by mistake") still discards.

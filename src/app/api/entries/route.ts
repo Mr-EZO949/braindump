@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { runExtraction } from "@/lib/ai/extraction";
+import { suggestAreas } from "@/lib/ai/areas";
 import { AI_INGESTION, AI_FLAGS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { checkEntryRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
 import type { RawEntrySourceType } from "@/types/ai";
@@ -201,13 +202,24 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const result = await runExtraction({
-    rawEntryId: rawEntry.id,
-    rawText: trimmed,
-    workspaceId: workspace_id,
-    userId: user.id,
-    supabase,
-  });
+  // Run extraction and life-area inference in parallel. Area inference is the
+  // same Haiku call the bootstrap wizard uses — so a NORMAL dump gets the same
+  // "here are your branches" treatment. It's independent of extraction, so
+  // running it concurrently adds no latency. Skipped for suggest-steps
+  // roadmaps (default_parent_node_id set) — those already have a home.
+  const wantAreaSuggestions = !default_parent_node_id;
+  const [result, areaResult] = await Promise.all([
+    runExtraction({
+      rawEntryId: rawEntry.id,
+      rawText: trimmed,
+      workspaceId: workspace_id,
+      userId: user.id,
+      supabase,
+    }),
+    wantAreaSuggestions
+      ? suggestAreas({ dump: trimmed })
+      : Promise.resolve({ suggested_areas: [], suggestion_error: null }),
+  ]);
 
   // Apply the default-parent override (e.g. from suggest-steps). Any
   // extracted proposal that ended up parent-less gets pinned under the
@@ -312,5 +324,9 @@ export async function POST(req: NextRequest) {
     clarifying_questions: result.clarifyingQuestions,
     completed_existing_node_titles: completedExistingTitles,
     auto_complete_local_refs: result.autoCompleteLocalRefs,
+    // Life-area branches inferred from this dump. The review modal shows the
+    // ones that don't already exist so the user can add them as top-level
+    // branches (same as the wizard's step 2).
+    suggested_areas: areaResult.suggested_areas,
   });
 }

@@ -1,15 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { CloseIcon, PlusIcon } from "@/components/ui/icons";
 import type { WorkspaceProfileAreaType } from "@/types/graph";
-
-interface GoalRow {
-  id: string;
-  title: string;
-}
 
 interface AreaRow {
   id: string;
@@ -38,19 +33,32 @@ interface Props {
   isOnboarding?: boolean;
 }
 
-const MAX_GOALS = 6;
 const MAX_AREAS = 6;
-const AREA_TYPE_OPTIONS: Array<{ value: WorkspaceProfileAreaType; label: string }> = [
-  { value: "academic", label: "Academic" },
-  { value: "project", label: "Project" },
-  { value: "career", label: "Career" },
-  { value: "health", label: "Health" },
-  { value: "life_admin", label: "Life admin" },
-  { value: "personal", label: "Personal" },
+// Manual areas the user types on step 2 get a neutral default type — the
+// dropdown that used to let them pick one was removed (the type is an
+// internal grouping hint, not a decision worth putting on the user).
+const DEFAULT_AREA_TYPE: WorkspaceProfileAreaType = "personal";
+// Human labels for the (now display-only) area type. The picker was removed;
+// the badge just shows the AI's category, tinted neutral-gray in CSS.
+const AREA_TYPE_LABEL: Record<WorkspaceProfileAreaType, string> = {
+  academic: "Academic",
+  project: "Project",
+  career: "Career",
+  health: "Health",
+  life_admin: "Life admin",
+  personal: "Personal",
+};
+
+// Cycled under the spinner while the final bootstrap request runs. The submit
+// does real work — extraction, node creation, embeddings, connection
+// inference — so it can take a bit; these keep the wait feeling intentional.
+const BUILD_MESSAGES = [
+  "Reading your dump…",
+  "Pulling out tasks, goals, and ideas…",
+  "Sorting them under your areas…",
+  "Finding the connections between them…",
+  "Almost there — this can take a minute…",
 ];
-const AREA_TYPE_LABEL = Object.fromEntries(
-  AREA_TYPE_OPTIONS.map((o) => [o.value, o.label]),
-) as Record<WorkspaceProfileAreaType, string>;
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -65,48 +73,45 @@ export function WorkspaceBootstrapWizard({
 }: Props) {
   // The hero textarea is the brain dump — that's where the AI does its work
   // and where most of the user's first-touch value comes from. Everything
-  // structured (focus, role, goals) is tucked behind an "Add structure"
-  // toggle so the canvas stays calm on first impression.
+  // structured (focus, role) is tucked behind an "Add structure" toggle so
+  // the canvas stays calm on first impression.
   const [bootstrapDump, setBootstrapDump] = useState("");
   const [showStructure, setShowStructure] = useState(false);
   const [successTitle, setSuccessTitle] = useState("");
   const [role, setRole] = useState("");
-  const [goalDraft, setGoalDraft] = useState("");
-  const [goals, setGoals] = useState<GoalRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  // Step 2 (the area skeleton): AI proposes life-areas from the dump, user edits.
+  // Step 2 (the area skeleton): AI proposes life-areas from the dump, user
+  // edits. Goals are no longer collected on step 1 — anything the user wants
+  // to track as its own branch is added here, as an area, AFTER they've seen
+  // what the AI already proposed (so they don't create duplicates).
   const [step, setStep] = useState<0 | 1>(0);
   const [areas, setAreas] = useState<AreaRow[]>([]);
   const [areaTitleDraft, setAreaTitleDraft] = useState("");
-  const [areaTypeDraft, setAreaTypeDraft] = useState<WorkspaceProfileAreaType>("personal");
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [buildMessageIndex, setBuildMessageIndex] = useState(0);
 
   const trimmed = successTitle.trim();
   const trimmedRole = role.trim();
-  const trimmedGoalDraft = goalDraft.trim();
   const trimmedDump = bootstrapDump.trim();
-  const canAddGoal =
-    Boolean(trimmedGoalDraft) &&
-    goals.length < MAX_GOALS &&
-    !goals.some((g) => g.title.toLowerCase() === trimmedGoalDraft.toLowerCase());
+  const trimmedAreaDraft = areaTitleDraft.trim();
+  const canAddArea =
+    Boolean(trimmedAreaDraft) &&
+    areas.length < MAX_AREAS &&
+    !areas.some((a) => a.title.toLowerCase() === trimmedAreaDraft.toLowerCase());
 
-  function addGoalFromValue(value: string) {
-    const v = value.trim();
-    if (!v || goals.length >= MAX_GOALS || goals.some((g) => g.title.toLowerCase() === v.toLowerCase())) return;
-    setGoals((prev) => [...prev, { id: createId("goal"), title: v }]);
-  }
-
-  function addGoal() {
-    if (!canAddGoal) return;
-    addGoalFromValue(trimmedGoalDraft);
-    setGoalDraft("");
-  }
-
-  function removeGoal(id: string) {
-    setGoals((prev) => prev.filter((g) => g.id !== id));
-  }
+  // Cycle the build messages while the final submit runs.
+  useEffect(() => {
+    if (!submitting) {
+      setBuildMessageIndex(0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setBuildMessageIndex((i) => Math.min(i + 1, BUILD_MESSAGES.length - 1));
+    }, 2600);
+    return () => window.clearInterval(id);
+  }, [submitting]);
 
   // Step 1 → 2: move to the areas step and ask the AI to propose life-areas
   // from the dump. Show the step immediately (with a spinner) so it feels
@@ -130,7 +135,7 @@ export function WorkspaceBootstrapWizard({
         suggested_areas?: Array<{ title: string; area_type: WorkspaceProfileAreaType }>;
       };
       setAreas(
-        (data.suggested_areas ?? []).map((a) => ({
+        (data.suggested_areas ?? []).slice(0, MAX_AREAS).map((a) => ({
           id: createId("area"),
           title: a.title,
           area_type: a.area_type,
@@ -144,10 +149,11 @@ export function WorkspaceBootstrapWizard({
   }
 
   function addArea() {
-    const v = areaTitleDraft.trim();
-    if (!v || areas.length >= MAX_AREAS) return;
-    if (areas.some((a) => a.title.toLowerCase() === v.toLowerCase())) return;
-    setAreas((prev) => [...prev, { id: createId("area"), title: v.slice(0, 80), area_type: areaTypeDraft }]);
+    if (!canAddArea) return;
+    setAreas((prev) => [
+      ...prev,
+      { id: createId("area"), title: trimmedAreaDraft.slice(0, 80), area_type: DEFAULT_AREA_TYPE },
+    ]);
     setAreaTitleDraft("");
   }
 
@@ -170,7 +176,9 @@ export function WorkspaceBootstrapWizard({
           // Falls back to a neutral placeholder so the bootstrap endpoint
           // never sees an empty success_title.
           success_title: trimmed || workspaceName || "My workspace",
-          goals: goals.map((g) => ({ title: g.title })),
+          // Goals are no longer a separate concept in the wizard — the user's
+          // own branches come through as areas from step 2.
+          goals: [],
           areas: areas.map((a) => ({ title: a.title, area_type: a.area_type })),
           bootstrap_dump: trimmedDump || null,
         }),
@@ -263,7 +271,7 @@ export function WorkspaceBootstrapWizard({
                 Your life <span className="bootstrap-hero-heading-em">areas</span>
               </h2>
               <p className="bootstrap-hero-sub">
-                The branches your graph hangs off — edit, remove, or add. Your dump sorts under these.
+                The branches your graph hangs off — edit, remove, or add your own. Your dump sorts under these.
               </p>
             </>
           )}
@@ -280,10 +288,12 @@ export function WorkspaceBootstrapWizard({
             maxLength={4000}
             autoFocus
             rows={9}
+            disabled={submitting}
           />
 
-          {/* Structure toggle — collapsed by default. Opens to reveal three
-              terse inputs: season, role, goals. */}
+          {/* Structure toggle — collapsed by default. Opens to reveal two
+              terse inputs: focus + who you are. (Goals were removed — the
+              user adds their own branches as areas on step 2 instead.) */}
           <button
             type="button"
             className="bootstrap-structure-toggle"
@@ -296,7 +306,7 @@ export function WorkspaceBootstrapWizard({
             </span>
             <span>{showStructure ? "Hide structure" : "Add structure"}</span>
             <span className="bootstrap-structure-toggle-hint">
-              focus · who you are · top goals
+              focus · who you are
             </span>
           </button>
 
@@ -335,59 +345,6 @@ export function WorkspaceBootstrapWizard({
                     autoComplete="off"
                   />
                 </div>
-
-                <div className="bootstrap-line bootstrap-line--goals">
-                  <span className="bootstrap-line-prompt">
-                    Goals
-                    {goals.length > 0 ? (
-                      <span className="bootstrap-line-prompt-count">{goals.length}</span>
-                    ) : null}
-                  </span>
-                  <div className="bootstrap-goals-row">
-                    <input
-                      className="bootstrap-line-input"
-                      type="text"
-                      placeholder="type a goal, press enter"
-                      value={goalDraft}
-                      onChange={(e) => setGoalDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addGoal();
-                        }
-                      }}
-                      maxLength={120}
-                      autoComplete="off"
-                    />
-                    <button
-                      type="button"
-                      className="bootstrap-line-add"
-                      onClick={addGoal}
-                      disabled={!canAddGoal}
-                      aria-label="Add goal"
-                    >
-                      <PlusIcon className="h-[12px] w-[12px]" />
-                    </button>
-                  </div>
-                </div>
-
-                {goals.length > 0 && (
-                  <div className="bootstrap-goal-chips">
-                    {goals.map((goal) => (
-                      <span className="bootstrap-goal-chip-v2" key={goal.id}>
-                        {goal.title}
-                        <button
-                          type="button"
-                          className="bootstrap-goal-chip-v2-x"
-                          onClick={() => removeGoal(goal.id)}
-                          aria-label={`Remove ${goal.title}`}
-                        >
-                          <CloseIcon className="h-[9px] w-[9px]" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -395,7 +352,11 @@ export function WorkspaceBootstrapWizard({
           ) : (
           <div className="bootstrap-areas">
             {loadingSuggestions ? (
-              <p className="bootstrap-areas-note">Reading your dump for life-areas…</p>
+              <div className="bootstrap-areas-loading" role="status" aria-live="polite">
+                <span className="bootstrap-spinner" aria-hidden="true" />
+                <p className="bootstrap-areas-loading-title">Reading your dump for life-areas…</p>
+                <p className="bootstrap-areas-loading-sub">This usually takes a few seconds.</p>
+              </div>
             ) : (
               <>
                 {areas.length === 0 ? (
@@ -424,7 +385,7 @@ export function WorkspaceBootstrapWizard({
                   <input
                     className="bootstrap-line-input"
                     type="text"
-                    placeholder="add an area"
+                    placeholder={areas.length >= MAX_AREAS ? "Max areas reached" : "Add your own area"}
                     value={areaTitleDraft}
                     onChange={(e) => setAreaTitleDraft(e.target.value)}
                     onKeyDown={(e) => {
@@ -435,24 +396,13 @@ export function WorkspaceBootstrapWizard({
                     }}
                     maxLength={80}
                     autoComplete="off"
+                    disabled={areas.length >= MAX_AREAS}
                   />
-                  <select
-                    className="bootstrap-area-type-select"
-                    value={areaTypeDraft}
-                    onChange={(e) => setAreaTypeDraft(e.target.value as WorkspaceProfileAreaType)}
-                    aria-label="Area type"
-                  >
-                    {AREA_TYPE_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
                   <button
                     type="button"
                     className="bootstrap-line-add"
                     onClick={addArea}
-                    disabled={!areaTitleDraft.trim() || areas.length >= MAX_AREAS}
+                    disabled={!canAddArea}
                     aria-label="Add area"
                   >
                     <PlusIcon className="h-[12px] w-[12px]" />
@@ -503,6 +453,17 @@ export function WorkspaceBootstrapWizard({
             You can do this anytime — just Brain Dump.
           </p>
         ) : null}
+
+        {/* Full-modal loading veil while the final bootstrap request runs — a
+            spinner plus a couple of cycling reassurance messages so the
+            (genuinely multi-second) build never feels frozen. */}
+        {submitting && (
+          <div className="bootstrap-building" role="status" aria-live="polite">
+            <span className="bootstrap-building-spinner" aria-hidden="true" />
+            <p className="bootstrap-building-title">Building your graph</p>
+            <p className="bootstrap-building-msg">{BUILD_MESSAGES[buildMessageIndex]}</p>
+          </div>
+        )}
 
         {showCancelConfirm && (
           <div className="bootstrap-confirm-overlay">

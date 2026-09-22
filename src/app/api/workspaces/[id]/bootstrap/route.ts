@@ -8,6 +8,7 @@ import { getImportanceLabel } from "@/lib/graph/importance";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { pickGoalForArea } from "@/lib/graph/anchor-attachment";
 import { runExtraction } from "@/lib/ai/extraction";
+import { generateAndStoreEmbedding } from "@/lib/ai/embeddings";
 import { AI_FLAGS } from "@/lib/ai/config";
 import type {
   NodeType,
@@ -418,6 +419,28 @@ export async function POST(
       );
     }
   }
+
+  // Embed the skeleton branches (goals + areas). Without embeddings these
+  // nodes are invisible to semantic search — so connection analysis on the
+  // first dump can't link the user's new tasks to their life-areas, and the
+  // retroactive clustering pass skips them. Awaited + best-effort per node so
+  // a flaky embedding call never fails the wizard.
+  await Promise.all(
+    childNodes
+      .filter((node) => typeof node.id === "string" && typeof node.title === "string")
+      .map((node) =>
+        generateAndStoreEmbedding({
+          nodeId: node.id as string,
+          title: node.title as string,
+          summary: (node.summary as string | null) ?? null,
+          workspaceId,
+          userId: user.id,
+          supabase,
+        }).catch(() => {
+          // Node is created regardless; a missing embedding falls to the retry queue.
+        }),
+      ),
+  );
 
   const { error: updateWorkspaceError } = await supabase
     .from("workspaces")

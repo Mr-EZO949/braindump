@@ -86,9 +86,22 @@ interface EditState {
   proposed_node_type: NodeType;
 }
 
+// A life-area branch the extractor inferred from the dump (mirrors the
+// wizard's step 2). Kept as a local shape so this client file never imports
+// the server-only areas module (which pulls in the Anthropic SDK).
+export interface SuggestedAreaOption {
+  title: string;
+  area_type: string;
+}
+
 interface ProposedNodesReviewProps {
   existingNodeTitles: Record<string, string>;
   proposals: ProposedNode[];
+  // Life-areas inferred from this dump. The modal shows the ones that don't
+  // already exist as togglable chips; accepted ones are created as top-level
+  // branches via onAddAreas before the node acceptance runs.
+  suggestedAreas?: SuggestedAreaOption[];
+  onAddAreas?: (areas: SuggestedAreaOption[]) => Promise<void>;
   onAccept: (
     actions: Array<{
       id: string;
@@ -117,6 +130,8 @@ interface ProposedNodesReviewProps {
 export function ProposedNodesReview({
   existingNodeTitles,
   proposals,
+  suggestedAreas = [],
+  onAddAreas,
   onAccept,
   onClose,
   submitting,
@@ -125,6 +140,34 @@ export function ProposedNodesReview({
 }: ProposedNodesReviewProps) {
   const hasQuestions = clarifyingQuestions.length > 0;
   const hasProposals = proposals.length > 0;
+
+  // Only offer areas that don't already exist as a node (case-insensitive) —
+  // no point proposing a "Fitness" branch when one is already there.
+  const newAreas = useMemo(() => {
+    const existing = new Set(
+      Object.values(existingNodeTitles).map((t) => t.trim().toLowerCase()),
+    );
+    const seen = new Set<string>();
+    return suggestedAreas.filter((a) => {
+      const key = a.title.trim().toLowerCase();
+      if (!key || existing.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [suggestedAreas, existingNodeTitles]);
+  // Areas start selected — they're high-signal branches from this dump.
+  const [areaOn, setAreaOn] = useState<Set<string>>(
+    () => new Set(newAreas.map((a) => a.title.toLowerCase())),
+  );
+  const toggleArea = (title: string) => {
+    const key = title.toLowerCase();
+    setAreaOn((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
   // Per-question answer state. Each question's draft + submitted state is
   // tracked separately; once submitted we collapse the input into a small
   // "→ answer" stub so the user knows it landed in chat.
@@ -210,6 +253,7 @@ export function ProposedNodesReview({
 
   const allChecked = checked.size === proposals.length;
   const acceptCount = checked.size;
+  const selectedAreaCount = newAreas.filter((a) => areaOn.has(a.title.toLowerCase())).length;
   const dupCount = proposals.filter(
     (p) => (duplicatesByProposal[p.id]?.length ?? 0) > 0,
   ).length;
@@ -219,6 +263,12 @@ export function ProposedNodesReview({
     if (mode === "reject-all") {
       await onAccept(proposals.map((p) => ({ id: p.id, action: "reject" })));
       return;
+    }
+    // Create the selected life-area branches first (so they exist as anchors
+    // before connection analysis links the accepted nodes to them).
+    const areasToAdd = newAreas.filter((a) => areaOn.has(a.title.toLowerCase()));
+    if (areasToAdd.length > 0 && onAddAreas) {
+      await onAddAreas(areasToAdd);
     }
     const actions = proposals.map((p) => {
       const isAccept = checked.has(p.id);
@@ -287,6 +337,37 @@ export function ProposedNodesReview({
           </button>
         </div>
       </div>
+
+      {/* Suggested life-areas — top-level branches inferred from this dump.
+          Toggle the ones to add; selected areas are created as branches when
+          you accept, then the dump's nodes get linked under them. */}
+      {newAreas.length > 0 && (
+        <div className="prn-areas">
+          <div className="prn-areas-header">
+            <span className="prn-areas-label">Life-areas to branch under</span>
+            <span className="prn-areas-hint">tap to include</span>
+          </div>
+          <div className="prn-areas-chips">
+            {newAreas.map((a) => {
+              const on = areaOn.has(a.title.toLowerCase());
+              return (
+                <button
+                  key={a.title}
+                  type="button"
+                  className={`prn-area-chip${on ? " prn-area-chip--on" : ""}`}
+                  onClick={() => toggleArea(a.title)}
+                  aria-pressed={on}
+                >
+                  <span className="prn-area-chip-check" aria-hidden="true">
+                    {on ? "✓" : "+"}
+                  </span>
+                  {a.title}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Clarifying questions — the extractor asks back for vague bits */}
       {hasQuestions && (
@@ -505,13 +586,28 @@ export function ProposedNodesReview({
               </button>
               <button
                 className="prn-btn-primary"
-                disabled={submitting || acceptCount === 0}
+                disabled={submitting || (acceptCount === 0 && selectedAreaCount === 0)}
                 onClick={() => void handleSubmit("accept-checked")}
                 type="button"
               >
-                {submitting ? "Saving…" : `Add ${acceptCount} node${acceptCount !== 1 ? "s" : ""}`}
+                {submitting
+                  ? "Saving…"
+                  : acceptCount > 0
+                    ? `Add ${acceptCount} node${acceptCount !== 1 ? "s" : ""}`
+                    : `Add ${selectedAreaCount} branch${selectedAreaCount !== 1 ? "es" : ""}`}
               </button>
             </>
+          ) : selectedAreaCount > 0 ? (
+            <button
+              className="prn-btn-primary"
+              disabled={submitting}
+              onClick={() => void handleSubmit("accept-checked")}
+              type="button"
+            >
+              {submitting
+                ? "Saving…"
+                : `Add ${selectedAreaCount} branch${selectedAreaCount !== 1 ? "es" : ""}`}
+            </button>
           ) : (
             <button
               className="prn-btn-ghost"
