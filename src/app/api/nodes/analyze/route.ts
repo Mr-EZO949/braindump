@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
   // before matchNodes runs on any sibling.
   const { data: nodeRows } = await supabase
     .from("nodes")
-    .select("id, title, summary")
+    .select("id, title, summary, node_type")
     .in("id", normalizedNodeIds)
     .eq("workspace_id", workspace_id)
     .eq("user_id", user.id);
@@ -165,6 +165,31 @@ export async function POST(req: NextRequest) {
       supabase,
     }).catch(() => {});
   }
+
+  // Cost optimization: run edge INFERENCE only where it pays off. Every node is
+  // embedded above (so it stays searchable), but a leaf task/habit that
+  // extraction already nested under a parent rarely needs cross-links — the
+  // valuable connections are between branch-level nodes (goals, projects,
+  // concepts) and any still-orphaned node. Skipping already-parented leaves
+  // cuts the number of inferEdge (Haiku) calls on a deep dump by ~60-70%
+  // without losing the links that matter.
+  const { data: parentEdges } = await supabase
+    .from("edges")
+    .select("source_node_id")
+    .eq("workspace_id", workspace_id)
+    .eq("user_id", user.id)
+    .eq("edge_type", "belongs_to")
+    .eq("status", "active")
+    .in("source_node_id", normalizedNodeIds);
+  const parentedNodeIds = new Set((parentEdges ?? []).map((e) => e.source_node_id as string));
+  const nodeTypeById = new Map(
+    (nodeRows ?? []).map((n) => [n.id as string, n.node_type as string]),
+  );
+  const analysisNodeIds = normalizedNodeIds.filter((id) => {
+    const type = nodeTypeById.get(id);
+    const isLeafType = type === "task" || type === "habit";
+    return !(isLeafType && parentedNodeIds.has(id));
+  });
 
   // Build workspace context ONCE for the whole batch. Passing the same snapshot
   // to every runConnectionAnalysis keeps the inferEdge prompt prefix stable
@@ -185,11 +210,11 @@ export async function POST(req: NextRequest) {
   // Track which specific node IDs failed so the client can retry only those rather
   // than re-running the whole batch.
   const results = await Promise.all(
-    normalizedNodeIds.map(async (nodeId) => {
+    analysisNodeIds.map(async (nodeId) => {
       try {
         const result = await runConnectionAnalysis({
           nodeId,
-          excludeNodeIds: getPriorBatchNodeIds(normalizedNodeIds, nodeId),
+          excludeNodeIds: getPriorBatchNodeIds(analysisNodeIds, nodeId),
           workspaceId: workspace_id,
           userId: user.id,
           supabase,
