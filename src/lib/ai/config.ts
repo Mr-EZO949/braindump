@@ -25,7 +25,7 @@ export const AI_FLAGS = {
 
 export const AI_MODELS = {
   // Claude — production LLM
-  CLAUDE_SONNET: "claude-sonnet-4-6",
+  CLAUDE_SONNET: "claude-sonnet-5",
   // Haiku — cheap structured tasks (history compression, node judgment)
   CLAUDE_HAIKU: "claude-haiku-4-5-20251001",
   // Gemini — embeddings always; also the dev-tier LLM when AI_PRIMARY_PROVIDER=gemini
@@ -54,6 +54,36 @@ export const AI_TEMPERATURE = {
   PLANNER: 0.2, // Structured blocks — mostly deterministic
   MERGE_CHECK: 0.1, // Binary classification — deterministic
 } as const;
+
+// Newer Claude models (Sonnet 5, Opus 4.7+) REJECT `temperature`/`top_p`/`top_k`
+// with a 400, and default to *adaptive thinking* when `thinking` is omitted —
+// which would spend thinking tokens against our small max_tokens budgets and
+// add latency to the capture flow. Haiku 4.5 (and older) still accept
+// `temperature` and run thinking-off by default.
+//
+// `claudeRequestTuning` returns the correct per-model request params so a call
+// site stays correct whether it targets the Sonnet tier or Haiku. On the Sonnet
+// tier we disable thinking explicitly to preserve the pre-migration (Sonnet 4.6,
+// thinking-off) behavior: same latency, same cost shape, no truncation. Adaptive
+// thinking is a per-route quality lever we can opt into later (with max_tokens
+// headroom) — see the Sonnet 5 migration notes.
+const CLAUDE_MODELS_REJECTING_SAMPLING = [
+  "claude-sonnet-5",
+  "claude-opus-5",
+  "claude-opus-4-7",
+  "claude-opus-4-8",
+  "claude-fable",
+];
+
+export function claudeRequestTuning(
+  model: string,
+  temperature: number,
+): { temperature: number } | { thinking: { type: "disabled" } } {
+  const rejectsSampling = CLAUDE_MODELS_REJECTING_SAMPLING.some((prefix) =>
+    model.startsWith(prefix),
+  );
+  return rejectsSampling ? { thinking: { type: "disabled" } } : { temperature };
+}
 
 // ---------------------------------------------------------------------------
 // Confidence thresholds
@@ -115,9 +145,9 @@ export const AI_TOKEN_BUDGETS = {
 // ---------------------------------------------------------------------------
 
 export const AI_COST_PER_1M_TOKENS = {
-  // Claude Sonnet 4.6 (input / output)
-  CLAUDE_SONNET_INPUT: 3.0,
-  CLAUDE_SONNET_OUTPUT: 15.0,
+  // Claude Sonnet 5 (input / output) — cheaper than Sonnet 4.6's $3/$15
+  CLAUDE_SONNET_INPUT: 2.0,
+  CLAUDE_SONNET_OUTPUT: 10.0,
   // Claude Haiku 4.5 (input / output)
   CLAUDE_HAIKU_INPUT: 1.0,
   CLAUDE_HAIKU_OUTPUT: 5.0,

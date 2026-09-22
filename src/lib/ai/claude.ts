@@ -20,7 +20,7 @@ import type {
   MergeCheckOutput,
   AIRun,
 } from "@/types/ai";
-import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS } from "./config";
+import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS, claudeRequestTuning } from "./config";
 import { MalformedAIResponseError } from "./errors";
 import {
   validateExtractionOutput,
@@ -187,7 +187,7 @@ export class ClaudeProvider {
     const response = await this.client.messages.create({
       model: this.modelName,
       max_tokens: 8192,
-      temperature: AI_TEMPERATURE.EXTRACTION,
+      ...claudeRequestTuning(this.modelName, AI_TEMPERATURE.EXTRACTION),
       system: "You always respond with valid JSON only. No markdown code blocks, no extra text, no explanation — just the raw JSON object.",
       messages: [
         {
@@ -277,7 +277,7 @@ export class ClaudeProvider {
     const response = await this.client.messages.create({
       model: inferModel,
       max_tokens: maxTokens,
-      temperature: AI_TEMPERATURE.EDGE_INFERENCE,
+      ...claudeRequestTuning(inferModel, AI_TEMPERATURE.EDGE_INFERENCE),
       system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
       // Split into two user content blocks so the stable prefix (rules +
       // hoisted workspace context) can hit the prompt cache on repeated calls.
@@ -353,7 +353,7 @@ export class ClaudeProvider {
     const response = await this.client.messages.create({
       model: this.modelName,
       max_tokens: 2048,
-      temperature: AI_TEMPERATURE.ASSISTANT,
+      ...claudeRequestTuning(this.modelName, AI_TEMPERATURE.ASSISTANT),
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });
@@ -420,7 +420,7 @@ export class ClaudeProvider {
       const response = await this.client.messages.create({
         model: plannerModel,
         max_tokens: 4096,
-        temperature: AI_TEMPERATURE.PLANNER,
+        ...claudeRequestTuning(plannerModel, AI_TEMPERATURE.PLANNER),
         system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
         messages: [{ role: "user", content: prompt }],
       });
@@ -500,7 +500,7 @@ export class ClaudeProvider {
     const response = await this.client.messages.create({
       model: mergeModel,
       max_tokens: 256,
-      temperature: AI_TEMPERATURE.MERGE_CHECK,
+      ...claudeRequestTuning(mergeModel, AI_TEMPERATURE.MERGE_CHECK),
       system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
       messages: [{ role: "user", content: prompt }],
     });

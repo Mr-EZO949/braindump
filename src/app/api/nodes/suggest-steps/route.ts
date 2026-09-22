@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { AI_MODELS, AI_TEMPERATURE } from "@/lib/ai/config";
+import { AI_MODELS, AI_TEMPERATURE, claudeRequestTuning } from "@/lib/ai/config";
 
 // Light mode's output contract — a flat list of immediate next actions.
 const OUTPUT_FORMAT = `Output format — write as a brain dump that the extraction engine can parse:
@@ -171,7 +171,7 @@ export async function POST(req: NextRequest) {
     const response = await client.messages.create({
       model,
       max_tokens: 800,
-      temperature: AI_TEMPERATURE.PLANNER,
+      ...claudeRequestTuning(model, AI_TEMPERATURE.PLANNER),
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });
