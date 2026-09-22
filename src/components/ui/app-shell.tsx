@@ -3872,8 +3872,12 @@ export function AppShell({ initialUser }: AppShellProps) {
             initial={{ opacity: 0, y: 8 }}
             transition={{ duration: 0.15 }}
           >
-            <span className="ai-status-dot" />
-            {brainDumpSubmitting ? "Extracting nodes…" : "Finding connections…"}
+            <span className="ai-status-spinner" aria-hidden="true" />
+            <span className="ai-status-text">
+              {brainDumpSubmitting
+                ? "Reading your dump & building your graph…"
+                : "Finding connections…"}
+            </span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -4194,7 +4198,6 @@ export function AppShell({ initialUser }: AppShellProps) {
           workspaceName={workspaceName}
           isOnboarding={!workspaceCreationFlowRef.current}
           onComplete={(handoff) => {
-            const wasOnboarding = !workspaceCreationFlowRef.current;
             if (workspaceCreationFlowRef.current?.workspaceId === selectedWorkspaceId) {
               workspaceCreationFlowRef.current = null;
             }

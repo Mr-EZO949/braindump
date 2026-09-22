@@ -7806,16 +7806,47 @@ input[type="search"]::-webkit-search-results-decoration {
   z-index: 55;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
+  gap: 10px;
+  padding: 9px 16px;
   background: var(--color-bg-panel);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(213, 58, 71, 0.35);
   border-radius: 20px;
-  font-size: 12.5px;
-  color: var(--color-text-secondary);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  box-shadow: 0 6px 26px rgba(0, 0, 0, 0.45), 0 0 0 4px rgba(213, 58, 71, 0.06);
   pointer-events: none;
   white-space: nowrap;
+}
+
+.ai-status-text {
+  /* subtle shimmer so the label itself reads as "actively working" */
+  background: linear-gradient(
+    90deg,
+    var(--color-text-secondary) 0%,
+    var(--color-text) 50%,
+    var(--color-text-secondary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: ai-status-shimmer 1.8s linear infinite;
+}
+
+@keyframes ai-status-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.ai-status-spinner {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(213, 58, 71, 0.22);
+  border-top-color: #d53a47;
+  animation: graph-loading-spin 0.7s linear infinite;
 }
 
 .ai-status-dot {
