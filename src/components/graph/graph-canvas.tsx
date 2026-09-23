@@ -1292,51 +1292,56 @@ function getEdgeVisualStyle(
       ? `rgba(110,80,60,${Math.min(alpha * 1.4, 0.85)})`
       : `rgba(224,215,206,${alpha})`;
 
-  let opacity = structural ? 0.42 : 0.18;
-  let strokeWidth = structural ? 1.56 : 0.74;
-  let stroke = structural ? ink(0.34) : ink(0.18);
+  // Resting visibility. Secondary (semantic) edges used to be near-invisible
+  // until a node was hovered/selected — effective alpha (opacity × stroke
+  // alpha) was ~0.02-0.05. Bumped modestly so they read at rest too, while
+  // structural edges stay dominant so the hierarchy is still what the eye
+  // catches first.
+  let opacity = structural ? 0.42 : 0.26;
+  let strokeWidth = structural ? 1.56 : 0.8;
+  let stroke = structural ? ink(0.34) : ink(0.26);
   let dashArray: string | undefined;
   let markerEnd: string | undefined;
 
   switch (link.edge_type) {
     case "belongs_to":
-      opacity = structural ? 0.5 : 0.24;
-      strokeWidth = structural ? 1.36 + link.strength * 0.92 : 0.78;
-      stroke = structural ? ink(0.42) : ink(0.22);
+      opacity = structural ? 0.5 : 0.3;
+      strokeWidth = structural ? 1.36 + link.strength * 0.92 : 0.82;
+      stroke = structural ? ink(0.42) : ink(0.28);
       break;
     case "required_for":
     case "prerequisite_for":
-      opacity = structural ? 0.46 : 0.22;
-      strokeWidth = structural ? 1.54 + link.strength * 0.96 : 0.74;
-      stroke = structural ? ink(0.4) : ink(0.2);
+      opacity = structural ? 0.46 : 0.28;
+      strokeWidth = structural ? 1.54 + link.strength * 0.96 : 0.8;
+      stroke = structural ? ink(0.4) : ink(0.26);
       dashArray = "8 7";
       break;
     case "supports":
-      opacity = structural ? 0.48 : 0.18;
-      strokeWidth = structural ? 1.1 + link.strength * 0.5 : 0.66;
-      stroke = structural ? warmInk(0.5) : warmInk(0.2);
+      opacity = structural ? 0.48 : 0.26;
+      strokeWidth = structural ? 1.1 + link.strength * 0.5 : 0.72;
+      stroke = structural ? warmInk(0.5) : warmInk(0.28);
       break;
     case "related_to":
-      opacity = 0.16;
-      strokeWidth = 0.62;
-      stroke = ink(0.18);
+      opacity = 0.24;
+      strokeWidth = 0.68;
+      stroke = ink(0.26);
       dashArray = "3 6";
       break;
     case "useful_for":
-      opacity = 0.14;
-      strokeWidth = 0.58;
-      stroke = ink(0.16);
+      opacity = 0.22;
+      strokeWidth = 0.64;
+      stroke = ink(0.24);
       break;
     case "blocks":
-      opacity = 0.18;
-      strokeWidth = 0.66;
-      stroke = ink(0.2);
+      opacity = 0.26;
+      strokeWidth = 0.72;
+      stroke = ink(0.28);
       dashArray = "4 6";
       break;
     case "inspired_by":
-      opacity = 0.12;
-      strokeWidth = 0.52;
-      stroke = ink(0.14);
+      opacity = 0.2;
+      strokeWidth = 0.58;
+      stroke = ink(0.22);
       dashArray = "2 8";
       break;
   }

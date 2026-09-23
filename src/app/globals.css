@@ -15775,6 +15775,28 @@ input[type="search"]::-webkit-search-results-decoration {
   overflow: hidden;
   white-space: pre-wrap;
 }
+.dump-history-item-text--expanded {
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+.dump-history-more {
+  margin-top: 4px;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #d53a47;
+  cursor: pointer;
+}
+.dump-history-more:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+:root[data-theme="light"] .dump-history-item-text {
+  color: rgba(26, 22, 19, 0.82);
+}
 
 /* ── Bootstrap wizard step 2: AI-suggested life-areas ─────────────────── */
 .bootstrap-areas {

@@ -38,6 +38,15 @@ function formatWhen(iso: string): string {
 export function DumpHistoryModal({ workspaceId, onClose }: DumpHistoryModalProps) {
   const [entries, setEntries] = useState<DumpItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Which dumps are expanded to their full text (collapsed = clamped to 3 lines).
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -108,17 +117,38 @@ export function DumpHistoryModal({ workspaceId, onClose }: DumpHistoryModalProps
             </p>
           ) : (
             <ul className="dump-history-list">
-              {entries.map((e) => (
-                <li className="dump-history-item" key={e.id}>
-                  <div className="dump-history-item-meta">
-                    <span className="dump-history-when">{formatWhen(e.created_at)}</span>
-                    <span className="dump-history-status" data-status={e.status}>
-                      {STATUS_LABEL[e.status] ?? e.status}
-                    </span>
-                  </div>
-                  <p className="dump-history-item-text">{e.raw_text}</p>
-                </li>
-              ))}
+              {entries.map((e) => {
+                const isExpanded = expanded.has(e.id);
+                // Only offer the toggle when the text is long enough to be
+                // clamped (~3 lines at this width). Short dumps show in full.
+                const isLong = e.raw_text.length > 160 || e.raw_text.includes("\n");
+                return (
+                  <li className="dump-history-item" key={e.id}>
+                    <div className="dump-history-item-meta">
+                      <span className="dump-history-when">{formatWhen(e.created_at)}</span>
+                      <span className="dump-history-status" data-status={e.status}>
+                        {STATUS_LABEL[e.status] ?? e.status}
+                      </span>
+                    </div>
+                    <p
+                      className={`dump-history-item-text${isExpanded ? " dump-history-item-text--expanded" : ""}`}
+                      onClick={isLong ? () => toggleExpanded(e.id) : undefined}
+                      style={isLong ? { cursor: "pointer" } : undefined}
+                    >
+                      {e.raw_text}
+                    </p>
+                    {isLong ? (
+                      <button
+                        type="button"
+                        className="dump-history-more"
+                        onClick={() => toggleExpanded(e.id)}
+                      >
+                        {isExpanded ? "Show less" : "Show more"}
+                      </button>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
