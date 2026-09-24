@@ -24,9 +24,12 @@ export const viewport: Viewport = {
 };
 
 const SITE_NAME = "BrainDump";
-const TITLE_DEFAULT = "BrainDump — an AI second brain for ADHD & overwhelm";
+// Title mirrors the landing hero ("Dump it. Unfreeze your brain."); the
+// description leads with the real payoff — AI hands back your next step — not
+// "connections you didn't know existed" (old copy).
+const TITLE_DEFAULT = "BrainDump — Dump it. Unfreeze your brain.";
 const DESCRIPTION =
-  "BrainDump is an AI second brain for ADHD, overwhelm, and executive dysfunction. Dump your raw thoughts and the AI structures them into a living graph of connected priorities — then tells you what to work on next.";
+  "Dump your tangled thoughts into BrainDump and AI sorts the whole mess into clear priorities — then hands back the one thing to start now. A second brain for ADHD, overwhelm, and executive dysfunction.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

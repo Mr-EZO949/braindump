@@ -1,21 +1,18 @@
 // Canonical site URL, used for SEO metadata (metadataBase, canonical URLs,
 // OpenGraph), robots.ts and sitemap.ts.
 //
-// Resolution order:
-//   1. NEXT_PUBLIC_SITE_URL — set this to your real custom domain in prod
-//      (e.g. https://braindump.app). This is the one to configure.
-//   2. VERCEL_PROJECT_PRODUCTION_URL — Vercel injects the production *.vercel.app
-//      domain automatically, so canonical URLs are still absolute even if (1)
-//      isn't set. (This is the vercel.app host, not your custom domain — prefer
-//      setting NEXT_PUBLIC_SITE_URL so canonicals point at the branded domain.)
-//   3. localhost — dev fallback.
+// The production domain is the branded custom domain, NOT the *.vercel.app host,
+// so canonical/OG links point at the brand. Resolution:
+//   1. NEXT_PUBLIC_SITE_URL — override (e.g. a staging domain), if ever needed.
+//   2. In production: the canonical custom domain below.
+//   3. In dev: localhost.
+const PRODUCTION_URL = "https://www.thebraindump.app";
 
 function resolveSiteUrl(): string {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   if (explicit) return explicit.replace(/\/$/, "");
 
-  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
-  if (vercel) return `https://${vercel.replace(/\/$/, "")}`;
+  if (process.env.NODE_ENV === "production") return PRODUCTION_URL;
 
   return "http://localhost:3000";
 }
