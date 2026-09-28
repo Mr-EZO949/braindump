@@ -37,6 +37,7 @@ import {
   validateMergeCheckOutput,
 } from "./validation";
 import { buildExtractionPromptParts, EXTRACT_PROMPT_VERSION } from "./prompts/extract";
+import { buildLightExtractionPromptParts, EXTRACT_LIGHT_PROMPT_VERSION } from "./prompts/extract-light";
 import {
   buildEdgeInferencePromptParts,
   INFER_EDGE_PROMPT_VERSION,
@@ -143,16 +144,25 @@ export class ClaudeProvider {
   async extractNodes(
     input: ExtractionInput,
   ): Promise<AIProviderResult<ExtractionOutput>> {
-    const { rubricBlock, variableBlock } = buildExtractionPromptParts(input);
+    // Short update dumps take the light path: the slim rubric
+    // (prompts/extract-light.ts), still on Sonnet — Haiku was tested on it and
+    // wrongly completed whole projects from partial progress and invented
+    // details. Same model, ~1/4 of the input → ~3× cheaper per update.
+    const light = input.variant === "light";
+    const model = this.modelName;
+    const promptVersion = light ? EXTRACT_LIGHT_PROMPT_VERSION : EXTRACT_PROMPT_VERSION;
+    const { rubricBlock, variableBlock } = light
+      ? buildLightExtractionPromptParts(input)
+      : buildExtractionPromptParts(input);
     // Hash the full prompt so telemetry/input-hash matches the concatenated form.
     const fullPrompt = `${rubricBlock}\n\n${variableBlock}`;
-    const run = baseRun("extract", EXTRACT_PROMPT_VERSION, fullPrompt, this.modelName);
+    const run = baseRun("extract", promptVersion, fullPrompt, model);
     const start = Date.now();
 
     // The rubric (~9K tokens) is byte-identical for every dump from every
     // user and the prompt cache is shared org-wide, so whether to cache it is
     // a traffic decision made by the caller (extraction.ts).
-    const rubricContent = input.rubric_cache_ttl
+    const rubricContent = input.rubric_cache_ttl && !light
       ? {
           type: "text" as const,
           text: rubricBlock,
@@ -162,7 +172,7 @@ export class ClaudeProvider {
 
     const response = await this.client.messages.create(
       {
-        model: this.modelName,
+        model,
         // Sonnet 5's tokenizer emits ~30% more tokens than 4.6 for the same JSON,
         // and multi-domain dumps now yield larger extractions (18-20 nodes). 8192
         // brushed the cap and truncated → stop_reason "max_tokens" → invalid JSON
@@ -170,7 +180,7 @@ export class ClaudeProvider {
         // ceiling (stays under the SDK HTTP timeout) and is a pure guard — the
         // model still stops at end_turn once the JSON is complete.
         max_tokens: 16000,
-        ...claudeRequestTuning(this.modelName, AI_TEMPERATURE.EXTRACTION),
+        ...claudeRequestTuning(model, AI_TEMPERATURE.EXTRACTION),
         system: "You always respond with valid JSON only. No markdown code blocks, no extra text, no explanation — just the raw JSON object.",
         messages: [
           {
@@ -195,7 +205,7 @@ export class ClaudeProvider {
     const inputTokens = u.totalInput;
     const outputTokens = u.output;
     const latencyMs = Date.now() - start;
-    const estimatedCost = claudeCostUSD(this.modelName, u);
+    const estimatedCost = claudeCostUSD(model, u);
 
     let output: ExtractionOutput;
     try {
@@ -203,7 +213,7 @@ export class ClaudeProvider {
       output = validateExtractionOutput(parsed, {
         workspace_id: input.workspace_id,
         user_id: input.user_id,
-        prompt_version: EXTRACT_PROMPT_VERSION,
+        prompt_version: promptVersion,
       });
     } catch (error) {
       throw malformedResponse({
@@ -211,8 +221,8 @@ export class ClaudeProvider {
           error instanceof Error ? error.message : "Extraction output was malformed",
         rawOutput: text,
         runType: "extract",
-        promptVersion: EXTRACT_PROMPT_VERSION,
-        modelName: this.modelName,
+        promptVersion,
+        modelName: model,
         inputHash: run.input_hash,
         outputHash: shortHash(text),
         inputTokens,

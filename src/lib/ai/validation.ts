@@ -71,8 +71,10 @@ export interface ExtractionSession {
 
 export function validateExtractionOutput(raw: unknown, session: ExtractionSession): ExtractionOutput {
   if (!isObject(raw)) throw new Error("Extraction output must be an object");
+  // An update with nothing new may leave the (empty) array out entirely.
+  if (raw.proposed_nodes === undefined || raw.proposed_nodes === null) raw.proposed_nodes = [];
   if (!Array.isArray(raw.proposed_nodes))
-    throw new Error("Extraction output missing proposed_nodes array");
+    throw new Error("Extraction output proposed_nodes is not an array");
 
   const seenLocalRefs = new Set<string>();
 

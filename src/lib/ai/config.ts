@@ -219,6 +219,9 @@ export const AI_INGESTION = {
   MAX_CHARS: 10_000,
   // Number of retry attempts for extraction before marking raw_entry as failed
   EXTRACTION_MAX_RETRIES: 2,
+  // Dumps up to this length take the light extraction path (slim prompt on
+  // Haiku, ~1/5 the cost) — daily updates, not multi-domain brain dumps.
+  LIGHT_DUMP_MAX_CHARS: 700,
   // Number of retry attempts for embedding before queuing for later
   EMBEDDING_MAX_RETRIES: 3,
 } as const;

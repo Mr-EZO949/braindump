@@ -294,7 +294,8 @@ export interface ExtractionPromptParams {
   today?: string;
 }
 
-function buildVariableBlock(params: ExtractionPromptParams): string {
+// Shared with the light prompt (extract-light.ts).
+export function buildExtractionVariableBlock(params: ExtractionPromptParams): string {
   const workspaceContextBlock = params.workspace_context
     ? `\nWorkspace context (from onboarding + current graph):\n${params.workspace_context}\n`
     : "";
@@ -339,11 +340,11 @@ export function buildExtractionPromptParts(params: ExtractionPromptParams): {
   rubricBlock: string;
   variableBlock: string;
 } {
-  return { rubricBlock: RUBRIC_BLOCK, variableBlock: buildVariableBlock(params) };
+  return { rubricBlock: RUBRIC_BLOCK, variableBlock: buildExtractionVariableBlock(params) };
 }
 
 // Legacy single-string form — concatenates rubric + variable for callers
 // that don't care about caching.
 export function buildExtractionPrompt(params: ExtractionPromptParams): string {
-  return `${RUBRIC_BLOCK}\n\n${buildVariableBlock(params)}`;
+  return `${RUBRIC_BLOCK}\n\n${buildExtractionVariableBlock(params)}`;
 }

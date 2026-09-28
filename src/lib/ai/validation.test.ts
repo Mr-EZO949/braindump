@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validateMergeCheckOutput, validatePlanOutput } from "./validation";
+import { validateExtractionOutput, validateMergeCheckOutput, validatePlanOutput } from "./validation";
 
 function planRaw(blocks: unknown[]) {
   return { blocks, prompt_version: "plan-v3" };
@@ -112,5 +112,28 @@ describe("validateMergeCheckOutput", () => {
         reason: "bad",
       }),
     ).toThrow("Merge-check output missing same_entity");
+  });
+});
+
+const session = { workspace_id: "ws-1", user_id: "user-1", prompt_version: "extract-v21" };
+
+describe("validateExtractionOutput (compact v20+ output)", () => {
+  it("fills ids and prompt version from the session, not the model", () => {
+    const out = validateExtractionOutput(
+      { proposed_nodes: [{ local_ref: "n1", proposed_title: "Email the professor", proposed_node_type: "task", extraction_confidence: 0.9 }] },
+      session,
+    );
+    expect(out.proposed_nodes[0]).toMatchObject({ workspace_id: "ws-1", user_id: "user-1", source_span: null, soft_links: [] });
+    expect(out.prompt_version).toBe("extract-v21");
+  });
+
+  it("treats a missing node list as an update with nothing new", () => {
+    const out = validateExtractionOutput({ complete_existing_node_ids: ["00000000-0000-0000-0000-000000000001"] }, session);
+    expect(out.proposed_nodes).toEqual([]);
+    expect(out.complete_existing_node_ids).toHaveLength(1);
+  });
+
+  it("still rejects a node list that isn't an array", () => {
+    expect(() => validateExtractionOutput({ proposed_nodes: "nope" }, session)).toThrow();
   });
 });

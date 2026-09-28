@@ -355,6 +355,8 @@ export interface ExtractionInput {
   // Prompt-cache the static rubric for this long, or send it uncached (null /
   // absent). Picked from app-wide traffic in extraction.ts.
   rubric_cache_ttl?: "1h" | null;
+  // "light": short update dumps → slim prompt on Haiku (extract-light.ts).
+  variant?: "full" | "light";
 }
 
 export interface ExtractionOutput {

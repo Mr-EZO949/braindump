@@ -44,6 +44,7 @@ async function chooseRubricCacheTtl(): Promise<"1h" | null> {
     .from("ai_runs")
     .select("id", { count: "exact", head: true })
     .eq("run_type", "extract")
+    .like("prompt_version", "extract-v%") // full-rubric runs only, not light ones
     .gte("created_at", since);
   if (error) return null;
   return (count ?? 0) >= RUBRIC_CACHE_MIN_RECENT_EXTRACTIONS ? "1h" : null;
@@ -275,7 +276,11 @@ export async function runExtraction(params: {
       activeNodes: profile.activeNodes,
       parentOf,
     };
-    const rubric_cache_ttl = await rubricCacheTtl;
+    // Short update dumps take the light path (slim prompt on Haiku). If its
+    // output is malformed, the retry falls back to the full prompt.
+    let variant: "full" | "light" =
+      rawText.trim().length <= AI_INGESTION.LIGHT_DUMP_MAX_CHARS ? "light" : "full";
+    const rubric_cache_ttl = variant === "full" ? await rubricCacheTtl : null;
 
     providerResult = await executeWithRetry({
       maxRetries: AI_INGESTION.EXTRACTION_MAX_RETRIES,
@@ -289,6 +294,7 @@ export async function runExtraction(params: {
           today,
           signal,
           rubric_cache_ttl,
+          variant,
         }),
       shouldRetry: ({ attempt, error }) => {
         // A user cancel is final — never spend another call retrying it.
@@ -300,6 +306,10 @@ export async function runExtraction(params: {
         }
 
         if (error.code === "malformed_output") {
+          if (variant === "light") {
+            variant = "full";
+            return true;
+          }
           return attempt < 1;
         }
 
