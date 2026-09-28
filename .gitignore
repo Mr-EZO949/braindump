@@ -58,3 +58,4 @@ corporate/
 
 # Private reference notes (not for GitHub)
 GRAPH_PORTING_NOTES.md
+.env*.local
