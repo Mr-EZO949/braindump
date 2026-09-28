@@ -3276,6 +3276,55 @@ input[type="search"]::-webkit-search-results-decoration {
   margin-bottom: 10px;
 }
 
+/* Dump-usage counters (#12) */
+.sp-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.sp-usage-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-faint);
+  border-radius: 12px;
+  background: var(--color-bg-surface-elevated);
+}
+/* Big dumps carry the brand accent so the "heaviest" tier reads at a glance. */
+.sp-usage-cell--big {
+  border-color: rgba(213, 58, 71, 0.32);
+  background: rgba(213, 58, 71, 0.06);
+}
+.sp-usage-count {
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+}
+.sp-usage-cell--big .sp-usage-count {
+  color: var(--color-accent-primary);
+}
+.sp-usage-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.sp-usage-hint {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+.sp-usage-foot {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+.sp-usage-empty {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
 .sp-email {
   font-size: 12px;
   color: var(--color-text-secondary);
@@ -7861,6 +7910,27 @@ input[type="search"]::-webkit-search-results-decoration {
   white-space: nowrap;
 }
 
+/* Cancel affordance inside a status chip — re-enables pointer events (the chip
+   itself is click-through) so the user can stop a slow generation (#5). */
+.ai-status-cancel {
+  pointer-events: auto;
+  margin-left: 4px;
+  padding: 2px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.ai-status-cancel:hover {
+  color: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  background: rgba(213, 58, 71, 0.08);
+}
+
 .ai-status-text {
   /* subtle shimmer so the label itself reads as "actively working" */
   background: linear-gradient(
@@ -11934,9 +12004,97 @@ input[type="search"]::-webkit-search-results-decoration {
 /* Loading */
 .planner-loading {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px 20px 26px;
+}
+.planner-loading-head {
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
-  padding: 28px 20px;
+}
+.planner-loading-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.planner-loading-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  line-height: 1.3;
+}
+.planner-loading-sub {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+.planner-loading-skeletons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.planner-loading-skel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 3%, transparent);
+  animation: planner-skel-breathe 1.5s ease-in-out infinite;
+}
+.planner-loading-skel-time {
+  flex: none;
+  width: 42px;
+  height: 12px;
+  border-radius: 5px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-text-primary) 9%, transparent) 25%,
+    color-mix(in srgb, var(--color-text-primary) 16%, transparent) 50%,
+    color-mix(in srgb, var(--color-text-primary) 9%, transparent) 75%
+  );
+  background-size: 200% 100%;
+  animation: planner-skel-shimmer 1.6s linear infinite;
+}
+.planner-loading-skel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.planner-loading-skel-line {
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-text-primary) 9%, transparent) 25%,
+    color-mix(in srgb, var(--color-text-primary) 16%, transparent) 50%,
+    color-mix(in srgb, var(--color-text-primary) 9%, transparent) 75%
+  );
+  background-size: 200% 100%;
+  animation: planner-skel-shimmer 1.6s linear infinite;
+}
+.planner-loading-skel-line--short {
+  width: 55%;
+}
+@keyframes planner-skel-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@keyframes planner-skel-breathe {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .planner-loading-skel,
+  .planner-loading-skel-time,
+  .planner-loading-skel-line {
+    animation: none;
+  }
 }
 
 .planner-loading-cancel {

@@ -69,7 +69,10 @@ import {
   getEdgeRelationOptionIdForSelection,
   type EdgeRelationOptionId,
 } from "@/lib/graph/relationships";
-import { getStructuralSubtree } from "@/lib/graph/structure";
+import {
+  buildPrimaryStructuralTree,
+  getStructuralSubtreeFromIndexes,
+} from "@/lib/graph/structure";
 import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -295,6 +298,9 @@ export function AppShell({ initialUser }: AppShellProps) {
   // and re-loads its tasks list when the key changes — keeps the two views
   // in sync without a full page refresh.
   const [plannerRefreshKey, setPlannerRefreshKey] = useState(0);
+  // Bumped when a chat `plan_day` is accepted, to pull its freshly-drafted plan
+  // into the planner's review UI (journal #6).
+  const [draftPlanRefreshKey, setDraftPlanRefreshKey] = useState(0);
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
   const [proposedNodesSubmitting, setProposedNodesSubmitting] = useState(false);
@@ -341,6 +347,10 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
   const [stepSuggestionLoading, setStepSuggestionLoading] = useState(false);
+  // Lets the user cancel a slow roadmap/step generation (#5). Aborting the
+  // fetch also aborts the upstream model call server-side (the route forwards
+  // req.signal to Anthropic), so a cancel doesn't keep burning tokens.
+  const stepSuggestAbortRef = useRef<AbortController | null>(null);
   const [graphEditOps, setGraphEditOps] = useState<GraphEditOperation[]>([]);
   const [graphEditReviewOpen, setGraphEditReviewOpen] = useState(false);
   const [proposedEdges, setProposedEdges] = useState<ProposedEdgeWithNodes[]>([]);
@@ -380,10 +390,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   // Project ids we've already offered a roadmap for this session — so the
   // in-thread "want a roadmap?" prompt never nags about the same project.
   const roadmapPromptedRef = useRef<Set<string>>(new Set());
-  // Container ids we've already auto-suggested a next action for via Focus —
-  // so re-focusing an empty/declined container doesn't re-fire a billable
-  // suggest-steps call each time.
-  const focusSuggestedRef = useRef<Set<string>>(new Set());
 
   // Apply the viewport-derived default for the right panel AFTER hydration.
   // On mobile the rail should start closed; doing this in an effect (not the
@@ -409,6 +415,16 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
   const chatSessionIdRef = useRef<string | null>(null);
   const chatSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Synchronous re-entry lock for the chat send + resume paths. State flags
+  // (chatLoading / pendingActionBusy) update async, so two events in the same
+  // tick could both pass the check and fire two API calls (#11 credit-burn).
+  const chatSendingRef = useRef(false);
+  // Whether the current brain-dump's text has already been echoed into chat.
+  // applyDumpExtraction / the onboarding handoff set it true after echoing the
+  // dump once; the clarifying-question flow reads it so it never re-echoes the
+  // same dump (#11 duplication). Category-B openers (retry, legacy <nodes>)
+  // that DON'T echo reset it to false so the clarifying flow echoes once.
+  const dumpInChatRef = useRef(false);
 
   // Graph state
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
@@ -490,9 +506,29 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   const workspaceName = selectedWorkspace?.name ?? "General";
 
+  // Build graph lookups once per data change. Selection and details-panel
+  // rendering are frequent; repeatedly scanning every node and edge there made
+  // opening a node progressively slower as a workspace grew.
+  const graphIndexes = useMemo(() => {
+    const nodesById = new Map(graphData.nodes.map((node) => [node.id, node]));
+    const incidentEdgesByNode = new Map<string, Edge[]>();
+    for (const edge of graphData.edges) {
+      for (const nodeId of [edge.source_node_id, edge.target_node_id]) {
+        const incident = incidentEdgesByNode.get(nodeId) ?? [];
+        incident.push(edge);
+        incidentEdgesByNode.set(nodeId, incident);
+      }
+    }
+    return {
+      ...buildPrimaryStructuralTree(graphData),
+      incidentEdgesByNode,
+      nodesById,
+    };
+  }, [graphData]);
+
   const selectedNode = useMemo(
-    () => buildChatNodeContext(graphData, selectedNodeId),
-    [graphData, selectedNodeId],
+    () => buildChatNodeContext(graphData, selectedNodeId, graphIndexes),
+    [graphData, graphIndexes, selectedNodeId],
   );
 
   const nodeTypeCounts = useMemo(() => {
@@ -515,8 +551,11 @@ export function AppShell({ initialUser }: AppShellProps) {
     [nodeTypeCounts],
   );
 
-  // Completed nodes are hidden by default; user can reveal them via the filter bar.
-  const [hideCompleted, setHideCompleted] = useState(true);
+  // #17: completed nodes are SHOWN by default — a done task should stay in the
+  // graph, attached to its parent, so the user feels the satisfaction of it.
+  // The filter bar's "Hide done" toggle collapses them into the shelf for
+  // anyone who wants a clean board.
+  const [hideCompleted, setHideCompleted] = useState(false);
 
   const completedNodes = useMemo(
     () => graphData.nodes.filter((node) => node.status === "completed"),
@@ -597,8 +636,15 @@ export function AppShell({ initialUser }: AppShellProps) {
   );
 
   const selectedNodeDeletePlan = useMemo(
-    () => (selectedNodeId ? getStructuralSubtree(graphData, selectedNodeId) : null),
-    [graphData, selectedNodeId],
+    () =>
+      selectedNodeId
+        ? getStructuralSubtreeFromIndexes(
+            selectedNodeId,
+            graphIndexes.childrenByParent,
+            graphIndexes.incidentEdgesByNode,
+          )
+        : null,
+    [graphIndexes, selectedNodeId],
   );
 
   const existingNodeTitleMap = useMemo(
@@ -618,10 +664,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (!selectedNodeId) {
       return [];
     }
-
-    const nodesById = new Map(graphData.nodes.map((node) => [node.id, node]));
-
-    return graphData.edges
+    return (graphIndexes.incidentEdgesByNode.get(selectedNodeId) ?? [])
       .flatMap((edge) => {
         if (isEdgeHiddenInUi(edge.edge_type)) {
           return [];
@@ -633,7 +676,7 @@ export function AppShell({ initialUser }: AppShellProps) {
 
         const linkedNodeId =
           edge.source_node_id === selectedNodeId ? edge.target_node_id : edge.source_node_id;
-        const linkedNode = nodesById.get(linkedNodeId);
+        const linkedNode = graphIndexes.nodesById.get(linkedNodeId);
 
         if (!linkedNode) {
           return [];
@@ -650,7 +693,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         ];
       })
       .sort((connectionA, connectionB) => connectionA.title.localeCompare(connectionB.title));
-  }, [graphData.edges, graphData.nodes, selectedNodeId]);
+  }, [graphIndexes, selectedNodeId]);
 
   const defaultChatScope = useMemo(
     () =>
@@ -699,6 +742,12 @@ export function AppShell({ initialUser }: AppShellProps) {
     };
   }, [authUser?.id]);
 
+  // Graph fetch — keyed ONLY on the two things the query actually depends on
+  // (user + workspace). Previously this also depended on the workspace NAME,
+  // its bootstrap flag, and profileIntakeState, so the whole graph re-fetched
+  // (and the force layout re-ran, freezing a half-settled tangle) every time
+  // those resolved during bootstrap. The onboarding decision moved to its own
+  // effect below, which reads the already-loaded graph. (Perf: #1)
   useEffect(() => {
     let active = true;
 
@@ -708,6 +757,8 @@ export function AppShell({ initialUser }: AppShellProps) {
     void loadWorkspaceGraphData(
       authUser?.id ?? null,
       selectedWorkspaceId,
+      // workspaceName is display-only inside loadWorkspaceGraphData (not part of
+      // the query), so it's read here without being a dependency.
       selectedWorkspace?.name ?? null,
     ).then((nextGraphData) => {
       if (!active) {
@@ -716,32 +767,40 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       setGraphData(nextGraphData);
       setGraphLoading(false);
-
-      // For empty workspaces: show welcome for brand-new users,
-      // or go straight to the wizard if welcome was already seen.
-      // Held until the user-level intake is resolved so the two onboarding
-      // overlays never stack on top of each other.
-      if (
-        nextGraphData.nodes.length === 0 &&
-        selectedWorkspaceId &&
-        authUser &&
-        profileIntakeState === "done"
-      ) {
-        if (shouldShowWelcome(authUser.id)) {
-          setShowWelcome(true);
-        } else if (
-          !selectedWorkspace?.bootstrap_completed_at &&
-          !bootstrapSkippedThisSessionRef.current.has(selectedWorkspaceId)
-        ) {
-          setBootstrapWorkspaceId(selectedWorkspaceId);
-        }
-      }
     });
 
     return () => {
       active = false;
     };
-  }, [authUser?.id, selectedWorkspace?.name, selectedWorkspaceId, selectedWorkspace?.bootstrap_completed_at, profileIntakeState]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.id, selectedWorkspaceId]);
+
+  // Onboarding decision — runs AFTER the graph has loaded (reads the loaded
+  // node count) instead of re-fetching. For empty workspaces: show welcome for
+  // brand-new users, or go straight to the wizard if welcome was already seen.
+  // Held until the user-level intake is resolved so the two onboarding overlays
+  // never stack.
+  useEffect(() => {
+    if (graphLoading || !authUser || !selectedWorkspaceId) return;
+    if (graphData.nodes.length !== 0 || profileIntakeState !== "done") return;
+
+    if (shouldShowWelcome(authUser.id)) {
+      setShowWelcome(true);
+    } else if (
+      !selectedWorkspace?.bootstrap_completed_at &&
+      !bootstrapSkippedThisSessionRef.current.has(selectedWorkspaceId)
+    ) {
+      setBootstrapWorkspaceId(selectedWorkspaceId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    graphLoading,
+    graphData.nodes.length,
+    authUser?.id,
+    selectedWorkspaceId,
+    selectedWorkspace?.bootstrap_completed_at,
+    profileIntakeState,
+  ]);
 
   // Resolve the user-level "about you" intake once we know who's signed in.
   // Runs before the workspace onboarding (which is gated on this). Fails soft
@@ -777,6 +836,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         return;
       }
 
+      const sessionUserId = data.session?.user?.id ?? null;
       setAuthUser(
         data.session?.user
           ? {
@@ -785,6 +845,18 @@ export function AppShell({ initialUser }: AppShellProps) {
             }
           : null,
       );
+
+      // Perf: seed the selected workspace from localStorage the moment auth
+      // resolves so the graph fetch can start IN PARALLEL with loadWorkspaces,
+      // instead of waiting a full round-trip for the workspace list first.
+      // loadWorkspaces still validates/corrects this once it lands (it keeps a
+      // valid current selection), so a stale stored id just self-heals.
+      if (sessionUserId) {
+        const storedWorkspaceId = readLocalSelectedWorkspaceId(sessionUserId);
+        if (storedWorkspaceId) {
+          setSelectedWorkspaceId((prev) => prev ?? storedWorkspaceId);
+        }
+      }
     });
 
     const {
@@ -1080,6 +1152,9 @@ export function AppShell({ initialUser }: AppShellProps) {
         setClarifyingQuestions(questions);
         setSuggestedAreas(entryData.suggested_areas ?? []);
         setLastDumpRawText(nodesContent);
+        // This path doesn't echo the dump into chat, so let the clarifying
+        // flow echo it exactly once (#11).
+        dumpInChatRef.current = false;
         setProposedReviewOpen(true);
       }
     } catch {
@@ -1207,9 +1282,13 @@ export function AppShell({ initialUser }: AppShellProps) {
   const submitMessage = async (message: string, duplicateUserMessage = true) => {
     const trimmedMessage = message.trim();
 
-    if (trimmedMessage.length === 0 || chatLoading) {
+    // chatLoading is async state; chatSendingRef is a synchronous lock so two
+    // events in the same tick (e.g. Enter + click) can't fire two POSTs and
+    // duplicate the message / double-bill (#11).
+    if (trimmedMessage.length === 0 || chatLoading || chatSendingRef.current) {
       return;
     }
+    chatSendingRef.current = true;
 
     const nextScope = chatMessages.length === 0 ? defaultChatScope : chatScope;
     const targetWorkspaceId = selectedWorkspaceId;
@@ -1278,6 +1357,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       }
     } finally {
       if (chatAbortRef.current === abortCtrl) chatAbortRef.current = null;
+      chatSendingRef.current = false;
       setChatLoading(false);
     }
   };
@@ -1291,7 +1371,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     decision: "accept" | "reject" | "choice",
     choice?: string,
   ) => {
-    if (pendingActionBusy) return;
+    // pendingActionBusy is async state; chatSendingRef is the synchronous lock
+    // so a rapid double-click can't fire two resume POSTs (#11 credit-burn).
+    if (pendingActionBusy || chatSendingRef.current) return;
 
     const target = chatMessages.find((m) => m.id === messageId);
     const action = target?.pendingAction;
@@ -1299,6 +1381,7 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     const targetWorkspaceId = selectedWorkspaceId;
 
+    chatSendingRef.current = true;
     setPendingActionBusy(true);
     setChatLoading(true);
     setChatMessages((prev) =>
@@ -1356,6 +1439,14 @@ export function AppShell({ initialUser }: AppShellProps) {
         if (action.toolName && PLANNER_TOOLS.includes(action.toolName)) {
           setPlannerRefreshKey((v) => v + 1);
         }
+
+        // A chat-generated plan (plan_day) is drafted server-side but invisible
+        // until the planner loads it. Switch to the planner and pull the draft
+        // into its review UI so the user actually sees what was generated (#6).
+        if (action.toolName === "plan_day") {
+          setAppMode("assistant");
+          setDraftPlanRefreshKey((v) => v + 1);
+        }
       }
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") {
@@ -1379,6 +1470,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       }
     } finally {
       if (chatAbortRef.current === abortCtrl) chatAbortRef.current = null;
+      chatSendingRef.current = false;
       setPendingActionBusy(false);
       setChatLoading(false);
     }
@@ -1427,7 +1519,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (prev && prev.nodeId !== nodeId) {
       showToast(`Switched focus to "${node.title}".`);
     }
-    focusTimer.start({ nodeId, title: node.title, durationMinutes });
+    // Set the timer UP but PAUSED — the user presses Start when they're ready.
+    // Focus should never auto-run a countdown (testing journal #4).
+    focusTimer.start({ nodeId, title: node.title, durationMinutes, paused: true });
   };
 
   // Complete a focus session: stop the timer, confirm via toast, and — if a
@@ -2247,8 +2341,18 @@ export function AppShell({ initialUser }: AppShellProps) {
       .join(" ");
 
     const nowIso = new Date().toISOString();
-    setChatMessages((prev) => [
-      ...prev,
+    // #18: a dump starts a FRESH chat thread — the previous conversation is
+    // already auto-saved, so cut the session over and REPLACE the visible
+    // messages instead of appending. #11: this echoes the dump text exactly
+    // once, and dumpInChatRef=true tells the clarifying-question flow below not
+    // to echo it a second time. (The old code appended here and relied on a
+    // fragile mid-thread wipe, which dropped the summary and could double the
+    // echo depending on timing.)
+    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    setChatSessionId(null);
+    chatSessionIdRef.current = null;
+    setChatScope(createWorkspaceScope(workspaceName));
+    setChatMessages([
       {
         id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
         role: "user" as const,
@@ -2264,6 +2368,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         status: "ready" as const,
       },
     ]);
+    dumpInChatRef.current = true;
     setRightPanelOpen(true);
     setActiveRailTab("chat");
 
@@ -2425,6 +2530,9 @@ export function AppShell({ initialUser }: AppShellProps) {
         setClarifyingQuestions(questions);
         setSuggestedAreas(data.suggested_areas ?? []);
         setLastDumpRawText(retriedDumpText);
+        // Retry doesn't echo the dump into chat, so let the clarifying flow
+        // echo it exactly once (#11).
+        dumpInChatRef.current = false;
         setProposedReviewOpen(true);
       }
     } catch (err) {
@@ -2654,6 +2762,8 @@ export function AppShell({ initialUser }: AppShellProps) {
     const node = graphData.nodes.find((n) => n.id === nodeId);
     if (!node) return;
 
+    const abort = new AbortController();
+    stepSuggestAbortRef.current = abort;
     setStepSuggestionLoading(true);
     try {
       const res = await fetch("/api/nodes/suggest-steps", {
@@ -2667,10 +2777,11 @@ export function AppShell({ initialUser }: AppShellProps) {
           mode,
           instructions,
         }),
+        signal: abort.signal,
       });
       if (!res.ok) return;
       const data = (await res.json()) as { steps_text?: string };
-      if (data.steps_text) {
+      if (data.steps_text && !abort.signal.aborted) {
         // Pin the generated steps under the source node so they don't
         // float to the workspace root.
         await handleExtractNodes(data.steps_text, selectedWorkspaceId, {
@@ -2678,8 +2789,9 @@ export function AppShell({ initialUser }: AppShellProps) {
         });
       }
     } catch {
-      // step generation failed — silent for now; could surface a toast later
+      // Aborted or failed — silent (the user cancelled, or we surface elsewhere).
     } finally {
+      if (stepSuggestAbortRef.current === abort) stepSuggestAbortRef.current = null;
       setStepSuggestionLoading(false);
     }
   };
@@ -2712,45 +2824,76 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (!selectedWorkspaceId) return;
     const selectedNodes = stepSuggestionNodes.filter((n) => n.selected);
     if (selectedNodes.length === 0) return;
+    const abort = new AbortController();
+    stepSuggestAbortRef.current = abort;
     setStepSuggestionLoading(true);
     setStepSuggestionOpen(false);
 
     try {
-      // Generate steps for each SELECTED node and pin them UNDER that node so
-      // they nest correctly. (The old batch-join extracted with no parent, so
-      // steps floated to the workspace root.)
-      for (const node of selectedNodes) {
-        const res = await fetch("/api/nodes/suggest-steps", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: node.title,
-            summary: node.summary,
-            node_type: node.node_type,
-            workspace_id: selectedWorkspaceId,
+      // Step suggestions for different nodes are independent. Generate them
+      // three at a time so selecting several nodes doesn't add every model
+      // round-trip end-to-end. Keep extraction serial because it updates one
+      // shared proposal-review surface.
+      const generated: Array<{ nodeId: string; stepsText: string }> = [];
+      const batchSize = 3;
+      for (let i = 0; i < selectedNodes.length; i += batchSize) {
+        if (abort.signal.aborted) break;
+        const batch = selectedNodes.slice(i, i + batchSize);
+        const results = await Promise.all(
+          batch.map(async (node) => {
+            try {
+              const res = await fetch("/api/nodes/suggest-steps", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  title: node.title,
+                  summary: node.summary,
+                  node_type: node.node_type,
+                  workspace_id: selectedWorkspaceId,
+                }),
+                signal: abort.signal,
+              });
+              if (!res.ok) return null;
+              const data = (await res.json()) as { steps_text?: string };
+              return data.steps_text ? { nodeId: node.id, stepsText: data.steps_text } : null;
+            } catch {
+              return null;
+            }
           }),
+        );
+        generated.push(
+          ...results.filter(
+            (result): result is { nodeId: string; stepsText: string } => result !== null,
+          ),
+        );
+      }
+
+      for (const result of generated) {
+        if (abort.signal.aborted) break;
+        await handleExtractNodes(result.stepsText, selectedWorkspaceId, {
+          defaultParentNodeId: result.nodeId,
         });
-        if (res.ok) {
-          const data = await res.json() as { steps_text?: string };
-          if (data.steps_text) {
-            await handleExtractNodes(data.steps_text, selectedWorkspaceId, {
-              defaultParentNodeId: node.id,
-            });
-          }
-        }
       }
     } catch {
       // Step generation failed silently
     } finally {
+      if (stepSuggestAbortRef.current === abort) stepSuggestAbortRef.current = null;
       setStepSuggestionLoading(false);
       setStepSuggestionNodes([]);
-      // Now run deferred connection analysis
+      // Now run deferred connection analysis (skip if the user cancelled)
       const pending = pendingAnalysisRef.current;
-      if (pending) {
+      if (pending && !abort.signal.aborted) {
         pendingAnalysisRef.current = null;
         void analyzeNodes(pending.nodeIds);
       }
     }
+  };
+
+  // Cancel an in-flight roadmap/step generation (#5). Aborts the fetch, which
+  // also cancels the upstream model call (the route forwards req.signal).
+  const cancelStepSuggestion = () => {
+    stepSuggestAbortRef.current?.abort();
+    setStepSuggestionLoading(false);
   };
 
   const dismissStepSuggestion = () => {
@@ -2800,10 +2943,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     closeProposedNodesReview();
   };
 
-  // Tracks whether we've already injected the brain dump into chat for the
-  // current review session — so inline-answer + after-close dispatch don't
-  // both add it. Reset every time a new review opens.
-  const dumpInChatRef = useRef(false);
   // Questions the user already answered inline while the modal was open;
   // these are excluded from the after-close auto-dispatch.
   const [answeredInlineQuestions, setAnsweredInlineQuestions] = useState<Set<string>>(
@@ -2812,7 +2951,10 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   useEffect(() => {
     if (proposedReviewOpen) {
-      dumpInChatRef.current = false;
+      // NOTE: dumpInChatRef is intentionally NOT reset here. Each review-opening
+      // path sets it explicitly (true when it already echoed the dump, false
+      // when it didn't), so resetting it here would clobber that and let the
+      // clarifying flow re-echo the dump (#11).
       setAnsweredInlineQuestions(new Set());
     }
   }, [proposedReviewOpen]);
@@ -2822,11 +2964,28 @@ export function AppShell({ initialUser }: AppShellProps) {
   // stays on whatever view they were on (graph, list, etc.) and the chat
   // appears alongside as a side panel. Called automatically after the
   // proposed-nodes review closes when there are unanswered questions.
+  // #18: a brain dump's follow-up conversation should start its OWN chat with
+  // zero prior context, not pile onto whatever thread happens to be open. The
+  // first time a given dump is injected into chat (dumpInChatRef still false),
+  // cut over to a fresh session. The previous conversation is already
+  // auto-saved, so it stays available in chat history.
+  const startFreshDumpChatIfNeeded = () => {
+    if (dumpInChatRef.current) return;
+    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    setChatSessionId(null);
+    chatSessionIdRef.current = null;
+    setChatScope(createWorkspaceScope(workspaceName));
+  };
+
   const openClarifyingQuestionsInChat = (questions: string[], dumpText: string) => {
     if (questions.length === 0) return;
+    startFreshDumpChatIfNeeded();
     setRightPanelOpen(true);
     setActiveRailTab("chat");
     setChatMessages((prev) => {
+      // Never wipe prior messages here — keep the dump echo + summary that
+      // applyDumpExtraction already placed. The ref guard below is the sole
+      // thing preventing a second echo (#11).
       const out = [...prev];
       if (!dumpInChatRef.current && dumpText.length > 0) {
         out.push({
@@ -2857,9 +3016,13 @@ export function AppShell({ initialUser }: AppShellProps) {
   // modal stays open so they can keep reviewing nodes.
   const handleClarifyingAnswerInline = (question: string, answer: string) => {
     const dumpText = lastDumpRawText;
+    startFreshDumpChatIfNeeded();
     setRightPanelOpen(true);
     setActiveRailTab("chat");
     setChatMessages((prev) => {
+      // Never wipe prior messages here — keep the dump echo + summary that
+      // applyDumpExtraction already placed. The ref guard below is the sole
+      // thing preventing a second echo (#11).
       const out = [...prev];
       if (!dumpInChatRef.current && dumpText.length > 0) {
         out.push({
@@ -3070,6 +3233,25 @@ export function AppShell({ initialUser }: AppShellProps) {
   const handleStatusChange = async (nodeId: string, status: Node["status"]) => {
     const previousNode = graphData.nodes.find((n) => n.id === nodeId);
     if (!previousNode) return;
+
+    // Habits recur — "completing" one logs today's completion server-side and
+    // keeps the node ACTIVE. Never run the optimistic complete-and-hide path
+    // below for a habit, or it disappears from the graph even though the DB
+    // keeps it active (#13). Fire the same PATCH (the server's habit guard
+    // records the day) and refresh so the streak/day reflects it.
+    if (previousNode.node_type === "habit" && status === "completed") {
+      try {
+        await fetch(`/api/nodes/${nodeId}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "completed" }),
+        });
+        showToast("Logged today ✓");
+      } catch {
+        showToast("Couldn't log that — try again.");
+      }
+      return;
+    }
 
     // Client mirror of the server's belongs_to cascade so the whole subtree
     // completes/uncompletes on the SAME click instead of waiting for the
@@ -3460,18 +3642,27 @@ export function AppShell({ initialUser }: AppShellProps) {
                 selectedNodeId={selectedNodeId}
                 workspaceId={selectedWorkspaceId}
                 tasksRefreshKey={plannerRefreshKey}
+                draftPlanRefreshKey={draftPlanRefreshKey}
                 onAskInChat={(message) => {
                   void submitMessage(message);
                 }}
                 onLinkedNodeStatusChange={(nodeId, nextStatus) => {
                   // Mirror the planner toggle in the local graphData so the
                   // graph view shows the matching status without a refetch.
-                  setGraphData((prev) => ({
-                    ...prev,
-                    nodes: prev.nodes.map((n) =>
-                      n.id === nodeId ? { ...n, status: nextStatus } : n,
-                    ),
-                  }));
+                  setGraphData((prev) => {
+                    const target = prev.nodes.find((n) => n.id === nodeId);
+                    // Habits recur — checking off a habit's planner task logs
+                    // TODAY's completion server-side (the /status route's habit
+                    // guard) but must NOT complete the node, or it vanishes from
+                    // the graph (#13). Leave its status untouched.
+                    if (target?.node_type === "habit") return prev;
+                    return {
+                      ...prev,
+                      nodes: prev.nodes.map((n) =>
+                        n.id === nodeId ? { ...n, status: nextStatus } : n,
+                      ),
+                    };
+                  });
                 }}
               />
             </motion.div>
@@ -3856,6 +4047,13 @@ export function AppShell({ initialUser }: AppShellProps) {
             <div className="ai-status-chip">
               <span className="ai-status-spinner" />
               Generating steps…
+              <button
+                type="button"
+                className="ai-status-cancel"
+                onClick={cancelStepSuggestion}
+              >
+                Cancel
+              </button>
             </div>
           </motion.div>
         )}
@@ -4145,27 +4343,21 @@ export function AppShell({ initialUser }: AppShellProps) {
             <WhatNowDialog
               workspaceId={selectedWorkspaceId}
               userId={authUser?.id ?? null}
+              graphSignature={`${graphData.nodes.length}:${graphData.edges.length}:${
+                graphData.nodes.filter((n) => n.status === "completed").length
+              }`}
               onClose={() => setWhatNowOpen(false)}
               onFocusNode={(nodeId) => {
                 setAppMode("graph");
                 setWhatNowOpen(false);
                 handleSelectNode(nodeId);
-                // "Pick something to work on" is the focus intent — start the
-                // timer on the chosen node.
+                // "Pick something to work on" is the focus intent — set up the
+                // timer (paused) on the chosen node. We do NOT auto-break the
+                // node into subtasks anymore (testing journal #4): pressing
+                // Focus should never silently fire an AI breakdown. If the node
+                // needs steps, the user breaks it down from the details panel
+                // (which handleSelectNode just opened).
                 void handleStartFocus(nodeId);
-                // If Focus pointed at a container with no actionable child,
-                // generate one light next-action so the user isn't dead-ended.
-                // Fires AI only here (on the explicit focus pick), only when
-                // there's genuinely nothing to do under it, and at most once
-                // per container per session (the dedupe ref) so re-focusing a
-                // declined/empty container doesn't re-bill.
-                if (
-                  !focusSuggestedRef.current.has(nodeId) &&
-                  needsNextAction(nodeId, graphData.nodes, graphData.edges)
-                ) {
-                  focusSuggestedRef.current.add(nodeId);
-                  void handleSuggestStepsForNode(nodeId, "light");
-                }
               }}
               onScheduledToPlanner={() => {
                 setWhatNowOpen(false);
@@ -4243,6 +4435,9 @@ export function AppShell({ initialUser }: AppShellProps) {
                   status: "ready" as const,
                 },
               ]);
+              // Onboarding dump is now echoed once — the clarifying flow must
+              // not echo it again (#11).
+              dumpInChatRef.current = true;
             }
 
             // If the bootstrap dump produced proposed nodes, hand them
