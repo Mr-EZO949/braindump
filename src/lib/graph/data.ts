@@ -405,27 +405,34 @@ export function findFirstMatchingNode(graphData: GraphData, query: string) {
 export function buildChatNodeContext(
   graphData: GraphData,
   nodeId: string | null,
+  indexes?: {
+    nodesById: Map<string, Node>;
+    incidentEdgesByNode: Map<string, Edge[]>;
+  },
 ): ChatNodeContext | null {
   if (!nodeId) {
     return null;
   }
 
-  const node = graphData.nodes.find((candidate) => candidate.id === nodeId);
+  const nodesById =
+    indexes?.nodesById ?? new Map(graphData.nodes.map((candidate) => [candidate.id, candidate]));
+  const node = nodesById.get(nodeId);
 
   if (!node) {
     return null;
   }
 
-  const neighboringEdges = graphData.edges.filter(
-    (edge) => edge.source_node_id === nodeId || edge.target_node_id === nodeId,
-  );
+  const neighboringEdges =
+    indexes?.incidentEdgesByNode.get(nodeId) ??
+    graphData.edges.filter(
+      (edge) => edge.source_node_id === nodeId || edge.target_node_id === nodeId,
+    );
   const connectedNodeTitles = neighboringEdges
     .map((edge) =>
       edge.source_node_id === nodeId ? edge.target_node_id : edge.source_node_id,
     )
     .map(
-      (connectedNodeId) =>
-        graphData.nodes.find((candidate) => candidate.id === connectedNodeId)?.title,
+      (connectedNodeId) => nodesById.get(connectedNodeId)?.title,
     )
     .filter((title): title is string => Boolean(title));
 

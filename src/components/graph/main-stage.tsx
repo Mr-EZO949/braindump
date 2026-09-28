@@ -216,11 +216,16 @@ export function MainStage({
         </div>
       ) : null}
 
-      <div className="pointer-events-none absolute bottom-6 left-6 z-20">
-        <div className="pointer-events-auto">
-          <CompletedShelf nodes={completedNodes} onSelect={onSelectCompletedNode} />
+      {/* The shelf is the "where did my done tasks go" affordance — only needed
+          when completed nodes are hidden from the graph. When they're shown
+          (the #17 default) they live on the board, so the shelf is redundant. */}
+      {hideCompleted ? (
+        <div className="pointer-events-none absolute bottom-6 left-6 z-20">
+          <div className="pointer-events-auto">
+            <CompletedShelf nodes={completedNodes} onSelect={onSelectCompletedNode} />
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div className="graph-toolbar-responsive absolute right-6 top-6 z-20 flex items-center gap-2">
         <div

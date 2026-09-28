@@ -396,7 +396,12 @@ function getAnchorScore(node: Node, childCount: number, depth: number, hasParent
 
 function createNodeLayout(node: Node, importanceScore: number) {
   const normalizedScore = normalizeImportanceScore(importanceScore);
-  const sizeScale = normalizedScore;
+  // "Objectives" (goal/project — the big, breakdown-able items) read HEAVIER
+  // than actionable tasks regardless of score: size + weight is the primary
+  // big-vs-actionable cue (#3). Boost their size scale toward the max so an
+  // Objective is visibly larger than the task pills beneath it.
+  const isObjectiveType = node.node_type === "goal" || node.node_type === "project";
+  const sizeScale = clamp(normalizedScore + (isObjectiveType ? 0.2 : 0), 0, 1);
   const visualTier = getVisualTierFromScore(importanceScore);
   const fontSize = lerp(
     importanceVisualBounds.minFontSize,
@@ -1226,7 +1231,11 @@ function getLinkPath(
   return `M ${startX} ${startY} Q ${controlX} ${controlY} ${endX} ${endY}`;
 }
 
-function getInteractionSets(graphData: GraphData, nodeId: string | null) {
+function getInteractionSets(
+  graphData: GraphData,
+  nodeId: string | null,
+  incidentEdgesByNode?: Map<string, Edge[]>,
+) {
   const connectedNodes = new Set<string>();
   const connectedEdges = new Set<string>();
 
@@ -1236,11 +1245,12 @@ function getInteractionSets(graphData: GraphData, nodeId: string | null) {
 
   connectedNodes.add(nodeId);
 
-  graphData.edges.forEach((edge) => {
-    if (edge.source_node_id !== nodeId && edge.target_node_id !== nodeId) {
-      return;
-    }
-
+  const incidentEdges =
+    incidentEdgesByNode?.get(nodeId) ??
+    graphData.edges.filter(
+      (edge) => edge.source_node_id === nodeId || edge.target_node_id === nodeId,
+    );
+  incidentEdges.forEach((edge) => {
     connectedEdges.add(edge.id);
     connectedNodes.add(edge.source_node_id);
     connectedNodes.add(edge.target_node_id);
@@ -1520,15 +1530,20 @@ function getNodeVisualState(options: {
   }
 
   if (completed && !selected) {
+    // #17: a done task should feel EARNED, not ghosted. Reuse the design
+    // system's "completed" green (node-status-badge--completed) for a soft
+    // success-tinted card that stays legible and attached to its parent,
+    // instead of fading almost to nothing. Older completions still recede via
+    // edge-decay over weeks, so this doesn't clutter a mature graph.
     return {
-      border: borderToken(0.05),
-      surfaceTintOpacity: 0.07,
+      border: isLight ? "rgba(90,170,95,0.40)" : "rgba(120,200,120,0.36)",
+      surfaceTintOpacity: 0.08,
       glowOpacity: 0,
       heatOpacity: 0,
-      opacity: 0.46,
-      shadowOpacity: 0.12,
+      opacity: 0.66,
+      shadowOpacity: 0.16,
       text: TEXT_COMPLETED,
-      topSheenOpacity: sheen(0.14),
+      topSheenOpacity: sheen(0.18),
     };
   }
 
@@ -1758,13 +1773,24 @@ export function GraphCanvas({
     );
   }, [graphData.nodes, searchQuery]);
 
+  const incidentEdgesByNode = useMemo(() => {
+    const index = new Map<string, Edge[]>();
+    for (const edge of graphData.edges) {
+      for (const nodeId of [edge.source_node_id, edge.target_node_id]) {
+        const incident = index.get(nodeId) ?? [];
+        incident.push(edge);
+        index.set(nodeId, incident);
+      }
+    }
+    return index;
+  }, [graphData.edges]);
   const selectedInteraction = useMemo(
-    () => getInteractionSets(graphData, focusNodeId),
-    [focusNodeId, graphData],
+    () => getInteractionSets(graphData, focusNodeId, incidentEdgesByNode),
+    [focusNodeId, graphData, incidentEdgesByNode],
   );
   const hoveredInteraction = useMemo(
-    () => getInteractionSets(graphData, hoveredNodeId),
-    [graphData, hoveredNodeId],
+    () => getInteractionSets(graphData, hoveredNodeId, incidentEdgesByNode),
+    [graphData, hoveredNodeId, incidentEdgesByNode],
   );
 
   const getFocusView = useCallback((nodeId: string): ViewTarget | null => {
@@ -2763,7 +2789,13 @@ export function GraphCanvas({
             const nodeRadius = Math.min(node.width, node.height) * 0.44;
             const topBandId = `node-top-band-${node.id}`;
             const actionWashId = `node-action-wash-${node.id}`;
+            const bigOutlineId = `node-big-outline-${node.id}`;
             const actionable = node.node_type === "task";
+            // "Big" nodes — goals and projects — are outcomes that break down
+            // into steps, not single actions. Mark them with a persistent
+            // gradient-red OUTLINE (never a full fill) so the big-vs-actionable
+            // distinction is legible at a glance (testing journal #3).
+            const isBig = node.node_type === "goal" || node.node_type === "project";
             const topBandOpacity = actionable
               ? selected
                 ? 0.28
@@ -2858,6 +2890,13 @@ export function GraphCanvas({
                       <stop offset="100%" stopColor={rgba("#60131f", 0)} />
                     </linearGradient>
                   ) : null}
+                  {isBig ? (
+                    <linearGradient id={bigOutlineId} x1="0" x2="1" y1="0" y2="1">
+                      <stop offset="0%" stopColor="rgba(228,96,110,0.95)" />
+                      <stop offset="50%" stopColor="rgba(197,65,80,0.82)" />
+                      <stop offset="100%" stopColor="rgba(146,41,58,0.78)" />
+                    </linearGradient>
+                  ) : null}
                 </defs>
                 <g filter={nodeFilter}>
                   <rect
@@ -2939,12 +2978,27 @@ export function GraphCanvas({
                     x={-(node.width - 2) / 2}
                     y={-(node.height - 2) / 2}
                   />
+                  {isBig ? (
+                    <rect
+                      fill="none"
+                      height={node.height - 1}
+                      opacity={selected ? 1 : hovered ? 0.96 : 0.86}
+                      rx={Math.max(nodeRadius - 0.5, 12)}
+                      stroke={`url(#${bigOutlineId})`}
+                      strokeWidth={selected ? 2.6 : hovered ? 2.3 : 2}
+                      width={node.width - 1}
+                      x={-(node.width - 1) / 2}
+                      y={-(node.height - 1) / 2}
+                    />
+                  ) : null}
                   {skipLabel ? null : (
                     <text
                       fill={visual.text}
                       fontFamily="var(--font-geist-sans), sans-serif"
                       fontSize={node.fontSize}
-                      fontWeight={560}
+                      // Objectives carry a heavier title than task pills — the
+                      // "weight" half of the size-&-weight distinction (#3).
+                      fontWeight={isBig ? 680 : 540}
                       letterSpacing="-0.02em"
                       textAnchor="middle"
                       textDecoration={node.status === "completed" ? "line-through" : undefined}

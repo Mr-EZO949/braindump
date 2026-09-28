@@ -119,6 +119,14 @@ function getScoreTier(score: number): string {
   return "Low priority";
 }
 
+// User-facing category label. Goals/projects are the big, breakdown-able items
+// — shown as "Objective"; a task is an "Action" item. Other types title-case.
+function nodeCategoryLabel(nodeType: string): string {
+  if (nodeType === "goal" || nodeType === "project") return "Objective";
+  if (nodeType === "task") return "Task";
+  return nodeType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 // Human labels for the raw signal names persisted by computeWorkspaceScores.
 // Anything not in the map renders the raw snake_case name as a fallback.
 const SIGNAL_LABELS: Record<string, string> = {
@@ -548,7 +556,7 @@ export function ContextRail({
                 {pendingDumpText ? (
                   <div className="flex flex-col gap-2.5">
                     <p className="text-[12.5px] leading-snug text-(--color-text-secondary)">
-                      That reads like a brain dump. How should I take it?
+                      Should I build this into your graph, or just talk it through?
                     </p>
                     <p className="line-clamp-2 rounded-md border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.025)] px-3 py-2 text-[12px] italic text-(--color-text-muted)">
                       {pendingDumpText}
@@ -559,7 +567,7 @@ export function ContextRail({
                         onClick={() => onResolveDumpChoice?.("dump")}
                         className="flex-1 rounded-full border border-[rgba(213,58,71,0.55)] bg-[rgba(213,58,71,0.95)] px-4 py-2 text-[12.5px] font-semibold text-white"
                       >
-                        Brain dump
+                        Add to my graph
                       </button>
                       <button
                         type="button"
@@ -703,7 +711,7 @@ export function ContextRail({
 
                   {/* Meta tags row */}
                   <div className="detail-meta-row">
-                    <span className="detail-tag">{selectedNode.node_type}</span>
+                    <span className="detail-tag">{nodeCategoryLabel(selectedNode.node_type)}</span>
                     <span className="detail-tag">{selectedNode.importance}</span>
                     {selectedNode.status && selectedNode.status !== "active" && (
                       <span className={`detail-tag detail-tag--${selectedNode.status}`}>

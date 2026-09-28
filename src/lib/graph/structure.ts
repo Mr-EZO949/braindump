@@ -149,6 +149,22 @@ export function buildPrimaryStructuralTree(graphData: GraphData) {
 
 export function getStructuralSubtree(graphData: GraphData, rootNodeId: string): StructuralSubtree {
   const { childrenByParent } = buildPrimaryStructuralTree(graphData);
+  const incidentEdgesByNode = new Map<string, Edge[]>();
+  graphData.edges.forEach((edge) => {
+    for (const nodeId of [edge.source_node_id, edge.target_node_id]) {
+      const incident = incidentEdgesByNode.get(nodeId) ?? [];
+      incident.push(edge);
+      incidentEdgesByNode.set(nodeId, incident);
+    }
+  });
+  return getStructuralSubtreeFromIndexes(rootNodeId, childrenByParent, incidentEdgesByNode);
+}
+
+export function getStructuralSubtreeFromIndexes(
+  rootNodeId: string,
+  childrenByParent: Map<string, string[]>,
+  incidentEdgesByNode: Map<string, Edge[]>,
+): StructuralSubtree {
   const visited = new Set<string>();
   const stack = [rootNodeId];
 
@@ -169,17 +185,16 @@ export function getStructuralSubtree(graphData: GraphData, rootNodeId: string): 
   }
 
   const nodeIds = Array.from(visited);
-  const subtreeSet = new Set(nodeIds);
-  const edgeIds = graphData.edges
-    .filter(
-      (edge) =>
-        subtreeSet.has(edge.source_node_id) || subtreeSet.has(edge.target_node_id),
-    )
-    .map((edge) => edge.id);
+  const edgeIds = new Set<string>();
+  for (const nodeId of nodeIds) {
+    for (const edge of incidentEdgesByNode.get(nodeId) ?? []) {
+      edgeIds.add(edge.id);
+    }
+  }
 
   return {
     descendantCount: Math.max(nodeIds.length - 1, 0),
-    edgeIds,
+    edgeIds: Array.from(edgeIds),
     nodeIds,
   };
 }
