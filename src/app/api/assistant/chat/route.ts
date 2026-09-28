@@ -32,7 +32,7 @@ import { checkAIRunRateLimit } from "@/lib/ai/rate-limit";
 import { hashText, normalizeAIError } from "@/lib/ai/errors";
 import { recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
-import { cachedSystem, cachedTools, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
+import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { dispatchTool, getToolSchemas, isPausingTool } from "@/lib/ai/tools";
 import { buildHistoryMessages, sanitizeHistory } from "@/lib/ai/chat-memory";
 import { getTemporalFlag } from "@/lib/ai/temporal-flags";
@@ -268,6 +268,7 @@ export async function POST(req: NextRequest) {
     context: ctx.contextString,
     scope: ctx.scopeLabel,
     temporalFlag,
+    relevantExtras: ctx.relevantExtras,
   });
   // Persisted hash still uses the full prompt string so telemetry matches old rows.
   const userPromptForHash = `${contextBlock}\n\n${messageBlock}`;
@@ -281,9 +282,9 @@ export async function POST(req: NextRequest) {
   }
 
   const client = new Anthropic({ apiKey: claudeKey });
-  // Prompt-cache layout (tools/system 1h, history + last message 5m): see
-  // src/lib/ai/assistant-cache.ts.
-  const tools = cachedTools(getToolSchemas());
+  // Prompt-cache layout (static system 1h; graph context, history and last
+  // message 5m): see src/lib/ai/assistant-cache.ts.
+  const tools = getToolSchemas();
   const toolCtx = {
     supabase,
     userId: user.id,
@@ -292,21 +293,17 @@ export async function POST(req: NextRequest) {
     today: todayISO,
   };
 
-  const systemPromptBlocks = cachedSystem(systemPrompt);
+  // The graph snapshot rides in the system prompt, where every turn of the
+  // thread re-reads it from cache instead of re-sending it.
+  const systemPromptBlocks = cachedSystem(systemPrompt, contextBlock);
 
   // Conversation state — the thread's recent turns verbatim, then the current
-  // turn: the graph context preamble + the user's message.
+  // turn (per-message extras + the user's message).
   const priorMessages = buildHistoryMessages(history);
   const historyEnd = priorMessages.length > 0 ? priorMessages.length - 1 : null;
   const messages: MessageParam[] = [
     ...priorMessages,
-    {
-      role: "user",
-      content: [
-        { type: "text", text: contextBlock },
-        { type: "text", text: messageBlock },
-      ],
-    },
+    { role: "user", content: [{ type: "text", text: messageBlock }] },
   ];
 
   const start = Date.now();

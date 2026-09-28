@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 
-import { cachedSystem, cachedTools, withCacheBreakpoints } from "./assistant-cache";
+import { cachedSystem, withCacheBreakpoints } from "./assistant-cache";
 
 function breakpoints(messages: MessageParam[]): string[] {
   const out: string[] = [];
@@ -63,15 +63,13 @@ describe("withCacheBreakpoints", () => {
   });
 });
 
-describe("static prefix", () => {
-  it("caches tools and system for an hour, on the last tool only", () => {
-    const input: Tool[] = [
-      { name: "a", input_schema: { type: "object" } },
-      { name: "b", input_schema: { type: "object" } },
-    ];
-    const tools = cachedTools(input);
-    expect(tools[0].cache_control).toBeUndefined();
-    expect(tools[1].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
-    expect(cachedSystem("s")[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+describe("cachedSystem", () => {
+  it("caches the static prompt for an hour and the graph context for 5 minutes", () => {
+    const blocks = cachedSystem("rules", "graph");
+    expect(blocks.map((b) => b.cache_control)).toEqual([{ type: "ephemeral", ttl: "1h" }, { type: "ephemeral" }]);
+  });
+
+  it("omits an empty graph context", () => {
+    expect(cachedSystem("rules", "  ")).toHaveLength(1);
   });
 });

@@ -165,23 +165,28 @@ ${params.context}
 User question: ${params.message}`;
 }
 
-// Split version: returns the cacheable context preamble separately from the
-// user's message so the chat route can attach cache_control to the preamble.
-// The context preamble is workspace-snapshot material that is stable across
-// rapid turns; the message is what changes.
+// Split version: the graph snapshot (contextBlock) is byte-stable for a given
+// graph state, so the chat route caches it as a system block that every turn
+// of the thread re-reads at 0.1×. Everything per-message — the temporal flag,
+// nodes matching this message that aren't in the snapshot, the message itself —
+// goes in messageBlock, sent fresh.
 export function buildAssistantUserPromptParts(params: {
   message: string;
   context: string;
   scope: string;
   temporalFlag?: string;
+  relevantExtras?: string;
 }): { contextBlock: string; messageBlock: string } {
   const flag = params.temporalFlag?.trim();
-  // The flag lives in the (uncached) message block, never the cached context
-  // block — it changes over time and must not bust the prompt cache.
+  const extras = params.relevantExtras?.trim();
   return {
     contextBlock: `Scope: ${params.scope}\n\nGraph context:\n${params.context}`,
-    messageBlock: flag
-      ? `${flag}\n\nUser question: ${params.message}`
-      : `User question: ${params.message}`,
+    messageBlock: [
+      flag || null,
+      extras ? `Also possibly relevant to this message (not in the overview):\n${extras}` : null,
+      `User question: ${params.message}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
   };
 }

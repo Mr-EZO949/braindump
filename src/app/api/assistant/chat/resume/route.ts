@@ -26,6 +26,7 @@ import { getRequestToday } from "@/lib/time/request-date";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
   buildAssistantSystemPrompt,
+  buildAssistantUserPromptParts,
   ASSISTANT_PROMPT_VERSION,
 } from "@/lib/ai/prompts/assistant";
 import {
@@ -36,7 +37,8 @@ import {
 import { normalizeAIError } from "@/lib/ai/errors";
 import { recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
-import { cachedSystem, cachedTools, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
+import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
+import { buildAssistantContext } from "@/lib/ai/context";
 import { dispatchTool, getToolSchemas, isReadOnlyTool, isPausingTool } from "@/lib/ai/tools";
 import { resolveChoice } from "@/lib/ai/tools/interactive";
 import { actionSucceeded, confirmationFor, looksMultiStep } from "@/lib/ai/tools/confirmations";
@@ -301,11 +303,27 @@ export async function POST(req: NextRequest) {
     return new Response("ANTHROPIC_API_KEY is not configured", { status: 500 });
   }
   const client = new Anthropic({ apiKey: claudeKey });
-  // Same cache layout as the initial turn (src/lib/ai/assistant-cache.ts):
-  // the paused request's prefix is still warm, so this call re-reads it and
-  // only pays for the tool results appended since.
-  const tools = cachedTools(getToolSchemas());
-  const systemPromptBlocks = cachedSystem(buildAssistantSystemPrompt(resolvedMode, todayISO));
+  // Same cache layout as the initial turn (src/lib/ai/assistant-cache.ts).
+  // The graph snapshot is rebuilt now, AFTER the accepted action ran, so the
+  // model continues from the graph as it is — that re-writes the snapshot and
+  // the thread after it once; the static prompt is still read from cache.
+  const ctx = await buildAssistantContext({
+    workspaceId,
+    userId: user.id,
+    selectedNodeId,
+    supabase,
+    message: lastUserQuestion(messages),
+  });
+  const { contextBlock } = buildAssistantUserPromptParts({
+    message: "",
+    context: ctx.contextString,
+    scope: ctx.scopeLabel,
+  });
+  const tools = getToolSchemas();
+  const systemPromptBlocks = cachedSystem(
+    buildAssistantSystemPrompt(resolvedMode, todayISO),
+    contextBlock,
+  );
 
   const start = Date.now();
 

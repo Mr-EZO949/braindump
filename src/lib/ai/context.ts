@@ -33,7 +33,12 @@ export interface ContextItem {
 }
 
 export interface AssembledContext {
+  // Byte-stable for a given graph state (no message-dependent ordering), so the
+  // chat route can prompt-cache it across a thread's turns.
   contextString: string;
+  // Nodes that match THIS message but aren't in the overview above — the only
+  // per-message part, sent fresh with the message.
+  relevantExtras: string;
   itemsIncluded: number;
   itemsTruncated: number;
   estimatedTokens: number;
@@ -64,9 +69,11 @@ export async function buildAssistantContext(params: {
     Date.now() - AI_ASSISTANT.COMPLETED_NODE_CONTEXT_WINDOW_HOURS * 60 * 60 * 1000,
   ).toISOString();
 
-  // Semantic retrieval — embed the user's message and find the most relevant nodes.
-  // Runs in parallel with the other queries; failures are silently swallowed so
-  // the assistant always responds even if embeddings are unavailable.
+  // Semantic retrieval — embed the user's message and find the most relevant
+  // nodes. They don't reorder the overview (that would change its bytes every
+  // turn and defeat the prompt cache); matches OUTSIDE the overview are
+  // returned separately as relevantExtras. Failures are swallowed so the
+  // assistant always responds even if embeddings are unavailable.
   const semanticMatchPromise = matchNodes({
     queryText: params.message,
     workspaceId: params.workspaceId,
@@ -160,19 +167,15 @@ export async function buildAssistantContext(params: {
   const recentlyCompleted: CompletedRow[] = recentlyCompletedResult.data ?? [];
   const recentPlanSession: PlanSessionRow | null = (planResult.data as PlanSessionRow[] | null)?.[0] ?? null;
 
-  // Map of nodeId → semantic similarity score (0–1) for boosting priority
-  const semanticScoreById = new Map(
-    semanticMatches.map((m) => [m.node_id, m.similarity]),
-  );
-
   const nodeById = new Map(allNodes.map((n) => [n.id, n]));
   const activeNodes = allNodes.filter((n) => n.status !== "completed");
 
-  // Sort active nodes by score desc for priority ordering
+  // Sort active nodes by score desc for priority ordering (id breaks ties so
+  // the order — and the cached context bytes — are deterministic).
   const sortedActive = [...activeNodes].sort((a, b) => {
     const sa = a.current_importance_score ?? 50;
     const sb = b.current_importance_score ?? 50;
-    return sb - sa;
+    return sb - sa || a.id.localeCompare(b.id);
   });
 
   // ---------------------------------------------------------------------------
@@ -279,11 +282,7 @@ export async function buildAssistantContext(params: {
       `score: ${Math.round(score)}, status: ${node.status}`,
     ].filter(Boolean);
     const text = parts.join(" — ");
-    const basePriority = score >= 80 ? 75 : score >= 50 ? 55 : 35;
-    // Semantic boost: up to +20 for highly similar nodes (similarity 0.9+ → +20, 0.7+ → +10)
-    const semanticSim = semanticScoreById.get(node.id) ?? 0;
-    const semanticBoost = semanticSim >= 0.9 ? 20 : semanticSim >= 0.7 ? 10 : 0;
-    const priority = basePriority + semanticBoost;
+    const priority = score >= 80 ? 75 : score >= 50 ? 55 : 35;
     items.push({ kind: "node", id: node.id, text, priority, tokens: estimateTokens(text) });
   }
 
@@ -372,6 +371,16 @@ export async function buildAssistantContext(params: {
 
   const contextString = included.map((i) => i.text).join("\n\n");
 
+  const includedIds = new Set(included.map((i) => i.id));
+  const extras = semanticMatches
+    .filter((m) => m.similarity >= 0.6 && !includedIds.has(m.node_id))
+    .map((m) => nodeById.get(m.node_id))
+    .filter((n): n is NodeRow => !!n && n.status !== "completed")
+    .slice(0, 5);
+  const relevantExtras = extras
+    .map((n) => `- ${n.title} [${n.node_type}]${n.summary ? ` — ${truncateToTokens(n.summary, 40)}` : ""}`)
+    .join("\n");
+
   const selectedTitle = params.selectedNodeId
     ? allNodes.find((n) => n.id === params.selectedNodeId)?.title
     : null;
@@ -381,6 +390,7 @@ export async function buildAssistantContext(params: {
 
   return {
     contextString,
+    relevantExtras,
     itemsIncluded: included.length,
     itemsTruncated: truncatedCount,
     estimatedTokens: usedTokens,

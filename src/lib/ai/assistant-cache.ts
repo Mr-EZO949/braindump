@@ -2,31 +2,31 @@
 //
 // Anthropic allows 4 cache breakpoints per request, over the prefix order
 // tools → system → messages:
-//   1. tools         1h — identical for every user and every turn
-//   2. system        1h — per mode + date, shared by every user in that mode
-//   3. history end   5m — turn N+1 re-reads turn N's history at 0.1× and only
-//                         pays to write the newest exchange (chat-memory.ts
-//                         keeps that prefix stable)
-//   4. last message  5m — moves every tool round, so round k re-reads
-//                         everything up to round k-1 instead of re-paying it
-// 1h entries must come before 5m ones, which this order satisfies.
+//   1. static system  1h — tools + the mode/date system prompt; identical for
+//                          every user in that mode, so shared app-wide
+//   2. graph context  5m — the user's graph snapshot (byte-stable until the
+//                          graph changes), re-read by every turn of a thread
+//   3. history end    5m — turn N+1 re-reads turn N's history at 0.1× and only
+//                          pays to write the newest exchange (chat-memory.ts
+//                          keeps that prefix stable)
+//   4. last message   5m — moves every tool round, so round k re-reads
+//                          everything up to round k-1 instead of re-paying it
+// 1h entries must come before 5m ones, which this order satisfies. Tools carry
+// no breakpoint of their own — they sit inside breakpoint 1's prefix.
 
 import type {
   ContentBlockParam,
   MessageParam,
   TextBlockParam,
-  Tool,
 } from "@anthropic-ai/sdk/resources/messages";
 
 const LONG = { type: "ephemeral", ttl: "1h" } as const;
 const SHORT = { type: "ephemeral" } as const;
 
-export function cachedTools<T extends Tool>(tools: T[]): T[] {
-  return tools.map((t, i) => (i === tools.length - 1 ? { ...t, cache_control: LONG } : t));
-}
-
-export function cachedSystem(text: string): TextBlockParam[] {
-  return [{ type: "text", text, cache_control: LONG }];
+export function cachedSystem(staticPrompt: string, graphContext?: string): TextBlockParam[] {
+  const blocks: TextBlockParam[] = [{ type: "text", text: staticPrompt, cache_control: LONG }];
+  if (graphContext?.trim()) blocks.push({ type: "text", text: graphContext, cache_control: SHORT });
+  return blocks;
 }
 
 function stripCacheControl(block: ContentBlockParam): ContentBlockParam {
