@@ -39,7 +39,8 @@ import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, cachedTools, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { dispatchTool, getToolSchemas, isReadOnlyTool, isPausingTool } from "@/lib/ai/tools";
 import { resolveChoice } from "@/lib/ai/tools/interactive";
-import { looksLikeGraphEdit } from "@/lib/graph/dump-heuristic";
+import { actionSucceeded, confirmationFor, looksMultiStep } from "@/lib/ai/tools/confirmations";
+import { looksLikeStructuralEdit } from "@/lib/graph/dump-heuristic";
 import type { AssistantMode } from "@/types/ai";
 
 const MAX_TOOL_ROUNDS = 6;
@@ -168,11 +169,11 @@ export async function POST(req: NextRequest) {
     today: todayISO,
   };
 
-  // Match the initial turn's model tier: a graph-editing thread continues on
+  // Match the initial turn's model tier: a structural-edit thread continues on
   // Sonnet so the follow-up reasoning (and any next proposal) stays strong;
-  // plain chat stays on Haiku. Derived from the original user question in the
+  // chat and simple edits stay on Haiku. Derived from the original user question in the
   // persisted history. See issue #19 + /api/assistant/chat.
-  const assistantModel = looksLikeGraphEdit(lastUserQuestion(messages))
+  const assistantModel = looksLikeStructuralEdit(lastUserQuestion(messages))
     ? AI_MODELS.CLAUDE_SONNET
     : AI_MODELS.CLAUDE_HAIKU;
 
@@ -182,6 +183,8 @@ export async function POST(req: NextRequest) {
   // append a user turn carrying one tool_result per original tool_use.
   // ---------------------------------------------------------------------------
   const toolResults: ToolResultBlockParam[] = [];
+  // The accepted action's own result, kept untruncated for the no-model reply.
+  let acceptedResult: { content: string; isError: boolean } | null = null;
 
   // Primary (the one the user explicitly answered).
   const isChoiceTool = run.pending_tool_name === "ask_choice";
@@ -207,6 +210,7 @@ export async function POST(req: NextRequest) {
       tool_use_id: run.pending_tool_use_id as string,
       ctx: toolCtx,
     });
+    acceptedResult = { content: result.content, isError: result.is_error };
     toolResults.push({
       type: "tool_result",
       tool_use_id: result.tool_use_id,
@@ -265,6 +269,29 @@ export async function POST(req: NextRequest) {
   // Delete the pending row now — from here on the loop either completes or
   // writes a fresh pending row if Claude proposes another mutation.
   await supabase.from("pending_chat_runs").delete().eq("id", run.id);
+
+  // A simple, single action that succeeded needs no follow-up model call —
+  // it would only say "Done" while re-sending the whole prompt. Structural
+  // (Sonnet) threads, multi-step asks, anything queued behind it, and
+  // failures still go back to the model so it can continue, re-propose or
+  // explain. plan_day is a
+  // single action even though it runs on the Sonnet tier.
+  if (
+    decision === "accept" &&
+    acceptedResult &&
+    deferred.length === 0 &&
+    actionSucceeded(acceptedResult.content, acceptedResult.isError) &&
+    !looksMultiStep(lastUserQuestion(messages)) &&
+    (assistantModel === AI_MODELS.CLAUDE_HAIKU || run.pending_tool_name === "plan_day")
+  ) {
+    return new Response(confirmationFor(run.pending_tool_name as string, acceptedResult.content), {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "X-Resume-Decision": decision,
+        "X-Resume-Model": "none",
+      },
+    });
+  }
 
   // ---------------------------------------------------------------------------
   // Resume the Claude streaming loop.

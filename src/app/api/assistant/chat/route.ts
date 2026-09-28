@@ -27,7 +27,7 @@ import {
   AI_RATE_LIMITS,
   claudeRequestTuning,
 } from "@/lib/ai/config";
-import { looksLikeGraphEdit } from "@/lib/graph/dump-heuristic";
+import { looksLikeStructuralEdit } from "@/lib/graph/dump-heuristic";
 import { checkAIRunRateLimit } from "@/lib/ai/rate-limit";
 import { hashText, normalizeAIError } from "@/lib/ai/errors";
 import { recordClaudeRun } from "@/lib/ai/telemetry";
@@ -134,14 +134,13 @@ export async function POST(req: NextRequest) {
     ? (mode as AssistantMode)
     : "explain";
 
-  // Model routing: plain Q&A stays on cheap Haiku, but a message that reads as a
-  // GRAPH-EDITING command escalates the whole turn to Sonnet. The model that
-  // emits the mutation is the one doing the structural reasoning (split-vs-
-  // replace, correct parent, batching), so the choice must be made up-front —
-  // by the time Haiku "notices" it's editing, the decision is already made.
-  // This mirrors the dump path (braindump → Sonnet extraction) for the
-  // imperative edits that never trip the dump heuristic. See issue #19.
-  const assistantModel = looksLikeGraphEdit(message)
+  // Model routing: chat and simple edits (add one item, mark done, move a
+  // time, rename) stay on Haiku; a STRUCTURAL edit or full planning escalates
+  // the whole turn to Sonnet. The model that emits the mutation is the one
+  // doing the structural reasoning (split-vs-replace, correct parent,
+  // batching), so the choice is made up-front. See issue #19 and
+  // looksLikeStructuralEdit.
+  const assistantModel = looksLikeStructuralEdit(message)
     ? AI_MODELS.CLAUDE_SONNET
     : AI_MODELS.CLAUDE_HAIKU;
 

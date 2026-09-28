@@ -37,18 +37,20 @@ export function looksLikeBrainDump(text: string): boolean {
   );
 }
 
-// Does a chat message look like a GRAPH-EDITING command (add / connect / split /
-// merge / move / rename / archive / complete something in the graph) rather than
-// a plain question? Used to route the turn to the stronger reasoning model
-// (Sonnet) — structural edits are where the weaker model made bad calls
-// (e.g. replacing a parent instead of adding children under it). A miss just
-// falls back to the default model, so this leans toward recall.
+// Should this chat turn run on the stronger model (Sonnet)? Only STRUCTURAL
+// graph edits and full planning — where the weaker model made bad calls
+// (issue #19: replacing a parent instead of adding children under it, wrong
+// level, un-batched splits). Simple edits — add one item, mark done, rename,
+// move a time, delete, set a deadline — are a single tool call with no
+// structural judgment, so they stay on Haiku: they're most chat turns, and
+// Sonnet costs 2–3× per turn.
 //
 // Deliberately NOT gated on "?": editing asks are often polite questions
-// ("can you connect X to Y?", "could you mark these done?"). We only bail on
-// advice/how-to openers, which are discussion, not commands.
-export function looksLikeGraphEdit(text: string): boolean {
-  const t = text.trim().toLowerCase();
+// ("can you split this?"). We only bail on advice/how-to openers, which are
+// discussion, not commands.
+export function looksLikeStructuralEdit(text: string): boolean {
+  const raw = text.trim();
+  const t = raw.toLowerCase();
   if (t.length < 3) return false;
 
   // Advice / how-to / opinion openers → discussion, let the default model chat.
@@ -60,18 +62,37 @@ export function looksLikeGraphEdit(text: string): boolean {
     return false;
   }
 
-  // Structural / lifecycle editing verbs. Word-boundaried to avoid substrings
-  // like "made" matching "add". "break … into", "put/group/nest under" are the
-  // hierarchy phrasings that tripped up the weak model.
-  const EDIT_INTENT =
-    /\b(add|create|capture|track|split|break (it|them|this|that|down|up)|break .+ (into|down)|reparent|move|rename|retitle|relabel|merge|combine|dedupe|deduplicate|connect|link|attach|nest|group|reorganiz|restructure|delete|remove|archive|complete|finish|finished|mark .+ (done|complete|completed)|done with|shipped|wrapped up|knocked out|set (the )?deadline|schedule|plan my|time.?block|make me a schedule)\b/;
+  // Reshaping the tree: split / merge / regroup / restructure.
+  const RESHAPE =
+    /\b(split|break (it|them|this|that|down|up)|break .+ (into|down)|reparent|merge|combine|dedupe|deduplicate|nest|regroup|group .+ (under|into|together)|reorganiz|restructure)\b/;
 
-  // Hierarchy prepositions paired with a graph noun ("under the backlog",
-  // "into two projects", "as a child of …").
-  const STRUCTURAL_PLACEMENT =
+  // Placing things in the hierarchy ("under the backlog", "move X under Y",
+  // "it should belong to the ML exam").
+  const PLACEMENT =
     /\b(under|beneath|inside|into|below) (the |my |a |an |two |three )?(backlog|goal|project|task|node|area|parent|epic|exam|class)/;
+  const PUT_UNDER =
+    /\b(add|create|move|put|place|file|attach)\b.+\b(under|beneath|inside|into|as a (child|subtask|sub-task) of)\b/;
+  const BELONGS = /\bbelongs? (to|under|in)\b/;
 
-  return EDIT_INTENT.test(t) || STRUCTURAL_PLACEMENT.test(t);
+  // Building a whole plan (one per day or so) — not nudging one block.
+  const FULL_PLAN = /\b(plan my|re-?plan|make me a schedule|time.?block)\b/;
+
+  // Adding several things with structure in one go ("add a project X with
+  // tasks a, b, c", or a bulleted list).
+  const MULTI_ADD =
+    /\b(add|create)\b/.test(t) &&
+    (/\b(with|including) (\w+ )?(tasks?|steps?|subtasks?|sub-tasks?|children|phases?)\b/.test(t) ||
+      (t.match(/,/g)?.length ?? 0) >= 3 ||
+      /\n\s*([-*•]|\d+[.)])/.test(raw));
+
+  return (
+    RESHAPE.test(t) ||
+    PLACEMENT.test(t) ||
+    PUT_UNDER.test(t) ||
+    BELONGS.test(t) ||
+    FULL_PLAN.test(t) ||
+    MULTI_ADD
+  );
 }
 
 // Active projects with no children — candidates for a "want a roadmap?"

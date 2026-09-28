@@ -30,10 +30,12 @@
 //   (the server already knows them — they were ~20% of output tokens), and
 //   the model writes compact JSON with null/empty fields left out. Same
 //   semantics, ~30% fewer output tokens → cheaper and seconds faster per dump.
+// v21 (cost): no source_span — it copied input text back out (~20% of the
+//   remaining output) and was stored but never shown anywhere.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v20";
+export const EXTRACT_PROMPT_VERSION = "extract-v21";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -53,7 +55,6 @@ Rules:
   - Bad summary: "Student wants to work on academic research papers as part of their broader goals."
 - Bodies are a separate, longer field — see Body rule below.
 - Confidence: 0.0–1.0. Use 0.9+ only if the idea is clearly stated. Use 0.6–0.8 for inferred ideas.
-- source_span: copy the exact phrase or sentence from the input that led to this node. Use null for implied anchor/group nodes.
 - Node types: project | task | class | concept | idea | goal | habit
 - local_ref: assign each node a unique short ID like "n1", "n2", "n3". Other relationship fields must reference these IDs.
 
@@ -185,7 +186,7 @@ Semantic clustering rule (IMPORTANT — apply this actively):
   - A cluster that would apply to almost any person (do NOT create "Tasks", "Things to Do", "Random Stuff")
   - A cluster for only 1–2 nodes (minimum 3 children to justify a cluster)
   - A cluster that overlaps with an already-named anchor node (if the user named the project, don't also make a cluster for it)
-- Use extraction_confidence 0.75 and source_span null for cluster nodes.
+- Use extraction_confidence 0.75 for cluster nodes.
 - List cluster nodes BEFORE their children in the array.
 - Do NOT create a cluster if a named anchor already serves the same purpose.
 
@@ -269,8 +270,7 @@ Write it compact: no indentation or line breaks. Leave out any field whose value
         }
       ],
       "target_date": "YYYY-MM-DD or null",
-      "extraction_confidence": 0.0,
-      "source_span": "string or null"
+      "extraction_confidence": 0.0
     }
   ],
   "clarifying_questions": ["string"],
