@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getRequestToday } from "@/lib/time/request-date";
 import { runExtraction } from "@/lib/ai/extraction";
+import { loadCalibrationStats, selectAutoApply } from "@/lib/ai/auto-apply";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { suggestAreas } from "@/lib/ai/areas";
@@ -109,6 +110,7 @@ export async function POST(req: NextRequest) {
     workspace_id,
     source_type = "brain_dump",
     default_parent_node_id,
+    auto_apply = true,
   } = body as {
     raw_text: string;
     workspace_id: string;
@@ -119,6 +121,8 @@ export async function POST(req: NextRequest) {
     // by the "suggest steps" flow so the generated subtasks anchor under
     // the source node instead of falling back to the workspace root.
     default_parent_node_id?: string | null;
+    // The user's "Auto-add confident items" preference (default on).
+    auto_apply?: boolean;
   };
 
   // Empty input guard
@@ -363,9 +367,50 @@ export async function POST(req: NextRequest) {
   // without embeddings, so clustering wouldn't see them and would miss
   // exactly the groupings the user just dumped about.
 
+  // Proposals that closely match an existing node the resolver couldn't rule
+  // on — the review shows the hint, and they're never auto-applied.
+  const possibleDuplicates = result.possibleDuplicates.flatMap((dup) => {
+    const proposal = result.proposedNodes.find((p) => p.local_ref === dup.localRef);
+    return proposal
+      ? [
+          {
+            proposal_id: proposal.id,
+            existing_node_id: dup.existingNodeId,
+            existing_title: dup.existingTitle,
+          },
+        ]
+      : [];
+  });
+
+  // Calibrated auto-apply (src/lib/ai/auto-apply.ts): proposals this user
+  // reliably accepts skip the review modal; the client accepts them through the
+  // normal review route and offers a one-tap Undo. Best-effort — on any error
+  // everything simply goes to review, as before.
+  let autoApplyProposalIds: string[] = [];
+  if (auto_apply !== false && result.proposedNodes.length > 0) {
+    try {
+      const stats = await loadCalibrationStats(supabase, user.id);
+      autoApplyProposalIds = selectAutoApply({
+        proposals: result.proposedNodes.map((p) => ({
+          id: p.id,
+          local_ref: p.local_ref ?? null,
+          primary_parent_local_ref: p.primary_parent_local_ref ?? null,
+          existing_parent_node_id: p.existing_parent_node_id ?? null,
+          proposed_node_type: p.proposed_node_type,
+          extraction_confidence: p.extraction_confidence,
+        })),
+        heldIds: new Set(possibleDuplicates.map((d) => d.proposal_id)),
+        stats,
+      });
+    } catch (err) {
+      console.warn("[entries] auto-apply selection failed — everything goes to review:", err);
+    }
+  }
+
   return NextResponse.json({
     raw_entry_id: rawEntry.id,
     ai_run_id: result.aiRunId,
+    auto_apply_proposal_ids: autoApplyProposalIds,
     status: "completed",
     proposed_nodes: result.proposedNodes,
     proposed_node_count: result.proposedNodes.length,
@@ -376,20 +421,7 @@ export async function POST(req: NextRequest) {
     // turn into nodes — offered as optional chips in the review so the user can
     // add them as top-level branches (same as the wizard's step 2).
     suggested_areas: clientAreas,
-    // Proposals that closely match an existing node the resolver couldn't rule
-    // on — the review shows the hint, and they're never auto-applied.
-    possible_duplicates: result.possibleDuplicates.flatMap((dup) => {
-      const proposal = result.proposedNodes.find((p) => p.local_ref === dup.localRef);
-      return proposal
-        ? [
-            {
-              proposal_id: proposal.id,
-              existing_node_id: dup.existingNodeId,
-              existing_title: dup.existingTitle,
-            },
-          ]
-        : [];
-    }),
+    possible_duplicates: possibleDuplicates,
     // Dump size (by extracted node count) — surfaced to the user and available
     // for per-plan usage metering later. Detection only; no limits enforced yet.
     dump_size: {

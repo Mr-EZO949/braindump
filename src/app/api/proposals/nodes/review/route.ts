@@ -431,6 +431,67 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // ---------------------------------------------------------------------
+      // Cross-batch references:
+      //
+      // One dump's proposals can be accepted over more than one call — auto-
+      // apply accepts the confident ones immediately and the rest are reviewed
+      // later (and a user can always accept in steps). A child whose parent
+      // (or dependency / link target) was accepted in an EARLIER call must
+      // still wire up to it; before this, it was created with no parent edge.
+      // local_refs are only unique within a dump, so lookups are per raw_entry.
+      // ---------------------------------------------------------------------
+      const missingRefsByEntry = new Map<string, Set<string>>();
+      for (const { proposal } of acceptedPairs) {
+        const rawEntryId = proposalMap.get(proposal.id)?.raw_entry_id as string | undefined;
+        if (!rawEntryId) continue;
+        const refs = [
+          proposal.primary_parent_local_ref,
+          ...(proposal.depends_on_local_refs ?? []),
+          ...(proposal.soft_links ?? []).map((link) => link.target_local_ref),
+        ];
+        for (const ref of refs) {
+          if (!ref || acceptedByLocalRef.has(ref)) continue;
+          if (!missingRefsByEntry.has(rawEntryId)) missingRefsByEntry.set(rawEntryId, new Set());
+          missingRefsByEntry.get(rawEntryId)!.add(ref);
+        }
+      }
+      for (const [rawEntryId, refs] of missingRefsByEntry) {
+        const { data: earlierAccepted } = await supabase
+          .from("proposed_nodes")
+          .select("local_ref, accepted_node_id, ai_run_id, extraction_confidence")
+          .eq("raw_entry_id", rawEntryId)
+          .eq("user_id", user.id)
+          .eq("proposal_status", "accepted")
+          .in("local_ref", [...refs])
+          .not("accepted_node_id", "is", null);
+        const earlierNodeIds = (earlierAccepted ?? []).map((row) => row.accepted_node_id as string);
+        const { data: earlierNodes } = earlierNodeIds.length
+          ? await supabase
+              .from("nodes")
+              .select("id, title, status")
+              .in("id", earlierNodeIds)
+              .eq("user_id", user.id)
+          : { data: [] as Array<{ id: string; title: string; status: string | null }> };
+        const liveTitleById = new Map(
+          (earlierNodes ?? [])
+            .filter((n) => n.status !== "archived")
+            .map((n) => [n.id as string, n.title as string]),
+        );
+        for (const row of earlierAccepted ?? []) {
+          const localRef = row.local_ref as string | null;
+          const nodeId = row.accepted_node_id as string;
+          const title = liveTitleById.get(nodeId);
+          if (!localRef || !title || acceptedByLocalRef.has(localRef)) continue;
+          acceptedByLocalRef.set(localRef, {
+            aiRunId: (row.ai_run_id as string | null) ?? null,
+            confidence: (row.extraction_confidence as number | null) ?? 0.75,
+            nodeId,
+            title,
+          });
+        }
+      }
+
       const structuralEdgeRows: Array<{
         ai_run_id: string | null;
         confidence: number;

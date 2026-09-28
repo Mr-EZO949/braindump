@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -83,6 +83,12 @@ import { needsNextAction } from "@/lib/graph/next-action";
 import type { RailTab, ChatMessage, ChatScope, Nudge, PendingAction } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, NodeType, Workspace } from "@/types/graph";
 import { localDateISO } from "@/lib/time/local-date";
+import {
+  acceptProposalsNow,
+  readAutoApplyPreference,
+  undoAutoApplied,
+} from "@/lib/graph/auto-apply-client";
+import { AutoApplyNotice } from "@/components/ui/auto-apply-notice";
 import type { ProposedNode } from "@/types/ai";
 
 type AuthUserState = {
@@ -382,6 +388,12 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
   const [stepSuggestionLoading, setStepSuggestionLoading] = useState(false);
+  // Calibrated auto-apply: what was added without review, for one-tap Undo.
+  const [autoApplyUndo, setAutoApplyUndo] = useState<{
+    proposalIds: string[];
+    nodeIds: string[];
+    count: number;
+  } | null>(null);
   // Lets the user cancel a slow roadmap/step generation (#5). Aborting the
   // fetch also aborts the upstream model call server-side (the route forwards
   // req.signal to Anthropic), so a cancel doesn't keep burning tokens.
@@ -2424,35 +2436,48 @@ export function AppShell({ initialUser }: AppShellProps) {
   // Shared tail for every dump (button, chat, bootstrap): mirror the dump +
   // a conversational summary into chat, then open the proposed-nodes review
   // modal. One implementation so all entry points behave identically.
-  const applyDumpExtraction = (
+  const applyDumpExtraction = async (
     rawText: string,
     data: {
       proposed_nodes?: ProposedNode[];
       clarifying_questions?: string[];
       completed_existing_node_titles?: string[];
       suggested_areas?: Array<{ title: string; area_type: string }>;
+      auto_apply_proposal_ids?: string[];
     },
+    workspaceId: string | null,
   ) => {
     const nodes = data.proposed_nodes ?? [];
     const questions = data.clarifying_questions ?? [];
     const completedTitles = data.completed_existing_node_titles ?? [];
     const areas = data.suggested_areas ?? [];
+    const autoIds = (data.auto_apply_proposal_ids ?? []).filter((id) =>
+      nodes.some((n) => n.id === id),
+    );
 
-    const summary = [
-      nodes.length > 0
-        ? `I analyzed your dump and proposed ${nodes.length} node${nodes.length === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
-        : "I went through your dump but didn't find anything new worth proposing.",
-      completedTitles.length > 0
-        ? `I also marked ${completedTitles.length} existing item${completedTitles.length === 1 ? "" : "s"} done: ${completedTitles.slice(0, 3).join(", ")}${completedTitles.length > 3 ? "…" : ""}.`
-        : null,
-      questions.length > 0
-        ? `I have ${questions.length} quick clarifying question${questions.length === 1 ? "" : "s"} — answer inline when ready.`
-        : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
+    const buildSummary = (appliedCount: number, reviewCount: number) =>
+      [
+        appliedCount > 0
+          ? `I added ${appliedCount} item${appliedCount === 1 ? "" : "s"} to your graph${
+              reviewCount > 0
+                ? ` — ${reviewCount} ${reviewCount === 1 ? "needs" : "need"} a quick look in the panel that just opened.`
+                : "."
+            }`
+          : reviewCount > 0
+            ? `I analyzed your dump and proposed ${reviewCount} node${reviewCount === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
+            : "I went through your dump but didn't find anything new worth proposing.",
+        completedTitles.length > 0
+          ? `I also marked ${completedTitles.length} existing item${completedTitles.length === 1 ? "" : "s"} done: ${completedTitles.slice(0, 3).join(", ")}${completedTitles.length > 3 ? "…" : ""}.`
+          : null,
+        questions.length > 0
+          ? `I have ${questions.length} quick clarifying question${questions.length === 1 ? "" : "s"} — answer inline when ready.`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
 
     const nowIso = new Date().toISOString();
+    const summaryId = `chat-extract-${Math.random().toString(36).slice(2, 10)}`;
     // #18: a dump starts a FRESH chat thread — the previous conversation is
     // already auto-saved, so cut the session over and REPLACE the visible
     // messages instead of appending. #11: this echoes the dump text exactly
@@ -2460,7 +2485,8 @@ export function AppShell({ initialUser }: AppShellProps) {
     // to echo it a second time. (The old code appended here and relied on a
     // fragile mid-thread wipe, which dropped the summary and could double the
     // echo depending on timing.) The old thread is flushed first, so it's
-    // genuinely saved before we cut over.
+    // genuinely saved before we cut over. Posted BEFORE auto-apply so the
+    // roadmap prompt it may add lands after the summary, not wiped by it.
     flushPendingChatSave();
     setChatSessionId(null);
     chatSessionIdRef.current = null;
@@ -2474,9 +2500,9 @@ export function AppShell({ initialUser }: AppShellProps) {
         status: "ready" as const,
       },
       {
-        id: `chat-extract-${Math.random().toString(36).slice(2, 10)}`,
+        id: summaryId,
         role: "assistant" as const,
-        body: summary,
+        body: buildSummary(autoIds.length, nodes.length - autoIds.length),
         createdAt: nowIso,
         status: "ready" as const,
       },
@@ -2485,13 +2511,59 @@ export function AppShell({ initialUser }: AppShellProps) {
     setRightPanelOpen(true);
     setActiveRailTab("chat");
 
-    if (nodes.length > 0 || questions.length > 0) {
-      setProposedNodes(nodes);
+    // Calibrated auto-apply (src/lib/ai/auto-apply.ts): the proposals this user
+    // reliably accepts go straight into the graph through the normal review
+    // route, with a one-tap Undo — no modal. Only the rest need a look.
+    let appliedIds = new Set<string>();
+    if (autoIds.length > 0) {
+      const batch = await acceptProposalsNow(autoIds);
+      if (batch && batch.acceptedNodes.length > 0) {
+        appliedIds = new Set(autoIds);
+        setClusterRefreshKey((k) => k + 1);
+        mergeAcceptedIntoGraph(batch.acceptedNodes, batch.acceptedEdges);
+        const createdIds = batch.acceptedNodes.map((n) => n.id);
+        if (workspaceId) void analyzeNodes(createdIds, workspaceId);
+        setAutoApplyUndo({ proposalIds: autoIds, nodeIds: createdIds, count: createdIds.length });
+      } else {
+        // Couldn't apply — fall back to reviewing everything, and say so.
+        setChatMessages((prev) =>
+          prev.map((m) => (m.id === summaryId ? { ...m, body: buildSummary(0, nodes.length) } : m)),
+        );
+      }
+    }
+
+    const remaining = nodes.filter((n) => !appliedIds.has(n.id));
+    if (remaining.length > 0 || questions.length > 0) {
+      setProposedNodes(remaining);
       setClarifyingQuestions(questions);
       setSuggestedAreas(areas);
       setLastDumpRawText(rawText);
       setProposedReviewOpen(true);
     }
+  };
+
+  // Stable so the notice's auto-dismiss timer isn't reset on every render.
+  const dismissAutoApplyNotice = useCallback(() => setAutoApplyUndo(null), []);
+
+  // One-tap Undo for auto-applied proposals: remove the nodes and teach the
+  // calibration that this kind of proposal needs review for this user.
+  const handleUndoAutoApply = async () => {
+    const pending = autoApplyUndo;
+    if (!pending) return;
+    setAutoApplyUndo(null);
+    const removedIds = new Set(await undoAutoApplied(pending.proposalIds));
+    if (removedIds.size === 0) {
+      showToast("Couldn't undo — those items may have changed.");
+      return;
+    }
+    setGraphData((prev) => ({
+      ...prev,
+      nodes: prev.nodes.filter((n) => !removedIds.has(n.id)),
+      edges: prev.edges.filter(
+        (e) => !removedIds.has(e.source_node_id) && !removedIds.has(e.target_node_id),
+      ),
+    }));
+    showToast(`Removed ${removedIds.size} item${removedIds.size === 1 ? "" : "s"}.`);
   };
 
   // Dump submitted from the chat composer (after the user picked "Brain
@@ -2504,7 +2576,11 @@ export function AppShell({ initialUser }: AppShellProps) {
       const res = await fetch("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ raw_text: trimmed, workspace_id: targetWorkspaceId }),
+        body: JSON.stringify({
+          raw_text: trimmed,
+          workspace_id: targetWorkspaceId,
+          auto_apply: readAutoApplyPreference(),
+        }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         proposed_nodes?: ProposedNode[];
@@ -2539,7 +2615,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         setActiveRailTab("chat");
         return;
       }
-      applyDumpExtraction(trimmed, data);
+      await applyDumpExtraction(trimmed, data, targetWorkspaceId);
     } catch {
       const nowIso = new Date().toISOString();
       setChatMessages((prev) => [
@@ -2568,7 +2644,11 @@ export function AppShell({ initialUser }: AppShellProps) {
       const res = await fetch("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ raw_text: trimmed, workspace_id: targetWorkspaceId }),
+        body: JSON.stringify({
+          raw_text: trimmed,
+          workspace_id: targetWorkspaceId,
+          auto_apply: readAutoApplyPreference(),
+        }),
       });
       const data = await res.json() as {
         proposed_nodes?: ProposedNode[];
@@ -2592,7 +2672,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       setBrainDumpOpen(false);
       setBrainDumpError(null);
       setBrainDumpFailedEntryId(null);
-      applyDumpExtraction(trimmed, data);
+      await applyDumpExtraction(trimmed, data, targetWorkspaceId);
     } catch (err) {
       setBrainDumpError(
         err instanceof Error ? err.message : "Could not process that brain dump.",
@@ -2680,6 +2760,103 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
+  // Merge freshly accepted nodes into the graph: position unattached ones near
+  // the viewport centre, clear stale positions for attached ones, and softly
+  // offer a roadmap for any project that landed with no steps. Shared by the
+  // review modal and calibrated auto-apply so both behave identically.
+  const mergeAcceptedIntoGraph = (nodes: Node[], acceptedEdges: Edge[]) => {
+    const attachedNodeIds = new Set(
+      acceptedEdges
+        .filter((edge) => edge.edge_type === "belongs_to" || edge.edge_type === "required_for")
+        .map((edge) => edge.source_node_id),
+    );
+
+    // Cluster new nodes near the viewport center instead of scattering them.
+    // Viewport center in graph coords = (-panX/zoom, -panY/zoom).
+    const zoom = cameraView?.zoom ?? 1;
+    const panX = cameraView?.panX ?? 0;
+    const panY = cameraView?.panY ?? 0;
+    const cx = -panX / zoom;
+    const cy = -panY / zoom;
+
+    const SPACING = 220; // graph units between nodes
+    const unattachedNodes = nodes.filter((node) => !attachedNodeIds.has(node.id));
+    const cols = Math.max(1, Math.ceil(Math.sqrt(unattachedNodes.length || 1)));
+    const startX = cx - ((cols - 1) * SPACING) / 2;
+    const startY = cy - (Math.ceil((unattachedNodes.length || 1) / cols) - 1) * SPACING / 2;
+    let unattachedIndex = 0;
+
+    const positioned = nodes.map((node) => {
+      if (attachedNodeIds.has(node.id)) {
+        if (authUser?.id && selectedWorkspaceId) {
+          removeLocalNodePosition(authUser.id, selectedWorkspaceId, node.id);
+        }
+
+        return {
+          ...node,
+          manual_position: false,
+          position_x: null,
+          position_y: null,
+        };
+      }
+
+      const col = unattachedIndex % cols;
+      const row = Math.floor(unattachedIndex / cols);
+      unattachedIndex += 1;
+
+      const px = Math.round(startX + col * SPACING);
+      const py = Math.round(startY + row * SPACING);
+      if (authUser?.id && selectedWorkspaceId) {
+        persistLocalNodePosition(authUser.id, selectedWorkspaceId, node.id, { x: px, y: py });
+      }
+      return { ...node, position_x: px, position_y: py, manual_position: true };
+    });
+
+    setGraphData((prev) => ({
+      ...prev,
+      nodes: [...prev.nodes, ...positioned],
+      edges: [...prev.edges, ...acceptedEdges],
+    }));
+
+    // After accepting, if any project landed with no steps under it,
+    // proactively ask in-thread whether they want a roadmap. Guarded so
+    // it never nags about the same project twice in a session. The user
+    // replies in chat → the assistant proposes steps via the normal
+    // propose-with-Accept/Reject flow.
+    const mergedGraph: GraphData = {
+      nodes: [...graphData.nodes, ...positioned],
+      edges: [...graphData.edges, ...acceptedEdges],
+    };
+    const childless = findChildlessProjects(mergedGraph).filter(
+      (p) => !roadmapPromptedRef.current.has(p.id),
+    );
+    if (childless.length > 0) {
+      childless.forEach((p) => roadmapPromptedRef.current.add(p.id));
+      const names = childless.slice(0, 3).map((p) => `"${p.title}"`);
+      const extra = childless.length - names.length;
+      const nameList =
+        names.length === 1
+          ? names[0]
+          : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+      const body =
+        childless.length === 1
+          ? `${nameList} is a project with no steps under it yet. Want me to suggest a roadmap for it? Just say the word and I'll propose steps you can review.`
+          : `${nameList}${extra > 0 ? ` and ${extra} more` : ""} are projects with no steps under them yet. Want me to suggest a roadmap for any of them?`;
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `chat-roadmap-${Math.random().toString(36).slice(2, 10)}`,
+          role: "assistant" as const,
+          body,
+          createdAt: new Date().toISOString(),
+          status: "ready" as const,
+        },
+      ]);
+      setRightPanelOpen(true);
+      setActiveRailTab("chat");
+    }
+  };
+
   const handleProposalReview = async (
     actions: Array<{
       id: string;
@@ -2699,98 +2876,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     // grouping suggestions surface right after accepting a dump's nodes.
     setClusterRefreshKey((k) => k + 1);
     if (data.accepted_nodes && data.accepted_nodes.length > 0) {
-      const nodes = data.accepted_nodes;
-      const acceptedEdges = data.accepted_edges ?? [];
-      const attachedNodeIds = new Set(
-        acceptedEdges
-          .filter((edge) => edge.edge_type === "belongs_to" || edge.edge_type === "required_for")
-          .map((edge) => edge.source_node_id),
-      );
-
-      // Cluster new nodes near the viewport center instead of scattering them.
-      // Viewport center in graph coords = (-panX/zoom, -panY/zoom).
-      const zoom = cameraView?.zoom ?? 1;
-      const panX = cameraView?.panX ?? 0;
-      const panY = cameraView?.panY ?? 0;
-      const cx = -panX / zoom;
-      const cy = -panY / zoom;
-
-      const SPACING = 220; // graph units between nodes
-      const unattachedNodes = nodes.filter((node) => !attachedNodeIds.has(node.id));
-      const cols = Math.max(1, Math.ceil(Math.sqrt(unattachedNodes.length || 1)));
-      const startX = cx - ((cols - 1) * SPACING) / 2;
-      const startY = cy - (Math.ceil((unattachedNodes.length || 1) / cols) - 1) * SPACING / 2;
-      let unattachedIndex = 0;
-
-      const positioned = nodes.map((node) => {
-        if (attachedNodeIds.has(node.id)) {
-          if (authUser?.id && selectedWorkspaceId) {
-            removeLocalNodePosition(authUser.id, selectedWorkspaceId, node.id);
-          }
-
-          return {
-            ...node,
-            manual_position: false,
-            position_x: null,
-            position_y: null,
-          };
-        }
-
-        const col = unattachedIndex % cols;
-        const row = Math.floor(unattachedIndex / cols);
-        unattachedIndex += 1;
-
-        const px = Math.round(startX + col * SPACING);
-        const py = Math.round(startY + row * SPACING);
-        if (authUser?.id && selectedWorkspaceId) {
-          persistLocalNodePosition(authUser.id, selectedWorkspaceId, node.id, { x: px, y: py });
-        }
-        return { ...node, position_x: px, position_y: py, manual_position: true };
-      });
-
-      setGraphData((prev) => ({
-        ...prev,
-        nodes: [...prev.nodes, ...positioned],
-        edges: [...prev.edges, ...acceptedEdges],
-      }));
-
-      // After accepting, if any project landed with no steps under it,
-      // proactively ask in-thread whether they want a roadmap. Guarded so
-      // it never nags about the same project twice in a session. The user
-      // replies in chat → the assistant proposes steps via the normal
-      // propose-with-Accept/Reject flow.
-      const mergedGraph: GraphData = {
-        nodes: [...graphData.nodes, ...positioned],
-        edges: [...graphData.edges, ...acceptedEdges],
-      };
-      const childless = findChildlessProjects(mergedGraph).filter(
-        (p) => !roadmapPromptedRef.current.has(p.id),
-      );
-      if (childless.length > 0) {
-        childless.forEach((p) => roadmapPromptedRef.current.add(p.id));
-        const names = childless.slice(0, 3).map((p) => `"${p.title}"`);
-        const extra = childless.length - names.length;
-        const nameList =
-          names.length === 1
-            ? names[0]
-            : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-        const body =
-          childless.length === 1
-            ? `${nameList} is a project with no steps under it yet. Want me to suggest a roadmap for it? Just say the word and I'll propose steps you can review.`
-            : `${nameList}${extra > 0 ? ` and ${extra} more` : ""} are projects with no steps under them yet. Want me to suggest a roadmap for any of them?`;
-        setChatMessages((prev) => [
-          ...prev,
-          {
-            id: `chat-roadmap-${Math.random().toString(36).slice(2, 10)}`,
-            role: "assistant" as const,
-            body,
-            createdAt: new Date().toISOString(),
-            status: "ready" as const,
-          },
-        ]);
-        setRightPanelOpen(true);
-        setActiveRailTab("chat");
-      }
+      mergeAcceptedIntoGraph(data.accepted_nodes, data.accepted_edges ?? []);
     }
     setProposedNodesSubmitting(false);
     setProposedReviewOpen(false);
@@ -4148,6 +4234,14 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       {/* Step generation loading indicator */}
       <AnimatePresence>
+        {autoApplyUndo ? (
+          <AutoApplyNotice
+            key="auto-apply"
+            count={autoApplyUndo.count}
+            onUndo={() => void handleUndoAutoApply()}
+            onDismiss={dismissAutoApplyNotice}
+          />
+        ) : null}
         {stepSuggestionLoading && (
           <motion.div
             key="step-loading"

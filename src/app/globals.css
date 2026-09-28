@@ -7921,6 +7921,59 @@ input[type="search"]::-webkit-search-results-decoration {
   white-space: nowrap;
 }
 
+/* Calibrated auto-apply notice (#friction): "Added N items · Undo". Same
+   surface/tokens as the AI status chip, but interactive. */
+.auto-apply-notice {
+  position: fixed;
+  /* Above the AI status chip (bottom: 88px) — auto-apply immediately kicks off
+     "Finding connections…", so both can be visible at once. */
+  bottom: 136px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 56;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  box-shadow: 0 6px 26px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+}
+.auto-apply-notice-check {
+  color: rgba(130, 210, 130, 0.95);
+  font-weight: 700;
+}
+.auto-apply-notice-undo {
+  padding: 3px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.auto-apply-notice-undo:hover {
+  color: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  background: rgba(213, 58, 71, 0.08);
+}
+.auto-apply-notice-close {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
 /* Cancel affordance inside a status chip — re-enables pointer events (the chip
    itself is click-through) so the user can stop a slow generation (#5). */
 .ai-status-cancel {
