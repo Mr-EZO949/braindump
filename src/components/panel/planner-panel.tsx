@@ -67,6 +67,10 @@ type PlannerPanelProps = {
   onReject: () => void;
   onReset: () => void;
   onCancel: () => void;
+  // True while an accept is being written (tasks saved). Disables the
+  // Accept/Reject buttons so a second click can't apply the plan twice —
+  // which stacked duplicate, overlapping tasks on the day (journal #6a).
+  accepting?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -223,6 +227,7 @@ export function PlannerPanel({
   onReject,
   onReset,
   onCancel,
+  accepting = false,
 }: PlannerPanelProps) {
   const [selectedWindow, setSelectedWindow] = useState<PlanningWindow>("2h");
   const [startMode, setStartMode] = useState<"now" | "at">("now");
@@ -369,13 +374,29 @@ export function PlannerPanel({
   if (loading) {
     return (
       <div className="planner-loading">
-        <span className="ai-status-dot" />
-        <span className="text-[12px] font-medium text-[var(--color-text-secondary)]">
-          Building your plan…
-        </span>
-        <button className="planner-loading-cancel" onClick={onCancel} type="button">
-          Cancel
-        </button>
+        <div className="planner-loading-head">
+          <span className="ai-status-dot" />
+          <div className="planner-loading-copy">
+            <p className="planner-loading-title">Building your plan…</p>
+            <p className="planner-loading-sub">
+              Picking your highest-priority work and time-blocking a realistic session.
+            </p>
+          </div>
+          <button className="planner-loading-cancel" onClick={onCancel} type="button">
+            Cancel
+          </button>
+        </div>
+        <div className="planner-loading-skeletons" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <div className="planner-loading-skel" key={i} style={{ animationDelay: `${i * 0.12}s` }}>
+              <span className="planner-loading-skel-time" />
+              <span className="planner-loading-skel-body">
+                <span className="planner-loading-skel-line" />
+                <span className="planner-loading-skel-line planner-loading-skel-line--short" />
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -459,6 +480,7 @@ export function PlannerPanel({
         <div className="planner-actions">
           <button
             className="planner-reject-btn"
+            disabled={accepting}
             onClick={onReject}
             type="button"
           >
@@ -466,11 +488,12 @@ export function PlannerPanel({
           </button>
           <button
             className="planner-accept-btn"
-            disabled={blocks.length === 0}
+            data-busy={accepting || undefined}
+            disabled={blocks.length === 0 || accepting}
             onClick={() => onAccept(blocks.map((b) => b.id))}
             type="button"
           >
-            Accept plan
+            {accepting ? "Accepting…" : "Accept plan"}
           </button>
         </div>
       ) : (

@@ -745,11 +745,67 @@ function AnyTimeChip({ task, onToggle, onEdit, onDelete }: AnyTimeChipProps) {
   );
 }
 
+// Assign side-by-side columns to timeline events that overlap in time, so
+// concurrent tasks render next to each other instead of stacked on the same
+// pixels (journal #6a). Events are grouped into clusters of transitively-
+// overlapping intervals; within a cluster each event takes the first free
+// column. Returns id → { lane, laneCount } where laneCount is the cluster width.
+function computeTimelineLanes(
+  tasks: { id: string; start_time: string | null; duration_minutes: number | null }[],
+): Map<string, { lane: number; laneCount: number }> {
+  const result = new Map<string, { lane: number; laneCount: number }>();
+  const evs = tasks
+    .map((t) => {
+      const start = parseTimeToMinutes(t.start_time);
+      if (start === null) return null;
+      const dur = Math.max(
+        TIMELINE_MIN_DURATION_MINUTES,
+        t.duration_minutes ?? DEFAULT_TASK_DURATION_MINUTES,
+      );
+      return { id: t.id, start, end: start + dur };
+    })
+    .filter((e): e is { id: string; start: number; end: number } => e !== null)
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+
+  let cluster: { id: string; start: number; end: number }[] = [];
+  let clusterEnd = -1;
+  const flush = () => {
+    if (cluster.length === 0) return;
+    const colEnds: number[] = []; // last end-minute per column
+    const colOf = new Map<string, number>();
+    for (const e of cluster) {
+      let col = colEnds.findIndex((end) => end <= e.start);
+      if (col === -1) {
+        col = colEnds.length;
+        colEnds.push(e.end);
+      } else {
+        colEnds[col] = e.end;
+      }
+      colOf.set(e.id, col);
+    }
+    const laneCount = colEnds.length;
+    for (const e of cluster) result.set(e.id, { lane: colOf.get(e.id) ?? 0, laneCount });
+  };
+  for (const e of evs) {
+    if (cluster.length > 0 && e.start >= clusterEnd) {
+      flush();
+      cluster = [];
+      clusterEnd = -1;
+    }
+    cluster.push(e);
+    clusterEnd = Math.max(clusterEnd, e.end);
+  }
+  flush();
+  return result;
+}
+
 type TimelineEventProps = {
   task: PlanTask;
   startHour: number;
   startMinutes: number;
   durationMinutes: number;
+  lane?: number;
+  laneCount?: number;
   isInteracting: boolean;
   onToggle: () => void;
   onEdit: () => void;
@@ -763,6 +819,8 @@ function TimelineEvent({
   startHour,
   startMinutes,
   durationMinutes,
+  lane = 0,
+  laneCount = 1,
   isInteracting,
   onToggle,
   onEdit,
@@ -776,11 +834,23 @@ function TimelineEvent({
   const isShort = height < 46;
   const timeLabel = formatTimeRange(formatMinutesToTaskTime(startMinutes), durationMinutes);
 
+  // When events overlap in time, split them into side-by-side columns instead
+  // of stacking on the same pixels (journal #6a). Single events keep the full
+  // width (left/right come from the CSS).
+  const laneStyle =
+    laneCount > 1
+      ? {
+          left: `calc(4px + ${(lane / laneCount) * 100}% )`,
+          width: `calc(${100 / laneCount}% - ${(4 * (laneCount + 1)) / laneCount}px)`,
+          right: "auto" as const,
+        }
+      : null;
+
   return (
     <div
       className={`timeline-event${task.done ? " timeline-event-done" : ""}${confirmDelete ? " timeline-event-confirming" : ""}`}
       data-interacting={isInteracting || undefined}
-      style={{ top, height }}
+      style={{ top, height, ...laneStyle }}
     >
       {confirmDelete ? (
         <div className="timeline-event-confirm">
@@ -1093,33 +1163,39 @@ function DayTimeline({
               <div className="timeline-line-half" style={{ top: i * HOUR_HEIGHT + HOUR_HEIGHT / 2 }} />
             </div>
           ))}
-          {timedTasks.map((t) => {
-            const baseStartMinutes = parseTimeToMinutes(t.start_time);
-            if (baseStartMinutes === null) return null;
+          {(() => {
+            const lanes = computeTimelineLanes(timedTasks);
+            return timedTasks.map((t) => {
+              const baseStartMinutes = parseTimeToMinutes(t.start_time);
+              if (baseStartMinutes === null) return null;
 
-            const durationMinutes = draftTiming?.taskId === t.id
-              ? draftTiming.durationMinutes
-              : Math.max(TIMELINE_MIN_DURATION_MINUTES, t.duration_minutes ?? DEFAULT_TASK_DURATION_MINUTES);
-            const startMinutes = draftTiming?.taskId === t.id
-              ? draftTiming.startMinutes
-              : baseStartMinutes;
+              const durationMinutes = draftTiming?.taskId === t.id
+                ? draftTiming.durationMinutes
+                : Math.max(TIMELINE_MIN_DURATION_MINUTES, t.duration_minutes ?? DEFAULT_TASK_DURATION_MINUTES);
+              const startMinutes = draftTiming?.taskId === t.id
+                ? draftTiming.startMinutes
+                : baseStartMinutes;
+              const laneInfo = lanes.get(t.id);
 
-            return (
-              <TimelineEvent
-                key={t.id}
-                task={t}
-                durationMinutes={durationMinutes}
-                isInteracting={draftTiming?.taskId === t.id}
-                onDelete={() => onDelete(t.id)}
-                onEdit={() => handleEventEdit(t)}
-                onMoveStart={(event) => startTimelineInteraction(event, t, "move")}
-                onResizeStart={(event) => startTimelineInteraction(event, t, "resize")}
-                onToggle={() => onToggle(t.id)}
-                startHour={startHour}
-                startMinutes={startMinutes}
-              />
-            );
-          })}
+              return (
+                <TimelineEvent
+                  key={t.id}
+                  task={t}
+                  durationMinutes={durationMinutes}
+                  lane={laneInfo?.lane ?? 0}
+                  laneCount={laneInfo?.laneCount ?? 1}
+                  isInteracting={draftTiming?.taskId === t.id}
+                  onDelete={() => onDelete(t.id)}
+                  onEdit={() => handleEventEdit(t)}
+                  onMoveStart={(event) => startTimelineInteraction(event, t, "move")}
+                  onResizeStart={(event) => startTimelineInteraction(event, t, "resize")}
+                  onToggle={() => onToggle(t.id)}
+                  startHour={startHour}
+                  startMinutes={startMinutes}
+                />
+              );
+            });
+          })()}
         </div>
       </div>
     </div>
@@ -1135,6 +1211,12 @@ type AssistantModeProps = {
   // Bumped by app-shell whenever the graph side cascades plan_tasks — we
   // re-fetch the tasks list so the planner reflects auto-toggled rows.
   tasksRefreshKey?: number;
+  // Bumped by app-shell when the user accepts a chat `plan_day`. The chat tool
+  // persists a DRAFT plan_session + blocks server-side; on this signal we load
+  // that draft into the planner's review UI so the user actually SEES it (and
+  // applies it with correct local-time scheduling). Fixes: chat "generated a
+  // schedule" but nothing shows on the planner (journal #6).
+  draftPlanRefreshKey?: number;
   onAskInChat?: (message: string) => void;
   // Called after the planner toggles a task that has a linked graph node,
   // so app-shell can mirror the new status into its local graphData state
@@ -1147,6 +1229,7 @@ export function AssistantMode({
   selectedNodeId,
   workspaceId,
   tasksRefreshKey,
+  draftPlanRefreshKey,
   onAskInChat,
   onLinkedNodeStatusChange,
 }: AssistantModeProps) {
@@ -1206,6 +1289,16 @@ export function AssistantMode({
 
   // AI plan state
   const [plannerState, setPlannerState] = useState<PlannerState>(INITIAL_PLANNER_STATE);
+  // Guards against double-applying a plan: the async accept (fetch + task
+  // inserts) leaves a window where a second click would stack a duplicate,
+  // overlapping copy of every task on the day (journal #6a). The ref blocks
+  // re-entry synchronously; the state drives the button's disabled/busy UI.
+  const acceptingPlanRef = useRef(false);
+  const [planAccepting, setPlanAccepting] = useState(false);
+  const resetPlanAccepting = useCallback(() => {
+    acceptingPlanRef.current = false;
+    setPlanAccepting(false);
+  }, []);
   const planAbortRef = useRef<AbortController | null>(null);
   // Chosen clock start ("HH:MM") for the in-flight/current plan, or null = now.
   // Kept here (not on the session row) because anchoring is a UI-only choice
@@ -1319,6 +1412,47 @@ export function AssistantMode({
       // ignore — next interaction will retry
     });
   }, [tasksRefreshKey, loadPersistedTasks]);
+
+  // Load a fresh chat-generated draft plan into the review UI (journal #6).
+  // Only picks up a draft created in the last few minutes so an old, abandoned
+  // in-planner draft isn't resurrected on an unrelated remount.
+  const loadLatestDraftPlan = useCallback(async () => {
+    if (!supabase || !workspaceId) return;
+    const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { data: sessions } = await supabase
+      .from("plan_sessions")
+      .select(
+        "id, workspace_id, user_id, planning_window, custom_minutes, scope, status, created_at",
+      )
+      .eq("workspace_id", workspaceId)
+      .eq("status", "draft")
+      .gte("created_at", cutoff)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const session = (sessions?.[0] as PlanSession | undefined) ?? null;
+    if (!session) return;
+    const { data: blockRows } = await supabase
+      .from("plan_blocks")
+      .select(
+        "id, plan_session_id, node_id, title, start_offset, duration_minutes, reason, block_type, completion_status",
+      )
+      .eq("plan_session_id", session.id);
+    setPlannerState({
+      session,
+      blocks: sortPlanBlocks((blockRows ?? []) as PlanBlock[]),
+      recentlyUnblockedNodeIds: new Set(),
+      loading: false,
+      error: null,
+      finalised: false,
+    });
+  }, [supabase, workspaceId]);
+
+  useEffect(() => {
+    if (draftPlanRefreshKey === undefined || draftPlanRefreshKey === 0) return;
+    void loadLatestDraftPlan().catch(() => {
+      // ignore — the draft stays in the DB; the user can re-open the planner
+    });
+  }, [draftPlanRefreshKey, loadLatestDraftPlan]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -1765,8 +1899,11 @@ export function AssistantMode({
   );
 
   const handlePlanAccept = async (finalBlockIds: string[]) => {
+    if (acceptingPlanRef.current) return; // already applying — ignore re-clicks
     const sessionId = plannerState.session?.id;
     if (!sessionId) return;
+    acceptingPlanRef.current = true;
+    setPlanAccepting(true);
 
     try {
       // Chat-generated plans have local IDs — skip the server feedback call
@@ -1827,6 +1964,7 @@ export function AssistantMode({
       // plan on top. Defer the actual write to the modal's choice (replace/add).
       const existingPlanTasks = findPlanTasksForDate(tasks, targetDate);
       if (newTasks.length > 0 && existingPlanTasks.length > 0) {
+        // Hand off to the replace/add modal — it (or cancel) resets the flag.
         setReplanPrompt({
           targetDate,
           newTasks,
@@ -1841,14 +1979,17 @@ export function AssistantMode({
           ...prev,
           error: "Plan was accepted, but tasks could not be saved.",
         }));
+        resetPlanAccepting();
         return;
       }
 
       // Switch to task view at the date these tasks were scheduled onto.
       setSelectedDate(targetDate);
       setPlannerState(INITIAL_PLANNER_STATE);
+      resetPlanAccepting();
     } catch {
       setPlannerState((prev) => ({ ...prev, error: "Could not accept the plan. Try again." }));
+      resetPlanAccepting();
     }
   };
 
@@ -1865,26 +2006,34 @@ export function AssistantMode({
         ...prev,
         error: "Plan was accepted, but tasks could not be saved.",
       }));
+      resetPlanAccepting();
       return;
     }
     setReplanPrompt(null);
     setSelectedDate(targetDate);
     setPlannerState(INITIAL_PLANNER_STATE);
+    resetPlanAccepting();
   };
 
   const handleReplanReplace = () => void finishReplan(replanPrompt?.existingTaskIds ?? []);
   const handleReplanAdd = () => void finishReplan([]);
-  const handleReplanCancel = () => setReplanPrompt(null);
+  const handleReplanCancel = () => {
+    setReplanPrompt(null);
+    resetPlanAccepting();
+  };
 
   // Escape closes the replan modal (cancel), matching the rest of the app.
   useEffect(() => {
     if (!replanPrompt) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setReplanPrompt(null);
+      if (e.key === "Escape") {
+        setReplanPrompt(null);
+        resetPlanAccepting();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [replanPrompt]);
+  }, [replanPrompt, resetPlanAccepting]);
 
   const handlePlanReject = async () => {
     const sessionId = plannerState.session?.id;
@@ -1979,6 +2128,7 @@ export function AssistantMode({
               onReject={() => void handlePlanReject()}
               onReset={handlePlanReset}
               onCancel={handlePlanCancel}
+              accepting={planAccepting}
             />
           ) : (
             <>

@@ -2,9 +2,7 @@
 // One-shot endpoint that returns everything the news-style daily brief needs:
 //   - top: top-3 priority nodes (same as /top-now)
 //   - nudges: proactive prompts (same shape as /nudges)
-//   - today_schedule: plan_tasks scheduled for today
 //   - yesterday_wins: nodes completed in the last 24h
-//   - weekly_pulse: rolling 7-day stats (completed, created, scheduled, rate)
 //   - headline: always null (the Focus redesign dropped it; kept for shape)
 //
 // Single endpoint avoids the 2-3 round trips the old DailyBriefOverlay was
@@ -19,8 +17,6 @@ import type { Nudge } from "@/types/chat";
 const RECENT_COMPLETION_WINDOW_HOURS = 24;
 const QUIET_GOAL_DAYS = 14;
 const MAX_NUDGES = 4;
-const PULSE_DAYS = 7;
-const MAX_TODAY_SCHEDULE = 8;
 const MAX_YESTERDAY_WINS = 5;
 
 function todayISO(now = new Date()): string {
@@ -30,22 +26,6 @@ function todayISO(now = new Date()): string {
 function dateNDaysAgoISO(days: number, now = new Date()): string {
   const d = new Date(now);
   d.setDate(now.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-
-// Returns the ISO date of this calendar week's Monday (UTC).
-// Used as the lower bound for the weekly completion-rate window — the rate
-// resets every Monday rather than rolling 7 days.
-//
-// All date math here uses UTC for consistency with `todayISO`. There's a
-// small TZ-fuzzy band near midnight where a user's local "today" doesn't
-// match the server's UTC "today" — acceptable for this metric.
-function thisWeekMondayISO(now = new Date()): string {
-  const d = new Date(now);
-  // Sunday=0, Mon=1 ... Sat=6 → days to subtract to land on Monday
-  const dow = d.getUTCDay();
-  const diff = (dow + 6) % 7;
-  d.setUTCDate(d.getUTCDate() - diff);
   return d.toISOString().slice(0, 10);
 }
 
@@ -92,20 +72,13 @@ export async function POST(req: NextRequest) {
   const sinceCompletionsISO = new Date(
     Date.now() - RECENT_COMPLETION_WINDOW_HOURS * 3600_000,
   ).toISOString();
-  const weekStartISO = dateNDaysAgoISO(PULSE_DAYS - 1);
-  // Plan rate window: this calendar week (Monday → today, exclusive of today).
-  // Resets every Monday. Today's tasks are excluded so a still-pending task
-  // scheduled for this morning doesn't drag the rate down.
-  const planRateStartISO = thisWeekMondayISO();
 
-  // Run independent reads in parallel — RLS already scopes them.
+  // Only fetch data rendered in the Focus dialog. The previous response also
+  // loaded today's schedule and weekly statistics, which this dialog no
+  // longer uses.
   const [
     plannerResult,
-    todayScheduleResult,
     yesterdayCompletionsResult,
-    weeklyCompletionsResult,
-    weeklyCreationsResult,
-    weeklyScheduledResult,
     overdueResult,
     quietGoalsResult,
   ] = await Promise.all([
@@ -118,15 +91,6 @@ export async function POST(req: NextRequest) {
     }).catch(() => ({ candidates: [] })),
 
     supabase
-      .from("plan_tasks")
-      .select("id, title, start_time, duration_minutes, done, node_id")
-      .eq("user_id", user.id)
-      .eq("workspace_id", workspace_id)
-      .eq("scheduled_date", today)
-      .order("start_time", { ascending: true, nullsFirst: false })
-      .limit(MAX_TODAY_SCHEDULE),
-
-    supabase
       .from("lifecycle_events")
       .select("created_at, node_id, nodes!inner(workspace_id, title, node_type)")
       .eq("user_id", user.id)
@@ -135,31 +99,6 @@ export async function POST(req: NextRequest) {
       .gte("created_at", sinceCompletionsISO)
       .order("created_at", { ascending: false })
       .limit(MAX_YESTERDAY_WINS),
-
-    supabase
-      .from("lifecycle_events")
-      .select("id, nodes!inner(workspace_id)", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .eq("new_status", "completed")
-      .eq("nodes.workspace_id", workspace_id)
-      .gte("created_at", `${weekStartISO}T00:00:00.000Z`),
-
-    supabase
-      .from("nodes")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .eq("workspace_id", workspace_id)
-      .gte("created_at", `${weekStartISO}T00:00:00.000Z`),
-
-    // Plan-rate query: tasks scheduled this calendar week (Mon → today),
-    // EXCLUDING today (incomplete tasks for today shouldn't count yet).
-    supabase
-      .from("plan_tasks")
-      .select("done")
-      .eq("user_id", user.id)
-      .eq("workspace_id", workspace_id)
-      .gte("scheduled_date", planRateStartISO)
-      .lt("scheduled_date", today),
 
     supabase
       .from("plan_tasks")
@@ -192,16 +131,6 @@ export async function POST(req: NextRequest) {
     planning_signals: c.planning_signals,
   }));
 
-  // ── today's schedule ─────────────────────────────────────────────────────
-  const today_schedule = (todayScheduleResult.data ?? []).map((row) => ({
-    id: row.id as string,
-    title: row.title as string,
-    start_time: row.start_time as string | null,
-    duration_minutes: row.duration_minutes as number | null,
-    done: row.done as boolean,
-    node_id: row.node_id as string | null,
-  }));
-
   // ── yesterday wins ───────────────────────────────────────────────────────
   const yesterday_wins = (yesterdayCompletionsResult.data ?? [])
     .map((row) => {
@@ -219,15 +148,6 @@ export async function POST(req: NextRequest) {
       };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
-
-  // ── weekly pulse ─────────────────────────────────────────────────────────
-  const weekly_completed = weeklyCompletionsResult.count ?? 0;
-  const weekly_created = weeklyCreationsResult.count ?? 0;
-  const weekly_scheduled_rows = weeklyScheduledResult.data ?? [];
-  const weekly_scheduled = weekly_scheduled_rows.length;
-  const weekly_scheduled_done = weekly_scheduled_rows.filter((r) => r.done).length;
-  const weekly_completion_rate =
-    weekly_scheduled > 0 ? weekly_scheduled_done / weekly_scheduled : null;
 
   // ── nudges ───────────────────────────────────────────────────────────────
   const nudges: Nudge[] = [];
@@ -281,15 +201,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     headline: null,
     top,
-    today_schedule,
     yesterday_wins,
-    weekly_pulse: {
-      completed: weekly_completed,
-      created: weekly_created,
-      scheduled: weekly_scheduled,
-      scheduled_done: weekly_scheduled_done,
-      completion_rate: weekly_completion_rate,
-    },
     nudges: nudges.slice(0, MAX_NUDGES),
   });
 }
