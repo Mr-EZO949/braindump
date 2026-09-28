@@ -47,7 +47,7 @@ import {
   buildAssistantUserPrompt,
   ASSISTANT_PROMPT_VERSION,
 } from "./prompts/assistant";
-import { buildPlanPrompt, PLAN_PROMPT_VERSION } from "./prompts/plan";
+import { buildPlanPrompt, PLAN_OUTPUT_SCHEMA, PLAN_PROMPT_VERSION } from "./prompts/plan";
 import { buildMergeCheckPrompt, MERGE_CHECK_PROMPT_VERSION } from "./prompts/merge-check";
 
 // ---------------------------------------------------------------------------
@@ -402,23 +402,30 @@ export class ClaudeProvider {
       workspace_context: input.workspace_context,
     });
 
-    // Planner runs on Sonnet: the strict time-block JSON + realistic per-task
-    // durations need it — Haiku produced malformed output (the user-facing
-    // "AI returned an invalid response") and weak durations. Planning is a
-    // low-volume call (a few per day), so the cost is negligible. One auto-retry
-    // absorbs a rare JSON hiccup so the user never sees a malformed-response error.
-    const plannerModel = AI_MODELS.CLAUDE_SONNET;
+    // Short sessions (≤3h) plan on Haiku with the JSON schema ENFORCED — the
+    // schema removes the malformed output that originally ruled Haiku out, and
+    // in the 2026-09-28 eval its 2h plans matched Sonnet's at ~40% of the cost.
+    // Full days stay on Sonnet: Haiku left ~2.5h of an 8h day empty and dropped
+    // every habit. If the Haiku attempt still fails, the retry uses Sonnet.
+    let plannerModel: string =
+      totalMinutes <= 180 ? AI_MODELS.CLAUDE_HAIKU : AI_MODELS.CLAUDE_SONNET;
     const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt, plannerModel);
     const start = Date.now();
 
     let text = "{}";
     let usage = EMPTY_USAGE;
+    let estimatedCost = 0; // priced per attempt — a retry may switch model
     let output: PlanOutput | null = null;
     let lastError: unknown;
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (attempt > 0) plannerModel = AI_MODELS.CLAUDE_SONNET;
+      const enforceSchema = plannerModel === AI_MODELS.CLAUDE_HAIKU;
       const response = await this.client.messages.create({
         model: plannerModel,
+        ...(enforceSchema
+          ? { output_config: { format: { type: "json_schema" as const, schema: PLAN_OUTPUT_SCHEMA } } }
+          : {}),
         // Headroom for Sonnet 5's tokenizer (~30% more tokens for the same
         // text) — a fuller day-plan JSON could otherwise brush the old cap.
         // Pure truncation guard; the model stops at end_turn when done.
@@ -428,7 +435,9 @@ export class ClaudeProvider {
         messages: [{ role: "user", content: prompt }],
       });
       text = response.content[0].type === "text" ? response.content[0].text : "{}";
-      usage = addUsage(usage, readClaudeUsage(response.usage));
+      const attemptUsage = readClaudeUsage(response.usage);
+      usage = addUsage(usage, attemptUsage);
+      estimatedCost += claudeCostUSD(plannerModel, attemptUsage);
       try {
         const parsed = JSON.parse(extractJson(text));
         output = validatePlanOutput(parsed, totalMinutes);
@@ -439,7 +448,6 @@ export class ClaudeProvider {
     }
 
     const latencyMs = Date.now() - start;
-    const estimatedCost = claudeCostUSD(plannerModel, usage);
     const inputTokens = totalInputTokens(usage);
     const outputTokens = usage.output;
 
@@ -464,6 +472,7 @@ export class ClaudeProvider {
       output,
       run: {
         ...run,
+        model_name: plannerModel,
         output_hash: shortHash(text),
         input_tokens: inputTokens,
         output_tokens: outputTokens,

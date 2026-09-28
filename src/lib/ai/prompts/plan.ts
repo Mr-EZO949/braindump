@@ -39,6 +39,34 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   "prompt_version": "${PLAN_PROMPT_VERSION}"
 }`;
 
+// The plan's JSON shape as a schema — sent as an enforced output format when
+// the planner runs on Haiku, so its output can't be malformed (the reason
+// Haiku was originally dropped from planning).
+export const PLAN_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["blocks", "prompt_version"],
+  properties: {
+    prompt_version: { type: "string" },
+    blocks: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["node_id", "title", "start_offset", "duration_minutes", "reason", "block_type"],
+        properties: {
+          node_id: { type: ["string", "null"] },
+          title: { type: "string" },
+          start_offset: { type: "integer" },
+          duration_minutes: { type: "integer" },
+          reason: { type: "string" },
+          block_type: { type: "string", enum: ["focus", "admin", "break", "buffer"] },
+        },
+      },
+    },
+  },
+} as const;
+
 export interface PlanPromptParams {
   planning_window: string;
   total_minutes: number;
