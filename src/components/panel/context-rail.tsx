@@ -120,7 +120,7 @@ function getScoreTier(score: number): string {
 }
 
 // User-facing category label. Goals/projects are the big, breakdown-able items
-// — shown as "Objective"; a task is an "Action" item. Other types title-case.
+// — shown as "Objective"; tasks stay "Task". Other types are title-cased.
 function nodeCategoryLabel(nodeType: string): string {
   if (nodeType === "goal" || nodeType === "project") return "Objective";
   if (nodeType === "task") return "Task";

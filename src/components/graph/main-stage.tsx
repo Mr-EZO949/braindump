@@ -216,10 +216,10 @@ export function MainStage({
         </div>
       ) : null}
 
-      {/* The shelf is the "where did my done tasks go" affordance — only needed
-          when completed nodes are hidden from the graph. When they're shown
-          (the #17 default) they live on the board, so the shelf is redundant. */}
-      {hideCompleted ? (
+      {/* The shelf lists completed nodes that are NOT on the board — all of
+          them when "Hide done" is on, otherwise the ones older than the recency
+          window. CompletedShelf renders nothing when that list is empty. */}
+      {completedNodes.length > 0 ? (
         <div className="pointer-events-none absolute bottom-6 left-6 z-20">
           <div className="pointer-events-auto">
             <CompletedShelf nodes={completedNodes} onSelect={onSelectCompletedNode} />

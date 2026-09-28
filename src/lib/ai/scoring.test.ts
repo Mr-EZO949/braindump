@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   dependencyPressure,
   blocksPenalty,
@@ -79,9 +79,18 @@ describe("urgency — deadline term (v8)", () => {
   const created = new Date().toISOString();
 
   it("adds nothing without a target_date", () => {
-    expect(urgency(makeNode("a", { created_at: created }))).toBe(
-      urgency(makeNode("b", { created_at: created, target_date: null })),
-    );
+    // urgency() reads the clock (age decay). Freeze it so both calls see the
+    // same "now" — otherwise the microseconds between the two calls make the
+    // exact comparison flaky. (toBeCloseTo would hide a real difference.)
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date());
+    try {
+      expect(urgency(makeNode("a", { created_at: created }))).toBe(
+        urgency(makeNode("b", { created_at: created, target_date: null })),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a task due today outranks an identical no-deadline task (fixes the eval inversion)", () => {

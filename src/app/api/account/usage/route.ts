@@ -34,32 +34,44 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // 1. All dump entries for this user (id + when).
-  const { data: entries, error: entriesError } = await supabase
-    .from("raw_entries")
-    .select("id, created_at")
-    .eq("user_id", user.id)
-    .in("source_type", DUMP_SOURCE_TYPES as unknown as string[]);
+  // PostgREST caps a query at 1000 rows by default, so both reads paginate —
+  // otherwise a heavy user would be silently undercounted.
+  const PAGE = 1000;
 
-  if (entriesError) {
-    return NextResponse.json({ error: entriesError.message }, { status: 500 });
+  // 1. Dump entries that actually ran (id + when). Only COMPLETED dumps count
+  //    as usage: a failed extraction produced no proposals, and counting it
+  //    would book it as a "small" dump the user never really got.
+  const dumpEntries: Array<{ id: string; created_at: string }> = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data: page, error: entriesError } = await supabase
+      .from("raw_entries")
+      .select("id, created_at")
+      .eq("user_id", user.id)
+      .eq("status", "completed")
+      .in("source_type", DUMP_SOURCE_TYPES as unknown as string[])
+      .order("created_at", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (entriesError) {
+      return NextResponse.json({ error: entriesError.message }, { status: 500 });
+    }
+    const rows = (page ?? []) as Array<{ id: string; created_at: string }>;
+    dumpEntries.push(...rows);
+    if (rows.length < PAGE) break;
   }
 
-  const dumpEntries = entries ?? [];
   if (dumpEntries.length === 0) {
     return NextResponse.json({ all_time: emptyCounts(), this_month: emptyCounts() });
   }
 
-  // 2. Count proposed nodes per raw_entry. Paginate so a heavy user with more
-  //    than one page of proposals is still counted exactly (the client caps at
-  //    1000 rows/query by default).
+  // 2. Count proposed nodes per raw_entry.
   const proposalCountByEntry = new Map<string, number>();
-  const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     const { data: page, error: propsError } = await supabase
       .from("proposed_nodes")
       .select("raw_entry_id")
       .eq("user_id", user.id)
+      // Stable order so pages can't skip or repeat rows between requests.
+      .order("id", { ascending: true })
       .range(from, from + PAGE - 1);
     if (propsError) {
       return NextResponse.json({ error: propsError.message }, { status: 500 });

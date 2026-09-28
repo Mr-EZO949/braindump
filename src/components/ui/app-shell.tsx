@@ -145,6 +145,40 @@ const importanceFilterOptions = [
   { label: "40 and above", value: "40" },
 ] as const;
 
+// How long a completed node stays on the graph board before moving to the
+// completed shelf (#17: keep the win visible, without months of clutter).
+const RECENT_COMPLETION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+// 32-bit FNV-1a over the fields that change what the user would see: node
+// identity/status/edit time/deadline/score and edge identity/status. Cheap
+// (one pass over a few KB) and collision-safe enough for a cache key.
+function hashGraphContent(nodes: Node[], edges: Edge[]): string {
+  let hash = 0x811c9dc5;
+  const feed = (value: string) => {
+    for (let i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+  };
+  for (const n of nodes) {
+    feed(
+      `${n.id}|${n.status ?? ""}|${n.updated_at ?? ""}|${n.target_date ?? ""}|${
+        n.current_importance_score ?? ""
+      };`,
+    );
+  }
+  for (const e of edges) {
+    feed(`${e.id}|${e.status ?? ""};`);
+  }
+  return `${nodes.length}:${edges.length}:${(hash >>> 0).toString(36)}`;
+}
+
+function isRecentCompletion(node: Node, cutoffMs: number): boolean {
+  if (!node.completed_at) return false;
+  const completedMs = Date.parse(node.completed_at);
+  return Number.isFinite(completedMs) && completedMs >= cutoffMs;
+}
+
 function formatNodeTypeLabel(nodeType: string) {
   return nodeType
     .replace(/_/g, " ")
@@ -553,13 +587,40 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   // #17: completed nodes are SHOWN by default — a done task should stay in the
   // graph, attached to its parent, so the user feels the satisfaction of it.
-  // The filter bar's "Hide done" toggle collapses them into the shelf for
-  // anyone who wants a clean board.
+  // But only RECENT ones: a completion stays on the board for a week, then moves
+  // to the completed shelf, so a mature graph doesn't fill up with months of
+  // done nodes (the force layout would have to place every one of them too).
+  // The filter bar's "Hide done" toggle shelves all of them.
   const [hideCompleted, setHideCompleted] = useState(false);
+  // Coarse clock for the recency window — read once, refreshed hourly. Held in
+  // state rather than calling Date.now() during render, so the memoized
+  // filters below stay pure.
+  const [recencyNowMs, setRecencyNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setRecencyNowMs(Date.now()), 60 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const recentCompletionCutoffMs = recencyNowMs - RECENT_COMPLETION_WINDOW_MS;
 
+  // Completed nodes that are NOT on the board (all of them when "Hide done" is
+  // on, otherwise the ones older than the recency window) — the shelf lists these.
   const completedNodes = useMemo(
-    () => graphData.nodes.filter((node) => node.status === "completed"),
-    [graphData.nodes],
+    () =>
+      graphData.nodes.filter(
+        (node) =>
+          node.status === "completed" &&
+          (hideCompleted || !isRecentCompletion(node, recentCompletionCutoffMs)),
+      ),
+    [graphData.nodes, hideCompleted, recentCompletionCutoffMs],
+  );
+
+  // Content signature for caches that must invalidate on ANY meaningful graph
+  // change (the Focus brief, #9). The old key was "nodes:edges:completedCount",
+  // which missed renames, deadline edits, archiving (archived nodes stay in
+  // graphData, so counts didn't move), rescoring, and a complete+reopen pair.
+  const graphContentSignature = useMemo(
+    () => hashGraphContent(graphData.nodes, graphData.edges),
+    [graphData.nodes, graphData.edges],
   );
 
   // Actionable-but-empty nodes (goal/project/class with no next step) — drives
@@ -601,8 +662,12 @@ export function AppShell({ initialUser }: AppShellProps) {
         return false;
       }
 
-      // Completed nodes are hidden by default
-      if (node.status === "completed" && hideCompleted) {
+      // Completed nodes: on the board only while recent (and "Hide done" is off);
+      // everything else lives in the completed shelf.
+      if (
+        node.status === "completed" &&
+        (hideCompleted || !isRecentCompletion(node, recentCompletionCutoffMs))
+      ) {
         return false;
       }
 
@@ -628,7 +693,14 @@ export function AppShell({ initialUser }: AppShellProps) {
           visibleNodeIds.has(edge.target_node_id),
       ),
     };
-  }, [graphData, hideCompleted, importanceFilter, nodeTypeFilter, showArchived]);
+  }, [
+    graphData,
+    hideCompleted,
+    importanceFilter,
+    nodeTypeFilter,
+    recentCompletionCutoffMs,
+    showArchived,
+  ]);
 
   const selectedNodeRecord = useMemo(
     () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -779,9 +851,13 @@ export function AppShell({ initialUser }: AppShellProps) {
   // node count) instead of re-fetching. For empty workspaces: show welcome for
   // brand-new users, or go straight to the wizard if welcome was already seen.
   // Held until the user-level intake is resolved so the two onboarding overlays
-  // never stack.
+  // never stack. Also held until the workspace RECORD is loaded: the workspace
+  // id is seeded from localStorage before the list arrives (parallel
+  // bootstrap), and until then `bootstrap_completed_at` reads as missing — which
+  // used to reopen the setup wizard on an empty, already-onboarded workspace.
+  const selectedWorkspaceLoaded = selectedWorkspace !== null;
   useEffect(() => {
-    if (graphLoading || !authUser || !selectedWorkspaceId) return;
+    if (graphLoading || !authUser || !selectedWorkspaceId || !selectedWorkspaceLoaded) return;
     if (graphData.nodes.length !== 0 || profileIntakeState !== "done") return;
 
     if (shouldShowWelcome(authUser.id)) {
@@ -798,6 +874,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     graphData.nodes.length,
     authUser?.id,
     selectedWorkspaceId,
+    selectedWorkspaceLoaded,
     selectedWorkspace?.bootstrap_completed_at,
     profileIntakeState,
   ]);
@@ -948,6 +1025,8 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
     chatSaveTimerRef.current = setTimeout(() => {
+      // Fired → no longer pending (flushPendingChatSave keys off this ref).
+      chatSaveTimerRef.current = null;
       void (async () => {
         const saved = await upsertChatSession({
           id: chatSessionIdRef.current,
@@ -973,8 +1052,34 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     return () => {
       if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+      chatSaveTimerRef.current = null;
     };
   }, [authUser?.id, selectedWorkspaceId, chatMessages, chatScope]);
+
+  // Persist the current thread IMMEDIATELY if a debounced save is still
+  // pending. Anything that switches threads (a dump starting a fresh thread,
+  // "New chat", loading another session) used to just cancel the timer, which
+  // silently dropped the last <800ms of messages. The session id is read
+  // synchronously here, before callers null it for the new thread.
+  const flushPendingChatSave = () => {
+    const pending = chatSaveTimerRef.current;
+    if (!pending) return;
+    clearTimeout(pending);
+    chatSaveTimerRef.current = null;
+    if (!authUser?.id || !selectedWorkspaceId || chatMessages.length === 0) return;
+    void upsertChatSession({
+      id: chatSessionIdRef.current,
+      workspaceId: selectedWorkspaceId,
+      scope: chatScope,
+      messages: chatMessages,
+    }).then((saved) => {
+      if (!saved) return;
+      setChatSessions((prev) => [
+        { ...(prev.find((s) => s.id === saved.id) ?? ({} as ChatSessionMeta)), ...saved },
+        ...prev.filter((s) => s.id !== saved.id),
+      ]);
+    });
+  };
 
 
   // Load the list of past sessions when workspace changes. The workspace-switch
@@ -996,7 +1101,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   }, [selectedWorkspaceId]);
 
   const handleStartNewChat = () => {
-    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    flushPendingChatSave();
     setChatMessages([]);
     setChatSessionId(null);
     chatSessionIdRef.current = null;
@@ -1007,7 +1112,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const handleLoadChatSession = async (sessionId: string) => {
     const detail = await loadChatSession(sessionId);
     if (!detail) return;
-    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    flushPendingChatSave();
     setChatSessionId(detail.id);
     chatSessionIdRef.current = detail.id;
     setChatMessages(detail.messages ?? []);
@@ -1289,41 +1394,42 @@ export function AppShell({ initialUser }: AppShellProps) {
       return;
     }
     chatSendingRef.current = true;
-
-    const nextScope = chatMessages.length === 0 ? defaultChatScope : chatScope;
-    const targetWorkspaceId = selectedWorkspaceId;
-
-    setRightPanelOpen(true);
-    setActiveRailTab("chat");
-    setChatScope(nextScope);
-    setRailChatInput("");
-
+    // Everything after taking the lock runs inside try/finally, so no failure
+    // path can leave chat permanently locked.
     const assistantMsgId = `chat-${Math.random().toString(36).slice(2, 10)}`;
-
-    setChatMessages((prev) => [
-      ...prev,
-      ...(duplicateUserMessage ? [createUserChatMessage(trimmedMessage)] : []),
-      {
-        id: assistantMsgId,
-        role: "assistant" as const,
-        body: "",
-        createdAt: new Date().toISOString(),
-        status: "ready" as const,
-      },
-    ]);
-
-    setChatLoading(true);
-
-    // Prior turns in this thread — send as plain {role, body} so the server
-    // can compress old ones if the history gets long.
-    const history = chatMessages
-      .filter((m) => (m.body ?? "").trim().length > 0 && m.status !== "error")
-      .map((m) => ({ role: m.role, body: m.body }));
-
     const abortCtrl = new AbortController();
-    chatAbortRef.current = abortCtrl;
 
     try {
+      const nextScope = chatMessages.length === 0 ? defaultChatScope : chatScope;
+      const targetWorkspaceId = selectedWorkspaceId;
+
+      setRightPanelOpen(true);
+      setActiveRailTab("chat");
+      setChatScope(nextScope);
+      setRailChatInput("");
+
+      setChatMessages((prev) => [
+        ...prev,
+        ...(duplicateUserMessage ? [createUserChatMessage(trimmedMessage)] : []),
+        {
+          id: assistantMsgId,
+          role: "assistant" as const,
+          body: "",
+          createdAt: new Date().toISOString(),
+          status: "ready" as const,
+        },
+      ]);
+
+      setChatLoading(true);
+
+      // Prior turns in this thread — send as plain {role, body} so the server
+      // can compress old ones if the history gets long.
+      const history = chatMessages
+        .filter((m) => (m.body ?? "").trim().length > 0 && m.status !== "error")
+        .map((m) => ({ role: m.role, body: m.body }));
+
+      chatAbortRef.current = abortCtrl;
+
       const res = await fetch("/api/assistant/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1382,26 +1488,29 @@ export function AppShell({ initialUser }: AppShellProps) {
     const targetWorkspaceId = selectedWorkspaceId;
 
     chatSendingRef.current = true;
-    setPendingActionBusy(true);
-    setChatLoading(true);
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        m.id === messageId && m.pendingAction
-          ? {
-              ...m,
-              pendingAction: {
-                ...m.pendingAction,
-                status: decision === "reject" ? "rejected" : "accepted",
-              },
-            }
-          : m,
-      ),
-    );
-
+    // As in submitMessage: everything after taking the lock is inside
+    // try/finally so no failure path can leave chat locked.
     const abortCtrl = new AbortController();
-    chatAbortRef.current = abortCtrl;
 
     try {
+      setPendingActionBusy(true);
+      setChatLoading(true);
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId && m.pendingAction
+            ? {
+                ...m,
+                pendingAction: {
+                  ...m.pendingAction,
+                  status: decision === "reject" ? "rejected" : "accepted",
+                },
+              }
+            : m,
+        ),
+      );
+
+      chatAbortRef.current = abortCtrl;
+
       const res = await fetch("/api/assistant/chat/resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2347,8 +2456,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     // once, and dumpInChatRef=true tells the clarifying-question flow below not
     // to echo it a second time. (The old code appended here and relied on a
     // fragile mid-thread wipe, which dropped the summary and could double the
-    // echo depending on timing.)
-    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    // echo depending on timing.) The old thread is flushed first, so it's
+    // genuinely saved before we cut over.
+    flushPendingChatSave();
     setChatSessionId(null);
     chatSessionIdRef.current = null;
     setChatScope(createWorkspaceScope(workspaceName));
@@ -2971,7 +3081,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   // auto-saved, so it stays available in chat history.
   const startFreshDumpChatIfNeeded = () => {
     if (dumpInChatRef.current) return;
-    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    flushPendingChatSave();
     setChatSessionId(null);
     chatSessionIdRef.current = null;
     setChatScope(createWorkspaceScope(workspaceName));
@@ -4343,9 +4453,7 @@ export function AppShell({ initialUser }: AppShellProps) {
             <WhatNowDialog
               workspaceId={selectedWorkspaceId}
               userId={authUser?.id ?? null}
-              graphSignature={`${graphData.nodes.length}:${graphData.edges.length}:${
-                graphData.nodes.filter((n) => n.status === "completed").length
-              }`}
+              graphSignature={graphContentSignature}
               onClose={() => setWhatNowOpen(false)}
               onFocusNode={(nodeId) => {
                 setAppMode("graph");

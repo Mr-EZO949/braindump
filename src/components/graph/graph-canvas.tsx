@@ -394,14 +394,29 @@ function getAnchorScore(node: Node, childCount: number, depth: number, hasParent
   return getImportanceScore(node) + childCount * 2.8 - depth * 0.8 + (!hasParent ? 1.2 : 0);
 }
 
+// Per-type size bands for createNodeLayout (see the comment there). With a
+// floor of 0.3 for Objectives and a ceiling of 0.82 for leaves, an Objective
+// beats an equally important task at every score (0.3 + 0.7s > 0.82s for s ≤ 1).
+const OBJECTIVE_NODE_TYPES: ReadonlySet<string> = new Set(["goal", "project"]);
+const LEAF_NODE_TYPES: ReadonlySet<string> = new Set(["task", "habit"]);
+const OBJECTIVE_SIZE_FLOOR = 0.3;
+const LEAF_SIZE_CEILING = 0.82;
+
 function createNodeLayout(node: Node, importanceScore: number) {
   const normalizedScore = normalizeImportanceScore(importanceScore);
   // "Objectives" (goal/project — the big, breakdown-able items) read HEAVIER
-  // than actionable tasks regardless of score: size + weight is the primary
-  // big-vs-actionable cue (#3). Boost their size scale toward the max so an
-  // Objective is visibly larger than the task pills beneath it.
-  const isObjectiveType = node.node_type === "goal" || node.node_type === "project";
-  const sizeScale = clamp(normalizedScore + (isObjectiveType ? 0.2 : 0), 0, 1);
+  // than actionable tasks: size + weight is the primary big-vs-actionable cue
+  // (#3). Size still ENCODES IMPORTANCE, so this is an order-preserving remap
+  // per type rather than an additive boost (the old "+0.2 then clamp" flattened
+  // every important Objective to the same max size):
+  //   Objective        → [OBJECTIVE_SIZE_FLOOR, 1]   (always ≥ an equal-score task)
+  //   task / habit     → [0, LEAF_SIZE_CEILING]      (pills stay pills)
+  //   everything else  → [0, 1]                      (unchanged)
+  const sizeScale = OBJECTIVE_NODE_TYPES.has(node.node_type)
+    ? OBJECTIVE_SIZE_FLOOR + (1 - OBJECTIVE_SIZE_FLOOR) * normalizedScore
+    : LEAF_NODE_TYPES.has(node.node_type)
+      ? LEAF_SIZE_CEILING * normalizedScore
+      : normalizedScore;
   const visualTier = getVisualTierFromScore(importanceScore);
   const fontSize = lerp(
     importanceVisualBounds.minFontSize,
