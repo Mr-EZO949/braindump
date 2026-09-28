@@ -87,7 +87,7 @@ export async function buildAssistantContext(params: {
   const [nodesResult, edgesResult, feedbackResult, recentlyCompletedResult, planResult, userProfileResult, semanticMatches] = await Promise.all([
     params.supabase
       .from("nodes")
-      .select("id, title, summary, node_type, importance, current_importance_score, status")
+      .select("id, title, summary, node_type, importance, current_importance_score, status, target_date")
       .eq("workspace_id", params.workspaceId)
       .eq("user_id", params.userId)
       .neq("status", "archived"),
@@ -150,6 +150,7 @@ export async function buildAssistantContext(params: {
     importance: string;
     current_importance_score: number | null;
     status: string;
+    target_date: string | null;
   };
   type EdgeRow = {
     id: string;
@@ -197,9 +198,11 @@ export async function buildAssistantContext(params: {
       const lines = [
         `[SELECTED NODE]`,
         `Title: ${sel.title}`,
+        `ID: ${sel.id}`,
         `Type: ${sel.node_type}`,
         `Importance: ${sel.importance}${sel.current_importance_score != null ? ` (score: ${Math.round(sel.current_importance_score)})` : ""}`,
         `Status: ${sel.status}`,
+        sel.target_date ? `Due: ${sel.target_date}` : null,
         sel.summary ? `Summary: ${sel.summary}` : null,
         neighborTitles.length > 0 ? `Connected to: ${neighborTitles.join(", ")}` : null,
         neighborEdges.length > 0
@@ -279,7 +282,8 @@ export async function buildAssistantContext(params: {
     const parts = [
       `${node.title} [${node.node_type}]`,
       summarySnippet,
-      `score: ${Math.round(score)}, status: ${node.status}`,
+      `score: ${Math.round(score)}, status: ${node.status}${node.target_date ? `, due: ${node.target_date}` : ""}`,
+      `id: ${node.id}`,
     ].filter(Boolean);
     const text = parts.join(" — ");
     const priority = score >= 80 ? 75 : score >= 50 ? 55 : 35;
@@ -290,7 +294,7 @@ export async function buildAssistantContext(params: {
   // 4. Recently completed nodes (within COMPLETED_NODE_CONTEXT_WINDOW_HOURS)
   // ---------------------------------------------------------------------------
   for (const node of recentlyCompleted) {
-    const text = `Recently completed: ${node.title}`;
+    const text = `Recently completed: ${node.title} (id: ${node.id})`;
     items.push({ kind: "node", id: node.id, text, priority: 30, tokens: estimateTokens(text) });
   }
 
@@ -378,7 +382,7 @@ export async function buildAssistantContext(params: {
     .filter((n): n is NodeRow => !!n && n.status !== "completed")
     .slice(0, 5);
   const relevantExtras = extras
-    .map((n) => `- ${n.title} [${n.node_type}]${n.summary ? ` — ${truncateToTokens(n.summary, 40)}` : ""}`)
+    .map((n) => `- ${n.title} [${n.node_type}]${n.summary ? ` — ${truncateToTokens(n.summary, 40)}` : ""} — id: ${n.id}`)
     .join("\n");
 
   const selectedTitle = params.selectedNodeId
