@@ -330,6 +330,54 @@ export async function matchNodes(
   return (data ?? []) as MatchedNode[];
 }
 
+// ---------------------------------------------------------------------------
+// embedTexts — many texts, ONE provider call, one ai_run row.
+// Used at ingestion (dump segments for retrieval, proposals for dedup).
+// Throws on provider failure; callers treat retrieval/dedup as best-effort.
+// ---------------------------------------------------------------------------
+
+export async function embedTexts(params: {
+  texts: string[];
+  userId: string;
+  workspaceId: string;
+  supabase: SupabaseClient;
+}): Promise<number[][]> {
+  const { texts, userId, workspaceId, supabase } = params;
+  if (texts.length === 0 || !AI_FLAGS.EMBEDDING_ENABLED) return [];
+
+  const result = await executeWithRetry({
+    maxRetries: AI_INGESTION.EMBEDDING_MAX_RETRIES,
+    operation: () => aiProvider().generateEmbeddings({ texts }),
+  });
+  await persistAIRun({ supabase, userId, workspaceId, source: "embeddings", run: result.run });
+  return result.output.embeddings;
+}
+
+// ---------------------------------------------------------------------------
+// matchNodesByVector — match_nodes with a precomputed query vector (no embed
+// call). Lets one batch embedding drive several similarity searches.
+// ---------------------------------------------------------------------------
+
+export async function matchNodesByVector(params: {
+  vector: number[];
+  userId: string;
+  workspaceId: string;
+  supabase: SupabaseClient;
+  limit?: number;
+  includeCompleted?: boolean;
+}): Promise<MatchedNode[]> {
+  const { data, error } = await params.supabase.rpc("match_nodes", {
+    query_embedding: JSON.stringify(params.vector),
+    match_user_id: params.userId,
+    match_workspace_id: params.workspaceId,
+    match_count: params.limit ?? AI_CANDIDATES.RETRIEVAL_K,
+    exclude_node_id: null,
+    include_completed: params.includeCompleted ?? false,
+  });
+  if (error) throw new Error(`match_nodes RPC failed: ${error.message}`);
+  return (data ?? []) as MatchedNode[];
+}
+
 export async function processQueuedEmbeddingRetries(params: {
   supabase: SupabaseClient;
   userId?: string;

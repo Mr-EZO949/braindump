@@ -12,6 +12,8 @@ import { aiProvider } from "./index";
 import { AI_CONFIDENCE, AI_INGESTION, AI_MODELS } from "./config";
 import type { ExtractionOutput, ProposedNode } from "@/types/ai";
 import { buildWorkspaceProfileContext } from "./workspace-profile";
+import { retrieveRelevantNodes, type ContextNodeForPrompt } from "./retrieval";
+import { resolveProposalsAgainstGraph, type ResolutionMatch } from "./resolution";
 import {
   isGenericRootTitle,
   pickExistingParentForNode,
@@ -43,6 +45,9 @@ export interface ExtractionSuccess {
   // already-completed (e.g. milestone the user just hit with no
   // matching pre-existing anchor).
   autoCompleteLocalRefs: string[];
+  // Proposals that closely match an existing node the resolver couldn't rule
+  // on (e.g. an abbreviation). Held for review — never auto-applied.
+  possibleDuplicates: Array<{ localRef: string; existingNodeId: string; existingTitle: string }>;
 }
 
 export interface ExtractionFailure {
@@ -116,6 +121,82 @@ function enrichExistingParentAssignments(
 }
 
 // ---------------------------------------------------------------------------
+// rehomeResolvedProposals — after duplicates are dropped, rewrite every
+// reference that pointed at a dropped proposal:
+//   • dropped as a copy of an EXISTING node → children attach to that node
+//     (existing_parent_node_id); deps/links to it are removed
+//   • dropped as a copy of another proposal in this dump → references point at
+//     the kept copy; a kept node whose parent WAS its dropped twin inherits the
+//     twin's place in the tree (never points at itself)
+// A node ends with at most one parent (same-dump parent wins), and existing
+// parent ids are validated against the workspace's active nodes. Pure.
+// ---------------------------------------------------------------------------
+
+type ExtractedProposal = ExtractionOutput["proposed_nodes"][number];
+
+export function rehomeResolvedProposals(params: {
+  nodes: ExtractedProposal[];
+  droppedProposals: ExtractedProposal[];
+  droppedRefToExistingId: Map<string, string>;
+  droppedRefToKeptRef: Map<string, string>;
+  validExistingParentIds: Set<string>;
+}): ExtractedProposal[] {
+  const { droppedRefToExistingId, droppedRefToKeptRef, validExistingParentIds } = params;
+  const droppedByRef = new Map(
+    params.droppedProposals.flatMap((n) => (n.local_ref ? [[n.local_ref, n] as const] : [])),
+  );
+  const isDropped = (ref: string | null | undefined) =>
+    !!ref && (droppedRefToExistingId.has(ref) || droppedRefToKeptRef.has(ref));
+  const remapRef = (ref: string, selfRef: string | null): string | null => {
+    if (droppedRefToExistingId.has(ref)) return null;
+    const target = droppedRefToKeptRef.get(ref) ?? ref;
+    return target === selfRef ? null : target;
+  };
+
+  return params.nodes.map((node) => {
+    let existingParentId = node.existing_parent_node_id;
+    let parentLocalRef = node.primary_parent_local_ref;
+    if (parentLocalRef && droppedRefToExistingId.has(parentLocalRef)) {
+      existingParentId = droppedRefToExistingId.get(parentLocalRef) ?? null;
+      parentLocalRef = null;
+    } else if (parentLocalRef && droppedRefToKeptRef.has(parentLocalRef)) {
+      const droppedTwin = droppedByRef.get(parentLocalRef);
+      parentLocalRef = remapRef(parentLocalRef, node.local_ref);
+      if (parentLocalRef === null && droppedTwin) {
+        parentLocalRef =
+          droppedTwin.primary_parent_local_ref &&
+          !isDropped(droppedTwin.primary_parent_local_ref) &&
+          droppedTwin.primary_parent_local_ref !== node.local_ref
+            ? droppedTwin.primary_parent_local_ref
+            : null;
+        existingParentId = existingParentId ?? droppedTwin.existing_parent_node_id ?? null;
+      }
+    }
+    const dependsOn = [
+      ...new Set(
+        (node.depends_on_local_refs ?? [])
+          .map((ref) => remapRef(ref, node.local_ref))
+          .filter((ref): ref is string => ref !== null),
+      ),
+    ];
+    const softLinks = (node.soft_links ?? []).flatMap((link) => {
+      const target = remapRef(link.target_local_ref, node.local_ref);
+      return target ? [{ ...link, target_local_ref: target }] : [];
+    });
+    return {
+      ...node,
+      primary_parent_local_ref: parentLocalRef,
+      depends_on_local_refs: dependsOn,
+      soft_links: softLinks,
+      existing_parent_node_id:
+        parentLocalRef === null && existingParentId && validExistingParentIds.has(existingParentId)
+          ? existingParentId
+          : null,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // runExtraction
 // ---------------------------------------------------------------------------
 
@@ -132,10 +213,15 @@ export async function runExtraction(params: {
   signal?: AbortSignal;
 }): Promise<ExtractionResult> {
   const { rawEntryId, rawText, workspaceId, userId, supabase, today, signal } = params;
-  let workspaceProfile: Awaited<ReturnType<typeof buildWorkspaceProfileContext>> = {
-    workspaceContext: undefined,
-    existingNodes: [],
-  };
+  // What the model sees: persona/workspace text + the existing nodes RELEVANT
+  // to this dump (retrieval), each with its parent. activeNodes feeds the
+  // exact-title dedup + parent validation (whole workspace).
+  let context: {
+    workspaceContext: string | undefined;
+    promptNodes: ContextNodeForPrompt[];
+    activeNodes: Array<{ id: string; title: string }>;
+    parentOf: Map<string, string>;
+  } = { workspaceContext: undefined, promptNodes: [], activeNodes: [], parentOf: new Map() };
 
   // Mark raw_entry as processing
   await supabase
@@ -145,11 +231,29 @@ export async function runExtraction(params: {
 
   let providerResult;
   try {
-    workspaceProfile = await buildWorkspaceProfileContext({
+    const profile = await buildWorkspaceProfileContext({
       workspaceId,
       userId,
       supabase,
+      includeAnchors: false,
     });
+    const parentOf = await loadParentMap(supabase, workspaceId, userId);
+    const retrieval = await retrieveRelevantNodes({
+      supabase,
+      userId,
+      workspaceId,
+      rawText,
+      nodes: profile.activeNodes,
+      parentOf,
+      rootNodeId: profile.rootNodeId,
+    });
+    console.log("[extraction] retrieval", retrieval.stats);
+    context = {
+      workspaceContext: profile.workspaceContext,
+      promptNodes: retrieval.contextNodes,
+      activeNodes: profile.activeNodes,
+      parentOf,
+    };
 
     providerResult = await executeWithRetry({
       maxRetries: AI_INGESTION.EXTRACTION_MAX_RETRIES,
@@ -158,8 +262,8 @@ export async function runExtraction(params: {
           raw_text: rawText,
           workspace_id: workspaceId,
           user_id: userId,
-          workspace_context: workspaceProfile.workspaceContext,
-          existing_nodes: workspaceProfile.existingNodes,
+          workspace_context: context.workspaceContext,
+          existing_nodes: context.promptNodes,
           today,
           signal,
         }),
@@ -224,20 +328,10 @@ export async function runExtraction(params: {
 
   const { output, run } = providerResult;
 
-  // Dedup + parent-reference validation run against ALL active workspace nodes,
-  // not just the ~14 anchors sent to the model. Otherwise a dump that mentions a
-  // node outside the anchor window makes the model invent a DUPLICATE it couldn't
-  // see, and the title-dedup below (keyed on anchors only) can't catch it —
-  // exactly the "braindump created duplicates" bug (journal #20). This is a cheap
-  // id+title query, no LLM cost.
-  const { data: allActiveNodeRows } = await supabase
-    .from("nodes")
-    .select("id, title")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .neq("status", "archived");
-  const allActiveNodes: Array<{ id: string; title: string }> = (allActiveNodeRows ??
-    []) as Array<{ id: string; title: string }>;
+  // Dedup + parent-reference validation run against ALL active workspace nodes
+  // (already loaded with the profile — no second query), not just the nodes the
+  // model saw.
+  const allActiveNodes = context.activeNodes;
   const validExistingParentIds = new Set(allActiveNodes.map((node) => node.id));
 
   // Persist ai_run
@@ -308,32 +402,111 @@ export async function runExtraction(params: {
       return true;
     });
 
+  // Semantic resolution: catch PARAPHRASED duplicates the exact-title pass
+  // can't ("Maintain Interview Readiness" vs existing "Interview Readiness").
+  // Embeddings find candidates; the contrastive rule (resolution.ts, calibrated
+  // on real data) decides. Best-effort: without embeddings we keep going.
+  let semanticDroppedCount = 0;
+  let intraDroppedCount = 0;
+  // Same item emitted twice in THIS dump: dropped local_ref → kept local_ref.
+  const droppedRefToKeptRef = new Map<string, string>();
+  let possibleDuplicates: ExtractionSuccess["possibleDuplicates"] = [];
+  // A node's identity is its PATH (parent › title): "Choose Stack…" under
+  // Gym App and under Student Tracker are two different tasks.
+  const activeTitleById = new Map(allActiveNodes.map((n) => [n.id, n.title]));
+  const proposalTitleByRef = new Map(
+    confidentSurvivors.flatMap((n) => (n.local_ref ? [[n.local_ref, n.proposed_title] as const] : [])),
+  );
+  try {
+    const resolution = await resolveProposalsAgainstGraph({
+      proposals: confidentSurvivors.flatMap((n) =>
+        n.local_ref
+          ? [
+              {
+                local_ref: n.local_ref,
+                proposed_title: n.proposed_title,
+                proposed_summary: n.proposed_summary ?? null,
+                proposed_node_type: n.proposed_node_type,
+                parent_title:
+                  (n.primary_parent_local_ref
+                    ? proposalTitleByRef.get(n.primary_parent_local_ref)
+                    : n.existing_parent_node_id
+                      ? activeTitleById.get(n.existing_parent_node_id)
+                      : null) ?? null,
+              },
+            ]
+          : [],
+      ),
+      userId,
+      workspaceId,
+      supabase,
+      existingParentTitle: (nodeId) => {
+        const parentId = context.parentOf.get(nodeId);
+        return parentId ? (activeTitleById.get(parentId) ?? null) : null;
+      },
+    });
+    for (const [localRef, match] of resolution.duplicates) {
+      droppedRefToExistingId.set(localRef, match.existingId);
+      semanticDroppedCount++;
+      console.log(
+        `[extraction] semantic duplicate: "${confidentSurvivors.find((n) => n.local_ref === localRef)?.proposed_title}" = existing "${match.existingTitle}" (${match.similarity.toFixed(3)}; ${match.reason})`,
+      );
+    }
+    // Intra-dump copies: drop the later one and point its references at the
+    // kept one — or at the existing node the kept one already resolved to.
+    for (const [droppedRef, keptRef] of resolution.intraDuplicates) {
+      if (droppedRefToExistingId.has(droppedRef)) continue;
+      const keptExistingId = droppedRefToExistingId.get(keptRef);
+      if (keptExistingId) {
+        droppedRefToExistingId.set(droppedRef, keptExistingId);
+        semanticDroppedCount++;
+      } else {
+        droppedRefToKeptRef.set(droppedRef, keptRef);
+        intraDroppedCount++;
+      }
+      const byRef = (ref: string) => confidentSurvivors.find((n) => n.local_ref === ref)?.proposed_title;
+      console.log(
+        `[extraction] intra-dump duplicate: "${byRef(droppedRef)}" = "${byRef(keptRef)}" (kept the earlier)`,
+      );
+    }
+    possibleDuplicates = [...resolution.possibleDuplicates.entries()]
+      .filter(([localRef]) => !resolution.duplicates.has(localRef) && !droppedRefToKeptRef.has(localRef))
+      .map(([localRef, match]: [string, ResolutionMatch]) => ({
+        localRef,
+        existingNodeId: match.existingId,
+        existingTitle: match.existingTitle,
+      }));
+  } catch (err) {
+    console.warn(
+      "[extraction] semantic resolution unavailable — exact-title dedup only:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+  const isDropped = (ref: string | null | undefined) =>
+    !!ref && (droppedRefToExistingId.has(ref) || droppedRefToKeptRef.has(ref));
+  const resolvedSurvivors = confidentSurvivors.filter((n) => !isDropped(n.local_ref));
+  // A dropped duplicate the model meant to create as an already-done milestone
+  // ("got my first V7 today" when that goal exists) → complete the EXISTING node.
+  const completeExistingNodeIds = new Set(output.complete_existing_node_ids ?? []);
+  for (const localRef of output.auto_complete_local_refs ?? []) {
+    const existingId = droppedRefToExistingId.get(localRef);
+    if (existingId) completeExistingNodeIds.add(existingId);
+  }
+
   // enrich first (attaches parent-less nodes to a likely existing anchor), then
   // apply duplicate re-homing LAST so it takes precedence over enrich's guess,
   // and validate every existing-parent reference against the full node set.
-  const qualifiedNodes = enrichExistingParentAssignments(
-    confidentSurvivors,
-    workspaceProfile.existingNodes,
-  ).map((node) => {
-    let existingParentId = node.existing_parent_node_id;
-    let parentLocalRef = node.primary_parent_local_ref;
-    if (parentLocalRef && droppedRefToExistingId.has(parentLocalRef)) {
-      existingParentId = droppedRefToExistingId.get(parentLocalRef) ?? null;
-      parentLocalRef = null;
-    }
-    return {
-      ...node,
-      primary_parent_local_ref: parentLocalRef,
-      existing_parent_node_id:
-        existingParentId && validExistingParentIds.has(existingParentId)
-          ? existingParentId
-          : null,
-    };
+  const qualifiedNodes = rehomeResolvedProposals({
+    nodes: enrichExistingParentAssignments(resolvedSurvivors, context.promptNodes),
+    droppedProposals: confidentSurvivors.filter((n) => isDropped(n.local_ref)),
+    droppedRefToExistingId,
+    droppedRefToKeptRef,
+    validExistingParentIds,
   });
 
-  if (droppedDuplicateCount > 0) {
+  if (droppedDuplicateCount + semanticDroppedCount + intraDroppedCount > 0) {
     console.log(
-      `[extraction] dropped ${droppedDuplicateCount} duplicate proposal${droppedDuplicateCount === 1 ? "" : "s"} (matched existing workspace node titles)`,
+      `[extraction] dropped duplicates — ${droppedDuplicateCount} exact + ${semanticDroppedCount} semantic (vs existing nodes), ${intraDroppedCount} within this dump`,
     );
   }
 
@@ -349,8 +522,9 @@ export async function runExtraction(params: {
       aiRunId,
       proposedNodes: [],
       clarifyingQuestions: output.clarifying_questions ?? [],
-      completeExistingNodeIds: output.complete_existing_node_ids ?? [],
-      autoCompleteLocalRefs: output.auto_complete_local_refs ?? [],
+      completeExistingNodeIds: [...completeExistingNodeIds],
+      autoCompleteLocalRefs: [],
+      possibleDuplicates: [],
     };
   }
 
@@ -426,14 +600,44 @@ export async function runExtraction(params: {
         "existing_parent_node_id" in node ? node.existing_parent_node_id : null,
     })),
     clarifyingQuestions: output.clarifying_questions ?? [],
-    completeExistingNodeIds: output.complete_existing_node_ids ?? [],
-    autoCompleteLocalRefs: output.auto_complete_local_refs ?? [],
+    completeExistingNodeIds: [...completeExistingNodeIds],
+    // Only refs that still exist as proposals (a dropped duplicate's
+    // completion was redirected to the existing node above).
+    autoCompleteLocalRefs: [
+      ...new Set(
+        (output.auto_complete_local_refs ?? [])
+          .filter((ref) => !droppedRefToExistingId.has(ref))
+          .map((ref) => droppedRefToKeptRef.get(ref) ?? ref),
+      ),
+    ],
+    possibleDuplicates,
   };
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// child → parent over active belongs_to edges (retrieval uses it to show each
+// node's place in the tree). Best-effort: an empty map just means no paths.
+async function loadParentMap(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  userId: string,
+): Promise<Map<string, string>> {
+  const { data } = await supabase
+    .from("edges")
+    .select("source_node_id, target_node_id")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", userId)
+    .eq("edge_type", "belongs_to")
+    .eq("status", "active");
+  const parentOf = new Map<string, string>();
+  for (const edge of (data ?? []) as Array<{ source_node_id: string; target_node_id: string }>) {
+    if (!parentOf.has(edge.source_node_id)) parentOf.set(edge.source_node_id, edge.target_node_id);
+  }
+  return parentOf;
+}
 
 async function markFailed(
   supabase: SupabaseClient,

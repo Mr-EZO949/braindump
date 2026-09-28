@@ -284,6 +284,76 @@ export class GeminiProvider implements AIProvider {
   }
 
   // -------------------------------------------------------------------------
+  // generateEmbeddings — several texts in ONE API call (batchEmbedContents).
+  // Ingestion embeds a dump's segments (retrieval) and every proposal (dedup);
+  // batching turns ~20 round-trips into one.
+  // -------------------------------------------------------------------------
+
+  async generateEmbeddings(input: {
+    texts: string[];
+  }): Promise<AIProviderResult<{ embeddings: number[][] }>> {
+    const joined = input.texts.join("\u241E");
+    const run: Omit<AIRun, "id" | "created_at"> = {
+      run_type: "embed",
+      provider: "gemini",
+      model_name: AI_MODELS.GEMINI_EMBEDDING,
+      prompt_version: "embed-batch-v1",
+      input_hash: shortHash(joined),
+      output_hash: null,
+      input_tokens: null,
+      output_tokens: null,
+      latency_ms: null,
+      estimated_cost: null,
+      status: "success",
+      error_text: null,
+    };
+    if (input.texts.length === 0) {
+      return { output: { embeddings: [] }, run: { ...run, latency_ms: 0, estimated_cost: 0 } };
+    }
+
+    const start = Date.now();
+    const model = this.genAI.getGenerativeModel({ model: AI_MODELS.GEMINI_EMBEDDING });
+    const result = await model.batchEmbedContents({
+      requests: input.texts.map((text) => ({
+        content: { role: "user", parts: [{ text }] },
+      })),
+    });
+    const embeddings = (result.embeddings ?? []).map((e) => e.values ?? []);
+    const latencyMs = Date.now() - start;
+
+    if (
+      embeddings.length !== input.texts.length ||
+      embeddings.some((v) => !Array.isArray(v) || v.length === 0)
+    ) {
+      throw malformedResponse({
+        message: `Batch embedding returned ${embeddings.length} vectors for ${input.texts.length} texts`,
+        rawOutput: JSON.stringify({ count: embeddings.length }),
+        runType: "embed",
+        modelName: AI_MODELS.GEMINI_EMBEDDING,
+        promptVersion: "embed-batch-v1",
+        inputHash: run.input_hash,
+        outputHash: null,
+        inputTokens: null,
+        outputTokens: null,
+        latencyMs,
+        estimatedCost: null,
+        cause: null,
+      });
+    }
+
+    const costPerM = AI_COST_PER_1M_TOKENS.GEMINI_EMBEDDING_INPUT;
+    return {
+      output: { embeddings },
+      run: {
+        ...run,
+        output_hash: shortHash(embeddings.map((v) => v.slice(0, 2).join(",")).join("|")),
+        latency_ms: latencyMs,
+        estimated_cost: (costPerM / 1_000_000) * input.texts.length,
+      },
+    };
+  }
+
+  // -------------------------------------------------------------------------
   // rerankCandidates (fallback — prefer CohereRerankProvider)
   // Scores candidates by simple string overlap as a degraded fallback.
   // -------------------------------------------------------------------------

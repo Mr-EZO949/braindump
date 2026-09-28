@@ -376,6 +376,20 @@ export async function POST(req: NextRequest) {
     // turn into nodes — offered as optional chips in the review so the user can
     // add them as top-level branches (same as the wizard's step 2).
     suggested_areas: clientAreas,
+    // Proposals that closely match an existing node the resolver couldn't rule
+    // on — the review shows the hint, and they're never auto-applied.
+    possible_duplicates: result.possibleDuplicates.flatMap((dup) => {
+      const proposal = result.proposedNodes.find((p) => p.local_ref === dup.localRef);
+      return proposal
+        ? [
+            {
+              proposal_id: proposal.id,
+              existing_node_id: dup.existingNodeId,
+              existing_title: dup.existingTitle,
+            },
+          ]
+        : [];
+    }),
     // Dump size (by extracted node count) — surfaced to the user and available
     // for per-plan usage metering later. Detection only; no limits enforced yet.
     dump_size: {

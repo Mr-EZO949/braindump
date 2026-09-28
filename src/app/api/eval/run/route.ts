@@ -132,6 +132,7 @@ export async function POST(req: NextRequest) {
           buildPlan: (i: Parameters<typeof claude.buildPlan>[0]) => claude.buildPlan(i),
           checkMerge: (i: Parameters<typeof claude.checkMerge>[0]) => claude.checkMerge(i),
           generateEmbedding: base.generateEmbedding.bind(base),
+          generateEmbeddings: base.generateEmbeddings.bind(base),
           rerankCandidates: base.rerankCandidates.bind(base),
         };
       })()

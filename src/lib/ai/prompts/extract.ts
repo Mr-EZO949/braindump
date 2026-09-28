@@ -21,10 +21,15 @@
 //   typed project/goal (breakdown-able "big" nodes), never a single "task";
 //   atomic one-sitting actions stay tasks; progress/findings on an existing big
 //   node attach under it as task children (testing journal #3, #16).
+// v19 (ingestion v2): the existing-node list is no longer "top 14 by
+//   importance" — it's RETRIEVED for this dump (embedding + lexical relevance,
+//   with parent paths). The prompt now says so, so the model treats matching
+//   items as the thing the user means instead of inventing duplicates, and uses
+//   "under: X" to attach at the right level.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v18";
+export const EXTRACT_PROMPT_VERSION = "extract-v19";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -147,7 +152,8 @@ Existing anchor attachment rule (IMPORTANT — apply before inventing new umbrel
 - Use null when no existing parent is a strong structural fit.
 
 Existing-node duplication rule (IMPORTANT — apply BEFORE creating any node):
-- For every node you would propose, check if a SEMANTICALLY EQUIVALENT node already exists in the provided existing anchor list.
+- The existing-node list in the Session block was RETRIEVED FOR THIS DUMP by meaning and wording — the user is very often talking about exactly these items. Each entry shows where it lives in the tree ("under: X").
+- For every node you would propose, check if a SEMANTICALLY EQUIVALENT node already exists in that list. Abbreviations and paraphrases count ("DL" = "Deep Learning", "ML exam" = "Machine Learning exam").
 - "Semantically equivalent" includes obvious paraphrases — same intent, different wording.
   - Existing: "Send my first V7 outdoor before December"
     Dump says: "want my first V7 before December"
@@ -294,7 +300,7 @@ function buildVariableBlock(params: ExtractionPromptParams): string {
 
   const existingNodesBlock =
     params.existing_nodes && params.existing_nodes.length > 0
-      ? `\nExisting workspace anchor nodes (use these IDs exactly if you attach a new node under an existing parent):\n${params.existing_nodes
+      ? `\nExisting workspace nodes RELEVANT TO THIS DUMP (retrieved by meaning + wording; "under:" is each node's parent). Use these IDs exactly to attach new children or list completions — never re-create one of these:\n${params.existing_nodes
           .map((node) => {
             const summary =
               node.summary && node.summary.length > 140

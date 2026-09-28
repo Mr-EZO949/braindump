@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   dependencyPressure,
   blocksPenalty,
@@ -75,22 +75,26 @@ function makeFeedbackEvent(
 // ---------------------------------------------------------------------------
 
 describe("urgency — deadline term (v8)", () => {
-  const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
-  const created = new Date().toISOString();
+  // urgency() reads the clock (age decay + days-until-deadline). Freeze it at a
+  // fixed instant for the WHOLE block and derive every date from that instant —
+  // otherwise dates computed at collection time drift from the clock the code
+  // reads a few ms later, which made exact/boundary assertions flaky
+  // (e.g. "14.0000000077 ≤ 14").
+  const NOW = new Date("2026-01-15T12:00:00.000Z");
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const inDays = (d: number) => new Date(NOW.getTime() + d * 86_400_000).toISOString();
+  const created = NOW.toISOString();
 
   it("adds nothing without a target_date", () => {
-    // urgency() reads the clock (age decay). Freeze it so both calls see the
-    // same "now" — otherwise the microseconds between the two calls make the
-    // exact comparison flaky. (toBeCloseTo would hide a real difference.)
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date());
-    try {
-      expect(urgency(makeNode("a", { created_at: created }))).toBe(
-        urgency(makeNode("b", { created_at: created, target_date: null })),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(urgency(makeNode("a", { created_at: created }))).toBe(
+      urgency(makeNode("b", { created_at: created, target_date: null })),
+    );
   });
 
   it("a task due today outranks an identical no-deadline task (fixes the eval inversion)", () => {

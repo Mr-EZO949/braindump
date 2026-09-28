@@ -82,13 +82,22 @@ function formatAnchorLine(node: AnchorNode) {
   return `- ${node.id}: ${node.title} [${node.node_type}]${summary}`;
 }
 
+// Active (non-archived) node row as fetched here — exposed so ingestion can
+// run relevance retrieval without querying the workspace's nodes again.
+export type WorkspaceNodeRow = AnchorNode;
+
 export async function buildWorkspaceProfileContext(params: {
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
+  // Extraction lists relevant nodes (with ids + parent paths) in its own
+  // block, so it passes false to avoid listing the anchors twice.
+  includeAnchors?: boolean;
 }): Promise<{
   workspaceContext: string | undefined;
   existingNodes: Array<{ id: string; title: string; summary: string | null; node_type: NodeType }>;
+  activeNodes: WorkspaceNodeRow[];
+  rootNodeId: string | null;
 }> {
   const [{ data: workspaceRow }, { data: nodeRows }, { data: userProfileRow }] = await Promise.all([
     params.supabase
@@ -124,7 +133,7 @@ export async function buildWorkspaceProfileContext(params: {
       : null;
   const typedNodeRows = (nodeRows ?? []) as Array<Record<string, unknown>>;
 
-  const anchors = typedNodeRows
+  const activeNodes: WorkspaceNodeRow[] = typedNodeRows
     .flatMap((row) => {
       if (
         typeof row.id !== "string" ||
@@ -150,7 +159,9 @@ export async function buildWorkspaceProfileContext(params: {
         } satisfies AnchorNode,
       ];
     })
-    .filter((node) => node.status !== "archived")
+    .filter((node) => node.status !== "archived");
+
+  const anchors = [...activeNodes]
     .sort((nodeA, nodeB) => {
       const rootDelta = Number(nodeB.id === rootNodeId) - Number(nodeA.id === rootNodeId);
       if (rootDelta !== 0) {
@@ -238,7 +249,7 @@ export async function buildWorkspaceProfileContext(params: {
     );
   }
 
-  if (anchors.length > 0) {
+  if (anchors.length > 0 && params.includeAnchors !== false) {
     lines.push("Existing workspace anchors:");
     lines.push(...anchors.map(formatAnchorLine));
   }
@@ -246,5 +257,7 @@ export async function buildWorkspaceProfileContext(params: {
   return {
     workspaceContext: lines.length > 1 ? lines.join("\n") : undefined,
     existingNodes,
+    activeNodes,
+    rootNodeId,
   };
 }

@@ -49,6 +49,14 @@ export interface AIProvider {
   ): Promise<AIProviderResult<EmbeddingOutput>>;
 
   /**
+   * Embed several texts in one provider call. Used at ingestion for
+   * relevance retrieval (dump segments) and semantic dedup (proposals).
+   */
+  generateEmbeddings(input: {
+    texts: string[];
+  }): Promise<AIProviderResult<{ embeddings: number[][] }>>;
+
+  /**
    * Rerank a list of candidates by relevance to a query.
    * Used after vector retrieval to improve precision before edge inference.
    */

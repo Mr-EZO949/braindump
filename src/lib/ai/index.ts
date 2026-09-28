@@ -55,6 +55,7 @@ function init() {
     buildPlan: (input) => llm.buildPlan(input),
     checkMerge: (input) => llm.checkMerge(input),
     generateEmbedding: (input) => gemini.generateEmbedding(input),
+    generateEmbeddings: (input) => gemini.generateEmbeddings(input),
     rerankCandidates: (input) => gemini.rerankCandidates(input),
   });
   registerRerankProvider(new CohereRerankProvider(cohereKey));
