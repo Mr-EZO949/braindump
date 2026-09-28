@@ -152,13 +152,14 @@ export const AI_COST_PER_1M_TOKENS = {
   CLAUDE_HAIKU_INPUT: 1.0,
   CLAUDE_HAIKU_OUTPUT: 5.0,
   // Gemini 2.5 Flash
-  GEMINI_FLASH_INPUT: 0.075,
-  GEMINI_FLASH_OUTPUT: 0.3,
+  GEMINI_FLASH_INPUT: 0.3,
+  GEMINI_FLASH_OUTPUT: 2.5,
   // Gemini 2.5 Pro (≤200k context tier; free-tier calls price at 0 regardless)
   GEMINI_PRO_INPUT: 1.25,
   GEMINI_PRO_OUTPUT: 10.0,
-  // Gemini embedding (input only)
-  GEMINI_EMBEDDING_INPUT: 0.0001,
+  // gemini-embedding-001 (input only). The API returns no token count, so
+  // callers estimate ~4 chars per token.
+  GEMINI_EMBEDDING_INPUT: 0.15,
   // Cohere Rerank v3.5 (per 1K search units)
   COHERE_RERANK_PER_CALL: 0.002,
 } as const;

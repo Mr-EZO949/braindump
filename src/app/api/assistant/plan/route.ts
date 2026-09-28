@@ -16,7 +16,7 @@ import { aiProvider } from "@/lib/ai";
 import { checkAIRunRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
 import { buildPlannerCandidates } from "@/lib/ai/planner";
 import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
-import { AI_MODELS, AI_COST_PER_1M_TOKENS, AI_RATE_LIMITS } from "@/lib/ai/config";
+import { AI_MODELS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { PLAN_PROMPT_VERSION } from "@/lib/ai/prompts/plan";
 import {
   hashText,

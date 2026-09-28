@@ -233,7 +233,10 @@ export async function POST(req: NextRequest) {
       signal: req.signal,
     }),
     wantAreaSuggestions
-      ? suggestAreas({ dump: trimmed })
+      ? suggestAreas({
+          dump: trimmed,
+          usageScope: { supabase, userId: user.id, workspaceId: workspace_id },
+        })
       : Promise.resolve({ suggested_areas: [], suggestion_error: null }),
   ]);
 

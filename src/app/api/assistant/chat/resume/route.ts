@@ -31,11 +31,12 @@ import {
 import {
   AI_MODELS,
   AI_TEMPERATURE,
-  AI_COST_PER_1M_TOKENS,
   claudeRequestTuning,
 } from "@/lib/ai/config";
 import { normalizeAIError } from "@/lib/ai/errors";
-import { persistAIRun } from "@/lib/ai/telemetry";
+import { recordClaudeRun } from "@/lib/ai/telemetry";
+import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
+import { cachedSystem, cachedTools, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { dispatchTool, getToolSchemas, isReadOnlyTool, isPausingTool } from "@/lib/ai/tools";
 import { resolveChoice } from "@/lib/ai/tools/interactive";
 import { looksLikeGraphEdit } from "@/lib/graph/dump-heuristic";
@@ -273,19 +274,11 @@ export async function POST(req: NextRequest) {
     return new Response("ANTHROPIC_API_KEY is not configured", { status: 500 });
   }
   const client = new Anthropic({ apiKey: claudeKey });
-  const baseTools = getToolSchemas();
-  const tools = baseTools.map((t, i) =>
-    i === baseTools.length - 1
-      ? { ...t, cache_control: { type: "ephemeral" as const } }
-      : t,
-  );
-  const systemPromptBlocks: TextBlockParam[] = [
-    {
-      type: "text",
-      text: buildAssistantSystemPrompt(resolvedMode, todayISO),
-      cache_control: { type: "ephemeral" },
-    },
-  ];
+  // Same cache layout as the initial turn (src/lib/ai/assistant-cache.ts):
+  // the paused request's prefix is still warm, so this call re-reads it and
+  // only pays for the tool results appended since.
+  const tools = cachedTools(getToolSchemas());
+  const systemPromptBlocks = cachedSystem(buildAssistantSystemPrompt(resolvedMode, todayISO));
 
   const start = Date.now();
 
@@ -294,10 +287,7 @@ export async function POST(req: NextRequest) {
 
   const readable = new ReadableStream({
     async start(controller) {
-      let totalInputTokens = 0;
-      let totalOutputTokens = 0;
-      let totalCacheReadTokens = 0;
-      let totalCacheWriteTokens = 0;
+      let usage = EMPTY_USAGE;
       let fullText = "";
       let streamError: ReturnType<typeof normalizeAIError> | null = null;
 
@@ -320,7 +310,7 @@ export async function POST(req: NextRequest) {
             ...claudeRequestTuning(assistantModel, AI_TEMPERATURE.ASSISTANT),
             system: systemPromptBlocks,
             tools,
-            messages,
+            messages: withCacheBreakpoints(messages, null),
           });
           currentStreamRef = currentStream;
 
@@ -335,17 +325,10 @@ export async function POST(req: NextRequest) {
               send(chunk);
             }
             if (event.type === "message_start" && event.message.usage) {
-              const u = event.message.usage as {
-                input_tokens?: number;
-                cache_read_input_tokens?: number | null;
-                cache_creation_input_tokens?: number | null;
-              };
-              totalInputTokens += u.input_tokens ?? 0;
-              totalCacheReadTokens += u.cache_read_input_tokens ?? 0;
-              totalCacheWriteTokens += u.cache_creation_input_tokens ?? 0;
+              usage = addUsage(usage, { ...readClaudeUsage(event.message.usage), output: 0 });
             }
             if (event.type === "message_delta" && event.usage) {
-              totalOutputTokens += event.usage.output_tokens ?? 0;
+              usage = { ...usage, output: usage.output + (event.usage.output_tokens ?? 0) };
             }
           }
 
@@ -437,39 +420,18 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        const latencyMs = Date.now() - start;
-        const isSonnet = assistantModel === AI_MODELS.CLAUDE_SONNET;
-        const rateIn = isSonnet
-          ? AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT
-          : AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT;
-        const rateOut = isSonnet
-          ? AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT
-          : AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT;
-        const estimatedCost =
-          (totalInputTokens / 1_000_000) * rateIn +
-          (totalCacheReadTokens / 1_000_000) * (rateIn * 0.1) +
-          (totalCacheWriteTokens / 1_000_000) * (rateIn * 1.25) +
-          (totalOutputTokens / 1_000_000) * rateOut;
-
-        await persistAIRun({
-          supabase,
-          userId: user.id,
-          workspaceId,
+        await recordClaudeRun({
+          scope: { supabase, userId: user.id, workspaceId },
           source: "assistant-chat-resume",
-          run: {
-            run_type: "assistant",
-            provider: "claude",
-            model_name: assistantModel,
-            prompt_version: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}:resume-${decision}`,
-            input_hash: run.id as string,
-            output_hash: fullText ? fullText.slice(0, 16) : null,
-            input_tokens: totalInputTokens + totalCacheReadTokens + totalCacheWriteTokens,
-            output_tokens: totalOutputTokens,
-            latency_ms: latencyMs,
-            estimated_cost: estimatedCost,
-            status: streamError ? "failed" : "success",
-            error_text: streamError?.message ?? null,
-          },
+          runType: "assistant",
+          model: assistantModel,
+          promptVersion: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}:resume-${decision}`,
+          usage,
+          latencyMs: Date.now() - start,
+          status: streamError ? "failed" : "success",
+          errorText: streamError?.message ?? null,
+          inputHash: run.id as string,
+          outputHash: fullText ? fullText.slice(0, 16) : null,
         });
       } catch (logErr) {
         console.error("[assistant/chat/resume] failed to log ai_run:", logErr);

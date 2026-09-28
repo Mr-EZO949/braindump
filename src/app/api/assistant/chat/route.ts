@@ -8,7 +8,6 @@ import Anthropic from "@anthropic-ai/sdk";
 import type {
   ContentBlock,
   MessageParam,
-  TextBlockParam,
   ToolResultBlockParam,
   ToolUseBlock,
 } from "@anthropic-ai/sdk/resources/messages";
@@ -25,14 +24,15 @@ import {
 import {
   AI_MODELS,
   AI_TEMPERATURE,
-  AI_COST_PER_1M_TOKENS,
   AI_RATE_LIMITS,
   claudeRequestTuning,
 } from "@/lib/ai/config";
 import { looksLikeGraphEdit } from "@/lib/graph/dump-heuristic";
 import { checkAIRunRateLimit } from "@/lib/ai/rate-limit";
 import { hashText, normalizeAIError } from "@/lib/ai/errors";
-import { persistAIRun } from "@/lib/ai/telemetry";
+import { recordClaudeRun } from "@/lib/ai/telemetry";
+import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
+import { cachedSystem, cachedTools, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { dispatchTool, getToolSchemas, isPausingTool } from "@/lib/ai/tools";
 import { buildHistoryMessages, sanitizeHistory } from "@/lib/ai/chat-memory";
 import { getTemporalFlag } from "@/lib/ai/temporal-flags";
@@ -182,14 +182,13 @@ export async function POST(req: NextRequest) {
       return new Response("ANTHROPIC_API_KEY is not configured", { status: 500 });
     }
     const client = new Anthropic({ apiKey: claudeKey });
-    const priorMessages = await buildHistoryMessages(client, history);
+    const priorMessages = buildHistoryMessages(history);
 
     const readable = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
         let fullText = "";
-        let totalInput = 0;
-        let totalOutput = 0;
+        let usage = EMPTY_USAGE;
         const t0 = Date.now();
         try {
           const stream = client.messages.stream({
@@ -207,43 +206,27 @@ export async function POST(req: NextRequest) {
               controller.enqueue(encoder.encode(chunk));
             }
             if (ev.type === "message_start" && ev.message.usage) {
-              totalInput += ev.message.usage.input_tokens ?? 0;
+              usage = addUsage(usage, { ...readClaudeUsage(ev.message.usage), output: 0 });
             }
             if (ev.type === "message_delta" && ev.usage) {
-              totalOutput += ev.usage.output_tokens ?? 0;
+              usage = { ...usage, output: usage.output + (ev.usage.output_tokens ?? 0) };
             }
           }
         } catch (err) {
           const norm = normalizeAIError(err, "Assistant response was interrupted");
           controller.enqueue(encoder.encode(`\n\n[${norm.userMessage}]`));
         }
-        try {
-          const estimatedCost =
-            (totalInput / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT +
-            (totalOutput / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT;
-          await persistAIRun({
-            supabase,
-            userId: user.id,
-            workspaceId: workspace_id,
-            source: "assistant-chat",
-            run: {
-              run_type: "assistant",
-              provider: "claude",
-              model_name: AI_MODELS.CLAUDE_HAIKU,
-              prompt_version: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}:simple`,
-              input_hash: hashText(message.trim()),
-              output_hash: fullText ? hashText(fullText).slice(0, 16) : null,
-              input_tokens: totalInput,
-              output_tokens: totalOutput,
-              latency_ms: Date.now() - t0,
-              estimated_cost: estimatedCost,
-              status: "success",
-              error_text: null,
-            },
-          });
-        } catch {
-          // best-effort logging
-        }
+        await recordClaudeRun({
+          scope: { supabase, userId: user.id, workspaceId: workspace_id },
+          source: "assistant-chat",
+          runType: "assistant",
+          model: AI_MODELS.CLAUDE_HAIKU,
+          promptVersion: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}:simple`,
+          usage,
+          latencyMs: Date.now() - t0,
+          inputHash: hashText(message.trim()),
+          outputHash: fullText ? hashText(fullText).slice(0, 16) : null,
+        });
         try { controller.close(); } catch { /* already closed */ }
       },
     });
@@ -299,15 +282,9 @@ export async function POST(req: NextRequest) {
   }
 
   const client = new Anthropic({ apiKey: claudeKey });
-  const baseTools = getToolSchemas();
-  // Tag the last tool with cache_control so the full tool schema array is
-  // cached alongside the system prompt. Tools change rarely; caching them is
-  // effectively free after the first hit.
-  const tools = baseTools.map((t, i) =>
-    i === baseTools.length - 1
-      ? { ...t, cache_control: { type: "ephemeral" as const } }
-      : t,
-  );
+  // Prompt-cache layout (tools/system 1h, history + last message 5m): see
+  // src/lib/ai/assistant-cache.ts.
+  const tools = cachedTools(getToolSchemas());
   const toolCtx = {
     supabase,
     userId: user.id,
@@ -316,32 +293,18 @@ export async function POST(req: NextRequest) {
     today: todayISO,
   };
 
-  // Cache the system prompt. It is mode-stable across a chat thread and is the
-  // single biggest reused block; $0.30/M cached read vs $3/M fresh Sonnet —
-  // this pays for itself after one continuation.
-  const systemPromptBlocks: TextBlockParam[] = [
-    {
-      type: "text",
-      text: systemPrompt,
-      cache_control: { type: "ephemeral" },
-    },
-  ];
+  const systemPromptBlocks = cachedSystem(systemPrompt);
 
-  // Conversation state — starts with prior-turn memory (compressed if long).
-  // The current user turn carries TWO content blocks: a cacheable context
-  // preamble (workspace graph snapshot, stable within ~5min cache TTL) and the
-  // actual user message (not cached — changes every turn).
-  const priorMessages = await buildHistoryMessages(client, history);
+  // Conversation state — the thread's recent turns verbatim, then the current
+  // turn: the graph context preamble + the user's message.
+  const priorMessages = buildHistoryMessages(history);
+  const historyEnd = priorMessages.length > 0 ? priorMessages.length - 1 : null;
   const messages: MessageParam[] = [
     ...priorMessages,
     {
       role: "user",
       content: [
-        {
-          type: "text",
-          text: contextBlock,
-          cache_control: { type: "ephemeral" },
-        },
+        { type: "text", text: contextBlock },
         { type: "text", text: messageBlock },
       ],
     },
@@ -354,10 +317,7 @@ export async function POST(req: NextRequest) {
 
   const readable = new ReadableStream({
     async start(controller) {
-      let totalInputTokens = 0;
-      let totalOutputTokens = 0;
-      let totalCacheReadTokens = 0;
-      let totalCacheWriteTokens = 0;
+      let usage = EMPTY_USAGE;
       let fullText = "";
       let streamError: ReturnType<typeof normalizeAIError> | null = null;
       let currentStream: ReturnType<typeof client.messages.stream> | null = null;
@@ -383,7 +343,7 @@ export async function POST(req: NextRequest) {
             ...claudeRequestTuning(assistantModel, AI_TEMPERATURE.ASSISTANT),
             system: systemPromptBlocks,
             tools,
-            messages,
+            messages: withCacheBreakpoints(messages, historyEnd),
           });
           currentStreamRef = currentStream;
 
@@ -398,17 +358,10 @@ export async function POST(req: NextRequest) {
               send(chunk);
             }
             if (event.type === "message_start" && event.message.usage) {
-              const u = event.message.usage as {
-                input_tokens?: number;
-                cache_read_input_tokens?: number | null;
-                cache_creation_input_tokens?: number | null;
-              };
-              totalInputTokens += u.input_tokens ?? 0;
-              totalCacheReadTokens += u.cache_read_input_tokens ?? 0;
-              totalCacheWriteTokens += u.cache_creation_input_tokens ?? 0;
+              usage = addUsage(usage, { ...readClaudeUsage(event.message.usage), output: 0 });
             }
             if (event.type === "message_delta" && event.usage) {
-              totalOutputTokens += event.usage.output_tokens ?? 0;
+              usage = { ...usage, output: usage.output + (event.usage.output_tokens ?? 0) };
             }
           }
 
@@ -522,41 +475,18 @@ export async function POST(req: NextRequest) {
       // Phase 8.5 — log ai_run with token counts (best-effort)
       // -----------------------------------------------------------------------
       try {
-        const latencyMs = Date.now() - start;
-        // Per-model pricing, with cache discounts applied:
-        //   fresh input, cache read = 10% of input, cache write = 125% of input
-        const isSonnet = assistantModel === AI_MODELS.CLAUDE_SONNET;
-        const rateIn = isSonnet
-          ? AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT
-          : AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT;
-        const rateOut = isSonnet
-          ? AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT
-          : AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT;
-        const estimatedCost =
-          (totalInputTokens / 1_000_000) * rateIn +
-          (totalCacheReadTokens / 1_000_000) * (rateIn * 0.1) +
-          (totalCacheWriteTokens / 1_000_000) * (rateIn * 1.25) +
-          (totalOutputTokens / 1_000_000) * rateOut;
-
-        await persistAIRun({
-          supabase,
-          userId: user.id,
-          workspaceId: workspace_id,
+        await recordClaudeRun({
+          scope: { supabase, userId: user.id, workspaceId: workspace_id },
           source: "assistant-chat",
-          run: {
-            run_type: "assistant",
-            provider: "claude",
-            model_name: assistantModel,
-            prompt_version: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}`,
-            input_hash: hashText(userPromptForHash),
-            output_hash: fullText ? hashText(fullText).slice(0, 16) : null,
-            input_tokens: totalInputTokens + totalCacheReadTokens + totalCacheWriteTokens,
-            output_tokens: totalOutputTokens,
-            latency_ms: latencyMs,
-            estimated_cost: estimatedCost,
-            status: streamError ? "failed" : "success",
-            error_text: streamError?.message ?? null,
-          },
+          runType: "assistant",
+          model: assistantModel,
+          promptVersion: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}`,
+          usage,
+          latencyMs: Date.now() - start,
+          status: streamError ? "failed" : "success",
+          errorText: streamError?.message ?? null,
+          inputHash: hashText(userPromptForHash),
+          outputHash: fullText ? hashText(fullText).slice(0, 16) : null,
         });
 
         if (ctx.itemsTruncated > 0) {

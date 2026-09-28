@@ -11,9 +11,11 @@
 // gets the chooser and never silently loses a dump.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 
 import { AI_MODELS } from "@/lib/ai/config";
+import { recordClaudeRun } from "@/lib/ai/telemetry";
+import { readClaudeUsage } from "@/lib/ai/usage";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -73,6 +75,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const client = new Anthropic({ apiKey });
+    const startedAt = Date.now();
     const response = await client.messages.create({
       model: AI_MODELS.CLAUDE_HAIKU,
       max_tokens: 5,
@@ -80,6 +83,16 @@ export async function POST(req: NextRequest) {
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: trimmed }],
     });
+    after(() =>
+      recordClaudeRun({
+        scope: { supabase, userId: user.id, workspaceId: null },
+        source: "classify-dump",
+        model: AI_MODELS.CLAUDE_HAIKU,
+        promptVersion: "classify-dump",
+        usage: readClaudeUsage(response.usage),
+        latencyMs: Date.now() - startedAt,
+      }),
+    );
 
     const raw =
       response.content[0]?.type === "text"

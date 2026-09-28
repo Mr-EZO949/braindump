@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { AIRunStatus, AIRunType } from "@/types/ai";
 
+import { claudeCostUSD, totalInputTokens, type UsageTotals } from "./usage";
+
 export type AIRunErrorCode =
   | "rate_limit"
   | "timeout"
@@ -386,6 +388,53 @@ export async function persistAIRun(params: PersistAIRunParams): Promise<string |
     );
     return null;
   }
+}
+
+// Who a Claude call is billed to. Library helpers take it optionally so they
+// stay usable from tests/scripts; routes always pass it.
+export interface AIUsageScope {
+  supabase: SupabaseClient;
+  userId: string;
+  workspaceId: string | null;
+}
+
+// Log one Claude call with its real cost (see usage.ts). Best-effort: never
+// throws, and a missing scope is a no-op.
+export async function recordClaudeRun(params: {
+  scope: AIUsageScope | null | undefined;
+  source: string;
+  model: string;
+  promptVersion: string;
+  usage: UsageTotals;
+  latencyMs: number;
+  runType?: AIRunType;
+  status?: AIRunStatus;
+  errorText?: string | null;
+  inputHash?: string | null;
+  outputHash?: string | null;
+}): Promise<string | null> {
+  const { scope } = params;
+  if (!scope) return null;
+  return persistAIRun({
+    supabase: scope.supabase,
+    userId: scope.userId,
+    workspaceId: scope.workspaceId,
+    source: params.source,
+    run: {
+      run_type: params.runType ?? "auxiliary",
+      provider: "claude",
+      model_name: params.model,
+      prompt_version: params.promptVersion,
+      input_hash: params.inputHash ?? null,
+      output_hash: params.outputHash ?? null,
+      input_tokens: totalInputTokens(params.usage),
+      output_tokens: params.usage.output,
+      latency_ms: params.latencyMs,
+      estimated_cost: claudeCostUSD(params.model, params.usage),
+      status: params.status ?? "success",
+      error_text: params.errorText ?? null,
+    },
+  });
 }
 
 export function buildLatencyMetrics(runs: AIRunRow[]): LatencyMetric[] {

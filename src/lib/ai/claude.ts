@@ -20,8 +20,16 @@ import type {
   MergeCheckOutput,
   AIRun,
 } from "@/types/ai";
-import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS, claudeRequestTuning } from "./config";
+import { AI_MODELS, AI_TEMPERATURE, claudeRequestTuning } from "./config";
 import { MalformedAIResponseError } from "./errors";
+import {
+  addUsage,
+  claudeCostUSD,
+  EMPTY_USAGE,
+  readClaudeUsage,
+  totalInputTokens,
+  type ClaudeUsage,
+} from "./usage";
 import {
   validateExtractionOutput,
   validateEdgeInferenceOutput,
@@ -29,11 +37,6 @@ import {
   validateMergeCheckOutput,
 } from "./validation";
 import { buildExtractionPromptParts, EXTRACT_PROMPT_VERSION } from "./prompts/extract";
-
-// Cache the extract rubric only when the brain dump is large enough that a
-// single session is likely to trigger the 3+ repeat calls needed to beat the
-// 1.25× cache-write surcharge. Short one-shot dumps skip caching.
-const EXTRACT_CACHE_MIN_DUMP_CHARS = 2000;
 import {
   buildEdgeInferencePromptParts,
   INFER_EDGE_PROMPT_VERSION,
@@ -54,41 +57,11 @@ function shortHash(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
 }
 
-// Anthropic returns input in THREE buckets: input_tokens (base rate),
-// cache_creation_input_tokens (billed 1.25×), cache_read_input_tokens (billed
-// 0.1×). Counting only input_tokens undercounts cache writes and overcounts
-// cache reads, so logged COGS drifts from the real invoice. readUsage pulls all
-// buckets; claudeCost prices each at its real rate. (Cost telemetry only — no
-// effect on generation.)
-type ClaudeUsage = {
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_input_tokens?: number | null;
-  cache_read_input_tokens?: number | null;
-};
-
+// Every usage bucket (fresh / cache write 5m·1h / cache read / output) priced
+// at its real rate — see usage.ts. totalInput is what ai_runs stores.
 function readUsage(u: ClaudeUsage) {
-  const input = u.input_tokens ?? 0;
-  const cacheWrite = u.cache_creation_input_tokens ?? 0;
-  const cacheRead = u.cache_read_input_tokens ?? 0;
-  const output = u.output_tokens ?? 0;
-  return { input, cacheWrite, cacheRead, output, totalInput: input + cacheWrite + cacheRead };
-}
-
-function claudeCost(
-  model: "sonnet" | "haiku",
-  t: { input: number; cacheWrite: number; cacheRead: number; output: number },
-): number {
-  const r =
-    model === "haiku"
-      ? { i: AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT, o: AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT }
-      : { i: AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT, o: AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT };
-  return (
-    (t.input / 1_000_000) * r.i +
-    (t.cacheWrite / 1_000_000) * r.i * 1.25 +
-    (t.cacheRead / 1_000_000) * r.i * 0.1 +
-    (t.output / 1_000_000) * r.o
-  );
+  const t = readClaudeUsage(u);
+  return { ...t, totalInput: totalInputTokens(t) };
 }
 
 function baseRun(
@@ -176,12 +149,15 @@ export class ClaudeProvider {
     const run = baseRun("extract", EXTRACT_PROMPT_VERSION, fullPrompt, this.modelName);
     const start = Date.now();
 
-    // Gate caching on dump size — small one-shot dumps won't hit the ~3 reads
-    // needed to amortize the 1.25× cache-write cost. Large dumps signal an
-    // engaged session likely to re-extract (edits, retries, follow-ups).
-    const shouldCache = input.raw_text.length >= EXTRACT_CACHE_MIN_DUMP_CHARS;
-    const rubricContent = shouldCache
-      ? { type: "text" as const, text: rubricBlock, cache_control: { type: "ephemeral" as const } }
+    // The rubric (~9K tokens) is byte-identical for every dump from every
+    // user and the prompt cache is shared org-wide, so whether to cache it is
+    // a traffic decision made by the caller (extraction.ts).
+    const rubricContent = input.rubric_cache_ttl
+      ? {
+          type: "text" as const,
+          text: rubricBlock,
+          cache_control: { type: "ephemeral" as const, ttl: input.rubric_cache_ttl },
+        }
       : { type: "text" as const, text: rubricBlock };
 
     const response = await this.client.messages.create(
@@ -219,12 +195,16 @@ export class ClaudeProvider {
     const inputTokens = u.totalInput;
     const outputTokens = u.output;
     const latencyMs = Date.now() - start;
-    const estimatedCost = claudeCost("sonnet", u);
+    const estimatedCost = claudeCostUSD(this.modelName, u);
 
     let output: ExtractionOutput;
     try {
       const parsed = JSON.parse(extractJson(text));
-      output = validateExtractionOutput(parsed);
+      output = validateExtractionOutput(parsed, {
+        workspace_id: input.workspace_id,
+        user_id: input.user_id,
+        prompt_version: EXTRACT_PROMPT_VERSION,
+      });
     } catch (error) {
       throw malformedResponse({
         message:
@@ -311,7 +291,7 @@ export class ClaudeProvider {
     const inputTokens = u.totalInput;
     const outputTokens = u.output;
     const latencyMs = Date.now() - start;
-    const estimatedCost = claudeCost("haiku", u);
+    const estimatedCost = claudeCostUSD(inferModel, u);
 
     let output: EdgeInferenceOutput;
     try {
@@ -384,7 +364,7 @@ export class ClaudeProvider {
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         latency_ms: Date.now() - start,
-        estimated_cost: claudeCost("sonnet", u),
+        estimated_cost: claudeCostUSD(this.modelName, u),
       },
     };
   }
@@ -422,10 +402,7 @@ export class ClaudeProvider {
     const start = Date.now();
 
     let text = "{}";
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheWrite = 0;
-    let cacheRead = 0;
+    let usage = EMPTY_USAGE;
     let output: PlanOutput | null = null;
     let lastError: unknown;
 
@@ -441,11 +418,7 @@ export class ClaudeProvider {
         messages: [{ role: "user", content: prompt }],
       });
       text = response.content[0].type === "text" ? response.content[0].text : "{}";
-      const u = readUsage(response.usage);
-      inputTokens += u.input;
-      outputTokens += u.output;
-      cacheWrite += u.cacheWrite;
-      cacheRead += u.cacheRead;
+      usage = addUsage(usage, readClaudeUsage(response.usage));
       try {
         const parsed = JSON.parse(extractJson(text));
         output = validatePlanOutput(parsed, totalMinutes);
@@ -456,8 +429,9 @@ export class ClaudeProvider {
     }
 
     const latencyMs = Date.now() - start;
-    const estimatedCost = claudeCost("sonnet", { input: inputTokens, cacheWrite, cacheRead, output: outputTokens });
-    inputTokens = inputTokens + cacheWrite + cacheRead; // store total billed input
+    const estimatedCost = claudeCostUSD(plannerModel, usage);
+    const inputTokens = totalInputTokens(usage);
+    const outputTokens = usage.output;
 
     if (!output) {
       throw malformedResponse({
@@ -526,7 +500,7 @@ export class ClaudeProvider {
     const inputTokens = u.totalInput;
     const outputTokens = u.output;
     const latencyMs = Date.now() - start;
-    const estimatedCost = claudeCost("haiku", u);
+    const estimatedCost = claudeCostUSD(mergeModel, u);
 
     let output: MergeCheckOutput;
     try {

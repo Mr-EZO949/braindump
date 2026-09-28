@@ -26,10 +26,14 @@
 //   with parent paths). The prompt now says so, so the model treats matching
 //   items as the thing the user means instead of inventing duplicates, and uses
 //   "under: X" to attach at the right level.
+// v20 (cost): the output no longer echoes workspace_id/user_id/prompt_version
+//   (the server already knows them — they were ~20% of output tokens), and
+//   the model writes compact JSON with null/empty fields left out. Same
+//   semantics, ~30% fewer output tokens → cheaper and seconds faster per dump.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v19";
+export const EXTRACT_PROMPT_VERSION = "extract-v20";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -245,13 +249,11 @@ Deadline rule (target_date):
 - target_date is most useful on goals and projects (those surface in the Roadmap view). For tasks, only set it if the deadline is a hard external constraint (assignment due date, IRB deadline, etc.).
 
 Respond with ONLY valid JSON matching this schema (no markdown, no explanation).
-Use the workspace_id and user_id provided in the Session block verbatim.
+Write it compact: no indentation or line breaks. Leave out any field whose value would be null or an empty array — only local_ref, proposed_title, proposed_node_type and extraction_confidence are required on each node.
 {
   "proposed_nodes": [
     {
       "local_ref": "n1",
-      "workspace_id": "<provided workspace_id>",
-      "user_id": "<provided user_id>",
       "proposed_title": "string",
       "proposed_summary": "string or null",
       "proposed_body": "string ≤400 chars (so what / why it matters / next step) or null",
@@ -273,8 +275,7 @@ Use the workspace_id and user_id provided in the Session block verbatim.
   ],
   "clarifying_questions": ["string"],
   "complete_existing_node_ids": ["uuid of existing workspace node user just completed"],
-  "auto_complete_local_refs": ["n1, n2 — local_refs of new nodes to create as already-completed"],
-  "prompt_version": "${EXTRACT_PROMPT_VERSION}"
+  "auto_complete_local_refs": ["n1, n2 — local_refs of new nodes to create as already-completed"]
 }`;
 
 export interface ExtractionPromptParams {
@@ -324,8 +325,6 @@ function buildVariableBlock(params: ExtractionPromptParams): string {
 
   return `Session:
 today: ${today}
-workspace_id: ${params.workspace_id}
-user_id: ${params.user_id}
 ${workspaceContextBlock}${existingNodesBlock}
 Brain dump:
 """

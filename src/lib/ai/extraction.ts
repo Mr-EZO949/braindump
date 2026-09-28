@@ -28,6 +28,26 @@ import {
   isMalformedAIResponseError,
 } from "./errors";
 import { persistAIRun } from "./telemetry";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+
+// The extraction rubric is identical for every dump app-wide and the prompt
+// cache is shared across the API org, so caching it is a traffic question:
+// a 1h cache write costs 2× and every read 0.1×, which wins once dumps arrive
+// ~3 an hour. Below that the write is wasted, so the rubric goes uncached.
+const RUBRIC_CACHE_MIN_RECENT_EXTRACTIONS = 2;
+
+async function chooseRubricCacheTtl(): Promise<"1h" | null> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return null;
+  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { count, error } = await admin
+    .from("ai_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("run_type", "extract")
+    .gte("created_at", since);
+  if (error) return null;
+  return (count ?? 0) >= RUBRIC_CACHE_MIN_RECENT_EXTRACTIONS ? "1h" : null;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -231,6 +251,7 @@ export async function runExtraction(params: {
 
   let providerResult;
   try {
+    const rubricCacheTtl = chooseRubricCacheTtl().catch(() => null);
     const profile = await buildWorkspaceProfileContext({
       workspaceId,
       userId,
@@ -254,6 +275,7 @@ export async function runExtraction(params: {
       activeNodes: profile.activeNodes,
       parentOf,
     };
+    const rubric_cache_ttl = await rubricCacheTtl;
 
     providerResult = await executeWithRetry({
       maxRetries: AI_INGESTION.EXTRACTION_MAX_RETRIES,
@@ -266,6 +288,7 @@ export async function runExtraction(params: {
           existing_nodes: context.promptNodes,
           today,
           signal,
+          rubric_cache_ttl,
         }),
       shouldRetry: ({ attempt, error }) => {
         // A user cancel is final — never spend another call retrying it.

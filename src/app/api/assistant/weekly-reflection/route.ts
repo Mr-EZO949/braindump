@@ -7,11 +7,13 @@
 // ~$0.001/call. Cached in-memory for 5 min via the Anthropic prompt cache
 // is not viable here (the user's stats vary), so this is uncached on purpose.
 
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { AI_MODELS, AI_TEMPERATURE } from "@/lib/ai/config";
+import { recordClaudeRun, type AIUsageScope } from "@/lib/ai/telemetry";
+import { readClaudeUsage } from "@/lib/ai/usage";
 
 const WINDOW_DAYS = 7;
 
@@ -63,14 +65,17 @@ function isoWeekStart(now: Date = new Date()): string {
   return dateOnly(d);
 }
 
-async function generateCommentary(stats: {
-  totalCompleted: number;
-  totalCreated: number;
-  totalScheduled: number;
-  totalScheduledDone: number;
-  topType: string | null;
-  windowDays: number;
-}): Promise<string | null> {
+async function generateCommentary(
+  stats: {
+    totalCompleted: number;
+    totalCreated: number;
+    totalScheduled: number;
+    totalScheduledDone: number;
+    topType: string | null;
+    windowDays: number;
+  },
+  scope: AIUsageScope,
+): Promise<string | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
 
@@ -92,6 +97,7 @@ Write a short, honest weekly reflection (2-3 sentences max, plain text — no ma
 
   try {
     const client = new Anthropic({ apiKey });
+    const startedAt = Date.now();
     const r = await client.messages.create({
       model: AI_MODELS.CLAUDE_HAIKU,
       max_tokens: 256,
@@ -100,6 +106,16 @@ Write a short, honest weekly reflection (2-3 sentences max, plain text — no ma
         "You are a reflective journaling assistant. Be honest, specific, and warm. Never use markdown formatting. Never use bullet points. Keep responses to 2-3 sentences.",
       messages: [{ role: "user", content: prompt }],
     });
+    after(() =>
+      recordClaudeRun({
+        scope,
+        source: "weekly-reflection",
+        model: AI_MODELS.CLAUDE_HAIKU,
+        promptVersion: "weekly-reflection",
+        usage: readClaudeUsage(r.usage),
+        latencyMs: Date.now() - startedAt,
+      }),
+    );
     const block = r.content[0];
     if (block?.type === "text") return block.text.trim();
     return null;
@@ -238,14 +254,17 @@ export async function POST(req: NextRequest) {
   }
 
   if (!commentary) {
-    commentary = await generateCommentary({
-      totalCompleted,
-      totalCreated,
-      totalScheduled,
-      totalScheduledDone,
-      topType,
-      windowDays: WINDOW_DAYS,
-    });
+    commentary = await generateCommentary(
+      {
+        totalCompleted,
+        totalCreated,
+        totalScheduled,
+        totalScheduledDone,
+        topType,
+        windowDays: WINDOW_DAYS,
+      },
+      { supabase, userId: user.id, workspaceId: workspace_id },
+    );
     if (commentary) {
       // Best-effort persist; failure here just means we'll regenerate next
       // time, not a user-visible error.

@@ -32,7 +32,9 @@ export type AIRunType =
   | "merge_check"
   | "lifecycle_cascade"
   | "node_judgment"
-  | "rerank_importance";
+  | "rerank_importance"
+  // Small Haiku helpers (classifiers, duration estimates, cluster naming, …)
+  | "auxiliary";
 
 export interface AINodeJudgment {
   id: string;
@@ -350,6 +352,9 @@ export interface ExtractionInput {
   today?: string;
   // Cancels the provider call when the client aborts the request.
   signal?: AbortSignal;
+  // Prompt-cache the static rubric for this long, or send it uncached (null /
+  // absent). Picked from app-wide traffic in extraction.ts.
+  rubric_cache_ttl?: "1h" | null;
 }
 
 export interface ExtractionOutput {

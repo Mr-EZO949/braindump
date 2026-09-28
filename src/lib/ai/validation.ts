@@ -61,12 +61,18 @@ const EXTRACTION_SOFT_LINK_PRIORITY: Record<string, number> = {
   related_to: 1,
 };
 
-export function validateExtractionOutput(raw: unknown): ExtractionOutput {
+// The model no longer echoes ids or the prompt version (extract v20) — the
+// server already knows them, so they come from the call instead.
+export interface ExtractionSession {
+  workspace_id: string;
+  user_id: string;
+  prompt_version: string;
+}
+
+export function validateExtractionOutput(raw: unknown, session: ExtractionSession): ExtractionOutput {
   if (!isObject(raw)) throw new Error("Extraction output must be an object");
   if (!Array.isArray(raw.proposed_nodes))
     throw new Error("Extraction output missing proposed_nodes array");
-  if (!isString(raw.prompt_version))
-    throw new Error("Extraction output missing prompt_version");
 
   const seenLocalRefs = new Set<string>();
 
@@ -80,10 +86,6 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
       throw new Error(
         `proposed_nodes[${i}] unknown node type: ${n.proposed_node_type}`
       );
-    if (!isString(n.workspace_id))
-      throw new Error(`proposed_nodes[${i}] missing workspace_id`);
-    if (!isString(n.user_id))
-      throw new Error(`proposed_nodes[${i}] missing user_id`);
     if (!isString(n.local_ref) || !n.local_ref.trim())
       throw new Error(`proposed_nodes[${i}] missing local_ref`);
 
@@ -187,8 +189,8 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
 
     return {
       local_ref: localRef,
-      workspace_id: n.workspace_id as string,
-      user_id: n.user_id as string,
+      workspace_id: session.workspace_id,
+      user_id: session.user_id,
       proposed_title: (n.proposed_title as string).trim(),
       proposed_summary: isString(n.proposed_summary)
         ? n.proposed_summary
@@ -293,7 +295,7 @@ export function validateExtractionOutput(raw: unknown): ExtractionOutput {
     clarifying_questions: clarifyingQuestions,
     complete_existing_node_ids: completeExistingNodeIds,
     auto_complete_local_refs: autoCompleteLocalRefs,
-    prompt_version: raw.prompt_version as string,
+    prompt_version: session.prompt_version,
   };
 }
 

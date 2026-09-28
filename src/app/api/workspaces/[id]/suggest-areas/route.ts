@@ -40,6 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     dump: bootstrap_dump,
     role,
     focus: success_title,
+    usageScope: { supabase, userId: user.id, workspaceId: null },
   });
   return NextResponse.json(result);
 }

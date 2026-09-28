@@ -12,6 +12,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 import { AI_MODELS, AI_TEMPERATURE } from "@/lib/ai/config";
+import { recordClaudeRun, type AIUsageScope } from "@/lib/ai/telemetry";
+import { readClaudeUsage } from "@/lib/ai/usage";
 import type { WorkspaceProfileAreaType } from "@/types/graph";
 
 export const AREA_TYPES = new Set<WorkspaceProfileAreaType>([
@@ -58,6 +60,8 @@ export interface SuggestAreasParams {
   dump?: string | null;
   role?: string | null;
   focus?: string | null;
+  // Who to bill in ai_runs; omitted → the call is not logged.
+  usageScope?: AIUsageScope;
 }
 
 // Infer areas from a dump. Returns [] on any failure or when nothing is
@@ -89,12 +93,21 @@ export async function suggestAreas(params: SuggestAreasParams): Promise<{
 
   try {
     const client = new Anthropic({ apiKey });
+    const startedAt = Date.now();
     const response = await client.messages.create({
       model: AI_MODELS.CLAUDE_HAIKU,
       max_tokens: 512,
       temperature: AI_TEMPERATURE.MERGE_CHECK, // 0.1 — deterministic classification
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMsg }],
+    });
+    await recordClaudeRun({
+      scope: params.usageScope,
+      source: "suggest-areas",
+      model: AI_MODELS.CLAUDE_HAIKU,
+      promptVersion: "suggest-areas",
+      usage: readClaudeUsage(response.usage),
+      latencyMs: Date.now() - startedAt,
     });
 
     const raw = response.content[0]?.type === "text" ? response.content[0].text : "[]";

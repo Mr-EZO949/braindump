@@ -10,7 +10,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { matchNodes } from "@/lib/ai/embeddings";
 import { aiProvider } from "@/lib/ai/index";
-import { AI_DEDUP, AI_FLAGS, AI_MODELS, AI_COST_PER_1M_TOKENS } from "@/lib/ai/config";
+import { AI_DEDUP, AI_FLAGS, AI_MODELS } from "@/lib/ai/config";
 import { MERGE_CHECK_PROMPT_VERSION } from "@/lib/ai/prompts/merge-check";
 import type { NodeType } from "@/types/graph";
 import {
@@ -130,18 +130,15 @@ export async function detectDuplicates(params: {
         run: {
           run_type: "merge_check",
           provider: "claude",
-          model_name: AI_MODELS.CLAUDE_SONNET,
+          model_name: runMeta.model_name,
           prompt_version: MERGE_CHECK_PROMPT_VERSION,
           input_hash: runMeta.input_hash,
           output_hash: runMeta.output_hash,
           input_tokens: runMeta.input_tokens,
           output_tokens: runMeta.output_tokens,
           latency_ms: runMeta.latency_ms,
-          estimated_cost:
-            runMeta.input_tokens != null && runMeta.output_tokens != null
-              ? (runMeta.input_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT +
-                (runMeta.output_tokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT
-              : null,
+          // Priced by the provider for the model that actually ran (Haiku).
+          estimated_cost: runMeta.estimated_cost,
           status: "success",
           error_text: null,
         },
@@ -163,7 +160,7 @@ export async function detectDuplicates(params: {
           workspaceId,
           runType: "merge_check",
           provider: "claude",
-          modelName: AI_MODELS.CLAUDE_SONNET,
+          modelName: AI_MODELS.CLAUDE_HAIKU, // checkMerge runs on Haiku
           promptVersion: MERGE_CHECK_PROMPT_VERSION,
           inputHash: hashText(`${node.title}\n${topMatch.title}`),
           error: normalized.message,

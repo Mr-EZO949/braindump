@@ -3,10 +3,12 @@
 // sub-tasks/steps. Returns brain-dump-style text that the client feeds into
 // the extraction pipeline via /api/entries.
 
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { AI_MODELS, AI_TEMPERATURE, claudeRequestTuning } from "@/lib/ai/config";
+import { recordClaudeRun } from "@/lib/ai/telemetry";
+import { readClaudeUsage } from "@/lib/ai/usage";
 
 // Light mode's output contract — a flat list of immediate next actions.
 const OUTPUT_FORMAT = `Output format — write as a brain dump that the extraction engine can parse:
@@ -157,6 +159,7 @@ export async function POST(req: NextRequest) {
       : "";
 
   const client = new Anthropic({ apiKey: claudeKey });
+  const usageScope = { supabase, userId: user.id, workspaceId: workspace_id };
   const userPrompt =
     (summary ? `Goal/Project: "${title}"\nDescription: ${summary}` : `Goal/Project: "${title}"`) +
     (cleanInstructions
@@ -171,6 +174,7 @@ export async function POST(req: NextRequest) {
   const minSteps = stepMode === "light" ? 1 : 2;
 
   async function generate(model: string): Promise<string> {
+    const startedAt = Date.now();
     const response = await client.messages.create(
       {
         model,
@@ -185,6 +189,16 @@ export async function POST(req: NextRequest) {
       // Forward the request's abort signal so a client cancel (#5) actually
       // stops the upstream model call instead of billing for output nobody sees.
       { signal: req.signal },
+    );
+    after(() =>
+      recordClaudeRun({
+        scope: usageScope,
+        source: "suggest-steps",
+        model,
+        promptVersion: `suggest-steps:${stepMode}`,
+        usage: readClaudeUsage(response.usage),
+        latencyMs: Date.now() - startedAt,
+      }),
     );
     const textBlock = response.content.find((b) => b.type === "text");
     return textBlock?.text?.trim() ?? "";

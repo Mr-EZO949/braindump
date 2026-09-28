@@ -177,7 +177,11 @@ export class GeminiProvider implements AIProvider {
     let output: ExtractionOutput;
     try {
       const parsed = JSON.parse(text);
-      output = validateExtractionOutput(parsed);
+      output = validateExtractionOutput(parsed, {
+        workspace_id: input.workspace_id,
+        user_id: input.user_id,
+        prompt_version: EXTRACT_PROMPT_VERSION,
+      });
     } catch (error) {
       throw malformedResponse({
         message:
@@ -242,7 +246,7 @@ export class GeminiProvider implements AIProvider {
     const tokenCount = embedding.length > 0 ? null : null; // Gemini embedding API doesn't return token count
 
     const costPerM = AI_COST_PER_1M_TOKENS.GEMINI_EMBEDDING_INPUT;
-    const estimated_cost = costPerM / 1_000_000; // treat as ~1 token unit per call
+    const estimated_cost = (costPerM / 1_000_000) * Math.ceil(input.text.length / 4);
     const latencyMs = Date.now() - start;
 
     let output: EmbeddingOutput;
@@ -348,7 +352,7 @@ export class GeminiProvider implements AIProvider {
         ...run,
         output_hash: shortHash(embeddings.map((v) => v.slice(0, 2).join(",")).join("|")),
         latency_ms: latencyMs,
-        estimated_cost: (costPerM / 1_000_000) * input.texts.length,
+        estimated_cost: (costPerM / 1_000_000) * Math.ceil(joined.length / 4),
       },
     };
   }

@@ -9,11 +9,13 @@
 // (30m for tasks, 60m for goals/projects, 45m for habits) if the model
 // errors or returns garbage.
 
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { AI_MODELS, AI_TEMPERATURE } from "@/lib/ai/config";
+import { recordClaudeRun, type AIUsageScope } from "@/lib/ai/telemetry";
+import { readClaudeUsage } from "@/lib/ai/usage";
 
 const MIN_DURATION = 15;
 const MAX_DURATION = 180;
@@ -47,6 +49,7 @@ function clampDuration(value: number): number {
 
 async function generateEstimates(
   nodes: NodeInput[],
+  scope: AIUsageScope,
 ): Promise<Record<string, number> | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
@@ -76,6 +79,7 @@ Rules:
 
   try {
     const client = new Anthropic({ apiKey });
+    const startedAt = Date.now();
     const r = await client.messages.create({
       model: AI_MODELS.CLAUDE_HAIKU,
       max_tokens: 512,
@@ -84,6 +88,16 @@ Rules:
         "You estimate task durations for a personal planning app. Always respond with valid JSON only — no markdown, no commentary.",
       messages: [{ role: "user", content: prompt }],
     });
+    after(() =>
+      recordClaudeRun({
+        scope,
+        source: "estimate-durations",
+        model: AI_MODELS.CLAUDE_HAIKU,
+        promptVersion: "estimate-durations",
+        usage: readClaudeUsage(r.usage),
+        latencyMs: Date.now() - startedAt,
+      }),
+    );
     const block = r.content[0];
     const text = block?.type === "text" ? block.text.trim() : "";
     const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -136,7 +150,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Too many nodes (max 20)" }, { status: 400 });
   }
 
-  const estimates = await generateEstimates(nodes);
+  const estimates = await generateEstimates(nodes, { supabase, userId: user.id, workspaceId: null });
 
   // Build the final result — fill in any missing IDs with the type-based
   // fallback so the caller always gets a complete map.

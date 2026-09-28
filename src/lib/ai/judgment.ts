@@ -9,7 +9,8 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { AI_COST_PER_1M_TOKENS, AI_MODELS } from "./config";
+import { AI_MODELS } from "./config";
+import { claudeCostUSD, readClaudeUsage, totalInputTokens, type UsageTotals } from "./usage";
 import { persistAIRun } from "./telemetry";
 import type { AIRunType } from "@/types/ai";
 import type { WorkspaceProfile } from "@/types/graph";
@@ -157,8 +158,7 @@ export async function scoreNodesJudgment(params: {
 
   const startedAt = Date.now();
   let results: JudgmentResult[] = [];
-  let inputTokens: number | null = null;
-  let outputTokens: number | null = null;
+  let usage: UsageTotals | null = null;
   let status: "success" | "failed" = "success";
   let errorText: string | null = null;
 
@@ -171,8 +171,7 @@ export async function scoreNodesJudgment(params: {
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    inputTokens = res.usage?.input_tokens ?? null;
-    outputTokens = res.usage?.output_tokens ?? null;
+    usage = readClaudeUsage(res.usage);
 
     const block = res.content.find((b) => b.type === "text");
     if (block && block.type === "text") {
@@ -186,11 +185,6 @@ export async function scoreNodesJudgment(params: {
 
   const latencyMs = Date.now() - startedAt;
 
-  const estimatedCost =
-    inputTokens != null && outputTokens != null
-      ? (inputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT +
-        (outputTokens / 1_000_000) * AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT
-      : null;
 
   await persistAIRun({
     supabase,
@@ -204,10 +198,10 @@ export async function scoreNodesJudgment(params: {
       prompt_version: "judgment_v1",
       input_hash: null,
       output_hash: null,
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
+      input_tokens: usage ? totalInputTokens(usage) : null,
+      output_tokens: usage?.output ?? null,
       latency_ms: latencyMs,
-      estimated_cost: estimatedCost,
+      estimated_cost: usage ? claudeCostUSD(AI_MODELS.CLAUDE_HAIKU, usage) : null,
       status,
       error_text: errorText,
     },

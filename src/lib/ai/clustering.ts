@@ -9,6 +9,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
 
 import { AI_MODELS, AI_TEMPERATURE } from "@/lib/ai/config";
+import { recordClaudeRun, type AIUsageScope } from "@/lib/ai/telemetry";
+import { readClaudeUsage } from "@/lib/ai/usage";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Cosine threshold above which two nodes are considered close enough to
@@ -183,7 +185,10 @@ export function greedyCluster(nodes: CandidateNode[]): CandidateNode[][] {
 
 // Asks Haiku for a short umbrella title + node_type for a candidate cluster.
 // Cheap structured task: ~500 input + 30 output tokens, ~$0.0008.
-async function nameCluster(cluster: CandidateNode[]): Promise<{ title: string; node_type: string } | null> {
+async function nameCluster(
+  cluster: CandidateNode[],
+  usageScope: AIUsageScope,
+): Promise<{ title: string; node_type: string } | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
 
@@ -223,12 +228,21 @@ No prose, no markdown.`;
 
   try {
     const client = new Anthropic({ apiKey });
+    const startedAt = Date.now();
     const r = await client.messages.create({
       model: AI_MODELS.CLAUDE_HAIKU,
       max_tokens: 128,
       temperature: AI_TEMPERATURE.MERGE_CHECK, // structured, deterministic
       system: "You always respond with valid JSON only. No markdown, no prose, just the raw JSON object.",
       messages: [{ role: "user", content: prompt }],
+    });
+    await recordClaudeRun({
+      scope: usageScope,
+      source: "cluster-naming",
+      model: AI_MODELS.CLAUDE_HAIKU,
+      promptVersion: "cluster-naming",
+      usage: readClaudeUsage(r.usage),
+      latencyMs: Date.now() - startedAt,
     });
     const block = r.content[0];
     if (block?.type !== "text") return null;
@@ -391,7 +405,7 @@ export async function runClusteringPass(params: {
   // Name each cluster with Haiku in parallel.
   const named = await Promise.all(
     fresh.map(async ({ cluster, signature }) => {
-      const naming = await nameCluster(cluster);
+      const naming = await nameCluster(cluster, { supabase, userId, workspaceId });
       if (!naming) return null;
       return {
         title: naming.title,
