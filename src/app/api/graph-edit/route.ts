@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { transitionNodeStatus } from "@/lib/graph/status-transition";
+import { getRequestToday } from "@/lib/time/request-date";
 import type { GraphEditOperation } from "@/types/graph";
 
 interface OpResult {
@@ -262,19 +264,21 @@ export async function POST(req: NextRequest) {
           const nodeRes = resolveTitle(op.node);
           if ("error" in nodeRes) { results.push({ op: "archive", success: false, error: nodeRes.error, node: op.node }); break; }
 
-          // Archive node
-          await supabase
-            .from("nodes")
-            .update({ status: "archived", archived_at: nowIso, updated_at: nowIso })
-            .eq("id", nodeRes.id)
-            .eq("user_id", user.id);
-
-          // Orphan connected edges
-          await supabase
-            .from("edges")
-            .update({ status: "orphaned", updated_at: nowIso })
-            .eq("user_id", user.id)
-            .or(`source_node_id.eq.${nodeRes.id},target_node_id.eq.${nodeRes.id}`);
+          // Same transition as every other status change (orphans edges, logs
+          // lifecycle + feedback events). Scores are recomputed once at the end
+          // of this route, not per operation.
+          const archived = await transitionNodeStatus({
+            supabase,
+            userId: user.id,
+            nodeId: nodeRes.id,
+            newStatus: "archived",
+            today: await getRequestToday(),
+            recomputeScores: false,
+          });
+          if (archived.kind === "error") {
+            results.push({ op: "archive", success: false, error: archived.error, node: op.node });
+            break;
+          }
 
           results.push({ op: "archive", success: true, node: op.node });
           break;

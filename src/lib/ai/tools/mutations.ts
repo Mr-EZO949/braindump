@@ -9,6 +9,10 @@
 // continue the conversation coherently.
 
 import { mergeNodes } from "@/lib/graph/merge";
+import { transitionNodeStatus } from "@/lib/graph/status-transition";
+import { computeWorkspaceScores } from "@/lib/ai/scoring";
+import { localDateISO } from "@/lib/time/local-date";
+import type { NodeStatus } from "@/types/graph";
 
 import type { ToolContext, ToolDefinition } from "./read-only";
 
@@ -67,55 +71,51 @@ async function fetchWorkspaceNode(
   );
 }
 
-// Habits recur — "completing" one records TODAY's completion (idempotent) and
-// leaves the node ACTIVE, exactly like the /status route's habit guard. Never
-// flip a habit to status=completed or it disappears from the graph (#13).
-async function logHabitCompletionToday(ctx: ToolContext, nodeId: string): Promise<void> {
-  const today = new Date().toISOString().slice(0, 10);
-  await ctx.supabase
-    .from("habit_completions")
-    .upsert(
-      { user_id: ctx.userId, node_id: nodeId, completed_on: today, source: "chat" },
-      { onConflict: "node_id,completed_on", ignoreDuplicates: true },
-    );
-}
-
-async function logLifecycleEvent(
+// Every chat-driven status change runs the SAME transition as the Details
+// button (src/lib/graph/status-transition.ts): cascades, planner sync, habit
+// semantics, lifecycle + feedback events. Returns a tool_result payload.
+async function toolStatusTransition(
   ctx: ToolContext,
-  params: { node_id: string; previous_status: string; new_status: string },
-): Promise<void> {
-  // Append-only; failures are not fatal for the mutation — the user's action
-  // succeeded, we just lost the audit trail for this step.
-  const { error } = await ctx.supabase.from("lifecycle_events").insert({
-    node_id: params.node_id,
-    user_id: ctx.userId,
-    previous_status: params.previous_status,
-    new_status: params.new_status,
-    cascade_triggered: false,
+  nodeId: string,
+  newStatus: NodeStatus,
+  options?: { recomputeScores?: boolean },
+): Promise<Record<string, unknown>> {
+  const result = await transitionNodeStatus({
+    supabase: ctx.supabase,
+    userId: ctx.userId,
+    workspaceId: ctx.workspaceId,
+    nodeId,
+    newStatus,
+    // The user's local day (bd_tz cookie → chat route). UTC only as a fallback.
+    today: ctx.today ?? localDateISO(new Date(), null),
+    habitSource: "chat",
+    recomputeScores: options?.recomputeScores,
   });
-  if (error) {
-    console.warn("[mutations] failed to log lifecycle_event:", error.message);
+  switch (result.kind) {
+    case "error":
+      return {
+        accepted: false,
+        error: result.httpStatus === 404 ? "node_id not found in this workspace" : result.error,
+      };
+    case "habit_logged":
+      // Habits recur: logged for today, the node stays active (#13).
+      return { accepted: true, node_id: nodeId, habit_logged: true, logged_on: result.loggedOn };
+    case "unchanged":
+      return {
+        accepted: true,
+        node_id: nodeId,
+        ...(newStatus === "completed" ? { already_completed: true } : {}),
+        ...(newStatus === "archived" ? { already_archived: true } : {}),
+      };
+    case "changed":
+      return {
+        accepted: true,
+        node_id: nodeId,
+        previous_status: result.previousStatus,
+        auto_completed_node_ids: result.autoCompletedNodeIds,
+        newly_available: result.newlyAvailable,
+      };
   }
-}
-
-async function orphanEdgesForNode(ctx: ToolContext, nodeId: string): Promise<void> {
-  // Mirrors the status-route behaviour: when a node becomes non-active, its
-  // currently-active edges transition to 'orphaned' so the UI hides them.
-  // Run both sides in parallel.
-  await Promise.all([
-    ctx.supabase
-      .from("edges")
-      .update({ status: "orphaned" })
-      .eq("user_id", ctx.userId)
-      .eq("source_node_id", nodeId)
-      .eq("status", "active"),
-    ctx.supabase
-      .from("edges")
-      .update({ status: "orphaned" })
-      .eq("user_id", ctx.userId)
-      .eq("target_node_id", nodeId)
-      .eq("status", "active"),
-  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -800,38 +800,9 @@ const ARCHIVE_NODE: ToolDefinition = {
     const args = (input ?? {}) as { node_id?: string };
     const nodeId = typeof args.node_id === "string" ? args.node_id : "";
     if (!nodeId) return { accepted: false, error: "node_id is required" };
-
-    const target = await fetchWorkspaceNode(ctx, nodeId);
-    if (!target) {
-      return { accepted: false, error: "node_id not found in this workspace" };
-    }
-    if (target.status === "archived") {
-      return { accepted: true, node_id: nodeId, already_archived: true };
-    }
-
-    const previousStatus = target.status ?? "active";
-    const { error } = await ctx.supabase
-      .from("nodes")
-      .update({
-        status: "archived",
-        archived_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", nodeId)
-      .eq("user_id", ctx.userId)
-      .eq("workspace_id", ctx.workspaceId);
-    if (error) {
-      return { accepted: false, error: `Failed to archive: ${error.message}` };
-    }
-
-    await orphanEdgesForNode(ctx, nodeId);
-    await logLifecycleEvent(ctx, {
-      node_id: nodeId,
-      previous_status: previousStatus,
-      new_status: "archived",
-    });
-
-    return { accepted: true, node_id: nodeId, previous_status: previousStatus };
+    // Same code path as the Details button (orphans edges, logs lifecycle +
+    // feedback events) — see src/lib/graph/status-transition.ts.
+    return toolStatusTransition(ctx, nodeId, "archived");
   },
 };
 
@@ -852,54 +823,10 @@ const COMPLETE_NODE: ToolDefinition = {
     const args = (input ?? {}) as { node_id?: string };
     const nodeId = typeof args.node_id === "string" ? args.node_id : "";
     if (!nodeId) return { accepted: false, error: "node_id is required" };
-
-    const target = await fetchWorkspaceNode(ctx, nodeId);
-    if (!target) {
-      return { accepted: false, error: "node_id not found in this workspace" };
-    }
-    if (target.status === "completed") {
-      return { accepted: true, node_id: nodeId, already_completed: true };
-    }
-    if (target.status === "archived") {
-      return {
-        accepted: false,
-        error: "Cannot complete an archived node. Reactivate it first.",
-      };
-    }
-
-    // Habits don't "complete" — log today's completion and keep the node active
-    // so it stays on the graph (#13). This matches the /status route guard, so
-    // chat behaves like the Details/planner paths.
-    if (target.node_type === "habit") {
-      await logHabitCompletionToday(ctx, nodeId);
-      return { accepted: true, node_id: nodeId, habit_logged: true };
-    }
-
-    const previousStatus = target.status ?? "active";
-    const { error } = await ctx.supabase
-      .from("nodes")
-      .update({
-        status: "completed",
-        completed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", nodeId)
-      .eq("user_id", ctx.userId)
-      .eq("workspace_id", ctx.workspaceId);
-    if (error) {
-      return { accepted: false, error: `Failed to complete: ${error.message}` };
-    }
-
-    // NOTE: completing a node does NOT orphan its edges — the canonical /status
-    // route keeps them active on complete (only archive orphans). Orphaning here
-    // detached completed nodes into standalone islands (#17); removed.
-    await logLifecycleEvent(ctx, {
-      node_id: nodeId,
-      previous_status: previousStatus,
-      new_status: "completed",
-    });
-
-    return { accepted: true, node_id: nodeId, previous_status: previousStatus };
+    // Same code path as the Details button: subtree + prerequisite cascades,
+    // planner sync, score recompute — and habits log the user's day instead of
+    // completing (#13). Chat used to hand-roll a weaker copy of this.
+    return toolStatusTransition(ctx, nodeId, "completed");
   },
 };
 
@@ -1077,7 +1004,7 @@ const PROPOSE_CHANGES_BATCH: ToolDefinition = {
       | { kind: BatchChange["kind"]; ok: true; id?: string; detail?: string }
       | { kind: BatchChange["kind"]; ok: false; error: string };
     const results: OpResult[] = [];
-    const nowIso = new Date().toISOString();
+    let statusChanged = false;
 
     for (const change of args.changes) {
       switch (change.kind) {
@@ -1221,70 +1148,40 @@ const PROPOSE_CHANGES_BATCH: ToolDefinition = {
           break;
         }
 
-        case "complete": {
-          if (!change.node_id) {
-            results.push({ kind: "complete", ok: false, error: "node_id required" });
-            break;
-          }
-          const target = await fetchWorkspaceNode(ctx, change.node_id);
-          if (!target) {
-            results.push({
-              kind: "complete",
-              ok: false,
-              error: "node not in this workspace",
-            });
-            break;
-          }
-          // Habits log today's completion and stay active (#13) — never mark the
-          // whole habit node done.
-          if (target.node_type === "habit") {
-            await logHabitCompletionToday(ctx, target.id);
-            results.push({ kind: "complete", ok: true, id: target.id, detail: "habit_logged" });
-            break;
-          }
-          const { error: updateErr } = await ctx.supabase
-            .from("nodes")
-            .update({ status: "completed", completed_at: nowIso })
-            .eq("id", target.id)
-            .eq("user_id", ctx.userId);
-          if (updateErr) {
-            results.push({ kind: "complete", ok: false, error: updateErr.message });
-            break;
-          }
-          results.push({ kind: "complete", ok: true, id: target.id });
-          break;
-        }
-
+        case "complete":
         case "archive": {
           if (!change.node_id) {
-            results.push({ kind: "archive", ok: false, error: "node_id required" });
+            results.push({ kind: change.kind, ok: false, error: "node_id required" });
             break;
           }
-          const target = await fetchWorkspaceNode(ctx, change.node_id);
-          if (!target) {
+          // The same transition the Details button runs (cascades, planner
+          // sync, habit semantics). Scores are recomputed ONCE after the loop.
+          const outcome = await transitionNodeStatus({
+            supabase: ctx.supabase,
+            userId: ctx.userId,
+            workspaceId: ctx.workspaceId,
+            nodeId: change.node_id,
+            newStatus: change.kind === "complete" ? "completed" : "archived",
+            today: ctx.today ?? localDateISO(new Date(), null),
+            habitSource: "chat",
+            recomputeScores: false,
+          });
+          if (outcome.kind === "error") {
             results.push({
-              kind: "archive",
+              kind: change.kind,
               ok: false,
-              error: "node not in this workspace",
+              error:
+                outcome.httpStatus === 404 ? "node not in this workspace" : outcome.error,
             });
             break;
           }
-          // Mirror the standalone archive route: set archived_at AND orphan
-          // every active edge touching this node, so we don't recreate the
-          // dangling-edge bug fixed earlier.
-          await ctx.supabase
-            .from("nodes")
-            .update({ status: "archived", archived_at: nowIso })
-            .eq("id", target.id)
-            .eq("user_id", ctx.userId);
-          await ctx.supabase
-            .from("edges")
-            .update({ status: "orphaned", updated_at: nowIso })
-            .eq("user_id", ctx.userId)
-            .or(
-              `source_node_id.eq.${target.id},target_node_id.eq.${target.id}`,
-            );
-          results.push({ kind: "archive", ok: true, id: target.id });
+          if (outcome.kind === "changed") statusChanged = true;
+          results.push({
+            kind: change.kind,
+            ok: true,
+            id: change.node_id,
+            ...(outcome.kind === "habit_logged" ? { detail: "habit_logged" } : {}),
+          });
           break;
         }
 
@@ -1297,6 +1194,17 @@ const PROPOSE_CHANGES_BATCH: ToolDefinition = {
           });
         }
       }
+    }
+
+    // One score recompute for the whole batch (each transition skipped its own).
+    if (statusChanged) {
+      await computeWorkspaceScores({
+        workspaceId: ctx.workspaceId,
+        userId: ctx.userId,
+        supabase: ctx.supabase,
+      }).catch((err: unknown) => {
+        console.warn("[mutations] batch score recompute failed:", err);
+      });
     }
 
     const okCount = results.filter((r) => r.ok).length;

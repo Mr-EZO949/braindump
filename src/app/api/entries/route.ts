@@ -4,7 +4,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getRequestToday } from "@/lib/time/request-date";
 import { runExtraction } from "@/lib/ai/extraction";
+import { computeWorkspaceScores } from "@/lib/ai/scoring";
+import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { suggestAreas } from "@/lib/ai/areas";
 import { classifyDumpSize } from "@/lib/ai/dump-size";
 import { AI_INGESTION, AI_FLAGS, AI_RATE_LIMITS } from "@/lib/ai/config";
@@ -219,6 +222,11 @@ export async function POST(req: NextRequest) {
       workspaceId: workspace_id,
       userId: user.id,
       supabase,
+      // User's local date for "by Friday"-style deadlines (bd_tz cookie).
+      today: await getRequestToday(),
+      // Client cancel (e.g. the Cancel on "Generating steps…") stops the
+      // Sonnet call instead of billing for it.
+      signal: req.signal,
     }),
     wantAreaSuggestions
       ? suggestAreas({ dump: trimmed })
@@ -302,19 +310,35 @@ export async function POST(req: NextRequest) {
       .eq("user_id", user.id)
       .eq("workspace_id", workspace_id)
       .in("id", result.completeExistingNodeIds);
-    const ownedIds = (ownedNodes ?? [])
-      .filter((n) => n.status !== "completed" && n.status !== "archived")
-      .map((n) => n.id as string);
-    if (ownedIds.length > 0) {
-      await supabase
-        .from("nodes")
-        .update({ status: "completed", completed_at: new Date().toISOString() })
-        .in("id", ownedIds);
-      for (const n of ownedNodes ?? []) {
-        if (ownedIds.includes(n.id as string)) {
-          completedExistingTitles.push(n.title as string);
-        }
+    const candidates = (ownedNodes ?? []).filter(
+      (n) => n.status !== "completed" && n.status !== "archived",
+    );
+    // Same transition as the Details button (cascades, planner sync, lifecycle
+    // events) — and a HABIT the user says they did logs today instead of being
+    // marked done forever. This used to be a raw status update, so "did my
+    // workout today" in a dump completed the whole habit (#13 via braindump).
+    const today = await getRequestToday();
+    let anyStatusChanged = false;
+    for (const n of candidates) {
+      const outcome = await transitionNodeStatus({
+        supabase,
+        userId: user.id,
+        workspaceId: workspace_id,
+        nodeId: n.id as string,
+        newStatus: "completed",
+        today,
+        habitSource: "dump",
+        recomputeScores: false,
+      });
+      if (outcome.kind === "changed") anyStatusChanged = true;
+      if (outcome.kind === "changed" || outcome.kind === "habit_logged") {
+        completedExistingTitles.push(n.title as string);
       }
+    }
+    if (anyStatusChanged) {
+      await computeWorkspaceScores({ workspaceId: workspace_id, userId: user.id, supabase }).catch(
+        (err: unknown) => console.warn("[entries] score recompute failed:", err),
+      );
     }
   }
 
