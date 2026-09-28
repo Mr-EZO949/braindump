@@ -19,6 +19,7 @@ import { buildAssistantContext } from "@/lib/ai/context";
 import {
   buildAssistantSystemPrompt,
   buildAssistantUserPromptParts,
+  buildTodayLine,
   ASSISTANT_PROMPT_VERSION,
 } from "@/lib/ai/prompts/assistant";
 import {
@@ -27,14 +28,15 @@ import {
   AI_RATE_LIMITS,
   claudeRequestTuning,
 } from "@/lib/ai/config";
-import { looksLikeStructuralEdit } from "@/lib/graph/dump-heuristic";
+import { routeChatMessage } from "@/lib/ai/chat-router";
+import { ASSISTANT_QA_PROMPT_VERSION, buildQASystemPrompt, streamQAAnswer } from "@/lib/ai/gemini-chat";
 import { checkAIRunRateLimit } from "@/lib/ai/rate-limit";
 import { hashText, normalizeAIError } from "@/lib/ai/errors";
-import { recordClaudeRun } from "@/lib/ai/telemetry";
+import { persistAIRun, recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { dispatchTool, getToolSchemas, isPausingTool } from "@/lib/ai/tools";
-import { buildHistoryMessages, sanitizeHistory } from "@/lib/ai/chat-memory";
+import { buildHistoryMessages, sanitizeHistory, type HistoryTurn } from "@/lib/ai/chat-memory";
 import { getTemporalFlag } from "@/lib/ai/temporal-flags";
 import type { AssistantMode } from "@/types/ai";
 
@@ -67,12 +69,18 @@ function truncateToolContent(
 // Haiku call with no context/tools — ~100 input tokens instead of ~5000.
 // A miss is harmless (the model just answers without data it didn't need).
 const SIMPLE_ASK_PATTERN = /^\s*(hi|hello|hey|yo|howdy|thanks|thank you|ty|ok|okay|cool|nice|got it|sure|sounds good|great|awesome|perfect|no|yes|yep|nope)[!.?\s]*$/i;
+// …except that a yes/no to the assistant's own question ("Want me to archive
+// it?") is an instruction, and the simple path has no tools to act on it.
+const REPLY_PATTERN = /^\s*(ok|okay|sure|sounds good|great|perfect|no|yes|yep|nope)[!.?\s]*$/i;
 
-function isSimpleAsk(message: string): boolean {
+function isSimpleAsk(message: string, history: HistoryTurn[]): boolean {
   const trimmed = message.trim();
   if (trimmed.length === 0) return false;
   if (trimmed.length > 60) return false;
-  return SIMPLE_ASK_PATTERN.test(trimmed);
+  if (!SIMPLE_ASK_PATTERN.test(trimmed)) return false;
+  const last = history[history.length - 1];
+  const answersQuestion = last?.role === "assistant" && last.body.trim().endsWith("?");
+  return !(answersQuestion && REPLY_PATTERN.test(trimmed));
 }
 
 export async function POST(req: NextRequest) {
@@ -134,15 +142,21 @@ export async function POST(req: NextRequest) {
     ? (mode as AssistantMode)
     : "explain";
 
-  // Model routing: chat and simple edits (add one item, mark done, move a
-  // time, rename) stay on Haiku; a STRUCTURAL edit or full planning escalates
-  // the whole turn to Sonnet. The model that emits the mutation is the one
-  // doing the structural reasoning (split-vs-replace, correct parent,
-  // batching), so the choice is made up-front. See issue #19 and
-  // looksLikeStructuralEdit.
-  const assistantModel = looksLikeStructuralEdit(message)
-    ? AI_MODELS.CLAUDE_SONNET
-    : AI_MODELS.CLAUDE_HAIKU;
+  // Model routing (chat-router.ts): plain questions → Gemini Flash-Lite with no
+  // tools (it hands back to Claude when the turn needs an action or a lookup);
+  // chat and simple edits (add one item, mark done, move a time, rename) →
+  // Haiku; a STRUCTURAL edit or full planning → Sonnet, since the model that
+  // emits the mutation is the one doing the structural reasoning
+  // (split-vs-replace, correct parent, batching). See issue #19.
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const chatRoute = routeChatMessage({
+    message,
+    history,
+    mode: resolvedMode,
+    qaEnabled: !!geminiKey && process.env.CHAT_QA_GEMINI !== "off",
+  });
+  const assistantModel =
+    chatRoute === "sonnet" ? AI_MODELS.CLAUDE_SONNET : AI_MODELS.CLAUDE_HAIKU;
 
   // ---------------------------------------------------------------------------
   // Verify workspace belongs to user
@@ -175,7 +189,7 @@ export async function POST(req: NextRequest) {
   // Simple-ask short-circuit: greetings / acknowledgments skip context + tools.
   // Saves ~4-5k input tokens per turn on chit-chat.
   // ---------------------------------------------------------------------------
-  if (isSimpleAsk(message)) {
+  if (isSimpleAsk(message, history)) {
     const claudeKey = process.env.ANTHROPIC_API_KEY;
     if (!claudeKey) {
       return new Response("ANTHROPIC_API_KEY is not configured", { status: 500 });
@@ -310,6 +324,7 @@ export async function POST(req: NextRequest) {
 
   let aborted = false;
   let currentStreamRef: ReturnType<typeof client.messages.stream> | null = null;
+  const qaAbort = new AbortController();
 
   const readable = new ReadableStream({
     async start(controller) {
@@ -328,6 +343,54 @@ export async function POST(req: NextRequest) {
           aborted = true;
         }
       };
+
+      // Plain question → Gemini first. An answer ends the turn; a hand-off or
+      // an error falls through to the Claude loop below with nothing sent.
+      if (chatRoute === "qa" && geminiKey) {
+        const qaStart = Date.now();
+        const qa = await streamQAAnswer({
+          apiKey: geminiKey,
+          systemPrompt: buildQASystemPrompt({
+            mode: resolvedMode,
+            todayLine: buildTodayLine(todayISO),
+            contextBlock,
+          }),
+          history,
+          message: messageBlock,
+          onText: send,
+          signal: qaAbort.signal,
+        });
+        const answered = qa.kind === "answered";
+        await persistAIRun({
+          supabase,
+          userId: user.id,
+          workspaceId: workspace_id,
+          source: "assistant-chat",
+          run: {
+            // Only an answer counts as the turn; a hand-off is overhead on the Claude turn.
+            run_type: answered ? "assistant" : "auxiliary",
+            provider: "gemini",
+            model_name: qa.model,
+            prompt_version: `${ASSISTANT_QA_PROMPT_VERSION}:${resolvedMode}${answered ? "" : `:${qa.kind}`}`,
+            input_hash: hashText(userPromptForHash),
+            output_hash: answered ? hashText(qa.text).slice(0, 16) : null,
+            input_tokens: qa.usage.prompt,
+            output_tokens: qa.usage.output,
+            latency_ms: Date.now() - qaStart,
+            estimated_cost: qa.costUSD,
+            status: qa.kind === "error" ? "failed" : "success",
+            error_text: qa.kind === "error" ? qa.error : null,
+          },
+        });
+        if (answered || aborted) {
+          try {
+            controller.close();
+          } catch {
+            // Already closed by client cancel — nothing to do.
+          }
+          return;
+        }
+      }
 
       try {
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -507,6 +570,7 @@ export async function POST(req: NextRequest) {
       // the loop bails on its next check, and abort the in-flight Anthropic
       // stream so we stop burning tokens.
       aborted = true;
+      qaAbort.abort();
       try {
         currentStreamRef?.abort();
       } catch {
@@ -523,6 +587,7 @@ export async function POST(req: NextRequest) {
       "X-Context-Truncated": String(ctx.itemsTruncated),
       "X-Context-Tokens": String(ctx.estimatedTokens),
       "X-Scope": ctx.scopeLabel,
+      "X-Chat-Route": chatRoute,
     },
   });
 }

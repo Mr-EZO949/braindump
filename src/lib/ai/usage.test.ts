@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AI_MODELS } from "./config";
-import { addUsage, claudeCostUSD, readClaudeUsage, totalInputTokens } from "./usage";
+import { addUsage, claudeCostUSD, geminiCostUSD, readClaudeUsage, totalInputTokens } from "./usage";
 
 describe("readClaudeUsage", () => {
   it("splits cache writes by TTL when the breakdown is present", () => {
@@ -51,5 +51,13 @@ describe("claudeCostUSD", () => {
     const both = addUsage(round, round);
     expect(totalInputTokens(both)).toBe(20_000);
     expect(both.output).toBe(200);
+  });
+});
+
+describe("geminiCostUSD", () => {
+  it("bills cached prompt tokens at 0.1× and prices by model", () => {
+    const u = { prompt: 3000, cached: 1000, output: 100 };
+    expect(geminiCostUSD("gemini-3.1-flash-lite", u)).toBeCloseTo((2000 * 0.25 + 1000 * 0.025 + 100 * 1.5) / 1e6, 10);
+    expect(geminiCostUSD("gemini-2.5-flash-lite", u)).toBeCloseTo((2000 * 0.1 + 1000 * 0.01 + 100 * 0.4) / 1e6, 10);
   });
 });

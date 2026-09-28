@@ -94,3 +94,36 @@ export function claudeCostUSD(
     1_000_000;
   return opts.batch ? cost / 2 : cost;
 }
+
+// Gemini reports prompt tokens (cached ones included) and output tokens
+// (thinking included). Implicitly-cached prompt tokens bill at 0.1×.
+export interface GeminiUsage {
+  prompt: number;
+  cached: number;
+  output: number;
+}
+
+function geminiRates(model: string): { input: number; output: number } {
+  if (model.includes("2.5-flash-lite")) {
+    return {
+      input: AI_COST_PER_1M_TOKENS.GEMINI_FLASH_LITE_25_INPUT,
+      output: AI_COST_PER_1M_TOKENS.GEMINI_FLASH_LITE_25_OUTPUT,
+    };
+  }
+  if (model.includes("flash-lite")) {
+    return {
+      input: AI_COST_PER_1M_TOKENS.GEMINI_FLASH_LITE_31_INPUT,
+      output: AI_COST_PER_1M_TOKENS.GEMINI_FLASH_LITE_31_OUTPUT,
+    };
+  }
+  return {
+    input: AI_COST_PER_1M_TOKENS.GEMINI_FLASH_INPUT,
+    output: AI_COST_PER_1M_TOKENS.GEMINI_FLASH_OUTPUT,
+  };
+}
+
+export function geminiCostUSD(model: string, u: GeminiUsage): number {
+  const r = geminiRates(model);
+  const cached = Math.min(u.cached, u.prompt);
+  return ((u.prompt - cached) * r.input + cached * r.input * 0.1 + u.output * r.output) / 1_000_000;
+}

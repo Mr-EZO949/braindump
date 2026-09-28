@@ -32,6 +32,8 @@ export const AI_MODELS = {
   GEMINI_FAST: "gemini-2.5-flash",
   GEMINI_PRO: "gemini-2.5-pro",
   GEMINI_EMBEDDING: "gemini-embedding-001",
+  // Plain-question chat turns (chat-router.ts → gemini-chat.ts).
+  GEMINI_CHAT_QA: "gemini-3.1-flash-lite",
   // Cohere reranking
   COHERE_RERANK: "rerank-v3.5",
 } as const;
@@ -154,6 +156,11 @@ export const AI_COST_PER_1M_TOKENS = {
   // Gemini 2.5 Flash
   GEMINI_FLASH_INPUT: 0.3,
   GEMINI_FLASH_OUTPUT: 2.5,
+  // Gemini Flash-Lite (chat Q&A). Implicitly-cached input bills at 0.1×.
+  GEMINI_FLASH_LITE_25_INPUT: 0.1,
+  GEMINI_FLASH_LITE_25_OUTPUT: 0.4,
+  GEMINI_FLASH_LITE_31_INPUT: 0.25,
+  GEMINI_FLASH_LITE_31_OUTPUT: 1.5,
   // Gemini 2.5 Pro (≤200k context tier; free-tier calls price at 0 regardless)
   GEMINI_PRO_INPUT: 1.25,
   GEMINI_PRO_OUTPUT: 10.0,
