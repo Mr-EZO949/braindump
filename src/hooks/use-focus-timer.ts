@@ -19,7 +19,15 @@ export type FocusTimer = {
 export type FocusTimerControls = {
   timer: FocusTimer | null;
   remainingSeconds: number;
-  start: (input: { nodeId: string; title: string; durationMinutes: number }) => void;
+  start: (input: {
+    nodeId: string;
+    title: string;
+    durationMinutes: number;
+    // When true, the timer is SET UP but not running — it lands paused at full
+    // duration so the user starts it explicitly. Used by "Start working" /
+    // Focus, which should never auto-run a countdown.
+    paused?: boolean;
+  }) => void;
   pause: () => void;
   resume: () => void;
   stop: () => void;
@@ -131,13 +139,22 @@ export function useFocusTimer(workspaceId: string | null): FocusTimerControls {
   );
 
   const start = useCallback(
-    (input: { nodeId: string; title: string; durationMinutes: number }) => {
+    (input: {
+      nodeId: string;
+      title: string;
+      durationMinutes: number;
+      paused?: boolean;
+    }) => {
+      const now = Date.now();
+      // paused start: freeze at t0 (pausedAt === startedAt, no accumulated
+      // pause) → full duration remaining, no tick, and a clean "never ran yet"
+      // signal for the pill to show "Start" instead of "Resume".
       persist({
         nodeId: input.nodeId,
         title: input.title,
         durationMinutes: input.durationMinutes,
-        startedAt: Date.now(),
-        pausedAt: null,
+        startedAt: now,
+        pausedAt: input.paused ? now : null,
         accumulatedPausedMs: 0,
       });
     },

@@ -23,20 +23,67 @@ type TopNode = {
   planning_signals: string[];
 };
 
-type WeeklyPulse = {
-  completed: number;
-  created: number;
-  scheduled: number;
-  scheduled_done: number;
-  completion_rate: number | null;
-};
-
 type LockInData = {
   headline: string | null;
   top: TopNode[];
-  weekly_pulse: WeeklyPulse;
   nudges: Nudge[];
 };
+
+// Focus is a $0 SQL brief, but pressing Focus still fired the endpoint on every
+// open. We now cache the result and only re-fetch when the cache is STALE:
+// older than FOCUS_CACHE_TTL_MS, or the graph changed since (signature mismatch
+// — a node/edge added/removed or a task completed). This honors the ask in the
+// testing journal (#9): cache "for some time or until a task is done / the
+// graph changes." Stale cache is still shown instantly (no flash) while a fresh
+// fetch runs behind it.
+const FOCUS_CACHE_TTL_MS = 5 * 60_000; // 5 minutes
+
+type FocusCacheEnvelope = {
+  data: LockInData;
+  cachedAt: number;
+  sig: string;
+};
+
+function focusCacheKey(workspaceId: string) {
+  return `braindump:focus-cache:${workspaceId}`;
+}
+
+function readFocusEnvelope(workspaceId: string | null): FocusCacheEnvelope | null {
+  if (!workspaceId || typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(focusCacheKey(workspaceId));
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as FocusCacheEnvelope;
+    if (!cached || typeof cached !== "object" || !cached.data) return null;
+    return Array.isArray(cached.data.top) && Array.isArray(cached.data.nudges)
+      ? cached
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// Any cached brief, fresh or stale — used to paint instantly without a flash.
+function readFocusCache(workspaceId: string | null): LockInData | null {
+  return readFocusEnvelope(workspaceId)?.data ?? null;
+}
+
+// True only when the cache is still trustworthy: within the TTL AND the graph
+// hasn't changed since (same signature). A fresh cache lets us skip the fetch.
+function isFocusCacheFresh(workspaceId: string | null, sig: string): boolean {
+  const env = readFocusEnvelope(workspaceId);
+  if (!env) return false;
+  return env.sig === sig && Date.now() - env.cachedAt < FOCUS_CACHE_TTL_MS;
+}
+
+function writeFocusCache(workspaceId: string, data: LockInData, sig: string) {
+  try {
+    const envelope: FocusCacheEnvelope = { data, cachedAt: Date.now(), sig };
+    window.sessionStorage.setItem(focusCacheKey(workspaceId), JSON.stringify(envelope));
+  } catch {
+    // Cached Focus data is an optimization; storage may be unavailable.
+  }
+}
 
 // Mount choreography: the card settles in, then its contents stagger up just
 // behind it. Framer-variants keep the timing declarative; the parent wrapper in
@@ -70,6 +117,9 @@ const ITEM_VARIANTS: Variants = {
 type WhatNowDialogProps = {
   workspaceId: string | null;
   userId: string | null;
+  // A cheap fingerprint of the current graph (node/edge/completed counts). When
+  // it changes, the Focus cache is treated as stale and re-fetched.
+  graphSignature?: string;
   onClose: () => void;
   onFocusNode: (nodeId: string) => void;
   onScheduledToPlanner?: () => void;
@@ -79,23 +129,33 @@ type WhatNowDialogProps = {
 export function WhatNowDialog({
   workspaceId,
   userId,
+  graphSignature = "",
   onClose,
   onFocusNode,
   onScheduledToPlanner,
   onSelectNudge,
 }: WhatNowDialogProps) {
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !readFocusCache(workspaceId));
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<LockInData | null>(null);
+  const [data, setData] = useState<LockInData | null>(() => readFocusCache(workspaceId));
   const [scheduling, setScheduling] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!workspaceId) return;
 
-    const ac = new AbortController();
-    setLoading(true);
+    const cached = readFocusCache(workspaceId);
+    setData(cached);
     setError(null);
+
+    // Fresh cache (within TTL + graph unchanged) → skip the round-trip entirely.
+    if (isFocusCacheFresh(workspaceId, graphSignature)) {
+      setLoading(false);
+      return;
+    }
+
+    const ac = new AbortController();
+    setLoading(!cached);
 
     fetch("/api/assistant/daily-brief", {
       method: "POST",
@@ -108,9 +168,12 @@ export function WhatNowDialog({
         if (!res.ok) throw new Error(json?.error ?? "Could not load focus");
         return json as LockInData;
       })
-      .then(setData)
+      .then((nextData) => {
+        setData(nextData);
+        writeFocusCache(workspaceId, nextData, graphSignature);
+      })
       .catch((err) => {
-        if (ac.signal.aborted) return;
+        if (ac.signal.aborted || cached) return;
         setError(err instanceof Error ? err.message : "Could not load focus");
       })
       .finally(() => {
@@ -118,7 +181,7 @@ export function WhatNowDialog({
       });
 
     return () => ac.abort();
-  }, [workspaceId]);
+  }, [workspaceId, graphSignature]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

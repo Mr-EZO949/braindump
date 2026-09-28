@@ -29,6 +29,10 @@ export function FocusTimerPill({
   onDone,
 }: FocusTimerPillProps) {
   const isPaused = timer.pausedAt !== null;
+  // Set-up-but-never-run: start() froze it at t0 (pausedAt === startedAt, no
+  // accumulated pause). Label the control "Start" then, "Resume" after it ran.
+  const neverStarted =
+    isPaused && timer.accumulatedPausedMs === 0 && timer.pausedAt === timer.startedAt;
 
   return (
     <div className="focus-pill" role="status" aria-live="polite">
@@ -43,7 +47,7 @@ export function FocusTimerPill({
             className="focus-pill__btn focus-pill__btn--ghost"
             onClick={onResume}
           >
-            Resume
+            {neverStarted ? "Start" : "Resume"}
           </button>
         ) : (
           <button
