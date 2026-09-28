@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BrainDump — Dump it. Unfreeze your brain.</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+/* ═══════════════════════════════════════════════════════════
+   BrainDump landing — same skin, disciplined.
+   Kept: #0b0b0d base, scarlet #d53a47, Inter + Geist Mono,
+         serif display, the existing sections and copy.
+   Cut:  ambient orbs, glow layers, grain, gradient-text on
+         every heading, mono eyebrow chips on every section,
+         the nine-times-centred stack, pills and tick marks.
+   Added: hairline structure, real value steps, flush-left
+         asymmetry, one accent moment per screen.
+   ═══════════════════════════════════════════════════════════ */
+
+:root{
+  --bg:        #0b0b0d;
+  --bg-2:      #0e0e11;
+  --surface:   #141417;
+  --surface-2: #18181b;
+
+  --text:   #f2efe9;
+  --text-2: #c1bbb5;
+  --text-3: #928b85;
+  --text-4: #6f6964;
+
+  --line:   rgba(255,255,255,.075);
+  --line-2: rgba(255,255,255,.14);
+  --line-3: rgba(255,255,255,.26);
+
+  --accent:    #d53a47;
+  --accent-hi: #ec5d68;
+  --accent-dp: #bd313f;
+
+  /* node inks, lifted for legibility on dark */
+  --k-task:     #c2686f;
+  --k-goal:     #d8d0c4;
+  --k-idea:     #7a9d8e;
+  --k-concept:  #8797a5;
+  --k-question: #9c8974;
+  --k-journal:  #8b8bb0;
+  --k-project:  #b3616f;
+  --k-class:    #bb9a63;
+
+  --sans:    "Inter", system-ui, sans-serif;
+  --display: "Newsreader", Georgia, "Times New Roman", serif;
+  --mono:    "Geist Mono", ui-monospace, monospace;
+
+  --page: 1180px;
+  --pad:  clamp(20px, 4vw, 48px);
+}
+
+*,*::before,*::after{ box-sizing:border-box; }
+html{ -webkit-text-size-adjust:100%; scroll-behavior:smooth; }
+
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+  font-size:16px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+::selection{ background:var(--accent); color:#fff; }
+a{ color:inherit; }
+
+.wrap{ max-width:var(--page); margin:0 auto; padding:0 var(--pad); }
+
+/* ── type ────────────────────────────────────────────────── */
+h1,h2,h3{ margin:0; letter-spacing:-.022em; line-height:1.05; text-wrap:balance; }
+
+h2.h{
+  font-family:var(--sans);
+  font-size:clamp(27px,3.5vw,40px);
+  font-weight:600; letter-spacing:-.028em; line-height:1.08;
+  max-width:17ch;
+}
+.lede{
+  color:var(--text-3); font-size:16.5px; line-height:1.62;
+  max-width:52ch; margin:14px 0 0;
+}
+
+/* data labels — mono is for DATA only, never section eyebrows */
+.meta{
+  font-family:var(--mono); font-size:10.5px; font-weight:500;
+  letter-spacing:.13em; text-transform:uppercase; color:var(--text-4);
+}
+.num{ font-family:var(--mono); font-variant-numeric:tabular-nums; }
+
+/* ── section scaffolding: flush-left, ruled, numbered ────── */
+.sec{ padding:clamp(60px,8vw,104px) 0; border-top:1px solid var(--line); }
+.sec.tint{ background:var(--bg-2); }
+
+.sec-head{
+  display:grid; grid-template-columns:64px 1fr; gap:clamp(16px,3vw,36px);
+  align-items:start;
+  padding-bottom:clamp(30px,4vw,46px);
+}
+.sec-no{
+  font-family:var(--mono); font-size:11px; font-weight:500;
+  letter-spacing:.1em; color:var(--accent);
+  padding-top:.55em;
+}
+.sec-head.wide{ grid-template-columns:64px minmax(0,1fr) minmax(0,.9fr); }
+.sec-head.wide .lede{ margin-top:.5em; }
+@media (max-width:860px){
+  .sec-head, .sec-head.wide{ grid-template-columns:1fr; gap:12px; }
+  .sec-no{ padding-top:0; }
+  .lede{ max-width:none; }
+}
+
+/* ── buttons ─────────────────────────────────────────────── */
+.btn{
+  font-family:var(--sans); font-size:13.5px; font-weight:500;
+  letter-spacing:-.005em; text-decoration:none;
+  display:inline-flex; align-items:center; gap:9px;
+  padding:12px 20px; border:1px solid transparent;
+  transition:background .16s, border-color .16s, color .16s;
+}
+.btn-solid{ background:var(--accent); color:#fff; border-color:var(--accent); }
+.btn-solid:hover{ background:var(--accent-dp); border-color:var(--accent-dp); }
+.btn-line{ color:var(--text); border-color:var(--line-2); }
+.btn-line:hover{ border-color:var(--line-3); background:rgba(255,255,255,.035); }
+.btn .arw{ transition:transform .16s; }
+.btn:hover .arw{ transform:translateX(3px); }
+
+/* ═══ NAV ══════════════════════════════════════════════════ */
+.nav{
+  position:sticky; top:0; z-index:50;
+  background:rgba(11,11,13,.86);
+  -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line);
+}
+.nav .wrap{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:20px; height:62px;
+}
+.brand{
+  font-size:19px; font-weight:700; letter-spacing:-.03em;
+  text-decoration:none; white-space:nowrap;
+}
+.brand i{ color:var(--accent); font-style:normal; }
+.nav-links{ display:flex; align-items:center; gap:26px; }
+.nav-links a{
+  font-size:13.5px; color:var(--text-3); text-decoration:none;
+  white-space:nowrap; transition:color .16s;
+}
+.nav-links a:hover{ color:var(--text); }
+.nav .btn{ padding:9px 16px; font-size:13px; }
+@media (max-width:820px){ .nav-links a:not(.btn){ display:none; } }
+
+/* ═══ HERO ═════════════════════════════════════════════════ */
+.hero{ padding:clamp(52px,7vw,92px) 0 clamp(56px,7vw,96px); }
+.hero-grid{
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(0,.92fr);
+  gap:clamp(32px,5vw,72px); align-items:center;
+}
+@media (max-width:940px){ .hero-grid{ grid-template-columns:1fr; gap:44px; } }
+
+.hero-tag{
+  display:inline-flex; align-items:center; gap:9px;
+  margin-bottom:22px;
+}
+.hero-tag span{ font-family:var(--mono); font-size:10.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--text-3); }
+.hero-tag::before{
+  content:""; width:20px; height:1px; background:var(--accent);
+}
+
+h1.hero-h1{
+  font-family:var(--display);
+  font-size:clamp(42px,6vw,72px);
+  font-weight:400; line-height:1.02; letter-spacing:-.028em;
+  margin:0 0 24px; max-width:13ch;
+}
+/* the ONE accent moment in the page's top half */
+h1.hero-h1 em{
+  display:block; font-style:italic; color:var(--accent-hi);
+  font-weight:400;
+}
+
+.hero p{ margin:0 0 14px; max-width:46ch; }
+.hero .p1{ color:var(--text-2); font-size:17.5px; line-height:1.6; }
+.hero .p2{ color:var(--text-3); font-size:16.5px; }
+.hero .p2 b{
+  font-family:var(--display); font-style:italic; font-weight:400;
+  font-size:1.13em; color:var(--text); letter-spacing:-.01em;
+}
+
+.hero-actions{ display:flex; flex-wrap:wrap; gap:12px; margin-top:28px; }
+.hero-trust{
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px;
+  margin-top:26px; padding-top:20px; border-top:1px solid var(--line);
+  max-width:46ch;
+}
+.hero-trust span{ font-family:var(--mono); font-size:10.5px; letter-spacing:.11em;
+  text-transform:uppercase; color:var(--text-4); white-space:nowrap; }
+
+/* ── hero panel: a filled workspace, not an empty window ─── */
+.panel{ border:1px solid var(--line-2); background:var(--surface); }
+.panel-bar{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:10px 14px; border-bottom:1px solid var(--line);
+  background:var(--surface-2);
+}
+.panel-bar .meta{ font-size:10px; }
+.panel-dots{ display:flex; gap:5px; }
+.panel-dots i{ width:7px; height:7px; border-radius:50%; background:var(--line-3); display:block; }
+
+.panel-split{ display:grid; grid-template-columns:1fr; }
+
+.dump{ padding:16px 16px 14px; border-bottom:1px solid var(--line); }
+.dump .meta{ display:block; margin-bottom:10px; }
+.dump ul{ list-style:none; margin:0; padding:0; }
+.dump li{
+  font-family:var(--mono); font-size:12px; line-height:1.5;
+  color:var(--text-4); padding:3px 0;
+}
+.dump li::before{ content:"› "; color:var(--line-3); }
+
+.filed{ padding:16px 16px 18px; }
+.filed .meta{ display:block; margin-bottom:12px; }
+.filed-row{
+  display:grid; grid-template-columns:52px minmax(0,1fr) auto; gap:12px;
+  align-items:baseline; padding:8px 0;
+  border-bottom:1px solid var(--line);
+}
+.filed-row:last-child{ border-bottom:none; }
+.filed-k{ font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; }
+.filed-t{ font-size:14.5px; color:var(--text); min-width:0; }
+.filed-m{ font-family:var(--mono); font-size:10.5px; color:var(--text-4); white-space:nowrap; }
+.k-task{ color:var(--k-task); } .k-goal{ color:var(--k-goal); }
+.k-idea{ color:var(--k-idea); } .k-concept{ color:var(--k-concept); }
+.k-project{ color:var(--k-project); } .k-class{ color:var(--k-class); }
+
+.panel-foot{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:12px 16px; border-top:1px solid var(--line-2);
+  background:var(--surface-2);
+}
+.panel-foot .now{ display:flex; align-items:baseline; gap:9px; min-width:0; }
+.panel-foot .now b{ font-size:14px; font-weight:500; color:var(--text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.panel-foot .go{
+  font-size:12.5px; color:var(--accent-hi); text-decoration:none; white-space:nowrap;
+  border-bottom:1px solid rgba(236,93,104,.4); padding-bottom:1px;
+}
+.panel-foot .go:hover{ border-bottom-color:var(--accent-hi); }
+
+/* ═══ TICKER — one quiet line, not a wall of pills ═════════ */
+.ticker{
+  border-top:1px solid var(--line); border-bottom:1px solid var(--line);
+  overflow:hidden; padding:13px 0; background:var(--bg-2);
+}
+.ticker-track{ display:flex; gap:0; width:max-content; animation:slide 46s linear infinite; }
+.ticker-track span{
+  font-size:13.5px; color:var(--text-4); white-space:nowrap; padding:0 22px;
+  border-right:1px solid var(--line);
+}
+@keyframes slide{ from{ transform:translateX(0); } to{ transform:translateX(-50%); } }
+.ticker:hover .ticker-track{ animation-play-state:paused; }
+
+/* ═══ §01 PROBLEM — ruled list, not three centred cards ════ */
+.probs{ border-top:1px solid var(--line); }
+.prob{
+  display:grid; grid-template-columns:64px minmax(0,1fr);
+  gap:clamp(16px,3vw,36px);
+  padding:22px 0; border-bottom:1px solid var(--line);
+}
+.prob-n{ font-family:var(--mono); font-size:11px; color:var(--text-4); letter-spacing:.08em; }
+.prob p{ margin:0; color:var(--text-2); font-size:17px; line-height:1.55; max-width:60ch; }
+@media (max-width:860px){
+  .prob{ grid-template-columns:1fr; gap:6px; padding:18px 0; }
+}
+.punch{
+  margin:clamp(34px,4.5vw,52px) 0 0;
+  font-family:var(--display); font-size:clamp(23px,3.2vw,34px);
+  font-weight:400; font-style:italic; line-height:1.22; letter-spacing:-.02em;
+  color:var(--text); max-width:24ch;
+}
+
+/* ═══ §02 LENSES — rail + preview ══════════════════════════ */
+.lenses{ display:grid; grid-template-columns:250px minmax(0,1fr); gap:clamp(20px,3vw,40px); }
+/* grid items default to min-width:auto — without this the graph's min-width
+   pushes the whole page wider instead of scrolling inside .stage */
+.lenses > *{ min-width:0; }
+@media (max-width:860px){ .lenses{ grid-template-columns:1fr; } }
+.rail{ border-top:1px solid var(--line); }
+.rail-item{
+  display:block; padding:16px 14px 16px 0; border-bottom:1px solid var(--line);
+  text-decoration:none; border-left:2px solid transparent; padding-left:14px;
+  transition:border-color .18s, background .18s;
+}
+.rail-item b{ display:block; font-size:16px; font-weight:600; letter-spacing:-.015em; }
+.rail-item span{ font-size:13.5px; color:var(--text-4); }
+.rail-item:hover{ background:rgba(255,255,255,.03); border-left-color:var(--line-3); }
+.rail-item.on{ border-left-color:var(--accent); background:rgba(213,58,71,.06); }
+.rail-item.on b{ color:var(--text); }
+
+.stage{ border:1px solid var(--line); background:var(--surface); padding:clamp(16px,2.6vw,28px); min-width:0; }
+.stage svg{ width:100%; height:auto; display:block; }
+.stage .glbl{ font-family:"Geist Mono",monospace; font-size:8.5px; letter-spacing:.1em;
+  text-transform:uppercase; }
+.stage .gnm{ font-family:"Inter",sans-serif; font-size:11.5px; fill:var(--text-3); }
+.stage-cap{
+  margin:16px 0 0; padding-top:14px; border-top:1px solid var(--line);
+  font-size:14px; color:var(--text-4); max-width:66ch;
+}
+
+/* ═══ §03 REVIEW — approve rows ════════════════════════════ */
+.review{ border-top:1px solid var(--line); max-width:760px; }
+.rev-row{
+  display:grid; grid-template-columns:56px minmax(0,1fr) auto; gap:14px;
+  align-items:center; padding:13px 0; border-bottom:1px solid var(--line);
+}
+.rev-k{ font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; }
+.rev-t{ font-size:15.5px; min-width:0; }
+.rev-s{ font-family:var(--mono); font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--text-4); white-space:nowrap; }
+.rev-s.ok{ color:var(--k-idea); }
+.rev-s.wait{ color:var(--text-4); }
+
+/* ═══ §04 CHAT — transcript + note ═════════════════════════ */
+.chat{ display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr); gap:clamp(24px,4vw,52px); }
+@media (max-width:900px){ .chat{ grid-template-columns:1fr; } }
+.turns{ border-top:1px solid var(--line); }
+.turn{ padding:15px 0; border-bottom:1px solid var(--line); }
+.turn .who{
+  font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--text-4); display:block; margin-bottom:7px;
+}
+.turn.you .who{ color:var(--accent); }
+.turn p{ margin:0; font-size:16.5px; line-height:1.5; color:var(--text); }
+.turn.bd p{ color:var(--text-2); }
+.did{ margin-top:11px; padding-top:10px; border-top:1px solid var(--line); }
+.did span{
+  display:block; font-family:var(--mono); font-size:11px; color:var(--text-4);
+  padding:2px 0;
+}
+.did span::before{ content:"— "; color:var(--k-idea); }
+
+.note{
+  align-self:start; padding:22px 22px;
+  background:var(--surface); border-left:2px solid var(--accent);
+}
+.note h3{ font-size:19px; font-weight:600; letter-spacing:-.02em; margin:0 0 11px; }
+.note p{ margin:0 0 12px; font-size:15.5px; line-height:1.58; color:var(--text-3); }
+.note p:last-child{ margin:0; }
+
+/* ═══ §05 PLANNER — timetable ══════════════════════════════ */
+.tt{ width:100%; border-collapse:collapse; }
+.tt th{
+  text-align:left; padding:0 14px 10px 0; border-bottom:1px solid var(--line-2);
+  font-family:var(--mono); font-size:10px; font-weight:500;
+  letter-spacing:.13em; text-transform:uppercase; color:var(--text-4);
+}
+.tt td{ padding:14px 14px 14px 0; border-bottom:1px solid var(--line);
+  font-size:16px; vertical-align:baseline; }
+.tt td.t{ font-family:var(--mono); font-size:12.5px; color:var(--text-3);
+  white-space:nowrap; font-variant-numeric:tabular-nums; }
+.tt td.k{ font-family:var(--mono); font-size:10px; letter-spacing:.12em;
+  text-transform:uppercase; white-space:nowrap; }
+.tt td.w{ color:var(--text); }
+.tt tr.soft td.w{ color:var(--text-4); }
+.tt td.d{ font-family:var(--mono); font-size:11px; color:var(--text-4); white-space:nowrap; }
+@media (max-width:760px){ .tt td.d, .tt th.d{ display:none; } }
+
+/* ═══ §06 HABITS ═══════════════════════════════════════════ */
+.habits{ border-top:1px solid var(--line); }
+.habit{
+  display:grid; grid-template-columns:minmax(0,1fr) auto; gap:clamp(14px,3vw,36px);
+  align-items:center; padding:18px 0; border-bottom:1px solid var(--line);
+}
+@media (max-width:720px){ .habit{ grid-template-columns:1fr; gap:12px; } }
+.habit b{ display:block; font-size:16.5px; font-weight:600; letter-spacing:-.015em; margin-bottom:3px; }
+.habit span{ font-size:14px; color:var(--text-4); }
+.habit span i{ font-style:normal; color:var(--text-2); }
+.dots{ display:flex; align-items:center; gap:4px; }
+.dots u{ width:10px; height:10px; display:block; text-decoration:none;
+  border:1px solid var(--line-2); }
+.dots u.on{ background:var(--text-3); border-color:var(--text-3); }
+.dots u.now{ background:var(--accent); border-color:var(--accent); }
+.dots em{ font-family:var(--mono); font-style:normal; font-size:11px;
+  color:var(--text-4); margin-left:10px; white-space:nowrap; }
+
+/* ═══ §07 COMPARE ══════════════════════════════════════════ */
+.cmp{ width:100%; border-collapse:collapse; }
+.cmp td{ padding:17px 16px 17px 0; border-bottom:1px solid var(--line); vertical-align:baseline; }
+.cmp td:first-child{ width:24%; font-size:16.5px; font-weight:600; letter-spacing:-.015em; white-space:nowrap; }
+.cmp td:last-child{ font-size:16px; color:var(--text-3); line-height:1.5; }
+.cmp td em{ color:var(--text-2); font-style:italic; }
+.cmp tr.us td{ border-top:1px solid var(--line-2); border-bottom:1px solid var(--line-2);
+  background:rgba(213,58,71,.05); padding-left:16px; }
+.cmp tr.us td:first-child{ color:var(--accent-hi); }
+.cmp tr.us td:last-child{ color:var(--text-2); }
+@media (max-width:680px){
+  .cmp td:first-child{ width:auto; display:block; padding:0 0 4px; white-space:normal; }
+  .cmp td:last-child{ display:block; padding-top:0; }
+  .cmp tr.us td{ padding-left:14px; }
+  .cmp tr.us td:first-child{ padding-top:14px; }
+}
+
+/* ═══ §08 PRICING — ruled columns, no boxes/pills/ticks ════ */
+.rates{ display:grid; grid-template-columns:repeat(3,1fr); border-top:1px solid var(--line-2); }
+@media (max-width:860px){ .rates{ grid-template-columns:1fr; } }
+.rate{ padding:26px clamp(14px,2vw,26px) 28px; border-left:1px solid var(--line);
+  display:flex; flex-direction:column; }
+.rate:first-child{ border-left:none; padding-left:0; }
+.rate:last-child{ padding-right:0; }
+@media (max-width:860px){
+  .rate{ border-left:none; border-bottom:1px solid var(--line); padding-left:0; padding-right:0; }
+  .rate.pick{ padding-left:16px; padding-right:16px; }
+}
+.rate.pick{ background:var(--surface); }
+.rate-top{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.rate-top .meta{ color:var(--text-3); }
+.rate-top .pill{ font-family:var(--mono); font-size:10px; letter-spacing:.11em;
+  text-transform:uppercase; color:var(--accent-hi); }
+.rate-p{ font-size:clamp(38px,4.6vw,50px); font-weight:600; letter-spacing:-.04em;
+  line-height:1; margin:16px 0 6px; font-variant-numeric:tabular-nums; }
+.rate-p sub{ font-family:var(--mono); font-size:11px; font-weight:400; color:var(--text-4);
+  vertical-align:baseline; bottom:0; margin-left:4px; letter-spacing:.04em; }
+.rate-tag{ font-size:14.5px; color:var(--text-4); margin:0 0 18px; padding-bottom:16px;
+  border-bottom:1px solid var(--line); }
+.rate ul{ list-style:none; margin:0 0 24px; padding:0; flex:1; }
+.rate li{ font-size:15px; color:var(--text-2); padding:6px 0 6px 15px; position:relative; line-height:1.45; }
+.rate li::before{ content:""; position:absolute; left:0; top:.85em;
+  width:5px; height:1px; background:var(--line-3); }
+.rate .btn{ justify-content:center; }
+
+/* ═══ CTA — the one deliberately centred moment ════════════ */
+.cta{ border-top:1px solid var(--line); padding:clamp(64px,8vw,110px) 0; text-align:center; }
+.cta h2{
+  font-family:var(--display); font-size:clamp(32px,5vw,58px); font-weight:400;
+  letter-spacing:-.028em; line-height:1.06; margin:0 auto;  max-width:16ch;
+}
+.cta h2 em{ font-style:italic; color:var(--accent-hi); }
+.cta p{ color:var(--text-3); margin:18px auto 0; max-width:44ch; font-size:16.5px; }
+.cta .hero-actions{ justify-content:center; margin-top:30px; }
+
+/* ═══ FOOTER ═══════════════════════════════════════════════ */
+.foot{ border-top:1px solid var(--line); padding:26px 0 40px; }
+.foot .wrap{ display:flex; align-items:center; justify-content:space-between;
+  gap:18px; flex-wrap:wrap; }
+.foot .brand{ font-size:15px; }
+.foot nav{ display:flex; gap:22px; }
+.foot a{ font-size:13px; color:var(--text-4); text-decoration:none; }
+.foot a:hover{ color:var(--text-2); }
+.foot .cp{ font-family:var(--mono); font-size:11px; color:var(--text-4); }
+
+/* ═══════════════════════════════════════════════════════════
+   NARROW MEASURES — phones treated as a first-class layout,
+   never a squeezed desktop. Nothing breaks mid-phrase.
+   ═══════════════════════════════════════════════════════════ */
+@media (max-width:760px){
+  .stage{ overflow-x:auto; }
+  .stage svg{ min-width:560px; }
+}
+
+@media (max-width:600px){
+  .hero{ padding-top:40px; }
+  h1.hero-h1{ max-width:none; }
+  .hero p{ max-width:none; }
+  .hero-actions{ flex-direction:column; align-items:stretch; gap:10px; }
+  .hero-actions .btn{ width:100%; justify-content:center; }
+  .hero-trust{ max-width:none; gap:6px 14px; }
+
+  /* filed rows: label + meta on one line, title beneath */
+  .filed-row{ grid-template-columns:minmax(0,1fr) auto; row-gap:3px; gap:10px; }
+  .filed-k{ grid-column:1; grid-row:1; }
+  .filed-m{ grid-column:2; grid-row:1; text-align:right; }
+  .filed-t{ grid-column:1 / -1; grid-row:2; font-size:15.5px; }
+
+  .rev-row{ grid-template-columns:minmax(0,1fr) auto; row-gap:2px; }
+  .rev-k{ grid-column:1; grid-row:1; }
+  .rev-s{ grid-column:2; grid-row:1; }
+  .rev-t{ grid-column:1 / -1; grid-row:2; }
+
+  /* planner: meta line above the task, never crushed beside it */
+  .tt thead{ display:none; }
+  .tt tr{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:3px 12px;
+    padding:13px 0; border-bottom:1px solid var(--line); }
+  .tt td{ border:none; padding:0; }
+  .tt td.t{ grid-column:1; grid-row:1; }
+  .tt td.k{ grid-column:2; grid-row:1; text-align:right; }
+  .tt td.w{ grid-column:1 / -1; grid-row:2; font-size:16.5px; }
+
+  .punch{ max-width:none; }
+  .rate-p{ margin-top:14px; }
+  .cta h2{ max-width:none; }
+  .cta .hero-actions .btn{ width:100%; }
+  .foot .wrap{ gap:14px; }
+}
+
+@media (max-width:380px){
+  .brand{ font-size:17px; }
+  .nav .btn{ padding:9px 12px; font-size:12.5px; }
+  .dump li{ font-size:11.5px; }
+  .dots u{ width:8px; height:8px; }
+  .dots{ gap:3px; }
+}
+
+/* ═══ MOTION — one load, then restraint ════════════════════ */
+@keyframes rise{ from{ opacity:0; transform:translateY(12px); } to{ opacity:1; transform:none; } }
+.load{ opacity:0; animation:rise .6s cubic-bezier(.22,1,.36,1) forwards; }
+.d1{animation-delay:.04s} .d2{animation-delay:.11s} .d3{animation-delay:.18s}
+.d4{animation-delay:.25s} .d5{animation-delay:.32s}
+
+.js .rv{ opacity:0; transform:translateY(10px);
+  transition:opacity .55s cubic-bezier(.22,1,.36,1), transform .55s cubic-bezier(.22,1,.36,1); }
+.js .rv.in{ opacity:1; transform:none; }
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{ animation:none !important; transition:none !important; }
+  .load,.js .rv{ opacity:1 !important; transform:none !important; }
+}
+</style>
+</head>
+
+<body>
+<script>document.documentElement.classList.add("js");</script>
+
+<!-- ═══ NAV ═══ -->
+<header class="nav">
+  <div class="wrap">
+    <a href="#" class="brand">BrainDump<i>.</i></a>
+    <nav class="nav-links">
+      <a href="#problem">Problem</a>
+      <a href="#inside">What's inside</a>
+      <a href="#chat">Chat</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#pricing" class="btn btn-solid">Start free</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ═══ HERO ═══ -->
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <div class="hero-tag load d1"><span>Built for ADHD minds</span></div>
+        <h1 class="hero-h1 load d2">Dump it. <em>Unfreeze your brain.</em></h1>
+        <p class="p1 load d3">
+          Twenty things to do, each one tangled in the next — so you re-read the
+          list, re-plan the plan, and start nothing.
+        </p>
+        <p class="p2 load d3">
+          Dump it all here. BrainDump untangles the pile and hands you
+          <b>the one thing to start now.</b>
+        </p>
+        <div class="hero-actions load d4">
+          <a href="#pricing" class="btn btn-solid">Start free <span class="arw">→</span></a>
+          <a href="#inside" class="btn btn-line">See what's inside <span class="arw">→</span></a>
+        </div>
+        <div class="hero-trust load d5">
+          <span>No credit card</span><span>Cancel anytime</span><span>Exportable graph</span>
+        </div>
+      </div>
+
+      <div class="panel load d4">
+        <div class="panel-bar">
+          <div class="panel-dots"><i></i><i></i><i></i></div>
+          <span class="meta">Workspace</span>
+        </div>
+
+        <div class="dump">
+          <span class="meta">As you typed it</span>
+          <ul>
+            <li>finish the proposal before friday</li>
+            <li>want to learn rust this year</li>
+            <li>auth bug still broken in prod</li>
+            <li>meeting w/ sarah 3pm tmrw</li>
+            <li>idea: embeddings for internal search</li>
+          </ul>
+        </div>
+
+        <div class="filed">
+          <span class="meta">What BrainDump filed</span>
+          <div class="filed-row"><span class="filed-k k-task">Task</span><span class="filed-t">Finish grant proposal</span><span class="filed-m">due Fri</span></div>
+          <div class="filed-row"><span class="filed-k k-goal">Goal</span><span class="filed-t">Learn Rust</span><span class="filed-m">this year</span></div>
+          <div class="filed-row"><span class="filed-k k-task">Task</span><span class="filed-t">Fix auth session bug</span><span class="filed-m">blocking</span></div>
+          <div class="filed-row"><span class="filed-k k-task">Task</span><span class="filed-t">Meeting — Sarah</span><span class="filed-m">tmrw 3pm</span></div>
+          <div class="filed-row"><span class="filed-k k-idea">Idea</span><span class="filed-t">Embeddings for search</span><span class="filed-m">→ Learn Rust</span></div>
+        </div>
+
+        <div class="panel-foot">
+          <div class="now">
+            <span class="meta">Start now</span>
+            <b>Fix auth session bug</b>
+          </div>
+          <a href="#pricing" class="go">Begin →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ TICKER ═══ -->
+<div class="ticker" aria-hidden="true">
+  <div class="ticker-track">
+    <span>Redesign the onboarding flow</span><span>Learn distributed systems</span>
+    <span>What is vector search?</span><span>Had a breakthrough today</span>
+    <span>Event sourcing pattern</span><span>API gateway project</span>
+    <span>Cache with Redis streams</span><span>Ship v2 this sprint</span>
+    <span>Fix auth session bug</span><span>Feeling overwhelmed, need focus</span>
+    <span>Redesign the onboarding flow</span><span>Learn distributed systems</span>
+    <span>What is vector search?</span><span>Had a breakthrough today</span>
+    <span>Event sourcing pattern</span><span>API gateway project</span>
+    <span>Cache with Redis streams</span><span>Ship v2 this sprint</span>
+    <span>Fix auth session bug</span><span>Feeling overwhelmed, need focus</span>
+  </div>
+</div>
+
+<!-- ═══ §01 PROBLEM ═══ -->
+<section class="sec" id="problem" style="border-top:none">
+  <div class="wrap">
+    <div class="sec-head wide rv">
+      <span class="sec-no">01</span>
+      <h2 class="h">Your brain didn't quit. It froze.</h2>
+      <p class="lede">
+        Too many open loops and too many half-made decisions, and the whole pile
+        locks up. You're not lazy. You're stuck mid-thought.
+      </p>
+    </div>
+
+    <div class="probs rv">
+      <div class="prob">
+        <span class="prob-n">01</span>
+        <p>You open your list. Fifteen things stare back, all equally urgent and equally vague. Your brain reads them twice and simply stops.</p>
+      </div>
+      <div class="prob">
+        <span class="prob-n">02</span>
+        <p>You finally pick one. Forty minutes in you discover it was blocked the whole time — waiting on a reply, a decision, a thing you haven't done. Hour gone.</p>
+      </div>
+      <div class="prob">
+        <span class="prob-n">03</span>
+        <p>So you re-plan. You re-prioritise. You build a cleaner system and a fresh start on Monday. You never actually begin.</p>
+      </div>
+    </div>
+
+    <p class="punch rv">It's not the work that's hard. It's the minutes you lose deciding what to do.</p>
+  </div>
+</section>
+
+<!-- ═══ §02 WHAT'S INSIDE ═══ -->
+<section class="sec tint" id="inside">
+  <div class="wrap">
+    <div class="sec-head wide rv">
+      <span class="sec-no">02</span>
+      <h2 class="h">One graph. Four ways to look at it.</h2>
+      <p class="lede">
+        Not four apps bolted together. Four lenses onto one set of nodes, and
+        every one of them is a view the AI reads from when it answers you.
+      </p>
+    </div>
+
+    <div class="lenses rv">
+      <div class="rail">
+        <a class="rail-item on" href="#inside"><b>Graph</b><span>how it all connects</span></a>
+        <a class="rail-item" href="#inside"><b>Tasks</b><span>today, this week, blocked</span></a>
+        <a class="rail-item" href="#inside"><b>Habits</b><span>streaks, cadence, check-ins</span></a>
+        <a class="rail-item" href="#inside"><b>Roadmap</b><span>goals over time</span></a>
+      </div>
+
+      <div>
+        <div class="stage">
+          <svg viewBox="0 0 820 300" role="img" aria-label="Graph of goals, projects and tasks">
+            <g stroke="rgba(255,255,255,.16)" stroke-width="1" fill="none">
+              <path d="M410 54 L196 132"/><path d="M410 54 L410 132"/><path d="M410 54 L624 132"/>
+              <path d="M196 132 L118 228"/><path d="M196 132 L274 228"/>
+              <path d="M410 132 L410 228"/>
+              <path d="M624 132 L546 228"/><path d="M624 132 L702 228"/>
+              <path d="M274 228 L410 228" stroke-dasharray="3 4"/>
+              <path d="M410 228 L546 228" stroke-dasharray="3 4"/>
+            </g>
+            <g>
+              <circle cx="410" cy="54" r="19" fill="#141417" stroke="var(--k-goal)" stroke-width="1.4"/>
+              <text class="glbl" x="410" y="57" text-anchor="middle" fill="var(--k-goal)">goal</text>
+              <text class="gnm" x="410" y="24" text-anchor="middle">Ship v1 by August</text>
+
+              <circle cx="196" cy="132" r="17" fill="#141417" stroke="var(--k-project)" stroke-width="1.3"/>
+              <text class="glbl" x="196" y="135" text-anchor="middle" fill="var(--k-project)">proj</text>
+              <text class="gnm" x="196" y="106" text-anchor="middle">Backend</text>
+
+              <circle cx="410" cy="132" r="17" fill="#141417" stroke="var(--k-project)" stroke-width="1.3"/>
+              <text class="glbl" x="410" y="135" text-anchor="middle" fill="var(--k-project)">proj</text>
+              <text class="gnm" x="410" y="106" text-anchor="middle">Frontend</text>
+
+              <circle cx="624" cy="132" r="17" fill="#141417" stroke="var(--k-project)" stroke-width="1.3"/>
+              <text class="glbl" x="624" y="135" text-anchor="middle" fill="var(--k-project)">proj</text>
+              <text class="gnm" x="624" y="106" text-anchor="middle">Launch</text>
+
+              <circle cx="118" cy="228" r="15" fill="#141417" stroke="var(--k-task)" stroke-width="1.3"/>
+              <text class="glbl" x="118" y="231" text-anchor="middle" fill="var(--k-task)">task</text>
+              <text class="gnm" x="118" y="262" text-anchor="middle">Auth</text>
+
+              <circle cx="274" cy="228" r="15" fill="#141417" stroke="var(--k-task)" stroke-width="1.3"/>
+              <text class="glbl" x="274" y="231" text-anchor="middle" fill="var(--k-task)">task</text>
+              <text class="gnm" x="274" y="262" text-anchor="middle">Ingestion API</text>
+
+              <circle cx="410" cy="228" r="15" fill="#141417" stroke="var(--k-idea)" stroke-width="1.3"/>
+              <text class="glbl" x="410" y="231" text-anchor="middle" fill="var(--k-idea)">idea</text>
+              <text class="gnm" x="410" y="262" text-anchor="middle">Semantic search</text>
+
+              <circle cx="546" cy="228" r="15" fill="#141417" stroke="var(--k-concept)" stroke-width="1.3"/>
+              <text class="glbl" x="546" y="231" text-anchor="middle" fill="var(--k-concept)">conc</text>
+              <text class="gnm" x="546" y="262" text-anchor="middle">Embeddings</text>
+
+              <circle cx="702" cy="228" r="15" fill="#141417" stroke="var(--k-class)" stroke-width="1.3"/>
+              <text class="glbl" x="702" y="231" text-anchor="middle" fill="var(--k-class)">class</text>
+              <text class="gnm" x="702" y="262" text-anchor="middle">MIT 6.824</text>
+            </g>
+          </svg>
+        </div>
+        <p class="stage-cap">
+          Solid lines are dependencies. Dotted lines are relations the graph noticed
+          on its own, without being told.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ §03 REVIEW ═══ -->
+<section class="sec">
+  <div class="wrap">
+    <div class="sec-head wide rv">
+      <span class="sec-no">03</span>
+      <h2 class="h">Dump freely. Approve what sticks.</h2>
+      <p class="lede">
+        Nothing enters your graph behind your back. Every node we pull out waits
+        for a yes, so you can dump as messy as you like and still stay in control.
+      </p>
+    </div>
+
+    <div class="review rv">
+      <div class="rev-row"><span class="rev-k k-task">Task</span><span class="rev-t">Finish grant proposal</span><span class="rev-s ok">Accepted</span></div>
+      <div class="rev-row"><span class="rev-k k-goal">Goal</span><span class="rev-t">Learn Rust</span><span class="rev-s ok">Accepted</span></div>
+      <div class="rev-row"><span class="rev-k k-idea">Idea</span><span class="rev-t">Embedding search</span><span class="rev-s wait">Waiting on you</span></div>
+      <div class="rev-row"><span class="rev-k k-task">Task</span><span class="rev-t">Fix auth session bug</span><span class="rev-s ok">Accepted</span></div>
+      <div class="rev-row"><span class="rev-k k-concept">Concept</span><span class="rev-t">Vector similarity</span><span class="rev-s wait">Waiting on you</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ §04 CHAT ═══ -->
+<section class="sec tint" id="chat">
+  <div class="wrap">
+    <div class="sec-head wide rv">
+      <span class="sec-no">04</span>
+      <h2 class="h">Whatever you'd click, just type.</h2>
+      <p class="lede">
+        Add, link, complete, schedule, merge, plan. No menus, no hunting for the
+        right button. Say what you want, look at what we propose, accept.
+      </p>
+    </div>
+
+    <div class="chat rv">
+      <div class="turns">
+        <div class="turn you">
+          <span class="who">You</span>
+          <p>the proposal is done. also sarah moved to thursday</p>
+        </div>
+        <div class="turn bd">
+          <span class="who">BrainDump</span>
+          <p>Done — and that unblocked two things that were waiting on it.</p>
+          <div class="did">
+            <span>Completed “Finish grant proposal”</span>
+            <span>Moved “Meeting — Sarah” to Thu 3pm</span>
+            <span>Unblocked 2 tasks</span>
+          </div>
+        </div>
+        <div class="turn you">
+          <span class="who">You</span>
+          <p>what should i do with the next two hours</p>
+        </div>
+        <div class="turn bd">
+          <span class="who">BrainDump</span>
+          <p>Auth bug first — it's blocking the API work and it's the only thing with a hard deadline. Then a break, then the ingestion API while you're warm.</p>
+        </div>
+      </div>
+
+      <aside class="note">
+        <h3>It remembers, so you don't have to.</h3>
+        <p>
+          A chatbot answers once and forgets your life. BrainDump reads the same
+          graph every time: your goals, your blockers, what you finished last
+          Tuesday, what you've been quietly avoiding for a month.
+        </p>
+        <p>
+          So “what should I do next” has a real answer, and one you can argue with.
+        </p>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ §05 PLANNER ═══ -->
+<section class="sec">
+  <div class="wrap">
+    <div class="sec-head wide rv">
+      <span class="sec-no">05</span>
+      <h2 class="h">We plan. You do.</h2>
+      <p class="lede">
+        Tell us the window: an hour, an afternoon, a whole day. We know what's
+        urgent, what's blocked, and what you've been avoiding. You just start the timer.
+      </p>
+    </div>
+
+    <div class="rv">
+      <table class="tt">
+        <thead>
+          <tr>
+            <th style="width:130px">Time</th>
+            <th style="width:96px">Mode</th>
+            <th>What</th>
+            <th class="d" style="width:180px">Why now</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="t">09:40–10:05</td><td class="k" style="color:var(--k-task)">Focus</td><td class="w">Fix auth session bug</td><td class="d">blocks 2 · hard deadline</td></tr>
+          <tr><td class="t">10:05–10:15</td><td class="k" style="color:var(--text-4)">Break</td><td class="w">Walk, water, no screen</td><td class="d">after deep work</td></tr>
+          <tr><td class="t">10:15–11:00</td><td class="k" style="color:var(--k-task)">Focus</td><td class="w">Build ingestion API</td><td class="d">unblocked at 10:05</td></tr>
+          <tr><td class="t">11:00–11:20</td><td class="k" style="color:var(--k-concept)">Admin</td><td class="w">Book dentist · reply to Sarah</td><td class="d">small, low energy</td></tr>
+          <tr class="soft"><td class="t">11:20–11:40</td><td class="k" style="color:var(--text-4)">Buffer</td><td class="w">Whatever ran over</td><td class="d">because it always does</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ §06 HABITS ═══ -->
+<section class="sec tint">
+  <div class="wrap">
+    <div class="sec-head wide rv">
+      <span class="sec-no">06</span>
+      <h2 class="h">Streaks with a destination.</h2>
+      <p class="lede">
+        Every habit points at a real goal you wrote down, so a streak stops being
+        a vanity number. It's a milestone counter.
+      </p>
+    </div>
+
+    <div class="habits rv">
+      <div class="habit">
+        <div>
+          <b>Spanish · 10 min/day</b>
+          <span>for <i>the Mexico City trip</i>, already booked for March</span>
+        </div>
+        <div class="dots" aria-label="12 day streak">
+          <u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="now"></u>
+          <em>12 days</em>
+        </div>
+      </div>
+      <div class="habit">
+        <div>
+          <b>Leetcode · 1/day</b>
+          <span>feeding <i>the job hunt</i> you started back in February</span>
+        </div>
+        <div class="dots" aria-label="5 day streak">
+          <u class="on"></u><u></u><u class="on"></u><u class="on"></u><u></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u></u><u class="on"></u><u class="on"></u><u class="now"></u>
+          <em>5 days</em>
+        </div>
+      </div>
+      <div class="habit">
+        <div>
+          <b>Read · 20 pages</b>
+          <span>three books left of <i>the six you wanted this quarter</i></span>
+        </div>
+        <div class="dots" aria-label="21 day streak">
+          <u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="on"></u><u class="now"></u>
+          <em>21 days</em>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ §07 COMPARE ═══ -->
+<section class="sec">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <span class="sec-no">07</span>
+      <h2 class="h">Why not just use anything else?</h2>
+    </div>
+
+    <table class="cmp rv">
+      <tbody>
+        <tr><td>To-do apps</td><td>track tasks in a vacuum. No habits, no goals, no <em>why</em>.</td></tr>
+        <tr><td>Habit apps</td><td>track streaks. They don't know what those streaks are <em>for</em>.</td></tr>
+        <tr><td>Note apps</td><td>store. They don't connect to the work you're actually doing.</td></tr>
+        <tr><td>AI chatbots</td><td>answer once, then forget your life every new conversation.</td></tr>
+        <tr class="us"><td>BrainDump</td><td>all four — tasks, habits, notes, AI — sharing one graph that <em>actually remembers</em>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══ §08 PRICING ═══ -->
+<section class="sec tint" id="pricing">
+  <div class="wrap">
+    <div class="sec-head wide rv">
+      <span class="sec-no">08</span>
+      <h2 class="h">Pricing</h2>
+      <p class="lede">
+        Pick a plan. Cancel anytime. Your graph exports as plain JSON whenever you want it.
+      </p>
+    </div>
+
+    <div class="rates rv">
+      <div class="rate">
+        <div class="rate-top"><span class="meta">Free</span></div>
+        <div class="rate-p">$0</div>
+        <p class="rate-tag">Get unstuck without commitment.</p>
+        <ul>
+          <li>Unlimited brain dumps</li>
+          <li>Graph of up to 50 nodes</li>
+          <li>Daily “what's next” pick</li>
+        </ul>
+        <a href="#" class="btn btn-line">Get started <span class="arw">→</span></a>
+      </div>
+
+      <div class="rate pick">
+        <div class="rate-top"><span class="meta">Pro</span><span class="pill">Most taken</span></div>
+        <div class="rate-p">$9<sub>/mo</sub></div>
+        <p class="rate-tag">For when paralysis is a daily fight.</p>
+        <ul>
+          <li>Everything in Free</li>
+          <li>Unlimited nodes &amp; full history</li>
+          <li>AI planner + weekly review</li>
+          <li>Habits, roadmap &amp; Pomodoro</li>
+        </ul>
+        <a href="#" class="btn btn-solid">Start free trial <span class="arw">→</span></a>
+      </div>
+
+      <div class="rate">
+        <div class="rate-top"><span class="meta">Team</span></div>
+        <div class="rate-p">$19<sub>/user/mo</sub></div>
+        <p class="rate-tag">Shared brains for small teams.</p>
+        <ul>
+          <li>Everything in Pro</li>
+          <li>Shared workspaces</li>
+          <li>Priority support</li>
+        </ul>
+        <a href="#" class="btn btn-line">Contact us <span class="arw">→</span></a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ CTA ═══ -->
+<section class="cta">
+  <div class="wrap">
+    <h2>Stop deciding. <em>Start doing.</em></h2>
+    <p>Dump the pile once and see what it looks like untangled. Free to start, and it takes about ninety seconds.</p>
+    <div class="hero-actions">
+      <a href="#" class="btn btn-solid">Start free <span class="arw">→</span></a>
+      <a href="#inside" class="btn btn-line">Read more first <span class="arw">→</span></a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ FOOTER ═══ -->
+<footer class="foot">
+  <div class="wrap">
+    <a href="#" class="brand">BrainDump<i>.</i></a>
+    <nav>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="#pricing">Pricing</a>
+    </nav>
+    <span class="cp">© 2026 BrainDump</span>
+  </div>
+</footer>
+
+<script>
+  const io = new IntersectionObserver((es) => {
+    for (const e of es) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }, { rootMargin: "0px 0px -10% 0px", threshold: 0.05 });
+  document.querySelectorAll(".rv").forEach(el => io.observe(el));
+</script>
+</body>
+</html>
