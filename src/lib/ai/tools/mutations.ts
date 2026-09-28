@@ -54,15 +54,30 @@ const VALID_EDGE_TYPES = new Set([
 async function fetchWorkspaceNode(
   ctx: ToolContext,
   nodeId: string,
-): Promise<{ id: string; status: string | null } | null> {
+): Promise<{ id: string; status: string | null; node_type: string | null } | null> {
   const { data } = await ctx.supabase
     .from("nodes")
-    .select("id, status")
+    .select("id, status, node_type")
     .eq("id", nodeId)
     .eq("user_id", ctx.userId)
     .eq("workspace_id", ctx.workspaceId)
     .maybeSingle();
-  return (data as { id: string; status: string | null } | null) ?? null;
+  return (
+    (data as { id: string; status: string | null; node_type: string | null } | null) ?? null
+  );
+}
+
+// Habits recur — "completing" one records TODAY's completion (idempotent) and
+// leaves the node ACTIVE, exactly like the /status route's habit guard. Never
+// flip a habit to status=completed or it disappears from the graph (#13).
+async function logHabitCompletionToday(ctx: ToolContext, nodeId: string): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  await ctx.supabase
+    .from("habit_completions")
+    .upsert(
+      { user_id: ctx.userId, node_id: nodeId, completed_on: today, source: "chat" },
+      { onConflict: "node_id,completed_on", ignoreDuplicates: true },
+    );
 }
 
 async function logLifecycleEvent(
@@ -852,6 +867,14 @@ const COMPLETE_NODE: ToolDefinition = {
       };
     }
 
+    // Habits don't "complete" — log today's completion and keep the node active
+    // so it stays on the graph (#13). This matches the /status route guard, so
+    // chat behaves like the Details/planner paths.
+    if (target.node_type === "habit") {
+      await logHabitCompletionToday(ctx, nodeId);
+      return { accepted: true, node_id: nodeId, habit_logged: true };
+    }
+
     const previousStatus = target.status ?? "active";
     const { error } = await ctx.supabase
       .from("nodes")
@@ -867,7 +890,9 @@ const COMPLETE_NODE: ToolDefinition = {
       return { accepted: false, error: `Failed to complete: ${error.message}` };
     }
 
-    await orphanEdgesForNode(ctx, nodeId);
+    // NOTE: completing a node does NOT orphan its edges — the canonical /status
+    // route keeps them active on complete (only archive orphans). Orphaning here
+    // detached completed nodes into standalone islands (#17); removed.
     await logLifecycleEvent(ctx, {
       node_id: nodeId,
       previous_status: previousStatus,
@@ -1208,6 +1233,13 @@ const PROPOSE_CHANGES_BATCH: ToolDefinition = {
               ok: false,
               error: "node not in this workspace",
             });
+            break;
+          }
+          // Habits log today's completion and stay active (#13) — never mark the
+          // whole habit node done.
+          if (target.node_type === "habit") {
+            await logHabitCompletionToday(ctx, target.id);
+            results.push({ kind: "complete", ok: true, id: target.id, detail: "habit_logged" });
             break;
           }
           const { error: updateErr } = await ctx.supabase

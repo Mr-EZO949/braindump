@@ -16,10 +16,15 @@
 //   filler levels, no wrapping a lone child, ≤~4 levels per dump). Together with
 //   the v16 project-with-parts rule and the semantic-clustering rule, this is
 //   what makes graphs deep instead of a flat fan — no area injection needed.
+// v18 adds the Big-outcome vs actionable-task rule: multi-step outcomes
+//   ("pass ML", "pass calculus 1&2", "write thesis", "test BrainDump") must be
+//   typed project/goal (breakdown-able "big" nodes), never a single "task";
+//   atomic one-sitting actions stay tasks; progress/findings on an existing big
+//   node attach under it as task children (testing journal #3, #16).
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v17";
+export const EXTRACT_PROMPT_VERSION = "extract-v18";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -67,6 +72,15 @@ Actionability rule (IMPORTANT — apply before extracting any task):
   - "review the Stats 302 problem set before Thursday" → task with that exact scope
   - "fix the three flaky tests in the checkout flow" → task (count + scope both provided)
 - If a fragment is BOTH vague AND repeated/emphatic (user clearly cares but can't articulate it), prefer raising a clarifying_question over inventing a fake task.
+
+Big-outcome vs actionable-task rule (IMPORTANT — this decides node_type, not just size):
+- A "task" is a SINGLE, self-contained action with one clear "done" — something you could finish in one sitting and check off. If an item would take MULTIPLE distinct actions to complete, it is NOT a task.
+- An item that is an OUTCOME, a body of work, or a "pass/ship/finish this whole thing" that clearly decomposes into several actions → use node_type "project" (concrete, bounded effort) or "goal" (a longer-horizon aspiration). NEVER type these as "task".
+  - Big → project/goal: "pass machine learning", "pass calculus 1 and 2", "write my thesis", "fix my sleep schedule", "test BrainDump", "get in shape", "learn React". These read as things you make PROGRESS on, not check off in one go.
+  - Actionable → task: "finish chapter 1", "solve 5 practice problems", "watch lecture 3", "email the professor", "write the introduction section", "fix the login bug". These have one clear finish.
+- Litmus test: if you would naturally want to break this into sub-steps to start it, it is a project/goal (a "big" node), not a task. If it already IS a step, it is a task.
+- Do NOT invent child steps for a big node here — just type it correctly as project/goal. Breakdown into steps happens later, on demand. Creating the big node with the right type is the whole job.
+- Progress / findings on an existing big node attach UNDER it as task children (see the Existing anchor + completion rules): e.g. existing project "Test BrainDump" + dump "tested it and found 10 bugs" → create task "Fix the 10 bugs found in BrainDump" (or similar) with existing_parent_node_id = the Test BrainDump node — not a new top-level task, and not a duplicate of the project.
 
 Habit vs task rule (choose node_type for recurring behaviors):
 - Use node_type "habit" ONLY when the item names a clear recurring cadence: "daily", "every day", "each morning/night", "weekly", "3× a week", "every Monday", "keep doing", "maintain". These are ongoing routines, not one-offs.

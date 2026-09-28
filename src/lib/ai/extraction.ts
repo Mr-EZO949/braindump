@@ -213,7 +213,22 @@ export async function runExtraction(params: {
   }
 
   const { output, run } = providerResult;
-  const validExistingParentIds = new Set(workspaceProfile.existingNodes.map((node) => node.id));
+
+  // Dedup + parent-reference validation run against ALL active workspace nodes,
+  // not just the ~14 anchors sent to the model. Otherwise a dump that mentions a
+  // node outside the anchor window makes the model invent a DUPLICATE it couldn't
+  // see, and the title-dedup below (keyed on anchors only) can't catch it —
+  // exactly the "braindump created duplicates" bug (journal #20). This is a cheap
+  // id+title query, no LLM cost.
+  const { data: allActiveNodeRows } = await supabase
+    .from("nodes")
+    .select("id, title")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", userId)
+    .neq("status", "archived");
+  const allActiveNodes: Array<{ id: string; title: string }> = (allActiveNodeRows ??
+    []) as Array<{ id: string; title: string }>;
+  const validExistingParentIds = new Set(allActiveNodes.map((node) => node.id));
 
   // Persist ai_run
   const aiRunId = await persistAIRun({
@@ -250,17 +265,26 @@ export async function runExtraction(params: {
       .join(" ");
   };
   const existingTitleFingerprints = new Map<string, string>(); // fp → existing node id
-  for (const n of workspaceProfile.existingNodes) {
-    existingTitleFingerprints.set(normalizeTitle(n.title), n.id);
+  for (const n of allActiveNodes) {
+    const fp = normalizeTitle(n.title);
+    // First writer wins — stable and good enough for a dedup key.
+    if (fp.length > 0 && !existingTitleFingerprints.has(fp)) {
+      existingTitleFingerprints.set(fp, n.id);
+    }
   }
 
-  // Filter out low-confidence proposals AND near-duplicates of existing
-  // anchors. When a proposal's normalized title matches an existing node's,
-  // we drop the proposal entirely — the existing node already represents
-  // that intent, and creating a parallel one fragments the graph.
+  // Filter out low-confidence proposals AND near-duplicates of EXISTING nodes
+  // (whole workspace, not just anchors). When a proposal's normalized title
+  // matches an existing node's, we drop the proposal — the existing node already
+  // represents that intent, and a parallel one fragments the graph. We remember
+  // each dropped proposal's local_ref → the existing node id, so any child that
+  // was going to nest under the duplicate re-homes onto the REAL existing node
+  // instead of being orphaned (this is what "add the belongs-to nodes" should do
+  // when the parent already exists — journal #20).
   let droppedDuplicateCount = 0;
-  const qualifiedNodes = enrichExistingParentAssignments(
-    output.proposed_nodes
+  const droppedRefToExistingId = new Map<string, string>();
+
+  const confidentSurvivors = output.proposed_nodes
     .filter((n) => n.extraction_confidence >= AI_CONFIDENCE.EXTRACTION_MIN)
     .filter((n) => {
       const fp = normalizeTitle(n.proposed_title);
@@ -268,23 +292,38 @@ export async function runExtraction(params: {
       const existingId = existingTitleFingerprints.get(fp);
       if (existingId) {
         droppedDuplicateCount++;
+        if (n.local_ref) droppedRefToExistingId.set(n.local_ref, existingId);
         return false;
       }
       return true;
-    })
-    .map((node) => ({
-      ...node,
-      existing_parent_node_id:
-        node.existing_parent_node_id && validExistingParentIds.has(node.existing_parent_node_id)
-          ? node.existing_parent_node_id
-          : null,
-    })),
+    });
+
+  // enrich first (attaches parent-less nodes to a likely existing anchor), then
+  // apply duplicate re-homing LAST so it takes precedence over enrich's guess,
+  // and validate every existing-parent reference against the full node set.
+  const qualifiedNodes = enrichExistingParentAssignments(
+    confidentSurvivors,
     workspaceProfile.existingNodes,
-  );
+  ).map((node) => {
+    let existingParentId = node.existing_parent_node_id;
+    let parentLocalRef = node.primary_parent_local_ref;
+    if (parentLocalRef && droppedRefToExistingId.has(parentLocalRef)) {
+      existingParentId = droppedRefToExistingId.get(parentLocalRef) ?? null;
+      parentLocalRef = null;
+    }
+    return {
+      ...node,
+      primary_parent_local_ref: parentLocalRef,
+      existing_parent_node_id:
+        existingParentId && validExistingParentIds.has(existingParentId)
+          ? existingParentId
+          : null,
+    };
+  });
 
   if (droppedDuplicateCount > 0) {
     console.log(
-      `[extraction] dropped ${droppedDuplicateCount} duplicate proposal${droppedDuplicateCount === 1 ? "" : "s"} (matched existing workspace anchor titles)`,
+      `[extraction] dropped ${droppedDuplicateCount} duplicate proposal${droppedDuplicateCount === 1 ? "" : "s"} (matched existing workspace node titles)`,
     );
   }
 
