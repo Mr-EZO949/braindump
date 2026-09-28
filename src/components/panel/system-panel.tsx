@@ -9,6 +9,10 @@ import { PushToggleButton } from "@/components/pwa/push-toggle-button";
 
 type Theme = "dark" | "light";
 
+// Dump-usage counters (#12) — mirrors /api/account/usage.
+type TierCounts = { small: number; medium: number; big: number; total: number };
+type DumpUsage = { all_time: TierCounts; this_month: TierCounts };
+
 type SystemPanelProps = {
   onSignOut: () => void;
   onDeleteAccount: () => void;
@@ -59,6 +63,9 @@ export function SystemPanel({
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  // Dump-usage counters (#12) — loaded when the panel opens.
+  const [usage, setUsage] = useState<DumpUsage | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
   // One Save for the whole modal — writes both /api/profile and the workspace.
   const [savingAll, setSavingAll] = useState(false);
   const [savedAll, setSavedAll] = useState(false);
@@ -165,6 +172,27 @@ export function SystemPanel({
       })
       .finally(() => {
         if (!cancelled) setPersonalLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  // Load dump-usage counters when the panel opens (#12).
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setUsageLoading(true);
+    fetch("/api/account/usage")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("usage fetch failed"))))
+      .then((data: DumpUsage) => {
+        if (!cancelled) setUsage(data);
+      })
+      .catch(() => {
+        if (!cancelled) setUsage(null);
+      })
+      .finally(() => {
+        if (!cancelled) setUsageLoading(false);
       });
     return () => {
       cancelled = true;
@@ -587,6 +615,40 @@ export function SystemPanel({
               </div>
             ) : null}
           </div>
+        </div>
+
+        {/* Dump usage (#12) — how many small / medium / big dumps you've run. */}
+        <div className="px-5 py-4">
+          <p className="sp-section-label">Dump usage</p>
+          {usageLoading && !usage ? (
+            <p className="sp-usage-empty">Counting your dumps…</p>
+          ) : usage && usage.all_time.total > 0 ? (
+            <>
+              <div className="sp-usage-grid">
+                {(
+                  [
+                    { key: "small", label: "Small", hint: "1–4 items" },
+                    { key: "medium", label: "Medium", hint: "5–12 items" },
+                    { key: "big", label: "Big", hint: "13+ items" },
+                  ] as const
+                ).map((t) => (
+                  <div className={`sp-usage-cell sp-usage-cell--${t.key}`} key={t.key}>
+                    <span className="sp-usage-count">{usage.all_time[t.key]}</span>
+                    <span className="sp-usage-label">{t.label}</span>
+                    <span className="sp-usage-hint">{t.hint}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="sp-usage-foot">
+                {usage.all_time.total} dump{usage.all_time.total === 1 ? "" : "s"} all-time
+                {usage.this_month.total > 0
+                  ? ` · ${usage.this_month.total} this month`
+                  : ""}
+              </p>
+            </>
+          ) : (
+            <p className="sp-usage-empty">No dumps yet — hit Brain Dump to get started.</p>
+          )}
         </div>
 
         <div className="sp-divider" />
