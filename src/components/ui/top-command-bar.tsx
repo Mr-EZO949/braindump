@@ -41,8 +41,8 @@ export function TopCommandBar({
   const [deleting, setDeleting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   return (
-    <header className="h-16 bg-[var(--color-bg-shell)] shadow-[inset_0_-1px_0_var(--color-border-faint)]">
-      <div className="top-bar-responsive flex h-full items-center justify-between gap-6 px-6">
+    <header className="app-topbar bg-[var(--color-bg-shell)] shadow-[inset_0_-1px_0_var(--color-border-faint)]">
+      <div className="top-bar-responsive flex h-16 items-center justify-between gap-6 px-6">
         <div className="flex min-w-0 items-center gap-3">
           <button
             aria-expanded={systemPanelOpen}

@@ -2862,6 +2862,17 @@ input[type="search"]::-webkit-search-results-decoration {
   padding-top: 14px;
 }
 
+/* Top command bar — pad past the iOS status bar / notch (safe-area insets) so
+   the logo + workspace buttons stay tappable in the installed PWA and in Safari
+   with viewport-fit=cover. The inner row is a fixed 64px BELOW this padding, and
+   the shell-coloured bar fills the inset zone so it reads as one solid bar.
+   All insets resolve to 0 on desktop, so this is a no-op there. */
+.app-topbar {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
 .logo-trigger {
   display: inline-flex;
   height: 36px;
@@ -13002,8 +13013,10 @@ input[type="search"]::-webkit-search-results-decoration {
 /* ─── App main area (dvh-aware) ─────────────────────────── */
 
 .app-main-area {
-  height: calc(100vh - 64px);
-  height: calc(100dvh - 64px);
+  /* Header is 64px tall PLUS the top safe-area inset (see .app-topbar), so the
+     main area must subtract both or the bottom gets pushed off-screen on iOS. */
+  height: calc(100vh - 64px - env(safe-area-inset-top, 0px));
+  height: calc(100dvh - 64px - env(safe-area-inset-top, 0px));
 }
 
 /* ─── Responsive helpers ────────────────────────────────── */
@@ -13255,10 +13268,14 @@ input[type="search"]::-webkit-search-results-decoration {
     border-radius: 14px;
   }
 
-  /* Review modals — fill screen on mobile */
+  /* Review modals — fill screen on mobile, but stay clear of the notch and the
+     home indicator (safe-area insets) and use dvh so the dynamic browser UI
+     doesn't clip the bottom. */
   .per-modal {
     width: calc(100vw - 24px);
-    max-height: calc(100vh - 48px);
+    max-height: calc(
+      100dvh - 48px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+    );
     border-radius: 12px;
   }
 
