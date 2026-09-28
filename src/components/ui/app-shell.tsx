@@ -82,6 +82,7 @@ import { classifyTaskSize } from "@/lib/ai/sizing";
 import { needsNextAction } from "@/lib/graph/next-action";
 import type { RailTab, ChatMessage, ChatScope, Nudge, PendingAction } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, NodeType, Workspace } from "@/types/graph";
+import { localDateISO } from "@/lib/time/local-date";
 import type { ProposedNode } from "@/types/ai";
 
 type AuthUserState = {
@@ -1609,7 +1610,8 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (!node) return;
     let durationMinutes = 25;
     if (supabase && selectedWorkspaceId && authUser?.id) {
-      const today = new Date().toISOString().slice(0, 10);
+      // Local date — plan_tasks.scheduled_date is the user's day, not UTC's.
+      const today = localDateISO();
       const { data } = await supabase
         .from("plan_tasks")
         .select("duration_minutes")
@@ -1640,7 +1642,8 @@ export function AppShell({ initialUser }: AppShellProps) {
     focusTimer.stop();
     showToast("Nice work — focus session done.");
     if (!active || !supabase || !selectedWorkspaceId || !authUser?.id) return;
-    const today = new Date().toISOString().slice(0, 10);
+    // Local date — plan_tasks.scheduled_date is the user's day, not UTC's.
+    const today = localDateISO();
     const { data } = await supabase
       .from("plan_tasks")
       .update({ done: true })

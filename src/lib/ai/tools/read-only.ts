@@ -14,6 +14,7 @@ import { scoreNodesJudgment } from "../judgment";
 import { checkAIRunRateLimitWindow } from "../rate-limit";
 import { computeWorkspaceScores } from "../scoring";
 import type { WorkspaceProfile } from "@/types/graph";
+import { addDaysISO, localDateISO } from "@/lib/time/local-date";
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -27,6 +28,9 @@ export interface ToolContext {
   userId: string;
   workspaceId: string;
   selectedNodeId: string | null;
+  // The user's local calendar date (YYYY-MM-DD, from the bd_tz cookie). Tools
+  // must use this for "today" — never new Date().toISOString(), which is UTC.
+  today?: string;
 }
 
 export interface ToolSchema {
@@ -145,17 +149,21 @@ const GET_NODE: ToolDefinition = {
       return { error: "Node not found in this workspace" };
     }
 
+    // NOTE: the columns are source_node_id / target_node_id. This used to query
+    // source_id / target_id, which don't exist — the error was swallowed, so
+    // get_node returned ZERO neighbors for every node and the assistant edited
+    // structure blind (a root cause of "chat replaced the parent", #19).
     const { data: edges } = await ctx.supabase
       .from("edges")
-      .select("id, source_id, target_id, edge_type, status")
-      .or(`source_id.eq.${id},target_id.eq.${id}`)
+      .select("id, source_node_id, target_node_id, edge_type, status")
+      .or(`source_node_id.eq.${id},target_node_id.eq.${id}`)
       .eq("user_id", ctx.userId)
       .eq("status", "active");
 
     const neighborIds = new Set<string>();
     for (const e of edges ?? []) {
-      if (e.source_id !== id) neighborIds.add(e.source_id);
-      if (e.target_id !== id) neighborIds.add(e.target_id);
+      if (e.source_node_id !== id) neighborIds.add(e.source_node_id);
+      if (e.target_node_id !== id) neighborIds.add(e.target_node_id);
     }
 
     const neighbors: Array<{
@@ -180,8 +188,8 @@ const GET_NODE: ToolDefinition = {
       );
 
       for (const e of edges ?? []) {
-        const isOut = e.source_id === id;
-        const otherId = isOut ? e.target_id : e.source_id;
+        const isOut = e.source_node_id === id;
+        const otherId = isOut ? e.target_node_id : e.source_node_id;
         const other = byId.get(otherId) as
           | { id: string; title: string; node_type: string }
           | undefined;
@@ -196,6 +204,16 @@ const GET_NODE: ToolDefinition = {
       }
     }
 
+    // Spell the hierarchy out explicitly. A belongs_to edge points child →
+    // parent, so a raw in/out list is easy to misread; the assistant needs to
+    // know "what is this under / what's under it" to ADD children rather than
+    // replace a node.
+    const parent =
+      neighbors.find((n) => n.edge_type === "belongs_to" && n.direction === "out") ?? null;
+    const children = neighbors
+      .filter((n) => n.edge_type === "belongs_to" && n.direction === "in")
+      .map(({ id: childId, title, node_type }) => ({ id: childId, title, node_type }));
+
     return {
       id: node.id,
       title: node.title,
@@ -205,6 +223,8 @@ const GET_NODE: ToolDefinition = {
       importance: node.importance,
       status: node.status,
       created_at: node.created_at,
+      parent: parent ? { id: parent.id, title: parent.title, node_type: parent.node_type } : null,
+      children,
       neighbors,
     };
   },
@@ -380,11 +400,10 @@ const GET_CALENDAR: ToolDefinition = {
       end_date?: string;
     };
 
-    const today = new Date();
-    const defaultStart = today.toISOString().slice(0, 10);
-    const plus7 = new Date(today.getTime() + 7 * 24 * 3600 * 1000)
-      .toISOString()
-      .slice(0, 10);
+    // Default range starts on the USER's today (ctx.today, from bd_tz) — the
+    // UTC date showed the wrong day's calendar late evening / after midnight.
+    const defaultStart = ctx.today ?? localDateISO(new Date(), null);
+    const plus7 = addDaysISO(defaultStart, 7);
 
     const startIso = isValidDate(start_date) ? start_date! : defaultStart;
     const endIso = isValidDate(end_date) ? end_date! : plus7;

@@ -21,6 +21,7 @@ import type {
   ToolUseBlock,
 } from "@anthropic-ai/sdk/resources/messages";
 import { NextRequest } from "next/server";
+import { getRequestToday } from "@/lib/time/request-date";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
@@ -155,11 +156,15 @@ export async function POST(req: NextRequest) {
   const messages = run.messages as unknown as MessageParam[];
   const deferred = (run.deferred_tool_uses as unknown as DeferredToolUse[]) ?? [];
 
+  // The user's local date (bd_tz cookie) — used by the system prompt and by
+  // tools that log habits / default calendar ranges. Never the UTC date.
+  const todayISO = await getRequestToday();
   const toolCtx = {
     supabase,
     userId: user.id,
     workspaceId,
     selectedNodeId,
+    today: todayISO,
   };
 
   // Match the initial turn's model tier: a graph-editing thread continues on
@@ -277,7 +282,7 @@ export async function POST(req: NextRequest) {
   const systemPromptBlocks: TextBlockParam[] = [
     {
       type: "text",
-      text: buildAssistantSystemPrompt(resolvedMode, new Date().toISOString().slice(0, 10)),
+      text: buildAssistantSystemPrompt(resolvedMode, todayISO),
       cache_control: { type: "ephemeral" },
     },
   ];

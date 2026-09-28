@@ -2,11 +2,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getRequestToday } from "@/lib/time/request-date";
 import { runExtraction } from "@/lib/ai/extraction";
 import { AI_FLAGS, AI_INGESTION } from "@/lib/ai/config";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -65,6 +66,8 @@ export async function POST(
     workspaceId: rawEntry.workspace_id as string,
     userId: user.id,
     supabase,
+    today: await getRequestToday(),
+    signal: req.signal,
   });
 
   if (!result.ok) {

@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getRequestToday } from "@/lib/time/request-date";
 import { getImportanceLabel } from "@/lib/graph/importance";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { pickGoalForArea } from "@/lib/graph/anchor-attachment";
@@ -531,6 +532,7 @@ export async function POST(
         workspaceId,
         userId: user.id,
         supabase,
+        today: await getRequestToday(),
       });
       if (result.ok) {
         // Anchor any orphan proposals (no existing parent + no proposed

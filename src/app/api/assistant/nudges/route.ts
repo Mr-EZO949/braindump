@@ -13,14 +13,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Nudge } from "@/types/chat";
+import { getRequestToday } from "@/lib/time/request-date";
 
 const RECENT_COMPLETION_WINDOW_HOURS = 48;
 const QUIET_GOAL_DAYS = 14;
 const MAX_NUDGES = 4;
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export async function GET(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
@@ -84,7 +82,8 @@ export async function GET(req: NextRequest) {
     .eq("user_id", user.id)
     .eq("workspace_id", workspaceId)
     .eq("done", false)
-    .lt("scheduled_date", todayISO())
+    // "Overdue" = before the USER's today (bd_tz), not UTC's.
+    .lt("scheduled_date", await getRequestToday())
     .limit(20);
   if (overdueTasks && overdueTasks.length > 0) {
     nudges.push({

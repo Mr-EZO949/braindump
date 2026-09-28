@@ -126,8 +126,12 @@ export async function runExtraction(params: {
   userId: string;
   supabase: SupabaseClient;
   retryCount?: number;
+  // The user's local date (YYYY-MM-DD) — resolves relative deadlines.
+  today?: string;
+  // Client cancel: aborts the provider call and skips retries.
+  signal?: AbortSignal;
 }): Promise<ExtractionResult> {
-  const { rawEntryId, rawText, workspaceId, userId, supabase } = params;
+  const { rawEntryId, rawText, workspaceId, userId, supabase, today, signal } = params;
   let workspaceProfile: Awaited<ReturnType<typeof buildWorkspaceProfileContext>> = {
     workspaceContext: undefined,
     existingNodes: [],
@@ -156,8 +160,14 @@ export async function runExtraction(params: {
           user_id: userId,
           workspace_context: workspaceProfile.workspaceContext,
           existing_nodes: workspaceProfile.existingNodes,
+          today,
+          signal,
         }),
       shouldRetry: ({ attempt, error }) => {
+        // A user cancel is final — never spend another call retrying it.
+        if (signal?.aborted) {
+          return false;
+        }
         if (!error.retryable) {
           return false;
         }

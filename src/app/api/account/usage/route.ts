@@ -10,6 +10,8 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { classifyDumpSize, type DumpSizeTier } from "@/lib/ai/dump-size";
+import { localDateISO } from "@/lib/time/local-date";
+import { getRequestTimeZone } from "@/lib/time/request-date";
 
 // A "dump" is a user-initiated brain dump (typed or spoken) — not an
 // assistant_save (chat-created) or planner_convert entry.
@@ -84,13 +86,11 @@ export async function GET() {
     if (rows.length < PAGE) break;
   }
 
-  // 3. Classify each dump by its proposed-node count and tally.
-  // created_at is stored/returned in UTC, so anchor "this month" to the UTC
-  // month start too (avoids an off-by-an-hour boundary from local time).
-  const now = new Date();
-  const monthStart = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-  ).toISOString();
+  // 3. Classify each dump by its proposed-node count and tally. "This month"
+  //    is the USER's calendar month (bd_tz cookie): each dump's timestamp is
+  //    converted to their local date and compared against their month prefix.
+  const timeZone = await getRequestTimeZone();
+  const thisMonthPrefix = localDateISO(new Date(), timeZone).slice(0, 7); // YYYY-MM
   const allTime = emptyCounts();
   const thisMonth = emptyCounts();
 
@@ -103,7 +103,7 @@ export async function GET() {
     const nodeCount = proposalCountByEntry.get(entry.id as string) ?? 0;
     const tier = classifyDumpSize(nodeCount);
     bump(allTime, tier);
-    if ((entry.created_at as string) >= monthStart) {
+    if (localDateISO(new Date(entry.created_at), timeZone).startsWith(thisMonthPrefix)) {
       bump(thisMonth, tier);
     }
   }

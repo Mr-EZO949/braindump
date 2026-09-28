@@ -153,6 +153,17 @@ export default function RootLayout({
               "try{var t=localStorage.getItem('braindump-theme');if(t==='light'){document.documentElement.setAttribute('data-theme','light');}}catch(e){}",
           }}
         />
+        <script
+          // Send the user's IANA time zone on every request (bd_tz cookie) so
+          // the server computes "today" in THEIR day, not UTC — habits,
+          // planner, Focus and extraction dates all key off it. Runs before
+          // hydration so even the first API calls carry it. Cookie name is
+          // TIME_ZONE_COOKIE in src/lib/time/local-date.ts.
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var z=Intl.DateTimeFormat().resolvedOptions().timeZone;if(z){document.cookie='bd_tz='+encodeURIComponent(z)+';path=/;max-age=31536000;samesite=lax';}}catch(e){}",
+          }}
+        />
       </head>
       <body className={`${inter.variable} ${geistMono.variable} antialiased`}>
         <ServiceWorkerRegister />

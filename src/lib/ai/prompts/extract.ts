@@ -281,7 +281,10 @@ export interface ExtractionPromptParams {
     title: string;
     summary: string | null;
     node_type: string;
+    parent_title?: string | null;
   }>;
+  // The user's local date (YYYY-MM-DD). Falls back to UTC only if absent.
+  today?: string;
 }
 
 function buildVariableBlock(params: ExtractionPromptParams): string {
@@ -299,7 +302,8 @@ function buildVariableBlock(params: ExtractionPromptParams): string {
                 : node.summary
                   ? ` — ${node.summary}`
                   : "";
-            return `- ${node.id}: ${node.title} [${node.node_type}]${summary}`;
+            const under = node.parent_title ? ` (under: ${node.parent_title})` : "";
+            return `- ${node.id}: ${node.title} [${node.node_type}]${under}${summary}`;
           })
           .join("\n")}\n`
       : "";
@@ -308,7 +312,9 @@ function buildVariableBlock(params: ExtractionPromptParams): string {
   // falls back to its training-cutoff worldview (~2024–2025) and resolves
   // "Friday", "October 24", etc. with the wrong year. ISO date so date
   // arithmetic in the model is unambiguous.
-  const today = new Date().toISOString().slice(0, 10);
+  // The USER's local date when provided (bd_tz cookie → entries route); the
+  // UTC date made "by Friday" resolve a day off for anyone far from UTC.
+  const today = params.today ?? new Date().toISOString().slice(0, 10);
 
   return `Session:
 today: ${today}

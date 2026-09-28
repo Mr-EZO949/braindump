@@ -6,7 +6,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { computeStreak, lastNDays, todayLocalISO } from "@/lib/habits/streak";
+import { computeStreak, lastNDays } from "@/lib/habits/streak";
+import { getRequestToday } from "@/lib/time/request-date";
 
 const HISTORY_DAYS_DEFAULT = 30;
 const HISTORY_DAYS_MAX = 365;
@@ -115,7 +116,9 @@ export async function GET(
   }
 
   const { searchParams } = new URL(req.url);
-  const todayISO = searchParams.get("today") ?? todayLocalISO();
+  // The user's local date (bd_tz cookie), not the server's UTC date — a
+  // "today" off by one broke streaks and rejected ticks after local midnight.
+  const todayISO = searchParams.get("today") ?? (await getRequestToday());
   if (!isISODate(todayISO)) {
     return NextResponse.json({ error: "Invalid 'today' parameter" }, { status: 400 });
   }
@@ -167,7 +170,7 @@ export async function POST(
     // empty body is fine — defaults to today
   }
   const requestedDate = (body as { date?: unknown })?.date;
-  const todayISO = todayLocalISO();
+  const todayISO = await getRequestToday();
   const dateToMark = isISODate(requestedDate) ? requestedDate : todayISO;
 
   // Only allow today and yesterday — backfill any further breaks the
@@ -246,7 +249,7 @@ export async function DELETE(
 
   const { searchParams } = new URL(req.url);
   const dateParam = searchParams.get("date");
-  const todayISO = todayLocalISO();
+  const todayISO = await getRequestToday();
   const dateToDelete = isISODate(dateParam) ? dateParam : todayISO;
 
   await supabase
@@ -315,7 +318,7 @@ export async function PATCH(
     started_on?: unknown;
     target_per_week?: unknown;
   };
-  const todayISO = todayLocalISO();
+  const todayISO = await getRequestToday();
   const updates: Record<string, unknown> = {};
 
   // Effective habit_started_on — kept as-is unless this request changes it.

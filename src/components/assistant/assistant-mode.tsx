@@ -18,6 +18,7 @@ import type { PlanBlock, PlanSession, PlanningWindow } from "@/types/ai";
 import type { GraphData, NodeStatus } from "@/types/graph";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { clientDayHints } from "@/lib/habits/streak";
+import { localDateISO } from "@/lib/time/local-date";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -673,8 +674,12 @@ function sortPlanBlocks(blocks: PlanBlock[]): PlanBlock[] {
 
 // ── Date helpers ───────────────────────────────────────────────────────────────
 
+// The user's LOCAL calendar date for d. This used d.toISOString() — the UTC
+// date — so the planner showed "yesterday" after local midnight east of UTC
+// (00:00–02:00 in Milan) and "tomorrow" all evening west of it (US), and filed
+// new tasks under the wrong scheduled_date.
 function toDateString(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return localDateISO(d);
 }
 
 function getWeekDays(anchor: Date): Date[] {

@@ -13,6 +13,7 @@ import type {
   ToolUseBlock,
 } from "@anthropic-ai/sdk/resources/messages";
 import { NextRequest } from "next/server";
+import { getRequestToday } from "@/lib/time/request-date";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { buildAssistantContext } from "@/lib/ai/context";
@@ -267,7 +268,9 @@ export async function POST(req: NextRequest) {
     message: message.trim(),
   });
 
-  const todayISO = new Date().toISOString().slice(0, 10);
+  // The user's local date (bd_tz cookie), not UTC — the model resolves
+  // "today"/"tomorrow" and the tools log habits against it.
+  const todayISO = await getRequestToday();
   const systemPrompt = buildAssistantSystemPrompt(resolvedMode, todayISO);
   // Temporal awareness: a cheap, AI-free flag if the user keeps circling a node
   // across days without finishing it. Injected into the uncached message block.
@@ -310,6 +313,7 @@ export async function POST(req: NextRequest) {
     userId: user.id,
     workspaceId: workspace_id,
     selectedNodeId: selected_node_id,
+    today: todayISO,
   };
 
   // Cache the system prompt. It is mode-stable across a chat thread and is the

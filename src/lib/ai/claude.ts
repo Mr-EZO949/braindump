@@ -184,24 +184,29 @@ export class ClaudeProvider {
       ? { type: "text" as const, text: rubricBlock, cache_control: { type: "ephemeral" as const } }
       : { type: "text" as const, text: rubricBlock };
 
-    const response = await this.client.messages.create({
-      model: this.modelName,
-      // Sonnet 5's tokenizer emits ~30% more tokens than 4.6 for the same JSON,
-      // and multi-domain dumps now yield larger extractions (18-20 nodes). 8192
-      // brushed the cap and truncated → stop_reason "max_tokens" → invalid JSON
-      // that reads as a failed extraction. 16000 is the safe non-streaming
-      // ceiling (stays under the SDK HTTP timeout) and is a pure guard — the
-      // model still stops at end_turn once the JSON is complete.
-      max_tokens: 16000,
-      ...claudeRequestTuning(this.modelName, AI_TEMPERATURE.EXTRACTION),
-      system: "You always respond with valid JSON only. No markdown code blocks, no extra text, no explanation — just the raw JSON object.",
-      messages: [
-        {
-          role: "user",
-          content: [rubricContent, { type: "text", text: variableBlock }],
-        },
-      ],
-    });
+    const response = await this.client.messages.create(
+      {
+        model: this.modelName,
+        // Sonnet 5's tokenizer emits ~30% more tokens than 4.6 for the same JSON,
+        // and multi-domain dumps now yield larger extractions (18-20 nodes). 8192
+        // brushed the cap and truncated → stop_reason "max_tokens" → invalid JSON
+        // that reads as a failed extraction. 16000 is the safe non-streaming
+        // ceiling (stays under the SDK HTTP timeout) and is a pure guard — the
+        // model still stops at end_turn once the JSON is complete.
+        max_tokens: 16000,
+        ...claudeRequestTuning(this.modelName, AI_TEMPERATURE.EXTRACTION),
+        system: "You always respond with valid JSON only. No markdown code blocks, no extra text, no explanation — just the raw JSON object.",
+        messages: [
+          {
+            role: "user",
+            content: [rubricContent, { type: "text", text: variableBlock }],
+          },
+        ],
+      },
+      // Client cancel → stop the (expensive) Sonnet call instead of paying for
+      // output nobody will see.
+      input.signal ? { signal: input.signal } : undefined,
+    );
 
     if (response.stop_reason === "max_tokens") {
       throw new Error(

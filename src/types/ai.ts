@@ -342,7 +342,14 @@ export interface ExtractionInput {
     title: string;
     summary: string | null;
     node_type: NodeType;
+    // Where this node sits in the tree ("under: X") — lets the model attach to
+    // the right level instead of guessing from a flat list.
+    parent_title?: string | null;
   }>;
+  // The user's local date (YYYY-MM-DD) for resolving "by Friday", "tomorrow".
+  today?: string;
+  // Cancels the provider call when the client aborts the request.
+  signal?: AbortSignal;
 }
 
 export interface ExtractionOutput {

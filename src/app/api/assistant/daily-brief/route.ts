@@ -13,15 +13,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { buildPlannerCandidates } from "@/lib/ai/planner";
 import type { Nudge } from "@/types/chat";
+import { isISODate } from "@/lib/time/local-date";
+import { getRequestToday } from "@/lib/time/request-date";
 
 const RECENT_COMPLETION_WINDOW_HOURS = 24;
 const QUIET_GOAL_DAYS = 14;
 const MAX_NUDGES = 4;
 const MAX_YESTERDAY_WINS = 5;
 
-function todayISO(now = new Date()): string {
-  return now.toISOString().slice(0, 10);
-}
 
 function dateNDaysAgoISO(days: number, now = new Date()): string {
   const d = new Date(now);
@@ -68,7 +67,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
   }
 
-  const today = todayISO();
+  // The user's local date: prefer what the client sent, else the bd_tz
+  // cookie — never the server's UTC date (overdue tasks were off by a day).
+  const today = isISODate(client_today) ? client_today : await getRequestToday();
   const sinceCompletionsISO = new Date(
     Date.now() - RECENT_COMPLETION_WINDOW_HOURS * 3600_000,
   ).toISOString();
