@@ -51,6 +51,8 @@ Rules:
 - Put each task under the phase it belongs to. Every phase must hold at least one task.
 - If the workspace's other active items are listed, do NOT propose steps that duplicate them, and sequence your steps around their deadlines and dependencies — if a step must happen before or is blocked by another item, order it accordingly and say so in its summary.
 - Be specific and practical, not generic. "Take a full-length SAT practice test" is better than "Practice".
+- DIRECT WORK, NOT PLANNING-TO-PLAN. Every step must be the actual work that moves this forward — not another layer of organizing it. Do NOT propose steps like "make a study plan", "create a schedule", "outline your approach", "research how to start", "gather resources", "figure out what to do", "break this into tasks". The user came here to be told what to DO, not to plan the plan. (The only exception: a genuine one-time unblock the Description names, e.g. "get the syllabus" when nothing can start without it.)
+- For learning / studying / courses, steps are concrete DOSES of the real material: "Watch lecture 3", "Solve 5 practice problems from chapter 2", "Finish the next unstudied topic", "Re-derive the key proof", "Do last year's midterm". Not "review the material" or "study more".
 - Include a mix of immediate quick-wins and longer tasks.
 - Keep titles short (under 60 characters) but descriptive.
 - Include a one-sentence summary for each step explaining why it matters or what it involves.
@@ -64,6 +66,7 @@ Given a goal or project, generate ONLY the 1–3 most immediate, concrete next a
 
 Rules:
 - Each step must be doable in one short sitting. "Open a new doc and write the title" beats "Draft the report".
+- DIRECT WORK, NOT PLANNING-TO-PLAN. The next action is the real work, never another layer of organizing it. Never propose "make a study plan", "create a schedule", "outline your approach", "research how to start", "figure out where to begin". For studying, that means "Watch lecture 1", "Solve 5 problems", "Finish the next topic" — not "review the material" or "plan your study".
 - Pick the true first step(s) — what literally has to happen before anything else.
 - Keep titles short (under 60 characters) and concrete.
 - One-sentence summary each.
@@ -168,16 +171,21 @@ export async function POST(req: NextRequest) {
   const minSteps = stepMode === "light" ? 1 : 2;
 
   async function generate(model: string): Promise<string> {
-    const response = await client.messages.create({
-      model,
-      // Headroom for Sonnet 5's tokenizer (~30% more tokens) plus grouped
-      // breakdowns that emit several sections. Pure truncation guard — the
-      // model stops at end_turn once the steps are complete.
-      max_tokens: 1600,
-      ...claudeRequestTuning(model, AI_TEMPERATURE.PLANNER),
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
-    });
+    const response = await client.messages.create(
+      {
+        model,
+        // Headroom for Sonnet 5's tokenizer (~30% more tokens) plus grouped
+        // breakdowns that emit several sections. Pure truncation guard — the
+        // model stops at end_turn once the steps are complete.
+        max_tokens: 1600,
+        ...claudeRequestTuning(model, AI_TEMPERATURE.PLANNER),
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+      },
+      // Forward the request's abort signal so a client cancel (#5) actually
+      // stops the upstream model call instead of billing for output nobody sees.
+      { signal: req.signal },
+    );
     const textBlock = response.content.find((b) => b.type === "text");
     return textBlock?.text?.trim() ?? "";
   }

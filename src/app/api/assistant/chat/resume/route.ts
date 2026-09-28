@@ -27,11 +27,17 @@ import {
   buildAssistantSystemPrompt,
   ASSISTANT_PROMPT_VERSION,
 } from "@/lib/ai/prompts/assistant";
-import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS } from "@/lib/ai/config";
+import {
+  AI_MODELS,
+  AI_TEMPERATURE,
+  AI_COST_PER_1M_TOKENS,
+  claudeRequestTuning,
+} from "@/lib/ai/config";
 import { normalizeAIError } from "@/lib/ai/errors";
 import { persistAIRun } from "@/lib/ai/telemetry";
 import { dispatchTool, getToolSchemas, isReadOnlyTool, isPausingTool } from "@/lib/ai/tools";
 import { resolveChoice } from "@/lib/ai/tools/interactive";
+import { looksLikeGraphEdit } from "@/lib/graph/dump-heuristic";
 import type { AssistantMode } from "@/types/ai";
 
 const MAX_TOOL_ROUNDS = 6;
@@ -57,6 +63,31 @@ interface DeferredToolUse {
   id: string;
   name: string;
   input: unknown;
+}
+
+// The original user question, dug out of the persisted message history so the
+// resume turn can pick the same model tier the initial turn would (Haiku for
+// chat, Sonnet for graph edits). Skips tool_result-only user turns and strips
+// the "User question:" preamble the chat route wraps the message in.
+function lastUserQuestion(messages: MessageParam[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "user") continue;
+    let text = "";
+    if (typeof m.content === "string") {
+      text = m.content;
+    } else if (Array.isArray(m.content)) {
+      const blocks = m.content
+        .filter((b): b is TextBlockParam => (b as { type?: string }).type === "text")
+        .map((b) => b.text);
+      if (blocks.length === 0) continue; // tool_result-only turn
+      text = blocks.join("\n");
+    }
+    if (!text) continue;
+    const marker = text.lastIndexOf("User question:");
+    return marker >= 0 ? text.slice(marker + "User question:".length).trim() : text;
+  }
+  return "";
 }
 
 export async function POST(req: NextRequest) {
@@ -131,6 +162,14 @@ export async function POST(req: NextRequest) {
     selectedNodeId,
   };
 
+  // Match the initial turn's model tier: a graph-editing thread continues on
+  // Sonnet so the follow-up reasoning (and any next proposal) stays strong;
+  // plain chat stays on Haiku. Derived from the original user question in the
+  // persisted history. See issue #19 + /api/assistant/chat.
+  const assistantModel = looksLikeGraphEdit(lastUserQuestion(messages))
+    ? AI_MODELS.CLAUDE_SONNET
+    : AI_MODELS.CLAUDE_HAIKU;
+
   // ---------------------------------------------------------------------------
   // Build the tool_result batch for the paused assistant turn.
   // The assistant turn is already the last message in `messages`; we now
@@ -168,6 +207,11 @@ export async function POST(req: NextRequest) {
       content: truncateToolContent(result.content),
       is_error: result.is_error,
     });
+    // NOTE: connection inference on newly-created nodes is handled client-side
+    // in app-shell after the resume stream completes (graph reload → diff new
+    // node IDs → analyzeNodes → /api/nodes/analyze), which also surfaces the
+    // proposed edges in the edge-review modal. Do NOT run it here too — that
+    // would double the infer_edge spend.
   } else {
     toolResults.push({
       type: "tool_result",
@@ -266,9 +310,9 @@ export async function POST(req: NextRequest) {
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           if (aborted) break;
           const currentStream = client.messages.stream({
-            model: AI_MODELS.CLAUDE_HAIKU,
+            model: assistantModel,
             max_tokens: 2048,
-            temperature: AI_TEMPERATURE.ASSISTANT,
+            ...claudeRequestTuning(assistantModel, AI_TEMPERATURE.ASSISTANT),
             system: systemPromptBlocks,
             tools,
             messages,
@@ -389,13 +433,18 @@ export async function POST(req: NextRequest) {
 
       try {
         const latencyMs = Date.now() - start;
-        const haikuIn = AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT;
-        const haikuOut = AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT;
+        const isSonnet = assistantModel === AI_MODELS.CLAUDE_SONNET;
+        const rateIn = isSonnet
+          ? AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT
+          : AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT;
+        const rateOut = isSonnet
+          ? AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT
+          : AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT;
         const estimatedCost =
-          (totalInputTokens / 1_000_000) * haikuIn +
-          (totalCacheReadTokens / 1_000_000) * (haikuIn * 0.1) +
-          (totalCacheWriteTokens / 1_000_000) * (haikuIn * 1.25) +
-          (totalOutputTokens / 1_000_000) * haikuOut;
+          (totalInputTokens / 1_000_000) * rateIn +
+          (totalCacheReadTokens / 1_000_000) * (rateIn * 0.1) +
+          (totalCacheWriteTokens / 1_000_000) * (rateIn * 1.25) +
+          (totalOutputTokens / 1_000_000) * rateOut;
 
         await persistAIRun({
           supabase,
@@ -405,7 +454,7 @@ export async function POST(req: NextRequest) {
           run: {
             run_type: "assistant",
             provider: "claude",
-            model_name: AI_MODELS.CLAUDE_HAIKU,
+            model_name: assistantModel,
             prompt_version: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}:resume-${decision}`,
             input_hash: run.id as string,
             output_hash: fullText ? fullText.slice(0, 16) : null,

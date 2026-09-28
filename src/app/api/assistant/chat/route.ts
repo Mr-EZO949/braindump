@@ -21,7 +21,14 @@ import {
   buildAssistantUserPromptParts,
   ASSISTANT_PROMPT_VERSION,
 } from "@/lib/ai/prompts/assistant";
-import { AI_MODELS, AI_TEMPERATURE, AI_COST_PER_1M_TOKENS, AI_RATE_LIMITS } from "@/lib/ai/config";
+import {
+  AI_MODELS,
+  AI_TEMPERATURE,
+  AI_COST_PER_1M_TOKENS,
+  AI_RATE_LIMITS,
+  claudeRequestTuning,
+} from "@/lib/ai/config";
+import { looksLikeGraphEdit } from "@/lib/graph/dump-heuristic";
 import { checkAIRunRateLimit } from "@/lib/ai/rate-limit";
 import { hashText, normalizeAIError } from "@/lib/ai/errors";
 import { persistAIRun } from "@/lib/ai/telemetry";
@@ -125,6 +132,17 @@ export async function POST(req: NextRequest) {
   const resolvedMode: AssistantMode = VALID_MODES.includes(mode as AssistantMode)
     ? (mode as AssistantMode)
     : "explain";
+
+  // Model routing: plain Q&A stays on cheap Haiku, but a message that reads as a
+  // GRAPH-EDITING command escalates the whole turn to Sonnet. The model that
+  // emits the mutation is the one doing the structural reasoning (split-vs-
+  // replace, correct parent, batching), so the choice must be made up-front —
+  // by the time Haiku "notices" it's editing, the decision is already made.
+  // This mirrors the dump path (braindump → Sonnet extraction) for the
+  // imperative edits that never trip the dump heuristic. See issue #19.
+  const assistantModel = looksLikeGraphEdit(message)
+    ? AI_MODELS.CLAUDE_SONNET
+    : AI_MODELS.CLAUDE_HAIKU;
 
   // ---------------------------------------------------------------------------
   // Verify workspace belongs to user
@@ -356,9 +374,9 @@ export async function POST(req: NextRequest) {
           if (aborted) break;
 
           currentStream = client.messages.stream({
-            model: AI_MODELS.CLAUDE_HAIKU,
+            model: assistantModel,
             max_tokens: 2048,
-            temperature: AI_TEMPERATURE.ASSISTANT,
+            ...claudeRequestTuning(assistantModel, AI_TEMPERATURE.ASSISTANT),
             system: systemPromptBlocks,
             tools,
             messages,
@@ -501,15 +519,20 @@ export async function POST(req: NextRequest) {
       // -----------------------------------------------------------------------
       try {
         const latencyMs = Date.now() - start;
-        // Haiku pricing, with cache discounts applied:
-        //   fresh input = $1/M, cache read = 10% of input, cache write = 125% of input
-        const haikuIn = AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT;
-        const haikuOut = AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT;
+        // Per-model pricing, with cache discounts applied:
+        //   fresh input, cache read = 10% of input, cache write = 125% of input
+        const isSonnet = assistantModel === AI_MODELS.CLAUDE_SONNET;
+        const rateIn = isSonnet
+          ? AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_INPUT
+          : AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_INPUT;
+        const rateOut = isSonnet
+          ? AI_COST_PER_1M_TOKENS.CLAUDE_SONNET_OUTPUT
+          : AI_COST_PER_1M_TOKENS.CLAUDE_HAIKU_OUTPUT;
         const estimatedCost =
-          (totalInputTokens / 1_000_000) * haikuIn +
-          (totalCacheReadTokens / 1_000_000) * (haikuIn * 0.1) +
-          (totalCacheWriteTokens / 1_000_000) * (haikuIn * 1.25) +
-          (totalOutputTokens / 1_000_000) * haikuOut;
+          (totalInputTokens / 1_000_000) * rateIn +
+          (totalCacheReadTokens / 1_000_000) * (rateIn * 0.1) +
+          (totalCacheWriteTokens / 1_000_000) * (rateIn * 1.25) +
+          (totalOutputTokens / 1_000_000) * rateOut;
 
         await persistAIRun({
           supabase,
@@ -519,7 +542,7 @@ export async function POST(req: NextRequest) {
           run: {
             run_type: "assistant",
             provider: "claude",
-            model_name: AI_MODELS.CLAUDE_HAIKU,
+            model_name: assistantModel,
             prompt_version: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}`,
             input_hash: hashText(userPromptForHash),
             output_hash: fullText ? hashText(fullText).slice(0, 16) : null,
