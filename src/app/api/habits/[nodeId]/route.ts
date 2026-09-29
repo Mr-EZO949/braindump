@@ -56,6 +56,15 @@ async function loadHabitNode(
   return primary.data;
 }
 
+// ?days=N (clamped); the Habits view and the Details streak ask for 90 so a
+// tick's response doesn't shrink the history they already show.
+function parseDays(searchParams: URLSearchParams): number {
+  const daysParam = parseInt(searchParams.get("days") ?? "", 10);
+  return Number.isFinite(daysParam) && daysParam > 0
+    ? Math.min(daysParam, HISTORY_DAYS_MAX)
+    : HISTORY_DAYS_DEFAULT;
+}
+
 async function buildResponse(
   supabase: NonNullable<Awaited<ReturnType<typeof getSupabaseServerClient>>>,
   nodeId: string,
@@ -107,36 +116,34 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const node = await loadHabitNode(supabase, nodeId, user.id);
+  const { searchParams } = new URL(req.url);
+  // The user's local date (bd_tz cookie), not the server's UTC date — a
+  // "today" off by one broke streaks and rejected ticks after local midnight.
+  const todayISO = searchParams.get("today") ?? (await getRequestToday());
+  const validToday = isISODate(todayISO);
+  const days = parseDays(searchParams);
+
+  // The ownership/type check and the history read go out together (one round
+  // trip, not two); the history is discarded if the check fails. Both queries
+  // are scoped to this user.
+  const [node, payload] = await Promise.all([
+    loadHabitNode(supabase, nodeId, user.id),
+    validToday ? buildResponse(supabase, nodeId, user.id, todayISO, days) : null,
+  ]);
   if (!node) {
     return NextResponse.json({ error: "Node not found" }, { status: 404 });
   }
   if (node.node_type !== "habit") {
     return NextResponse.json({ error: "Not a habit node" }, { status: 400 });
   }
-
-  const { searchParams } = new URL(req.url);
-  // The user's local date (bd_tz cookie), not the server's UTC date — a
-  // "today" off by one broke streaks and rejected ticks after local midnight.
-  const todayISO = searchParams.get("today") ?? (await getRequestToday());
-  if (!isISODate(todayISO)) {
+  if (!payload) {
     return NextResponse.json({ error: "Invalid 'today' parameter" }, { status: 400 });
   }
-  const daysParam = parseInt(searchParams.get("days") ?? "", 10);
-  const days =
-    Number.isFinite(daysParam) && daysParam > 0
-      ? Math.min(daysParam, HISTORY_DAYS_MAX)
-      : HISTORY_DAYS_DEFAULT;
 
-  const payload = await buildResponse(
-    supabase,
-    nodeId,
-    user.id,
-    todayISO,
-    days,
-    (node as { habit_started_on?: string | null }).habit_started_on ?? null,
-  );
-  return NextResponse.json(payload);
+  return NextResponse.json({
+    ...payload,
+    started_on: (node as { habit_started_on?: string | null }).habit_started_on ?? null,
+  });
 }
 
 export async function POST(
@@ -201,25 +208,27 @@ export async function POST(
 
   // Cascade to plan_tasks scheduled for that date — keeps habits ↔ planner
   // in sync. A habit ticked off in the calendar should check off the
-  // matching planner row, and vice-versa via the status route.
-  const { data: doneTasks } = await supabase
-    .from("plan_tasks")
-    .update({ done: true })
-    .eq("user_id", user.id)
-    .eq("node_id", nodeId)
-    .eq("scheduled_date", dateToMark)
-    .eq("done", false)
-    .select("id");
+  // matching planner row, and vice-versa via the status route. Independent of
+  // the history read, so both go out together.
+  const [{ data: doneTasks }, payload] = await Promise.all([
+    supabase
+      .from("plan_tasks")
+      .update({ done: true })
+      .eq("user_id", user.id)
+      .eq("node_id", nodeId)
+      .eq("scheduled_date", dateToMark)
+      .eq("done", false)
+      .select("id"),
+    buildResponse(
+      supabase,
+      nodeId,
+      user.id,
+      todayISO,
+      parseDays(new URL(req.url).searchParams),
+      (node as { habit_started_on?: string | null }).habit_started_on ?? null,
+    ),
+  ]);
   const updatedTaskIds = (doneTasks ?? []).map((row) => row.id as string);
-
-  const payload = await buildResponse(
-    supabase,
-    nodeId,
-    user.id,
-    todayISO,
-    HISTORY_DAYS_DEFAULT,
-    (node as { habit_started_on?: string | null }).habit_started_on ?? null,
-  );
   return NextResponse.json({ ...payload, updated_task_ids: updatedTaskIds });
 }
 
@@ -260,25 +269,26 @@ export async function DELETE(
     .eq("completed_on", dateToDelete);
 
   // Reverse the planner cascade: any plan_task scheduled for that date and
-  // linked to this habit gets un-marked.
-  const { data: reopenedTasks } = await supabase
-    .from("plan_tasks")
-    .update({ done: false })
-    .eq("user_id", user.id)
-    .eq("node_id", nodeId)
-    .eq("scheduled_date", dateToDelete)
-    .eq("done", true)
-    .select("id");
+  // linked to this habit gets un-marked (alongside the history read).
+  const [{ data: reopenedTasks }, payload] = await Promise.all([
+    supabase
+      .from("plan_tasks")
+      .update({ done: false })
+      .eq("user_id", user.id)
+      .eq("node_id", nodeId)
+      .eq("scheduled_date", dateToDelete)
+      .eq("done", true)
+      .select("id"),
+    buildResponse(
+      supabase,
+      nodeId,
+      user.id,
+      todayISO,
+      parseDays(searchParams),
+      (node as { habit_started_on?: string | null }).habit_started_on ?? null,
+    ),
+  ]);
   const updatedTaskIds = (reopenedTasks ?? []).map((row) => row.id as string);
-
-  const payload = await buildResponse(
-    supabase,
-    nodeId,
-    user.id,
-    todayISO,
-    HISTORY_DAYS_DEFAULT,
-    (node as { habit_started_on?: string | null }).habit_started_on ?? null,
-  );
   return NextResponse.json({ ...payload, updated_task_ids: updatedTaskIds });
 }
 
@@ -379,7 +389,7 @@ export async function PATCH(
     nodeId,
     user.id,
     todayISO,
-    HISTORY_DAYS_DEFAULT,
+    parseDays(new URL(req.url).searchParams),
     startedOn,
   );
   return NextResponse.json(payload);

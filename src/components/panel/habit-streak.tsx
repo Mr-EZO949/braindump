@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { applyHabitDayToggle } from "@/lib/habits/streak";
 
 type StreakState = {
   streak: number;
@@ -75,26 +76,32 @@ export function HabitStreak({ nodeId }: HabitStreakProps) {
     if (acting || !data) return;
     setActing(true);
     setError(null);
+    const previous = data;
+    const date = today();
+    // If today is already done, DELETE it. Otherwise POST.
+    const method = previous.streak.doneToday ? "DELETE" : "POST";
+    // Flip the button and streak on tap; the server's answer replaces it.
+    setData(applyHabitDayToggle(previous, date, method === "POST", date));
     try {
-      // If today is already done, DELETE it. Otherwise POST.
-      const method = data.streak.doneToday ? "DELETE" : "POST";
       const url =
         method === "DELETE"
-          ? `/api/habits/${nodeId}?date=${encodeURIComponent(today())}`
-          : `/api/habits/${nodeId}`;
+          ? `/api/habits/${nodeId}?date=${encodeURIComponent(date)}&days=${HISTORY_DAYS_FETCH}`
+          : `/api/habits/${nodeId}?days=${HISTORY_DAYS_FETCH}`;
       const res = await fetch(url, {
         method,
         headers: method === "POST" ? { "Content-Type": "application/json" } : undefined,
-        body: method === "POST" ? JSON.stringify({ date: today() }) : undefined,
+        body: method === "POST" ? JSON.stringify({ date }) : undefined,
       });
       if (res.ok) {
         const json = (await res.json()) as HabitData;
         setData(json);
       } else {
         const json = await res.json().catch(() => ({}));
+        setData(previous);
         setError(json?.error ?? "Action failed");
       }
     } catch {
+      setData(previous);
       setError("Action failed");
     } finally {
       setActing(false);
@@ -106,7 +113,7 @@ export function HabitStreak({ nodeId }: HabitStreakProps) {
     setSavingCadence(true);
     setError(null);
     try {
-      const res = await fetch(`/api/habits/${nodeId}`, {
+      const res = await fetch(`/api/habits/${nodeId}?days=${HISTORY_DAYS_FETCH}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_per_week: value }),
@@ -154,7 +161,7 @@ export function HabitStreak({ nodeId }: HabitStreakProps) {
           className="habit-streak-toggle"
           data-done={data.streak.doneToday}
           onClick={handleToggleToday}
-          disabled={acting}
+          aria-busy={acting}
         >
           {data.streak.doneToday ? "Done today ✓" : "Mark today"}
         </button>

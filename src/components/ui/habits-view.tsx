@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GraphData, Node } from "@/types/graph";
-import { todayLocalISO } from "@/lib/habits/streak";
+import { applyHabitDayToggle, todayLocalISO } from "@/lib/habits/streak";
 
 type HabitsViewProps = {
   graphData: GraphData;
@@ -301,7 +301,7 @@ export function HabitsView({ graphData, onSelectNode, onPlannerInvalidate }: Hab
 
   const handleSetStartedOn = async (nodeId: string, value: string | null) => {
     try {
-      const res = await fetch(`/api/habits/${nodeId}`, {
+      const res = await fetch(`/api/habits/${nodeId}?days=${HISTORY_DAYS}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ started_on: value }),
@@ -318,37 +318,56 @@ export function HabitsView({ graphData, onSelectNode, onPlannerInvalidate }: Hab
     }
   };
 
+  // Latest toggle request per habit — a response from an older tap (e.g. a
+  // quick double-tap) must not overwrite the newer optimistic state.
+  const toggleSeqRef = useRef(new Map<string, number>());
+
   const handleToggleDay = async (
     nodeId: string,
     date: string,
     currentlyDone: boolean,
   ) => {
+    const seq = (toggleSeqRef.current.get(nodeId) ?? 0) + 1;
+    toggleSeqRef.current.set(nodeId, seq);
+    const previous = habits.get(nodeId)?.data ?? null;
+    const setData = (data: HabitData) =>
+      setHabits((prev) => {
+        const next = new Map(prev);
+        next.set(nodeId, { loading: false, data, error: null });
+        return next;
+      });
+
+    // Flip the cell and streak on tap; the server's answer replaces it.
+    if (previous) setData(applyHabitDayToggle(previous, date, !currentlyDone, today));
+    const revert = () => {
+      if (previous && toggleSeqRef.current.get(nodeId) === seq) setData(previous);
+    };
+
     try {
       const res = currentlyDone
-        ? await fetch(`/api/habits/${nodeId}?date=${date}`, { method: "DELETE" })
-        : await fetch(`/api/habits/${nodeId}`, {
+        ? await fetch(`/api/habits/${nodeId}?date=${date}&days=${HISTORY_DAYS}`, {
+            method: "DELETE",
+          })
+        : await fetch(`/api/habits/${nodeId}?days=${HISTORY_DAYS}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ date }),
           });
-      if (!res.ok) return;
+      if (!res.ok) {
+        revert();
+        return;
+      }
       const json = (await res.json()) as HabitData & { updated_task_ids?: string[] };
-      setHabits((prev) => {
-        const next = new Map(prev);
-        next.set(nodeId, {
-          loading: false,
-          data: { history: json.history, streak: json.streak, started_on: json.started_on ?? null },
-          error: null,
-        });
-        return next;
-      });
+      if (toggleSeqRef.current.get(nodeId) === seq) {
+        setData({ history: json.history, streak: json.streak, started_on: json.started_on ?? null });
+      }
       // If the cascade flipped any planner rows, tell the parent so the
       // planner mode re-fetches its task list.
       if (json.updated_task_ids && json.updated_task_ids.length > 0) {
         onPlannerInvalidate?.();
       }
     } catch {
-      // user can re-tap
+      revert(); // user can re-tap
     }
   };
 

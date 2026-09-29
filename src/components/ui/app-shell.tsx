@@ -3437,13 +3437,15 @@ export function AppShell({ initialUser }: AppShellProps) {
     // keeps it active (#13). Fire the same PATCH (the server's habit guard
     // records the day) and refresh so the streak/day reflects it.
     if (previousNode.node_type === "habit" && status === "completed") {
+      // Confirm on tap; only a failed request changes the message.
+      showToast("Logged today ✓");
       try {
-        await fetch(`/api/nodes/${nodeId}/status`, {
+        const res = await fetch(`/api/nodes/${nodeId}/status`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: "completed" }),
         });
-        showToast("Logged today ✓");
+        if (!res.ok) showToast("Couldn't log that — try again.");
       } catch {
         showToast("Couldn't log that — try again.");
       }

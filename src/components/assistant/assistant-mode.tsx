@@ -1645,6 +1645,17 @@ export function AssistantMode({
             .sort(compareTasks),
         );
       } else {
+        // Tick on tap; the saved row replaces it below, or it's rolled back.
+        persistTasks(
+          tasks
+            .map((t) =>
+              t.id === id
+                ? { ...t, done: nowDone, completed_at: completedAt }
+                : t,
+            )
+            .sort(compareTasks),
+        );
+
         const { data, error } = await supabase
           .from("plan_tasks")
           .update({ done: nowDone })
@@ -1654,6 +1665,7 @@ export function AssistantMode({
           .single();
 
         if (error || !data) {
+          persistTasks(tasks);
           setTaskError("Could not update task.");
           return;
         }
@@ -1663,6 +1675,7 @@ export function AssistantMode({
           completed_at: completedAt,
         });
         if (!savedTask) {
+          persistTasks(tasks);
           setTaskError("Could not update task.");
           return;
         }

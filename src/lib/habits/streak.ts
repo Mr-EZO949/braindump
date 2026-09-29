@@ -94,3 +94,32 @@ export function lastNDays(
   }
   return out;
 }
+
+// Optimistic tick: what the server will return after marking/unmarking `date`,
+// computed locally so the UI flips on tap instead of after the round trip.
+// Toggling today adjusts the streak arithmetically (exact for any length);
+// any other day re-walks the loaded history, and the server's response
+// replaces this a moment later either way.
+export function applyHabitDayToggle<
+  T extends {
+    history: Array<{ date: CompletionDate; done: boolean }>;
+    streak: { streak: number; doneToday: boolean; atRisk: boolean };
+  },
+>(data: T, date: CompletionDate, done: boolean, today: CompletionDate): T {
+  const history = data.history.map((day) => (day.date === date ? { ...day, done } : day));
+  let streak = data.streak;
+  if (date === today) {
+    if (done && !streak.doneToday) {
+      streak = { streak: streak.streak + 1, doneToday: true, atRisk: false };
+    } else if (!done && streak.doneToday) {
+      const remaining = Math.max(0, streak.streak - 1);
+      streak = { streak: remaining, doneToday: false, atRisk: remaining > 0 };
+    }
+  } else {
+    streak = computeStreak(
+      history.filter((day) => day.done).map((day) => day.date),
+      today,
+    );
+  }
+  return { ...data, history, streak };
+}
