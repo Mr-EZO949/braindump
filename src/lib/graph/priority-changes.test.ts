@@ -38,6 +38,12 @@ describe("parsePriorityChanges", () => {
       { today: "2026-10-07" },
     );
     expect(result).toMatchObject({ ok: true, changes: [{ target_date: "2026-10-09" }] });
+    // Words that don't resolve never silently clear the deadline.
+    const vague = parsePriorityChanges(
+      { changes: [{ node_id: "n1", action: "deadline", date_words: "end of term" }] },
+      { today: "2026-10-07" },
+    );
+    expect(vague.ok).toBe(false);
   });
 
   it("clears a deadline with an empty string", () => {

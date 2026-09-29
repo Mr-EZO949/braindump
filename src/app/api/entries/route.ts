@@ -9,6 +9,8 @@ import { runExtraction } from "@/lib/ai/extraction";
 import { loadCalibrationStats, selectAutoApply } from "@/lib/ai/auto-apply";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
+import { readDumpPriorities, statusTouchedIds, type DumpPriorityRead } from "@/lib/ai/dump-priorities";
+import { applyPriorityChanges } from "@/lib/ai/tools/priority-mutations";
 import { suggestAreas } from "@/lib/ai/areas";
 import { classifyDumpSize } from "@/lib/ai/dump-size";
 import { AI_INGESTION, AI_FLAGS, AI_RATE_LIMITS } from "@/lib/ai/config";
@@ -222,6 +224,14 @@ export async function POST(req: NextRequest) {
   // chips for domains the dump didn't structure. Skipped for suggest-steps
   // roadmaps (default_parent_node_id set) — those already have a home.
   const wantAreaSuggestions = !default_parent_node_id;
+  const today = await getRequestToday();
+  // Dump → priorities (lib/ai/dump-priorities.ts): once retrieval knows which
+  // existing nodes this dump is about, a small Haiku read pulls out "waiting
+  // for the result" / "moved to Friday" / "I need it for my masters" — in
+  // parallel with extraction. Only for the user's own dumps (the chat <nodes>
+  // save and suggest-steps paths don't show the result).
+  const wantPriorities = !default_parent_node_id && source_type !== "assistant_save";
+  let priorityRead: Promise<DumpPriorityRead | null> = Promise.resolve(null);
   const [result, areaResult] = await Promise.all([
     runExtraction({
       rawEntryId: rawEntry.id,
@@ -230,10 +240,22 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       supabase,
       // User's local date for "by Friday"-style deadlines (bd_tz cookie).
-      today: await getRequestToday(),
+      today,
       // Client cancel (e.g. the Cancel on "Generating steps…") stops the
       // Sonnet call instead of billing for it.
       signal: req.signal,
+      onRetrieved: wantPriorities
+        ? (nodes) => {
+            priorityRead = readDumpPriorities({
+              dump: trimmed,
+              nodeIds: nodes.map((n) => n.id),
+              today,
+              supabase,
+              userId: user.id,
+              workspaceId: workspace_id,
+            });
+          }
+        : undefined,
     }),
     wantAreaSuggestions
       ? suggestAreas({
@@ -286,14 +308,33 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const priorities = await priorityRead;
+  const toolCtx = { supabase, userId: user.id, workspaceId: workspace_id, selectedNodeId: null, today };
+  // Same engine as chat's update_priorities (applies at once; the client shows
+  // it with an Undo). Its one score recompute also covers the completions.
+  const applyPriorities = async () =>
+    priorities && priorities.changes.length > 0
+      ? applyPriorityChanges(toolCtx, { changes: priorities.changes })
+      : null;
+  const priorityUpdate = (applied: Awaited<ReturnType<typeof applyPriorities>>) => {
+    const unclear = priorities?.unclear ?? [];
+    if (applied && applied.accepted && "undo" in applied) {
+      return { applied: applied.applied, failed: applied.failed, undo: applied.undo, unclear };
+    }
+    return unclear.length > 0 ? { applied: [], failed: [], undo: null, unclear } : null;
+  };
+
   if (!result.ok) {
-    // Extraction failed — entry is saved, user can retry
+    // Extraction failed — entry is saved, user can retry. The priority facts
+    // don't depend on extraction, so they still apply.
+    const applied = await applyPriorities();
     return NextResponse.json(
       {
         raw_entry_id: rawEntry.id,
         status: "failed",
         error: result.error,
         message: "Extraction failed. You can retry via POST /api/entries/:id/retry",
+        priority_update: priorityUpdate(applied),
       },
       { status: 207 } // 207 = partial success (entry saved, extraction failed)
     );
@@ -311,7 +352,12 @@ export async function POST(req: NextRequest) {
   // acceptance route can complete them on accept. Cleaner: a dedicated
   // column, but local_ref marker keeps the migration footprint small.
   const completedExistingTitles: string[] = [];
-  if (result.completeExistingNodeIds.length > 0) {
+  // "did the exam, now waiting for the result" — the priority read's wait
+  // beats extraction's "did" (the result isn't in).
+  const statusTouched = statusTouchedIds(priorities);
+  const completeIds = result.completeExistingNodeIds.filter((id) => !statusTouched.has(id));
+  let anyStatusChanged = false;
+  if (completeIds.length > 0) {
     // Verify ownership + same workspace before applying status changes —
     // the AI could (theoretically) emit a UUID from another workspace.
     const { data: ownedNodes } = await supabase
@@ -319,7 +365,7 @@ export async function POST(req: NextRequest) {
       .select("id, title, status")
       .eq("user_id", user.id)
       .eq("workspace_id", workspace_id)
-      .in("id", result.completeExistingNodeIds);
+      .in("id", completeIds);
     const candidates = (ownedNodes ?? []).filter(
       (n) => n.status !== "completed" && n.status !== "archived",
     );
@@ -327,8 +373,6 @@ export async function POST(req: NextRequest) {
     // events) — and a HABIT the user says they did logs today instead of being
     // marked done forever. This used to be a raw status update, so "did my
     // workout today" in a dump completed the whole habit (#13 via braindump).
-    const today = await getRequestToday();
-    let anyStatusChanged = false;
     for (const n of candidates) {
       const outcome = await transitionNodeStatus({
         supabase,
@@ -345,11 +389,12 @@ export async function POST(req: NextRequest) {
         completedExistingTitles.push(n.title as string);
       }
     }
-    if (anyStatusChanged) {
-      await computeWorkspaceScores({ workspaceId: workspace_id, userId: user.id, supabase }).catch(
-        (err: unknown) => console.warn("[entries] score recompute failed:", err),
-      );
-    }
+  }
+  const appliedPriorities = await applyPriorities();
+  if (anyStatusChanged && !appliedPriorities?.accepted) {
+    await computeWorkspaceScores({ workspaceId: workspace_id, userId: user.id, supabase, today }).catch(
+      (err: unknown) => console.warn("[entries] score recompute failed:", err),
+    );
   }
 
   // Mark auto-complete proposed nodes so the acceptance route knows to
@@ -425,6 +470,9 @@ export async function POST(req: NextRequest) {
     clarifying_questions: result.clarifyingQuestions,
     completed_existing_node_titles: completedExistingTitles,
     auto_complete_local_refs: result.autoCompleteLocalRefs,
+    // What the dump changed about existing priorities (applied already, with
+    // an undo snapshot), plus anything too ambiguous to act on.
+    priority_update: priorityUpdate(appliedPriorities),
     // Life-area branches inferred from this dump that extraction did NOT already
     // turn into nodes — offered as optional chips in the review so the user can
     // add them as top-level branches (same as the wizard's step 2).

@@ -78,7 +78,12 @@ import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
 import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
-import { appliedActionNote, createAppliedMarkerParser } from "@/lib/chat/applied-marker";
+import {
+  appliedActionFromPayload,
+  appliedActionNote,
+  createAppliedMarkerParser,
+  type AppliedMarkerPayload,
+} from "@/lib/chat/applied-marker";
 import { classifyTaskSize } from "@/lib/ai/sizing";
 import { needsNextAction } from "@/lib/graph/next-action";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
@@ -2569,6 +2574,8 @@ export function AppShell({ initialUser }: AppShellProps) {
       completed_existing_node_titles?: string[];
       suggested_areas?: Array<{ title: string; area_type: string }>;
       auto_apply_proposal_ids?: string[];
+      // What the dump changed about existing priorities (already applied).
+      priority_update?: (Omit<AppliedMarkerPayload, "tool_name"> & { unclear?: string[] }) | null;
     },
     workspaceId: string | null,
   ) => {
@@ -2579,6 +2586,11 @@ export function AppShell({ initialUser }: AppShellProps) {
     const autoIds = (data.auto_apply_proposal_ids ?? []).filter((id) =>
       nodes.some((n) => n.id === id),
     );
+    // Dump → priorities: shown as the same applied card chat uses, with Undo.
+    const priorityAction = data.priority_update
+      ? appliedActionFromPayload({ ...data.priority_update, tool_name: "update_priorities" })
+      : null;
+    const unclear = data.priority_update?.unclear ?? [];
 
     const buildSummary = (appliedCount: number, reviewCount: number) =>
       [
@@ -2590,13 +2602,17 @@ export function AppShell({ initialUser }: AppShellProps) {
             }`
           : reviewCount > 0
             ? `I analyzed your dump and proposed ${reviewCount} node${reviewCount === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
-            : "I went through your dump but didn't find anything new worth proposing.",
+            : priorityAction
+              ? "Nothing new to add — I updated what matters instead:"
+              : "I went through your dump but didn't find anything new worth proposing.",
         completedTitles.length > 0
           ? `I also marked ${completedTitles.length} existing item${completedTitles.length === 1 ? "" : "s"} done: ${completedTitles.slice(0, 3).join(", ")}${completedTitles.length > 3 ? "…" : ""}.`
           : null,
         questions.length > 0
           ? `I have ${questions.length} quick clarifying question${questions.length === 1 ? "" : "s"} — answer inline when ready.`
           : null,
+        priorityAction && appliedCount + reviewCount > 0 ? "I also updated what matters:" : null,
+        unclear.length > 0 ? `One thing I didn't change — ${unclear[0]} Tell me here and I'll update it.` : null,
       ]
         .filter(Boolean)
         .join(" ");
@@ -2630,6 +2646,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         body: buildSummary(autoIds.length, nodes.length - autoIds.length),
         createdAt: nowIso,
         status: "ready" as const,
+        ...(priorityAction ? { appliedAction: { ...priorityAction, status: "applied" as const } } : {}),
       },
     ]);
     dumpInChatRef.current = true;
@@ -2655,6 +2672,13 @@ export function AppShell({ initialUser }: AppShellProps) {
           prev.map((m) => (m.id === summaryId ? { ...m, body: buildSummary(0, nodes.length) } : m)),
         );
       }
+    }
+
+    if (priorityAction && workspaceId) {
+      void refreshAfterPriorityChange(
+        workspaceId,
+        priorityAction.items.map((item) => item.nodeId),
+      );
     }
 
     const remaining = nodes.filter((n) => !appliedIds.has(n.id));

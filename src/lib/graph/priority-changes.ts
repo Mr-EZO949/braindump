@@ -51,7 +51,9 @@ function dateField(value: unknown, today: string | undefined, words?: unknown): 
   const fromWords = said && today ? resolveRelativeDay(said, today) : null;
   if (fromWords) return fromWords;
   const text = str(value);
-  if (!text) return null;
+  // Words that didn't resolve with no date beside them are a problem, not a
+  // "clear the deadline".
+  if (!text) return said ? undefined : null;
   if (DATE_RE.test(text)) return text;
   return (today && resolveRelativeDay(text, today)) || undefined;
 }

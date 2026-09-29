@@ -38,8 +38,18 @@ function text(value: unknown): string {
 
 export function parseAppliedPayload(raw: string): Omit<AppliedAction, "status"> | null {
   try {
-    const parsed = JSON.parse(raw) as Partial<AppliedMarkerPayload>;
-    if (typeof parsed.tool_name !== "string" || !Array.isArray(parsed.applied)) return null;
+    return appliedActionFromPayload(JSON.parse(raw) as Partial<AppliedMarkerPayload>);
+  } catch {
+    return null;
+  }
+}
+
+/** Server payload (chat marker, or a dump's priority_update) → card data. */
+export function appliedActionFromPayload(
+  parsed: Partial<AppliedMarkerPayload> | null | undefined,
+): Omit<AppliedAction, "status"> | null {
+  try {
+    if (!parsed || typeof parsed.tool_name !== "string" || !Array.isArray(parsed.applied)) return null;
     const items: AppliedActionItem[] = parsed.applied
       .filter((row) => row && typeof row.node_id === "string")
       .map((row) => ({

@@ -232,6 +232,10 @@ export async function runExtraction(params: {
   today?: string;
   // Client cancel: aborts the provider call and skips retries.
   signal?: AbortSignal;
+  // Called with the existing nodes retrieval found relevant, BEFORE the
+  // extraction call — lets the caller start work that needs them (the dump
+  // priority read) in parallel instead of after.
+  onRetrieved?: (nodes: ContextNodeForPrompt[]) => void;
 }): Promise<ExtractionResult> {
   const { rawEntryId, rawText, workspaceId, userId, supabase, today, signal } = params;
   // What the model sees: persona/workspace text + the existing nodes RELEVANT
@@ -273,6 +277,7 @@ export async function runExtraction(params: {
       rootNodeId: profile.rootNodeId,
     });
     console.log("[extraction] retrieval", retrieval.stats);
+    params.onRetrieved?.(retrieval.contextNodes);
     context = {
       workspaceContext: profile.workspaceContext,
       promptNodes: retrieval.contextNodes,
