@@ -35,7 +35,9 @@ import { hashText, normalizeAIError } from "@/lib/ai/errors";
 import { persistAIRun, recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
-import { dispatchTool, getToolSchemas, isPausingTool } from "@/lib/ai/tools";
+import { dispatchEager, getToolSchemas, isPausingTool } from "@/lib/ai/tools";
+import { looksMultiStep } from "@/lib/ai/tools/confirmations";
+import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
 import { buildHistoryMessages, sanitizeHistory, type HistoryTurn } from "@/lib/ai/chat-memory";
 import { getTemporalFlag } from "@/lib/ai/temporal-flags";
 import type { AssistantMode } from "@/types/ai";
@@ -500,24 +502,43 @@ export async function POST(req: NextRequest) {
             break;
           }
 
-          const toolResults: ToolResultBlockParam[] = await Promise.all(
-            toolUseBlocks.map(async (block: ToolUseBlock) => {
-              const result = await dispatchTool({
+          const ran = await Promise.all(
+            toolUseBlocks.map((block: ToolUseBlock) =>
+              dispatchEager({
                 name: block.name,
                 input: block.input,
                 tool_use_id: block.id,
                 ctx: toolCtx,
-              });
-              return {
-                type: "tool_result" as const,
-                tool_use_id: result.tool_use_id,
-                content: truncateToolContent(result.content),
-                is_error: result.is_error,
-              };
-            }),
+              }),
+            ),
           );
+          // A direct tool (update_priorities) already changed the graph —
+          // the browser shows what moved, with an Undo.
+          for (const { applied } of ran) {
+            if (applied) send(encodeAppliedMarker(applied));
+          }
+          const toolResults: ToolResultBlockParam[] = ran.map(({ result }) => ({
+            type: "tool_result" as const,
+            tool_use_id: result.tool_use_id,
+            content: truncateToolContent(result.content),
+            is_error: result.is_error,
+          }));
 
           messages.push({ role: "user", content: toolResults });
+
+          // The applied card IS the reply: a lone, fully applied priority
+          // change needs no follow-up model call (it would only say "Done"
+          // while re-sending the whole prompt). Failures and multi-step asks
+          // still go back to the model.
+          const lone = ran.length === 1 ? ran[0].applied : null;
+          if (
+            lone &&
+            lone.failed.length === 0 &&
+            !looksMultiStep(message) &&
+            assistantModel === AI_MODELS.CLAUDE_HAIKU
+          ) {
+            break;
+          }
 
           if (round === MAX_TOOL_ROUNDS - 1) {
             // Final round already consumed — force a text-only close.

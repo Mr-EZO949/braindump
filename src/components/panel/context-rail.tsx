@@ -10,6 +10,7 @@ import { getLinkedNodePerspectives, type LinkedNodePerspective } from "@/lib/gra
 import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, MicIcon, NetworkIcon } from "@/components/ui/icons";
 import { ChatRichText } from "@/components/ui/chat-rich-text";
 import { PendingActionCard } from "@/components/panel/pending-action-card";
+import { AppliedActionCard } from "@/components/panel/applied-action-card";
 import { HabitStreak } from "@/components/panel/habit-streak";
 import { useVoiceInput } from "@/components/voice/use-voice-input";
 import { classifyTaskSize } from "@/lib/ai/sizing";
@@ -17,6 +18,8 @@ import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/
 import type { GraphData, NodeStatus } from "@/types/graph";
 import type { ChatSessionMeta } from "@/lib/chat/sessions";
 import { NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
+import { formatShortDate } from "@/lib/graph/short-date";
+import { todayIsoDate } from "@/lib/planner/auto-schedule";
 
 type LinkCategory =
   | "parent"
@@ -85,6 +88,7 @@ type ContextRailProps = {
     choice?: string,
   ) => void;
   onCancelChat: () => void;
+  onUndoAppliedAction: (messageId: string) => void;
   pendingActionBusy: boolean;
   nudges: Nudge[];
   onSelectNudge: (nudge: Nudge) => void;
@@ -163,6 +167,7 @@ export function ContextRail({
   onRetryChat,
   onResolvePendingAction,
   onCancelChat,
+  onUndoAppliedAction,
   pendingActionBusy,
   nudges,
   onSelectNudge,
@@ -495,10 +500,18 @@ export function ContextRail({
                         </div>
                       ) : message.body.trim().length === 0 &&
                         message.status !== "error" &&
-                        !message.pendingAction ? null : (
+                        !message.pendingAction &&
+                        !message.appliedAction ? null : (
                         <div className="chat-msg-assistant" key={message.id}>
                           <div className="chat-msg-assistant-card">
                             {message.body.length > 0 ? <ChatRichText body={message.body} /> : null}
+
+                            {message.appliedAction ? (
+                              <AppliedActionCard
+                                action={message.appliedAction}
+                                onUndo={() => onUndoAppliedAction(message.id)}
+                              />
+                            ) : null}
 
                             {message.pendingAction ? (
                               <PendingActionCard
@@ -735,11 +748,44 @@ export function ContextRail({
                     ) : null}
                   </div>
 
+                  {/* On hold — what it's waiting on and when to check back
+                      (ranking v2). Its open steps are out of Focus meanwhile. */}
+                  {selectedNode.status === "paused" ? (() => {
+                    const resumeOn = selectedNode.resumeOn ?? null;
+                    const due = resumeOn !== null && resumeOn <= todayIsoDate();
+                    return (
+                      <div className={`detail-waiting${due ? " detail-waiting--due" : ""}`}>
+                        <span className="detail-waiting-icon" aria-hidden="true">
+                          ⏸
+                        </span>
+                        <div className="detail-waiting-text">
+                          <span className="detail-waiting-title">
+                            {selectedNode.waitingFor ? `Waiting for ${selectedNode.waitingFor}` : "On hold"}
+                          </span>
+                          <span className="detail-waiting-sub">
+                            {due
+                              ? "Time to check back — any news?"
+                              : resumeOn
+                                ? `Check back ${formatShortDate(resumeOn)} · its steps are out of Focus till then`
+                                : "Its steps are out of Focus until you pick it back up"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })() : null}
+
                   {/* Score — compact inline + why */}
                   {(() => {
                     const displayScore = selectedNode.currentImportanceScore ?? selectedNode.importanceIndex;
-                    const signals = selectedNode.importanceTopSignals ?? [];
-                    const reason = selectedNode.importanceReason;
+                    const paused = selectedNode.status === "paused";
+                    // The tags and the waiting callout already say "high
+                    // stakes" / "on hold" — the chips keep what they don't.
+                    const signals = (selectedNode.importanceTopSignals ?? []).filter(
+                      (sig) =>
+                        !(sig === "stakes" && selectedNode.stakes === 1) &&
+                        !(sig === "on_hold" && paused),
+                    );
+                    const reason = paused ? null : selectedNode.importanceReason;
                     const hasExplainer = reason || signals.length > 0;
                     return (
                       <div className="detail-score">
@@ -872,6 +918,23 @@ export function ContextRail({
                                 title="Completed — click to reopen"
                               >
                                 Completed ✓
+                              </button>
+                            </>
+                          ) : selectedNode.status === "paused" ? (
+                            <>
+                              <button
+                                className="da-start"
+                                onClick={() => onStatusChange(selectedNode.id, "active")}
+                                type="button"
+                              >
+                                Resume
+                              </button>
+                              <button
+                                className="da-complete"
+                                onClick={() => onStatusChange(selectedNode.id, "completed")}
+                                type="button"
+                              >
+                                Mark complete
                               </button>
                             </>
                           ) : isHabitNode ? (

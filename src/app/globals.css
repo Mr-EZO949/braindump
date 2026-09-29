@@ -16417,3 +16417,465 @@ input[type="search"]::-webkit-search-results-decoration {
   color: var(--color-accent-primary-hover);
   background: var(--color-accent-soft);
 }
+
+/* ─── Ranking v2 — applied priority card (chat) ──────────────
+   update_priorities applies at once; this card is the reply: what moved,
+   with an Undo. Same family as .pending-action-card, a notch warmer. */
+.applied-card {
+  margin-top: 10px;
+  padding: 10px 10px 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border-subtle);
+  background:
+    linear-gradient(180deg, rgba(213, 58, 71, 0.07), rgba(213, 58, 71, 0) 58px),
+    var(--color-bg-surface);
+  box-shadow: var(--shadow-inset);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: appliedCardIn 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.applied-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.applied-card-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--color-accent-primary);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.applied-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.applied-card-undo {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    color var(--motion-fast),
+    border-color var(--motion-fast),
+    background-color var(--motion-fast);
+}
+
+.applied-card-undo:hover {
+  color: var(--color-text-primary);
+  border-color: rgba(213, 58, 71, 0.4);
+  background: var(--color-accent-soft);
+}
+
+.applied-card-undo:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.applied-card-busy {
+  flex: none;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.applied-card-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  transition: opacity var(--motion-normal);
+}
+
+.applied-card-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+  animation: appliedRowIn 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.applied-card-row + .applied-card-row {
+  border-top: 1px solid var(--color-border-faint);
+}
+
+.applied-card-glyph {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text-tertiary);
+}
+
+.applied-card-glyph--raise {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-primary-hover);
+}
+
+.applied-card-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.applied-card-name {
+  font-size: 12.5px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.applied-card-detail {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--color-text-muted);
+}
+
+.applied-card-delta {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.applied-card-delta--up {
+  color: var(--color-accent-primary-hover);
+  background: var(--color-accent-soft);
+}
+
+.applied-card-delta--down {
+  color: var(--color-text-muted);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.applied-card--undone .applied-card-mark {
+  background: var(--color-text-muted);
+  box-shadow: none;
+  color: var(--color-bg-surface);
+}
+
+.applied-card--undone .applied-card-list {
+  opacity: 0.5;
+}
+
+.applied-card--undone .applied-card-detail {
+  text-decoration: line-through;
+}
+
+.applied-card-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.applied-card-note--error {
+  color: var(--color-danger, #d35a55);
+}
+
+@keyframes appliedCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes appliedRowIn {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+:root[data-theme="light"] .applied-card {
+  background:
+    linear-gradient(180deg, rgba(213, 58, 71, 0.06), rgba(213, 58, 71, 0) 58px),
+    #ffffff;
+  box-shadow: 0 1px 2px rgba(20, 20, 24, 0.04);
+}
+
+:root[data-theme="light"] .applied-card-glyph,
+:root[data-theme="light"] .applied-card-delta--down {
+  background: rgba(20, 20, 24, 0.05);
+}
+
+/* ─── Ranking v2 — graph pulse on nodes whose priority just changed ── */
+.graph-node-pulse {
+  pointer-events: none;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: graphNodePulse 1.2s cubic-bezier(0.16, 1, 0.3, 1) 2 both;
+}
+
+@keyframes graphNodePulse {
+  0% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.16);
+  }
+}
+
+/* ─── Ranking v2 — Focus check-back card ─────────────────────
+   A waiting item whose day came: calmer than "Start here" (it's a quick
+   decision, not work), in the same amber as the "paused" tag. */
+.lockin-hero.lockin-hero--checkback,
+.lockin-hero.lockin-hero--checkback:hover {
+  cursor: default;
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(210, 190, 110, 0.1), rgba(210, 190, 110, 0) 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012));
+  border-color: rgba(210, 190, 110, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.lockin-hero.lockin-hero--checkback:active {
+  transform: none;
+}
+
+.lockin-hero--checkback .lockin-hero-eyebrow {
+  color: rgba(214, 196, 124, 0.95);
+}
+
+.lockin-hero-pip--calm {
+  background: rgb(210, 190, 110);
+  animation: none;
+  box-shadow: 0 0 0 3px rgba(210, 190, 110, 0.16);
+}
+
+.lockin-hero-title-link {
+  font-family: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 5px;
+  text-decoration-thickness: 1px;
+  transition: text-decoration-color var(--motion-fast);
+}
+
+.lockin-hero-title-link:hover,
+.lockin-hero-title-link:focus-visible {
+  outline: none;
+  text-decoration-color: currentColor;
+}
+
+.lockin-checkback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.lockin-checkback-btn {
+  padding: 9px 15px;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition:
+    color var(--motion-fast),
+    border-color var(--motion-fast),
+    background var(--motion-fast),
+    box-shadow var(--motion-fast);
+}
+
+.lockin-checkback-btn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.lockin-checkback-btn--primary,
+.lockin-checkback-btn--primary:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--color-accent-primary);
+  background: var(--color-accent-primary);
+  box-shadow: 0 6px 18px rgba(213, 58, 71, 0.24);
+}
+
+.lockin-checkback-btn--primary:hover:not(:disabled) {
+  border-color: var(--color-accent-primary-hover);
+  background: var(--color-accent-primary-hover);
+}
+
+.lockin-checkback-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.lockin-checkback-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.lockin-backup-tag {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(210, 190, 110, 0.2);
+  color: rgba(210, 190, 110, 0.9);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+:root[data-theme="light"] .lockin-hero.lockin-hero--checkback,
+:root[data-theme="light"] .lockin-hero.lockin-hero--checkback:hover {
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(176, 142, 40, 0.1), rgba(176, 142, 40, 0) 60%),
+    linear-gradient(180deg, rgba(20, 20, 24, 0.02), rgba(20, 20, 24, 0.005));
+  border-color: rgba(176, 142, 40, 0.3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+:root[data-theme="light"] .lockin-hero--checkback .lockin-hero-eyebrow,
+:root[data-theme="light"] .lockin-backup-tag {
+  color: rgba(138, 108, 20, 0.95);
+}
+
+:root[data-theme="light"] .lockin-checkback-btn {
+  border-color: rgba(20, 20, 24, 0.1);
+  background: rgba(20, 20, 24, 0.02);
+}
+
+:root[data-theme="light"] .lockin-checkback-btn:hover:not(:disabled) {
+  border-color: rgba(20, 20, 24, 0.18);
+  background: rgba(20, 20, 24, 0.05);
+}
+
+:root[data-theme="light"] .lockin-checkback-btn--primary,
+:root[data-theme="light"] .lockin-checkback-btn--primary:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--color-accent-primary);
+  background: var(--color-accent-primary);
+}
+
+/* ─── Ranking v2 — Details: what an on-hold node is waiting on ── */
+.detail-waiting {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: -6px 0 16px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(200, 180, 100, 0.16);
+  background: rgba(200, 180, 100, 0.05);
+}
+
+.detail-waiting-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  font-size: 10px;
+  background: rgba(200, 180, 100, 0.12);
+  color: rgba(214, 196, 124, 0.95);
+}
+
+.detail-waiting-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-waiting-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.detail-waiting-sub {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.detail-waiting--due {
+  border-color: rgba(213, 58, 71, 0.3);
+  background: var(--color-accent-soft);
+}
+
+.detail-waiting--due .detail-waiting-sub {
+  color: var(--color-accent-primary-hover);
+}
+
+:root[data-theme="light"] .detail-waiting {
+  border-color: rgba(176, 142, 40, 0.22);
+  background: rgba(176, 142, 40, 0.06);
+}
+
+:root[data-theme="light"] .detail-waiting-icon {
+  background: rgba(176, 142, 40, 0.12);
+  color: rgba(138, 108, 20, 0.95);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .applied-card,
+  .applied-card-row {
+    animation: none;
+  }
+  .graph-node-pulse {
+    animation: none;
+    opacity: 0.55;
+  }
+}

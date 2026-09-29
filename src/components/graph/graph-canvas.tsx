@@ -52,6 +52,8 @@ type GraphCanvasProps = {
   onCommitNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   onSelectNode: (nodeId: string | null) => void;
   onViewChange: (view: ViewState) => void;
+  /** Nodes whose priority just changed (chat / Focus / Undo) — one soft pulse. */
+  pulseNodeIds?: ReadonlySet<string> | null;
   searchQuery: string;
   suppressInitialFocusAnimation: boolean;
 };
@@ -1643,6 +1645,7 @@ export function GraphCanvas({
   onCommitNodePosition,
   onSelectNode,
   onViewChange,
+  pulseNodeIds,
   searchQuery,
   suppressInitialFocusAnimation,
 }: GraphCanvasProps) {
@@ -2977,6 +2980,22 @@ export function GraphCanvas({
                     </linearGradient>
                   ) : null}
                 </defs>
+                {pulseNodeIds?.has(node.id) ? (
+                  // Ranking v2: this node's priority just changed — a brand-red
+                  // ring (the applied card's ✓), so the resize reads as a response.
+                  <rect
+                    aria-hidden="true"
+                    className="graph-node-pulse"
+                    fill="none"
+                    height={node.height + 8}
+                    rx={Math.min(node.width + 8, node.height + 8) * 0.44}
+                    stroke="rgba(225, 70, 84, 0.9)"
+                    strokeWidth={1.8}
+                    width={node.width + 8}
+                    x={-(node.width + 8) / 2}
+                    y={-(node.height + 8) / 2}
+                  />
+                ) : null}
                 <g filter={nodeFilter}>
                   <rect
                     fill="rgba(4,4,6,0.92)"

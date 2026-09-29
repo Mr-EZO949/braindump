@@ -210,7 +210,7 @@ export async function buildAssistantContext(params: {
         `Title: ${sel.title}`,
         `ID: ${sel.id}`,
         `Type: ${sel.node_type}`,
-        `Importance: ${sel.importance}${sel.current_importance_score != null ? ` (score: ${Math.round(sel.current_importance_score)})` : ""}`,
+        `Importance: ${sel.importance}${sel.current_importance_score != null ? ` (importance ${Math.round(sel.current_importance_score)}/100)` : ""}`,
         `Status: ${statusLabel(sel)}`,
         sel.target_date ? `Due: ${sel.target_date}` : null,
         sel.stakes != null && sel.stakes !== 0 ? `Stakes: ${stakesLevel(sel.stakes)}` : null,
@@ -293,7 +293,9 @@ export async function buildAssistantContext(params: {
     const parts = [
       `${node.title} [${node.node_type}]`,
       summarySnippet,
-      `score: ${Math.round(score)}, status: ${statusLabel(node)}${node.target_date ? `, due: ${node.target_date}` : ""}${node.stakes != null && node.stakes !== 0 ? `, stakes: ${stakesLevel(node.stakes)}` : ""}`,
+      // "importance N/100", not "score": on an exam node a bare "score: 78"
+      // read as the user's grade (assistant-v21 eval).
+      `importance ${Math.round(score)}/100, status: ${statusLabel(node)}${node.target_date ? `, due: ${node.target_date}` : ""}${node.stakes != null && node.stakes !== 0 ? `, stakes: ${stakesLevel(node.stakes)}` : ""}`,
       `id: ${node.id}`,
     ].filter(Boolean);
     const text = parts.join(" — ");

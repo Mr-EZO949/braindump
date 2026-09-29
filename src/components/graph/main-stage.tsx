@@ -49,6 +49,8 @@ type MainStageProps = {
   }>;
   graphData: GraphData;
   workProgressByNode?: ReadonlyMap<string, WorkProgress>;
+  /** Nodes whose priority just changed — they pulse once (ranking v2). */
+  pulseNodeIds?: ReadonlySet<string> | null;
   graphImportanceFilter: string;
   graphImportanceFilterOptions: Array<{
     label: string;
@@ -105,6 +107,7 @@ type MainStageProps = {
 
 export function MainStage({
   workProgressByNode,
+  pulseNodeIds,
   createNodeDraft,
   createNodeError,
   createNodeSubmitting,
@@ -207,6 +210,7 @@ export function MainStage({
         onCommitNodePosition={onCommitNodePosition}
         onSelectNode={onSelectNode}
         onViewChange={onCameraViewChange}
+        pulseNodeIds={pulseNodeIds}
         searchQuery={graphSearchValue}
         suppressInitialFocusAnimation={suppressInitialFocusAnimation}
       />

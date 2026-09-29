@@ -56,6 +56,29 @@ export interface PendingAction {
   errorMessage?: string;
 }
 
+// A change chat already applied (update_priorities) — shown as a card with an
+// Undo instead of an Accept/Reject gate. `undo` is the server's snapshot of
+// what the change touched; it goes back to /api/assistant/priorities/undo.
+export type AppliedActionStatus = "applied" | "undoing" | "undone" | "error";
+
+export interface AppliedActionItem {
+  nodeId: string;
+  title: string;
+  action: string;
+  detail: string;
+  scoreBefore: number | null;
+  scoreAfter: number | null;
+}
+
+export interface AppliedAction {
+  toolName: string;
+  items: AppliedActionItem[];
+  failed: { title: string; action: string; error: string }[];
+  undo: unknown;
+  status: AppliedActionStatus;
+  errorMessage?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatMessageRole;
@@ -64,6 +87,7 @@ export interface ChatMessage {
   sections?: ChatMessageSection[];
   status?: ChatMessageStatus;
   pendingAction?: PendingAction;
+  appliedAction?: AppliedAction;
 }
 
 // M4.1 — Proactive nudge surfaced in the empty-chat state. Produced by

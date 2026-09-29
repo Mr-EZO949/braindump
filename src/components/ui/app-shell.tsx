@@ -78,14 +78,24 @@ import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
 import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
+import { appliedActionNote, createAppliedMarkerParser } from "@/lib/chat/applied-marker";
 import { classifyTaskSize } from "@/lib/ai/sizing";
 import { needsNextAction } from "@/lib/graph/next-action";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { computeWorkProgress } from "@/lib/graph/work-progress";
 import { NODE_TYPE_INFO, NODE_TYPES, normalizeNodeType } from "@/lib/graph/node-types";
-import type { RailTab, ChatMessage, ChatScope, Nudge, PendingAction } from "@/types/chat";
+import type {
+  AppliedAction,
+  RailTab,
+  ChatMessage,
+  ChatScope,
+  Nudge,
+  PendingAction,
+} from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, NodeType, Workspace } from "@/types/graph";
-import { localDateISO } from "@/lib/time/local-date";
+import { addDaysISO, localDateISO } from "@/lib/time/local-date";
+import { todayIsoDate } from "@/lib/planner/auto-schedule";
+import { clientDayHints } from "@/lib/habits/streak";
 import {
   acceptProposalsNow,
   readAutoApplyPreference,
@@ -203,6 +213,10 @@ function createDraftFromNode(node: Node): CreateNodeInput {
 }
 
 const CHAT_HISTORY_MAX = 200;
+// How long a node pulses after its priority changed, and how far "Still
+// waiting" on a Focus check-back pushes the next check (ranking v2).
+const PRIORITY_PULSE_MS = 2600;
+const CHECK_BACK_SNOOZE_DAYS = 7;
 
 function getChatHistoryKey(userId: string | null, workspaceId: string | null): string | null {
   if (!userId || !workspaceId) return null;
@@ -444,6 +458,10 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [chatScope, setChatScope] = useState<ChatScope>(createWorkspaceScope("General"));
   const [chatLoading, setChatLoading] = useState(false);
   const [pendingActionBusy, setPendingActionBusy] = useState(false);
+  // Nodes whose priority just changed (chat, Focus check-back, Undo) — the
+  // graph pulses them once so the resize reads as a response.
+  const [priorityPulseIds, setPriorityPulseIds] = useState<ReadonlySet<string> | null>(null);
+  const priorityPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [nudges, setNudges] = useState<Nudge[]>([]);
   const chatAbortRef = useRef<AbortController | null>(null);
 
@@ -1275,6 +1293,84 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
+  // After a priority change (already applied server-side): reload the graph so
+  // node sizes follow the new scores, and pulse the nodes that moved.
+  const refreshAfterPriorityChange = async (workspaceId: string, nodeIds: string[]) => {
+    if (authUser?.id) {
+      try {
+        setGraphData(
+          await loadWorkspaceGraphData(authUser.id, workspaceId, selectedWorkspace?.name ?? null),
+        );
+      } catch {
+        // The card still shows the change; the next load resizes the nodes.
+      }
+    }
+    if (priorityPulseTimerRef.current) clearTimeout(priorityPulseTimerRef.current);
+    setPriorityPulseIds(new Set(nodeIds));
+    priorityPulseTimerRef.current = setTimeout(() => setPriorityPulseIds(null), PRIORITY_PULSE_MS);
+  };
+
+  // Undo on an applied priority card: the server restores exactly the fields
+  // the change touched (lib/ai/tools/priority-mutations undoPriorityChanges).
+  const undoAppliedAction = async (messageId: string) => {
+    const action = chatMessages.find((m) => m.id === messageId)?.appliedAction;
+    const workspaceId = selectedWorkspaceId;
+    if (!action || (action.status !== "applied" && action.status !== "error") || !workspaceId) return;
+
+    const setStatus = (status: AppliedAction["status"], errorMessage?: string) =>
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId && m.appliedAction
+            ? { ...m, appliedAction: { ...m.appliedAction, status, errorMessage } }
+            : m,
+        ),
+      );
+
+    setStatus("undoing");
+    try {
+      const res = await fetch("/api/assistant/priorities/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_id: workspaceId, undo: action.undo, ...clientDayHints() }),
+      });
+      if (!res.ok) throw new Error("undo failed");
+      setStatus("undone");
+    } catch {
+      setStatus("error", "Couldn't undo that — try again.");
+    }
+    void refreshAfterPriorityChange(
+      workspaceId,
+      action.items.map((item) => item.nodeId),
+    );
+  };
+
+  // Focus's check-back card: "It's done" completes the waiting item; "Still
+  // waiting" keeps it on hold and asks again in a week. Same engine as chat's
+  // update_priorities, no model call.
+  const handleCheckBack = async (nodeId: string, decision: "done" | "still_waiting") => {
+    const workspaceId = selectedWorkspaceId;
+    if (!workspaceId) return;
+    const node = graphData.nodes.find((n) => n.id === nodeId);
+    const change =
+      decision === "done"
+        ? { node_id: nodeId, title: node?.title ?? "", action: "complete" }
+        : {
+            node_id: nodeId,
+            title: node?.title ?? "",
+            action: "wait",
+            waiting_for: node?.waiting_for ?? "an update",
+            check_back_on: addDaysISO(todayIsoDate(), CHECK_BACK_SNOOZE_DAYS),
+          };
+    const res = await fetch("/api/assistant/priorities", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: workspaceId, changes: [change], ...clientDayHints() }),
+    });
+    if (!res.ok) throw new Error("check-back failed");
+    showToast(decision === "done" ? "Done ✓" : `OK — I'll ask again next week`);
+    await refreshAfterPriorityChange(workspaceId, [nodeId]);
+  };
+
   // Streams /api/assistant/chat (or /resume) into the assistant bubble.
   // Handles the <<BRAINDUMP_PAUSE>> marker: when seen, attaches a pending
   // action to the bubble so the user gets an inline Accept/Reject card.
@@ -1293,8 +1389,12 @@ export function AppShell({ initialUser }: AppShellProps) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     const parser = createPauseMarkerParser();
+    // Chained after the pause parser: a change chat already applied
+    // (update_priorities) arrives as its own marker → applied card + Undo.
+    const appliedParser = createAppliedMarkerParser();
     let cleanText = "";
     let sawPause = false;
+    const appliedNodeIds = new Set<string>();
 
     // Snapshot the pre-stream body once so appends don't accumulate on top
     // of their own prior output. Each write then sets body = base + stream.
@@ -1321,24 +1421,46 @@ export function AppShell({ initialUser }: AppShellProps) {
       );
     };
 
+    const attachApplied = (applied: Omit<AppliedAction, "status">) => {
+      for (const item of applied.items) appliedNodeIds.add(item.nodeId);
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId ? { ...m, appliedAction: { ...applied, status: "applied" } } : m,
+        ),
+      );
+    };
+
+    const takeText = (text: string) => {
+      const next = appliedParser.push(text);
+      if (next.marker) attachApplied(next.marker);
+      if (next.text.length > 0) {
+        cleanText += next.text;
+        writeBody(cleanText);
+      }
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       const chunk = decoder.decode(value, { stream: true });
       const parsed = parser.push(chunk);
-      if (parsed.text.length > 0) {
-        cleanText += parsed.text;
-        writeBody(cleanText);
-      }
+      takeText(parsed.text);
       if (parsed.pause && !sawPause) {
         sawPause = true;
         attachPending({ ...parsed.pause, status: "awaiting" });
       }
     }
-    const tail = parser.flush();
+    takeText(parser.flush().text);
+    const tail = appliedParser.flush();
     if (tail.text.length > 0) {
       cleanText += tail.text;
       writeBody(cleanText);
+    }
+
+    // The graph already changed — resize the nodes now and pulse the ones
+    // that moved, so the rerank is visible where the user is looking.
+    if (appliedNodeIds.size > 0 && targetWorkspaceId) {
+      void refreshAfterPriorityChange(targetWorkspaceId, [...appliedNodeIds]);
     }
 
     if (sawPause) return;
@@ -1432,9 +1554,17 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       // Prior turns in this thread — send as plain {role, body} so the server
       // can compress old ones if the history gets long.
+      // An applied priority card has no text of its own — its note tells the
+      // model what already changed (or that the user undid it).
       const history = chatMessages
-        .filter((m) => (m.body ?? "").trim().length > 0 && m.status !== "error")
-        .map((m) => ({ role: m.role, body: m.body }));
+        .filter((m) => m.status !== "error")
+        .map((m) => ({
+          role: m.role,
+          body: m.appliedAction
+            ? `${m.body ?? ""}\n\n${appliedActionNote(m.appliedAction)}`.trim()
+            : (m.body ?? ""),
+        }))
+        .filter((m) => m.body.trim().length > 0);
 
       chatAbortRef.current = abortCtrl;
 
@@ -3757,6 +3887,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 edgeConnections={selectedNodeConnections}
                 graphData={filteredGraphData}
                 workProgressByNode={workProgressByNode}
+                pulseNodeIds={priorityPulseIds}
                 graphLoading={graphLoading}
                 graphImportanceFilter={importanceFilter}
                 graphSearchValue={graphSearchValue}
@@ -3955,6 +4086,9 @@ export function AppShell({ initialUser }: AppShellProps) {
             void resolvePendingAction(messageId, decision, choice);
           }}
           onCancelChat={cancelChat}
+          onUndoAppliedAction={(messageId) => {
+            void undoAppliedAction(messageId);
+          }}
           pendingActionBusy={pendingActionBusy}
           nudges={nudges}
           onSelectNudge={(nudge) => {
@@ -4569,6 +4703,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 setWhatNowOpen(false);
                 setAppMode("assistant");
               }}
+              onCheckBack={handleCheckBack}
               onSelectNudge={(nudge) => {
                 setWhatNowOpen(false);
                 // No app-mode swap — the chat fires in the right rail

@@ -39,7 +39,8 @@ import { recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { buildAssistantContext } from "@/lib/ai/context";
-import { dispatchTool, getToolSchemas, isReadOnlyTool, isPausingTool } from "@/lib/ai/tools";
+import { dispatchEager, dispatchTool, getToolSchemas, isReadOnlyTool, isPausingTool } from "@/lib/ai/tools";
+import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
 import { resolveChoice } from "@/lib/ai/tools/interactive";
 import { actionSucceeded, confirmationFor, looksMultiStep } from "@/lib/ai/tools/confirmations";
 import { looksLikeStructuralEdit } from "@/lib/graph/dump-heuristic";
@@ -435,22 +436,27 @@ export async function POST(req: NextRequest) {
             break;
           }
 
-          const results: ToolResultBlockParam[] = await Promise.all(
-            toolUseBlocks.map(async (block: ToolUseBlock) => {
-              const result = await dispatchTool({
+          const ran = await Promise.all(
+            toolUseBlocks.map((block: ToolUseBlock) =>
+              dispatchEager({
                 name: block.name,
                 input: block.input,
                 tool_use_id: block.id,
                 ctx: toolCtx,
-              });
-              return {
-                type: "tool_result" as const,
-                tool_use_id: result.tool_use_id,
-                content: truncateToolContent(result.content),
-                is_error: result.is_error,
-              };
-            }),
+              }),
+            ),
           );
+          // Same as the chat route: a direct tool's change reaches the
+          // browser as an applied card with an Undo.
+          for (const { applied } of ran) {
+            if (applied) send(encodeAppliedMarker(applied));
+          }
+          const results: ToolResultBlockParam[] = ran.map(({ result }) => ({
+            type: "tool_result" as const,
+            tool_use_id: result.tool_use_id,
+            content: truncateToolContent(result.content),
+            is_error: result.is_error,
+          }));
 
           messages.push({ role: "user", content: results });
 

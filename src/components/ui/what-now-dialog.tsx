@@ -126,7 +126,17 @@ type WhatNowDialogProps = {
   onFocusNode: (nodeId: string) => void;
   onScheduledToPlanner?: () => void;
   onSelectNudge?: (nudge: Nudge) => void;
+  // A waiting item whose check-back day came: one tap settles it ($0).
+  onCheckBack?: (nodeId: string, decision: "done" | "still_waiting") => Promise<void>;
 };
+
+// "Check back: waiting for exam result" → "Waiting for exam result" (the
+// eyebrow already says Check back).
+function checkBackLine(node: TopNode): string {
+  const signal = node.planning_signals[0] ?? "";
+  const rest = signal.replace(/^Check back:\s*/i, "");
+  return rest ? rest.charAt(0).toUpperCase() + rest.slice(1) : "On hold — any news?";
+}
 
 export function WhatNowDialog({
   workspaceId,
@@ -136,12 +146,15 @@ export function WhatNowDialog({
   onFocusNode,
   onScheduledToPlanner,
   onSelectNudge,
+  onCheckBack,
 }: WhatNowDialogProps) {
   const [loading, setLoading] = useState(() => !readFocusCache(workspaceId));
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<LockInData | null>(() => readFocusCache(workspaceId));
   const [scheduling, setScheduling] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [checkBackBusy, setCheckBackBusy] = useState<"done" | "still_waiting" | null>(null);
+  const [checkBackError, setCheckBackError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -299,6 +312,21 @@ export function WhatNowDialog({
   const top = data?.top ?? [];
   const nudges = data?.nudges ?? [];
   const backups = top.slice(1, 3);
+  const hero = top[0];
+
+  const settleCheckBack = async (decision: "done" | "still_waiting") => {
+    if (!hero || !onCheckBack || checkBackBusy) return;
+    setCheckBackBusy(decision);
+    setCheckBackError(null);
+    try {
+      // The graph refresh that follows changes graphSignature → Focus refetches.
+      await onCheckBack(hero.id, decision);
+    } catch {
+      setCheckBackError("Couldn't update that — try again.");
+    } finally {
+      setCheckBackBusy(null);
+    }
+  };
 
   return (
     <motion.div
@@ -334,28 +362,66 @@ export function WhatNowDialog({
         </div>
       ) : (
         <>
-          {/* The one thing — pick #1, the obvious move. Whole card is the action. */}
-          <motion.button
-            className="lockin-hero"
-            onClick={() => onFocusNode(top[0].id)}
-            type="button"
-            variants={ITEM_VARIANTS}
-          >
-            <span className="lockin-hero-eyebrow">
-              <span className="lockin-hero-pip" aria-hidden="true" />
-              Start here
-            </span>
-            <span className="lockin-hero-title">{top[0].title}</span>
-            {top[0].planning_signals[0] ? (
-              <span className="lockin-hero-signal">{top[0].planning_signals[0]}</span>
-            ) : null}
-            <span className="lockin-hero-go">
-              Focus this
-              <span className="lockin-hero-go-arrow" aria-hidden="true">
-                →
+          {hero.check_back && onCheckBack ? (
+            /* A waiting item whose day came — a decision, not a work block:
+               two taps settle it, no chat needed. */
+            <motion.div className="lockin-hero lockin-hero--checkback" variants={ITEM_VARIANTS}>
+              <span className="lockin-hero-eyebrow">
+                <span className="lockin-hero-pip lockin-hero-pip--calm" aria-hidden="true" />
+                Check back
               </span>
-            </span>
-          </motion.button>
+              <button
+                className="lockin-hero-title lockin-hero-title-link"
+                onClick={() => onFocusNode(hero.id)}
+                type="button"
+              >
+                {hero.title}
+              </button>
+              <span className="lockin-hero-signal">{checkBackLine(hero)}</span>
+              <div className="lockin-checkback-actions">
+                <button
+                  className="lockin-checkback-btn lockin-checkback-btn--primary"
+                  disabled={checkBackBusy !== null}
+                  onClick={() => void settleCheckBack("done")}
+                  type="button"
+                >
+                  {checkBackBusy === "done" ? "Saving…" : "It's done ✓"}
+                </button>
+                <button
+                  className="lockin-checkback-btn"
+                  disabled={checkBackBusy !== null}
+                  onClick={() => void settleCheckBack("still_waiting")}
+                  type="button"
+                >
+                  {checkBackBusy === "still_waiting" ? "Saving…" : "Still waiting"}
+                </button>
+              </div>
+              {checkBackError ? <span className="lockin-foot-note lockin-error">{checkBackError}</span> : null}
+            </motion.div>
+          ) : (
+            /* The one thing — pick #1, the obvious move. Whole card is the action. */
+            <motion.button
+              className="lockin-hero"
+              onClick={() => onFocusNode(hero.id)}
+              type="button"
+              variants={ITEM_VARIANTS}
+            >
+              <span className="lockin-hero-eyebrow">
+                <span className="lockin-hero-pip" aria-hidden="true" />
+                Start here
+              </span>
+              <span className="lockin-hero-title">{hero.title}</span>
+              {hero.planning_signals[0] ? (
+                <span className="lockin-hero-signal">{hero.planning_signals[0]}</span>
+              ) : null}
+              <span className="lockin-hero-go">
+                Focus this
+                <span className="lockin-hero-go-arrow" aria-hidden="true">
+                  →
+                </span>
+              </span>
+            </motion.button>
+          )}
 
           {/* Quiet backups — only if there are any */}
           {backups.length > 0 ? (
@@ -372,6 +438,7 @@ export function WhatNowDialog({
                     {i + 2}
                   </span>
                   <span className="lockin-backup-title">{node.title}</span>
+                  {node.check_back ? <span className="lockin-backup-tag">check back</span> : null}
                 </button>
               ))}
             </motion.div>

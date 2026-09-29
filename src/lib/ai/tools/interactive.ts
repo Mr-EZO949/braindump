@@ -13,7 +13,7 @@ const ASK_CHOICE: ToolDefinition = {
   schema: {
     name: "ask_choice",
     description:
-      "Ask the user a single forced-choice question when their intent is genuinely ambiguous and you cannot proceed well without knowing which they mean. Provide 2-4 short, mutually-exclusive options. Use SPARINGLY — only when guessing wrong would send the conversation the wrong way or waste real effort. Do NOT use it for open-ended questions, for things you can reasonably infer, or to offer next actions; just ask in prose for those. After the user picks, continue as if they'd told you the answer.",
+      "Ask the user a single forced-choice question when their intent is genuinely ambiguous and you cannot proceed well without knowing which they mean. Provide 2-4 short, mutually-exclusive options. Use SPARINGLY — only when guessing wrong would send the conversation the wrong way or waste real effort. Do NOT use it for open-ended questions, for things you can reasonably infer, or to offer next actions; just ask in prose for those. After the user picks, continue as if they'd told you the answer. Don't repeat the options in your text — the card shows them.",
     input_schema: {
       type: "object",
       properties: {
