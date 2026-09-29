@@ -14,13 +14,15 @@ type AnchorNode = {
 };
 
 const ANCHOR_TYPE_PRIORITY: Record<NodeType, number> = {
+  area: 5,
   goal: 5,
   project: 4,
   class: 3,
-  concept: 2,
+  habit: 3,
+  big_task: 2,
   task: 1,
   idea: 1,
-  habit: 3,
+  note: 1,
 };
 
 function truncate(value: string, maxChars: number) {

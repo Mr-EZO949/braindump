@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { GraphData, Node } from "@/types/graph";
 import { buildPrimaryStructuralTree } from "@/lib/graph/structure";
+import { CHECKABLE_TYPES } from "@/lib/graph/node-types";
 
 type TodosViewProps = {
   graphData: GraphData;
@@ -98,6 +99,17 @@ export function TodosView({ graphData, onSelectNode, onToggleStatus }: TodosView
     });
   };
 
+  // Big tasks whose steps are shown (expanded) under them.
+  const [expandedBigTasks, setExpandedBigTasks] = useState<Set<string>>(new Set());
+  const toggleExpanded = (nodeId: string) => {
+    setExpandedBigTasks((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  };
+
   const { parentByChild } = useMemo(() => {
     const tree = buildPrimaryStructuralTree(graphData);
     const parentByChild = new Map<string, string>();
@@ -107,13 +119,13 @@ export function TodosView({ graphData, onSelectNode, onToggleStatus }: TodosView
     return { parentByChild };
   }, [graphData]);
 
-  const { groups, total, summary } = useMemo(() => {
+  const { groups, total, summary, stepsByBigTask, progressByBigTask } = useMemo(() => {
     const nodeMap = new Map(graphData.nodes.map((n) => [n.id, n]));
     const lower = search.trim().toLowerCase();
 
     const filtered = graphData.nodes.filter((n) => {
-      // Tasks only — this is the Todos lens.
-      if (n.node_type !== "task") return false;
+      // Checkable work only — tasks and big tasks. This is the Todos lens.
+      if (!CHECKABLE_TYPES.has(n.node_type)) return false;
       if (!showArchived && n.status === "archived") return false;
       if (!showCompleted && n.status === "completed") return false;
       if (lower) {
@@ -123,7 +135,39 @@ export function TodosView({ graphData, onSelectNode, onToggleStatus }: TodosView
       return true;
     });
 
-    const items = filtered.map((node) => {
+    // A big task's progress counts all its (non-archived) steps, visible or
+    // not; its listed steps nest under it instead of repeating at top level.
+    // While searching the list stays flat so every match is visible.
+    const listedIds = new Set(filtered.map((n) => n.id));
+    const progressByBigTask = new Map<string, { done: number; total: number }>();
+    for (const n of graphData.nodes) {
+      const parentId = parentByChild.get(n.id);
+      const parentNode = parentId ? nodeMap.get(parentId) : undefined;
+      if (!parentNode || parentNode.node_type !== "big_task") continue;
+      if (!CHECKABLE_TYPES.has(n.node_type) || n.status === "archived") continue;
+      const entry = progressByBigTask.get(parentNode.id) ?? { done: 0, total: 0 };
+      entry.total += 1;
+      if (n.status === "completed") entry.done += 1;
+      progressByBigTask.set(parentNode.id, entry);
+    }
+    const stepsByBigTask = new Map<string, Node[]>();
+    const topLevel = filtered.filter((node) => {
+      if (lower) return true;
+      const parentId = parentByChild.get(node.id);
+      const parentNode = parentId ? nodeMap.get(parentId) : undefined;
+      if (!parentNode || parentNode.node_type !== "big_task" || !listedIds.has(parentNode.id)) {
+        return true;
+      }
+      const steps = stepsByBigTask.get(parentNode.id) ?? [];
+      steps.push(node);
+      stepsByBigTask.set(parentNode.id, steps);
+      return false;
+    });
+    stepsByBigTask.forEach((steps) =>
+      steps.sort((a, b) => statusRank(a.status) - statusRank(b.status) || scoreOf(b) - scoreOf(a)),
+    );
+
+    const items = topLevel.map((node) => {
       const parentId = parentByChild.get(node.id) ?? null;
       const parent = parentId ? nodeMap.get(parentId) ?? null : null;
       return { node, parent };
@@ -178,8 +222,102 @@ export function TodosView({ graphData, onSelectNode, onToggleStatus }: TodosView
       activeHigh,
     };
 
-    return { groups, total: items.length, summary };
+    return { groups, total: items.length, summary, stepsByBigTask, progressByBigTask };
   }, [graphData, search, sortKey, showCompleted, showArchived, parentByChild]);
+
+  function renderRow(
+    node: Node,
+    parent: Node | null,
+    opts: {
+      progress?: { done: number; total: number } | null;
+      steps?: number;
+      expanded?: boolean;
+      step?: boolean;
+    } = {},
+  ) {
+    const score = Math.round(scoreOf(node));
+    const completed = node.status === "completed";
+    const archived = node.status === "archived";
+    const isBigTask = node.node_type === "big_task";
+    return (
+      <li key={node.id} className="todos-row-wrap" data-step={opts.step || undefined}>
+        <button
+          type="button"
+          className="todos-row-check"
+          data-checked={completed || undefined}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleStatus(node.id, completed ? "active" : "completed");
+          }}
+          aria-label={completed ? "Mark as not done" : "Mark done"}
+          title={completed ? "Mark as not done" : "Mark done"}
+        >
+          {completed ? (
+            <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+              <path
+                d="m4 8.2 2.8 2.8 5.2-6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          ) : null}
+        </button>
+        <button
+          type="button"
+          className="list-view-row"
+          data-completed={completed || undefined}
+          data-archived={archived || undefined}
+          data-big-task={isBigTask || undefined}
+          data-tier={scoreTier(score)}
+          title={node.importance_reason ?? undefined}
+          onClick={() => onSelectNode(node.id)}
+        >
+          <span className="list-view-row-score" data-tier={scoreTier(score)}>
+            {score}
+          </span>
+          <span className="list-view-row-main">
+            <span className="list-view-row-title">
+              {node.title}
+              {isBigTask ? (
+                <span className="todos-steps">
+                  {opts.progress ? `${opts.progress.done}/${opts.progress.total} steps` : "Big task · no steps yet"}
+                </span>
+              ) : null}
+            </span>
+            {parent ? <span className="list-view-row-parent">{parent.title}</span> : null}
+          </span>
+          {node.target_date ? (
+            <span className="list-view-row-date">{formatShortDate(node.target_date)}</span>
+          ) : null}
+        </button>
+        {isBigTask && (opts.steps ?? 0) > 0 ? (
+          <button
+            type="button"
+            className="todos-expand"
+            data-expanded={opts.expanded || undefined}
+            aria-expanded={Boolean(opts.expanded)}
+            aria-label={opts.expanded ? "Hide steps" : "Show steps"}
+            title={opts.expanded ? "Hide steps" : "Show steps"}
+            onClick={() => toggleExpanded(node.id)}
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path
+                d="m4 6 4 4 4-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        ) : null}
+      </li>
+    );
+  }
 
   return (
     <div className="list-view">
@@ -314,63 +452,14 @@ export function TodosView({ graphData, onSelectNode, onToggleStatus }: TodosView
                 </button>
                 {isCollapsed ? null : (
                   <ul className="list-view-rows">
-                    {items.map(({ node, parent }) => {
-                      const score = Math.round(scoreOf(node));
-                      const completed = node.status === "completed";
-                      const archived = node.status === "archived";
-                      return (
-                        <li key={node.id} className="todos-row-wrap">
-                          <button
-                            type="button"
-                            className="todos-row-check"
-                            data-checked={completed || undefined}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onToggleStatus(node.id, completed ? "active" : "completed");
-                            }}
-                            aria-label={completed ? "Mark as not done" : "Mark done"}
-                            title={completed ? "Mark as not done" : "Mark done"}
-                          >
-                            {completed ? (
-                              <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-                                <path
-                                  d="m4 8.2 2.8 2.8 5.2-6"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              </svg>
-                            ) : null}
-                          </button>
-                          <button
-                            type="button"
-                            className="list-view-row"
-                            data-completed={completed || undefined}
-                            data-archived={archived || undefined}
-                            data-tier={scoreTier(score)}
-                            title={node.importance_reason ?? undefined}
-                            onClick={() => onSelectNode(node.id)}
-                          >
-                            <span
-                              className="list-view-row-score"
-                              data-tier={scoreTier(score)}
-                            >
-                              {score}
-                            </span>
-                            <span className="list-view-row-main">
-                              <span className="list-view-row-title">{node.title}</span>
-                              {parent ? (
-                                <span className="list-view-row-parent">{parent.title}</span>
-                              ) : null}
-                            </span>
-                            {node.target_date ? (
-                              <span className="list-view-row-date">{formatShortDate(node.target_date)}</span>
-                            ) : null}
-                          </button>
-                        </li>
-                      );
+                    {items.flatMap(({ node, parent }) => {
+                      const progress = progressByBigTask.get(node.id) ?? null;
+                      const steps = stepsByBigTask.get(node.id) ?? [];
+                      const expanded = expandedBigTasks.has(node.id);
+                      return [
+                        renderRow(node, parent, { progress, steps: steps.length, expanded }),
+                        ...(expanded ? steps.map((step) => renderRow(step, null, { step: true })) : []),
+                      ];
                     })}
                   </ul>
                 )}

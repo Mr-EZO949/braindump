@@ -8,13 +8,16 @@
 // partial progress ("practice exam" → "Pass Probability" done) and invented
 // details, which the past-tense / never-invent rules below don't fully fix.
 //
+// v2: node types v2 (docs/node-types.md) — big_task / area / note, goal only
+// for verifiable outcomes; old types in the existing list are still the same item.
+//
 // Same output schema and the same Session block as extract.ts, so the rest of
 // the pipeline (resolution, auto-apply, completions) is unchanged. Longer
 // dumps still take the full prompt (see AI_INGESTION.LIGHT_DUMP_MAX_CHARS).
 
 import { buildExtractionVariableBlock, type ExtractionPromptParams } from "./extract";
 
-export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v1";
+export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v2";
 
 const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to the user's existing knowledge graph. Most of these updates report things the user just did, plus a few new things to do. Keep the graph sparse: propose only what the dump clearly states.
 
@@ -30,17 +33,24 @@ const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to t
 2. New items.
 - One node per clear idea/task. Title 3–8 words. Summary: one short sentence in direct address or a noun phrase — never "the user …".
 - proposed_body: only if the dump gave a real stake, next step or detail (≤300 chars); otherwise leave it out.
-- A task is ONE concrete action with a clear "done" ("email the professor", "solve 5 practice problems"). Something that needs several actions ("pass calculus", "write the thesis", "fix my sleep") is a project or goal — never a task.
-- Habit only with an explicit cadence ("daily", "every morning", "3× a week"); otherwise task.
+- Pick the type by its one question:
+  - task — one sitting, one clear "done" ("email the professor", "solve 5 practice problems").
+  - big_task — ONE thing with one finish line that takes several sittings ("pass the calculus exam", "write the thesis", "fix my sleep schedule").
+  - project — a body of work with several different parts ("internship search", "launch the beta").
+  - goal — only an outcome with a verifiable finish line, ideally dated ("1450+ on the SAT", "internship in Milan by November"). Aspirations without one ("get in shape", "make money") are areas.
+  - habit — only with an explicit cadence ("daily", "every morning", "3× a week").
+  - area — an ongoing part of life with no finish line ("Health", "Career", "Life Admin").
+  - class — a course this term. idea — something they might do, not committed. note — something to remember: a person and their role, advice, a fact, a decision already made.
 - Vague fragments ("work on stuff", "idk what to do", "fix bugs" with no target) and feelings/complaints ("this feature is killing me", "everything's falling apart"): no node — at most one short, specific clarifying question that quotes the fragment.
 - Use only what the user said. Never add details they didn't give — no invented times, targets, numbers or steps.
-- Types: task | project | goal | habit | class | concept | idea.
+- Types: goal | project | big_task | task | habit | area | class | idea | note.
 
 3. Never duplicate — attach instead.
 - The existing-node list was retrieved for THIS dump by meaning and wording; the user is usually talking about exactly those items. "under: X" shows where each lives.
-- If an equivalent node already exists at the same level, do not propose it again.
-- If a new item is a step toward / part of an existing node, create it and set existing_parent_node_id to that node's id (the most specific fitting one; not a generic root).
+- If an equivalent node already exists, do not propose it again — even if its type differs (older graphs typed big tasks as tasks or projects, and areas as goals or concepts).
+- If a new item is a step toward / part of an existing node, create it and set existing_parent_node_id to that node's id (the most specific fitting one; not a generic root). Parents must be able to hold it: a big task holds only task steps (and notes); tasks, habits, ideas and notes hold nothing.
 - If the dump itself names a project plus its parts, create the project with the parts as children via primary_parent_local_ref (list the parent first). Never set both parent fields on one node.
+- If the user writes a heading over 2+ items ("Life admin: rent, parking pass, …") and no matching node exists, create that heading as the parent — an area for a part of life ("Life Admin"), a project for a body of work — and put the items under it. If a matching node exists, attach the items to it.
 
 4. Deadlines.
 - Only an explicit date or weekday ("by Friday", "due Oct 3", "end of the month") → target_date YYYY-MM-DD, resolved against today in the Session block ("Friday" = next Friday on/after today). Put it on the item the deadline is about. Anything else ("soon", "this week", "before the launch") → leave it out; never invent a date.

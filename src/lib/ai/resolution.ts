@@ -54,17 +54,28 @@ const DISCRIMINATING_WORDS = new Set([
   "first", "second", "third", "fourth", "fifth", "last", "next", "final", "midterm",
 ]);
 
-type Level = "container" | "leaf";
+type Level = "container" | "leaf" | "either";
 
 // Containers hold work; leaves are the work. A container and a leaf are never
-// the same item, however similar the words.
+// the same item, however similar the words. A big task sits between the two —
+// it is one deliverable that holds its steps — and the same item is often a
+// task or a project in older graphs ("Pass ML Exam"), so it can match either.
+// ("concept" is the legacy grouping type.)
 export function nodeLevel(nodeType: string): Level {
+  if (nodeType === "big_task") return "either";
   return nodeType === "goal" ||
     nodeType === "project" ||
     nodeType === "class" ||
+    nodeType === "area" ||
     nodeType === "concept"
     ? "container"
     : "leaf";
+}
+
+function levelsCanMatch(a: string, b: string): boolean {
+  const la = nodeLevel(a);
+  const lb = nodeLevel(b);
+  return la === lb || la === "either" || lb === "either";
 }
 
 function stem(token: string): string {
@@ -119,7 +130,7 @@ export function judgeSameItem(
   if (similarity < DEDUP_SIMILARITY_FLOOR) {
     return { same: false, certainlyDistinct: true, reason: "not similar enough" };
   }
-  if (nodeLevel(a.node_type) !== nodeLevel(b.node_type)) {
+  if (!levelsCanMatch(a.node_type, b.node_type)) {
     return { same: false, certainlyDistinct: true, reason: "a container and an item inside it" };
   }
 

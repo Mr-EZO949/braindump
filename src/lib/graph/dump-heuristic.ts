@@ -95,8 +95,8 @@ export function looksLikeStructuralEdit(text: string): boolean {
   );
 }
 
-// Active projects with no children — candidates for a "want a roadmap?"
-// nudge. A child belongs_to a parent (edge: source=child, target=parent),
+// Active projects and big tasks with no children — candidates for a "want a
+// roadmap?" / "break it down?" nudge. A child belongs_to a parent (edge: source=child, target=parent),
 // so a childless project is never the target of an active belongs_to edge.
 export function findChildlessProjects(
   graph: GraphData,
@@ -113,7 +113,7 @@ export function findChildlessProjects(
   return graph.nodes
     .filter(
       (n) =>
-        n.node_type === "project" &&
+        (n.node_type === "project" || n.node_type === "big_task") &&
         (n.status ?? "active") === "active" &&
         !parentsWithChildren.has(n.id),
     )

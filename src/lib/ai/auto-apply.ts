@@ -17,6 +17,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { CONTAINER_TYPES } from "@/lib/graph/node-types";
+
 export type RiskClass = `${"leaf" | "objective"}/${"parented" | "top"}/${"hi" | "lo"}`;
 
 export interface ClassStats {
@@ -34,7 +36,9 @@ const PRIOR_REJECTED = 0.5;
 export const CALIBRATION_WINDOW = 500;
 const HIGH_CONFIDENCE = 0.85;
 
-const OBJECTIVE_TYPES = new Set(["goal", "project", "class", "concept"]);
+// Proposals that create a place other work hangs under. "concept" is legacy:
+// historical proposals still carry it and must keep calibrating as objectives.
+const OBJECTIVE_TYPES = new Set<string>([...CONTAINER_TYPES, "concept"]);
 
 export interface AutoApplyCandidate {
   id: string;

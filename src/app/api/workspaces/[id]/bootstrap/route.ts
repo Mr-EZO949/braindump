@@ -40,13 +40,15 @@ interface BootstrapBody {
   bootstrap_dump?: string;
 }
 
+// Life domains are areas (node types v2); the "project" category names one
+// specific venture ("BrainDump"), so it stays a project.
 const AREA_TYPE_TO_NODE_TYPE: Record<WorkspaceProfileAreaType, NodeType> = {
-  academic: "concept",
+  academic: "area",
   project: "project",
-  career: "project",
-  health: "concept",
-  life_admin: "concept",
-  personal: "concept",
+  career: "area",
+  health: "area",
+  life_admin: "area",
+  personal: "area",
 };
 
 function truncate(value: string, maxChars: number) {
@@ -278,12 +280,13 @@ export async function POST(
         title: rootTitle,
         summary: rootSummary,
         raw_text: null,
-        node_type: "goal" as NodeType,
+        // The root is the user's whole life, never a goal (node types v2).
+        node_type: "area" as NodeType,
         importance: getImportanceLabel(ROOT_IMPORTANCE),
         importance_index: ROOT_IMPORTANCE,
         manual_weight: ROOT_IMPORTANCE,
         manual_weight_set_at: new Date().toISOString(),
-        color: NODE_COLOR_BY_TYPE.goal,
+        color: NODE_COLOR_BY_TYPE.area,
         status: "active",
       })
       .select("*")

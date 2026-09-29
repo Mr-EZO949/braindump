@@ -69,9 +69,15 @@ describe("needsNextAction", () => {
     expect(needsNextAction("p", nodes, [belongsTo("t", "p")])).toBe(false);
   });
 
-  it("ignores non-workable children (a concept doesn't count as a next step)", () => {
-    const nodes = [node("p", "project"), node("note", "concept")];
+  it("ignores non-workable children (a note doesn't count as a next step)", () => {
+    const nodes = [node("p", "project"), node("note", "note")];
     expect(needsNextAction("p", nodes, [belongsTo("note", "p")])).toBe(true);
+  });
+
+  it("flags a big task with no steps (Focus offers to break it down)", () => {
+    expect(needsNextAction("b", [node("b", "big_task")], [])).toBe(true);
+    const nodes = [node("b", "big_task"), node("t", "task")];
+    expect(needsNextAction("b", nodes, [belongsTo("t", "b")])).toBe(false);
   });
 
   it("is false for a completed container (nothing to suggest)", () => {

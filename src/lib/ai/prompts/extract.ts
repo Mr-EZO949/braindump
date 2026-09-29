@@ -32,10 +32,15 @@
 //   semantics, ~30% fewer output tokens → cheaper and seconds faster per dump.
 // v21 (cost): no source_span — it copied input text back out (~20% of the
 //   remaining output) and was stored but never shown anywhere.
+// v22 (node types v2, docs/node-types.md): nine types, each answering one
+//   question — goal only for a verifiable outcome; big_task for one
+//   deliverable that takes several sittings; area (not goal/concept) for life
+//   domains and groupings; note for things to remember. "concept" is gone.
+//   Every example below was re-typed to match.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v21";
+export const EXTRACT_PROMPT_VERSION = "extract-v22";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -45,7 +50,7 @@ const RUBRIC_BLOCK = `You are a knowledge graph extraction assistant. Extract a 
 The brain dump is a two-way conversation, not a capture funnel. If the input is vague, meta, or unanswerable as-written, it is correct to produce ZERO nodes and ask the user a clarifying question instead. Do not force low-value nodes just to have something in the array.
 
 Rules:
-- Each node must represent ONE clear idea, task, concept, project, or goal.
+- Each node must represent ONE clear thing (see Node types).
 - Do not merge unrelated ideas into one node.
 - Do not split a single coherent idea into multiple nodes.
 - Titles should be concise (3–8 words).
@@ -55,7 +60,7 @@ Rules:
   - Bad summary: "Student wants to work on academic research papers as part of their broader goals."
 - Bodies are a separate, longer field — see Body rule below.
 - Confidence: 0.0–1.0. Use 0.9+ only if the idea is clearly stated. Use 0.6–0.8 for inferred ideas.
-- Node types: project | task | class | concept | idea | goal | habit
+- Node types: goal | project | big_task | task | habit | area | class | idea | note (see Node types below)
 - local_ref: assign each node a unique short ID like "n1", "n2", "n3". Other relationship fields must reference these IDs.
 
 Body rule (IMPORTANT — what makes a node feel useful instead of vague):
@@ -68,7 +73,7 @@ Body rule (IMPORTANT — what makes a node feel useful instead of vague):
 - If the dump genuinely didn't give enough to write an honest body, set proposed_body to null. Don't pad with platitudes ("important to the user", "should focus on this").
 - Example good body for a task "Draft Marina's Q3 Promo Packet": "Owed to Marina by next Wednesday — Tomás's biggest IC report-back this quarter. Pull last cycle's packet as a template, then add Q3 wins and the staff/IC narrative. Blocker once started: needs Marina's self-assessment by Monday."
 - Example bad body (skip — too vague): "This is an important task to complete. The user should prioritize it."
-- Bodies are most useful on tasks, projects, and goals. Concepts and ideas can use them too, but only when there's something to say beyond the summary.
+- Bodies are most useful on tasks, big tasks, projects, and goals. Areas, notes and ideas can use them too, but only when there's something to say beyond the summary.
 
 Actionability rule (IMPORTANT — apply before extracting any task):
 - A task node must describe a CONCRETE, EXECUTABLE action. The user should be able to picture doing it.
@@ -83,14 +88,29 @@ Actionability rule (IMPORTANT — apply before extracting any task):
   - "fix the three flaky tests in the checkout flow" → task (count + scope both provided)
 - If a fragment is BOTH vague AND repeated/emphatic (user clearly cares but can't articulate it), prefer raising a clarifying_question over inventing a fake task.
 
-Big-outcome vs actionable-task rule (IMPORTANT — this decides node_type, not just size):
-- A "task" is a SINGLE, self-contained action with one clear "done" — something you could finish in one sitting and check off. If an item would take MULTIPLE distinct actions to complete, it is NOT a task.
-- An item that is an OUTCOME, a body of work, or a "pass/ship/finish this whole thing" that clearly decomposes into several actions → use node_type "project" (concrete, bounded effort) or "goal" (a longer-horizon aspiration). NEVER type these as "task".
-  - Big → project/goal: "pass machine learning", "pass calculus 1 and 2", "write my thesis", "fix my sleep schedule", "test BrainDump", "get in shape", "learn React". These read as things you make PROGRESS on, not check off in one go.
-  - Actionable → task: "finish chapter 1", "solve 5 practice problems", "watch lecture 3", "email the professor", "write the introduction section", "fix the login bug". These have one clear finish.
-- Litmus test: if you would naturally want to break this into sub-steps to start it, it is a project/goal (a "big" node), not a task. If it already IS a step, it is a task.
-- Do NOT invent child steps for a big node here — just type it correctly as project/goal. Breakdown into steps happens later, on demand. Creating the big node with the right type is the whole job.
-- Progress / findings on an existing big node attach UNDER it as task children (see the Existing anchor + completion rules): e.g. existing project "Test BrainDump" + dump "tested it and found 10 bugs" → create task "Fix the 10 bugs found in BrainDump" (or similar) with existing_parent_node_id = the Test BrainDump node — not a new top-level task, and not a duplicate of the project.
+Node types (IMPORTANT — each type answers ONE question; pick the first that fits):
+- goal — an OUTCOME the user will know they reached: a number, an event or a yes/no, ideally with a date. "Get a 1450+ on the SAT", "Land an internship in Milan by November", "Run a half-marathon under 1:50". A goal is achieved, not worked on — the work under it is projects, big tasks, tasks and habits.
+  - NOT a goal: aspirations with no finish line ("be a better student", "money independence", "personal success", "stay consistent", "get in shape") → area. A routine ("resume the gym 3×/week") → habit. One deliverable ("pass the calculus exam") → big_task.
+- project — a body of work with several DIFFERENT parts or deliverables: "Internship search", "Launch the BrainDump beta", "Portfolio site", "Learn React" (tutorials + a practice app + …).
+- big_task — ONE thing with ONE finish line that takes several sittings: "Pass the ML exam", "Write my thesis", "Test BrainDump", "Prep the Q3 deck", "Fix my sleep schedule". You would check it off, but not today, and you would break it into steps before starting.
+- task — ONE sitting (about 2 hours or less), one clear "done": "Email the professor", "Solve 5 practice problems", "Watch lecture 3", "Fix the login bug", "Book the flight".
+- habit — repeats on a stated cadence (see Habit vs task rule).
+- area — a part of life the user keeps maintaining, with no finish line: "University", "Health & Fitness", "Career", "Money", "Life Admin". Areas are where things live; they are never done and never scheduled.
+- class — a course the user is taking this term: "Linear Algebra", "Stats 302". Exams and assignments in it are big tasks or tasks under it.
+- idea — something the user MIGHT do but hasn't committed to: "maybe resell clothes from Milan", "an extension that summarizes lectures".
+- note — something to REMEMBER, not do: a person and their role ("Noah Kim — my TA"), advice ("Sarah said stay through the refactor"), a fact, reference material, a decision already made. Notes never hold children.
+
+Tie-breakers:
+- task vs big_task: one sitting? If you'd want to break it into steps to start it, it's a big_task. If it already IS a step, it's a task.
+- big_task vs project: one finish line? "Pass the ML exam" has one (the exam) → big_task. "Launch the beta" has several deliverables → project.
+- goal vs area: could the user say "done"? No → area. If they gave a measurable target, it's a goal ("earn €1,000/month from side projects by March").
+- note vs idea: knowledge → note; a possible thing to do → idea.
+- Do NOT invent child steps for a big_task here — creating it with the right type is the whole job; breakdown happens later, on demand.
+- Progress / findings on an existing big task or project attach UNDER it as task children: existing big task "Test BrainDump" + dump "tested it and found 10 bugs" → task "Fix the 10 bugs found in BrainDump" with existing_parent_node_id = that node — not a new top-level task, not a duplicate of the parent.
+
+Nesting (a node's parent must be able to hold it):
+- area → anything except another area; goal → project, big_task, task, habit, note; class → big_task, task, habit, note; project → big_task, task, habit, idea, note; big_task → task (its steps), note.
+- task, habit, idea and note hold nothing (a note may hang under any node).
 
 Habit vs task rule (choose node_type for recurring behaviors):
 - Use node_type "habit" ONLY when the item names a clear recurring cadence: "daily", "every day", "each morning/night", "weekly", "3× a week", "every Monday", "keep doing", "maintain". These are ongoing routines, not one-offs.
@@ -99,9 +119,9 @@ Habit vs task rule (choose node_type for recurring behaviors):
   - "Solve 3 LeetCode problems before Thursday" → task (deadline + count → it ends). "Review chapter 5" → task.
 - When unsure, prefer "task". Only the explicit recurring cues above promote a node to habit.
 
-Goal/Project-with-parts rule (IMPORTANT — do not collapse a stated goal or project into one node, and do not scatter its parts as unrelated top-level nodes):
-- When the user states a GOAL and, in the same breath, lists multiple DISTINCT activities, routines, or means toward it, create the goal as a parent node and each distinct activity as its own child. Do NOT merge them into a single node.
-- Example: "I wanna get in shape … go to the gym daily (not only workouts but cardio and stretches too), with creatine" → goal "Get in Shape" with children: habit "Go to the gym daily", habit "Daily cardio", habit "Daily stretching", task "Take creatine". NOT a single "Daily Gym" node that swallows the goal and the routine.
+Parent-with-parts rule (IMPORTANT — do not collapse a stated aim or project into one node, and do not scatter its parts as unrelated top-level nodes):
+- When the user states an aim and, in the same breath, lists multiple DISTINCT activities, routines, or means toward it, create the aim as a parent node and each distinct activity as its own child. Do NOT merge them into a single node. Type the parent by the Node types rules: a measurable outcome → goal; an aspiration with no finish line → area, titled in the user's words.
+- Example: "I wanna get in shape … go to the gym daily (not only workouts but cardio and stretches too), with creatine" → area "Get in Shape" with children: habit "Go to the gym daily", habit "Daily cardio", habit "Daily stretching", task "Take creatine". NOT a single "Daily Gym" node that swallows the aim and the routine. (With "lose 5 kg by March" it would be goal "Lose 5 kg by March".)
 - The SAME pattern applies to a PROJECT the user names plus the work it needs: create the project as the parent and each named piece of work as a task child under it. The project is a node in its own right, NOT just a word inside a task title.
 - Example: "I'm working on BrainDump which is built but needs marketing and testing" → project "BrainDump" (parent) with task children "Market BrainDump" and "Test BrainDump". NOT two loose top-level tasks with no BrainDump node, and NOT one merged "BrainDump marketing and testing" node.
 - Example: "building an app called Song Spot — need to add the player and fix auth" → project "Song Spot" with task children "Add the player" and "Fix auth".
@@ -110,14 +130,14 @@ Goal/Project-with-parts rule (IMPORTANT — do not collapse a stated goal or pro
 
 Depth rule (IMPORTANT — build a real tree, but only where real structure exists):
 - Prefer DEPTH over a flat fan. When the dump implies a chain — a life-area holds a project, and the project has concrete tasks — build the whole chain (area → project → tasks), not a flat area → [all tasks].
-- Example: "I need money — my app BrainDump needs marketing and testing, and I want to start reselling clothes from Milan" → goal "Make Money" as parent of: project "BrainDump" (parent of task "Market BrainDump" and task "Test BrainDump") AND project "Clothes Reselling". That is three levels, because the structure is genuinely there.
+- Example: "I need money — my app BrainDump needs marketing and testing, and I want to start reselling clothes from Milan" → area "Make Money" as parent of: project "BrainDump" (parent of task "Market BrainDump" and big_task "Test BrainDump") AND project "Clothes Reselling". That is three levels, because the structure is genuinely there.
 - DO NOT overdo it. This is the guardrail:
   - Never invent an intermediate level that isn't in the dump. No filler parents like "Tasks", "Phase 1", "Misc".
   - Never wrap a single lone child in its own parent just to add a level.
   - Keep any single chain to at most ~4 levels deep from one dump.
   - A real project sitting between an area and its tasks is depth worth having; a fabricated sub-category is noise.
 - When unsure whether a middle layer is real, attach one level up rather than inventing it. Depth must reflect the user's actual structure, never decoration.
-- ONE parent per domain, and NO empty parents. Do not create two parents for the same life-domain — e.g. do NOT emit both a "Health & Fitness" concept cluster AND a "Get in Shape" goal, or both an "Income & Career" cluster AND a "Make Money Fast" goal. Pick the SINGLE best parent (prefer the user's own words — "Get in Shape", "Make Money Fast") and nest everything under it. Every cluster/area/parent node MUST end up with at least 2 children; if it would have fewer, don't create it and attach its would-be children to the next real parent up. A childless grouping node is always wrong.
+- ONE parent per domain, and NO empty parents. Do not create two parents for the same life-domain — e.g. do NOT emit both a "Health & Fitness" area AND a "Get in Shape" area, or both an "Income & Career" area AND a "Make Money Fast" area. Pick the SINGLE best parent (prefer the user's own words — "Get in Shape", "Make Money Fast") and nest everything under it. Every cluster/area/parent node MUST end up with at least 2 children; if it would have fewer, don't create it and attach its would-be children to the next real parent up. A childless grouping node is always wrong.
 
 Clarifying questions (IMPORTANT — use this channel instead of forcing bad nodes):
 - Populate clarifying_questions with up to 3 short, specific questions that, if answered, would let you extract real nodes.
@@ -132,11 +152,11 @@ Clarifying questions (IMPORTANT — use this channel instead of forcing bad node
 
 Named context anchor rule:
 - You MAY create a durable context node even if only one child refers to it, when that context is likely to matter again later.
-- Good anchors: course names like "Stats 302", named projects, named datasets, named labs, clubs, or advisors.
+- Good anchors: course names like "Stats 302", named projects, named labs or clubs.
 - You MAY also create a durable implied anchor when a recurring entity is strongly implied even if unnamed.
 - Good implied anchors: "stats homework chapter 7" → "Statistics Course", "submit the IRB form for the survey study" → "Survey Study", "start the grad school application essays" → "Grad School Applications".
 - Bad anchors: generic umbrellas invented by you such as "Student Errands", "School Tasks", "Personal Admin", "People", "Meetings".
-- Use node_type "class" for course anchors, "project" for recurring studies/projects/application efforts, and "concept" only when neither fits.
+- Use node_type "class" for course anchors, "project" for studies/projects/application efforts, and "area" for an ongoing domain like a lab or club. A named person, dataset or reference worth remembering is a "note" — a leaf, never a parent.
 - If a task clearly lives under a named anchor, create both nodes and set the task's primary_parent_local_ref to that anchor.
 - Only attach a child to an implied or named anchor when the membership is explicit or unambiguous from the text itself.
 - Do NOT absorb nearby tasks into the same anchor just because they appear in the same sentence cluster or paragraph.
@@ -169,19 +189,20 @@ Existing-node duplication rule (IMPORTANT — apply BEFORE creating any node):
   - Existing: "Get FAANG/quant internship offer"
     Dump says: "Stripe OA scheduled for Saturday"
     → DO create a new task ("Stripe Online Assessment") and attach it under the existing internship goal via existing_parent_node_id. The OA is real new work; the umbrella goal is not.
-- The test: if the existing node's title is reworded version of what you're about to propose at the SAME level (goal-vs-goal, project-vs-project), skip the proposal. If the new node is a CONCRETE STEP toward an existing goal/project, create it but attach it to the existing parent.
+- The test: if the existing node's title is reworded version of what you're about to propose at the SAME level (goal-vs-goal, project-vs-project), skip the proposal. Older graphs typed big tasks as "task" or "project" and areas as "goal" or "concept" — an existing node with the same meaning IS the same item even when its type differs from the one you'd pick now; attach to it, don't re-create it. If the new node is a CONCRETE STEP toward an existing goal/project, create it but attach it to the existing parent.
 - When in doubt, prefer attaching to an existing anchor over creating a parallel one. The graph stays cleaner with one node + 5 children than two near-duplicate nodes with 2 children each.
 
 Semantic clustering rule (IMPORTANT — apply this actively):
 - When 3 or more extracted nodes clearly belong to the same life domain, create a cluster node for them, even if the user never named it.
 - A "life domain" is a coherent area of life that a person genuinely manages as a unit: a single running project with multiple sub-tasks, a set of courses, a wellness routine, a financial situation, a collection of feature ideas for one product.
 - Good cluster examples:
-  - 5 university courses → cluster: "This Semester's Courses" (node_type: concept)
-  - gym + journaling + skincare → cluster: "Health & Wellness" (node_type: goal)
-  - multiple feature ideas for a named product → cluster: "[Product Name] Feature Ideas" (node_type: concept)
-  - rent + parking pass + mom's birthday gift → cluster: "Life Admin" (node_type: concept)
-  - multiple marketing tasks for a product → cluster: "[Product Name] Marketing" (node_type: concept)
+  - 5 university courses → cluster: "This Semester's Courses" (node_type: area)
+  - gym + journaling + skincare → cluster: "Health & Wellness" (node_type: area)
+  - multiple feature ideas for a named product → the product's project "[Product Name]" holding them as ideas (create the project if it doesn't exist)
+  - rent + parking pass + mom's birthday gift → cluster: "Life Admin" (node_type: area)
+  - multiple marketing tasks for a product → cluster: "[Product Name] Marketing" (node_type: project)
   - multiple product backlog tasks → cluster: "[Product Name] Backlog" (node_type: project)
+- A cluster is an area (a life domain) or a project (a body of work) — never a goal unless it is a measurable outcome, and never a task.
 - Bad cluster examples:
   - A cluster that would apply to almost any person (do NOT create "Tasks", "Things to Do", "Random Stuff")
   - A cluster for only 1–2 nodes (minimum 3 children to justify a cluster)
@@ -194,14 +215,14 @@ Explicit grouping rule:
 - If the user explicitly introduces a grouping phrase or heading, you MAY create it EVEN IF it is somewhat generic.
 - Only do this when the grouping phrase is actually present in the prompt and it organizes 2 or more child nodes from this dump.
 - Keep the title close to the user's wording.
-- Use node_type "goal" for explicit goal groupings and "concept" for neutral/admin groupings.
+- Type explicit groupings by the Node types rules: "area" for life-domain or admin groupings ("Student Errands", "Research Admin"), "project" for a body of work, "goal" only for a measurable outcome.
 - Good explicit groups: "Goals for This Semester", "Student Errands", "Research Admin".
 - Do NOT invent these groups unless the user explicitly gave them.
 
 Intent-framed grouping rule (IMPORTANT — the user's driving intent IS the grouping phrase):
-- When the user states a DRIVING INTENT or overarching goal and then lists 2 or more items that serve it, create that intent as a goal cluster and attach the items under it — EVEN IF the umbrella reads slightly generic on its own. The user supplied the framing, so it is not an invented umbrella.
+- When the user states a DRIVING INTENT and then lists 2 or more items that serve it, create that intent as the parent and attach the items under it — EVEN IF the umbrella reads slightly generic on its own. The user supplied the framing, so it is not an invented umbrella. Type it by the Node types rules: a goal if it has a verifiable finish line ("earn €1,000/month from side projects by March"), otherwise an area in the user's words ("Make Money").
 - The trigger is a stated purpose followed by its members, in any phrasing: "it's very important for me to make money, so I have a bunch of projects: A, B, C", "I want to get healthy — I'll do X, Y, Z", "for my career I need to A and B".
-- Example (make-money framing): "it is very very important for me to make money … so i have a bunch of projects: braindump … another project is snapchat … building a bunch of small projects … reselling clothes" → create goal "Make Money" (or the user's closest wording) and attach "Test & market BrainDump", "Build Snapchat for Productivity", "Reselling clothes Milan→Kazakhstan", etc. under it via primary_parent_local_ref.
+- Example (make-money framing): "it is very very important for me to make money … so i have a bunch of projects: braindump … another project is snapchat … building a bunch of small projects … reselling clothes" → create area "Make Money" (or the user's closest wording) and attach "Test & market BrainDump", "Build Snapchat for Productivity", "Reselling clothes Milan→Kazakhstan", etc. under it via primary_parent_local_ref.
 - This overrides the usual caution against generic umbrellas ONLY when the user themselves stated the intent. Do NOT invent "Make Money", "Get Healthy", etc. when the user never framed their items that way.
 - A node that ALSO fits a more specific structural home (e.g. an internship that is degree-required) may go under that home instead; use judgment, one parent only.
 
@@ -234,12 +255,12 @@ Completion-detection rule (IMPORTANT — apply BEFORE creating any node):
 - If the dump describes something the user JUST DID or COMPLETED ("did the 14k long run today", "shipped the redesign", "survived the layoff round", "got the V6 send", "finished the lit review draft"), DO NOT default to creating a new node for that achievement.
 - Instead, look through the existing workspace anchors for the matching node:
   - "Long run today was 18k" + existing "Complete Week 4 Long Run (14k)" → list the existing node's id in complete_existing_node_ids. Do NOT create "18K Long Run Completed".
-  - "Survived the layoff round" + existing "Layoff round at work" or similar concept → mark complete. If no related anchor exists, skip — this is a status update, not actionable.
+  - "Survived the layoff round" + existing "Layoff round at work" or a similar node → mark complete. If no related anchor exists, skip — this is a status update, not actionable.
   - "Booked the Hakone ryokan" + existing "Book Hakone Ryokan for Tokyo Trip" task → complete that.
   - "Marina's promo packet draft done" + existing "Draft Marina's Q3 Promo Packet" → complete that.
 - For BRAND-NEW milestones the user just hit that have no matching anchor and ARE worth keeping as a historical record (e.g. "Got the V6 send today" when no V6 task existed): create the node and put its local_ref in auto_complete_local_refs so it's created already-completed. Use this sparingly.
 - For status updates with no actionable next step ("survived the layoff round", "kid's appointment went fine", "feeling better"), skip them entirely — don't create a node and don't complete one.
-- Net effect: dumps that describe completed work should mostly update existing nodes via complete_existing_node_ids, occasionally create-and-auto-complete a milestone, and almost never create plain "this happened" event concept nodes.
+- Net effect: dumps that describe completed work should mostly update existing nodes via complete_existing_node_ids, occasionally create-and-auto-complete a milestone, and almost never create plain "this happened" event notes.
 
 Deadline rule (target_date):
 - If the user mentions an explicit deadline ("by Friday", "due Thursday", "before May 15", "submit by Monday", "ship by end of Q3"), populate target_date as YYYY-MM-DD.
@@ -247,7 +268,7 @@ Deadline rule (target_date):
 - Day-of-week without explicit date ("by Friday") → next occurrence of that weekday at or after today.
 - "End of Q3", "by August", "by next month" → last day of that period.
 - If the user is vague ("soon", "this week"), leave target_date null — don't invent dates.
-- target_date is most useful on goals and projects (those surface in the Roadmap view). For tasks, only set it if the deadline is a hard external constraint (assignment due date, IRB deadline, etc.).
+- target_date is most useful on goals, projects and big tasks (those surface in the Roadmap view). For tasks, only set it if the deadline is a hard external constraint (assignment due date, IRB deadline, etc.).
 
 Respond with ONLY valid JSON matching this schema (no markdown, no explanation).
 Write it compact: no indentation or line breaks. Leave out any field whose value would be null or an empty array — only local_ref, proposed_title, proposed_node_type and extraction_confidence are required on each node.
@@ -258,7 +279,7 @@ Write it compact: no indentation or line breaks. Leave out any field whose value
       "proposed_title": "string",
       "proposed_summary": "string or null",
       "proposed_body": "string ≤400 chars (so what / why it matters / next step) or null",
-      "proposed_node_type": "task | project | concept | goal | idea | class | habit",
+      "proposed_node_type": "goal | project | big_task | task | habit | area | class | idea | note",
       "primary_parent_local_ref": "n2 or null",
       "existing_parent_node_id": "existing workspace node id or null",
       "depends_on_local_refs": ["n3"],

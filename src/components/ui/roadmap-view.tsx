@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { GraphData, Node } from "@/types/graph";
 import { buildPrimaryStructuralTree } from "@/lib/graph/structure";
+import { NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
 
 type RoadmapViewProps = {
   graphData: GraphData;
@@ -238,7 +239,9 @@ export function RoadmapView({ graphData, onSelectNode }: RoadmapViewProps) {
                     </span>
                     <span className="roadmap-item-body">
                       <div className="roadmap-item-head">
-                        <span className="roadmap-item-type">{item.node.node_type}</span>
+                        <span className="roadmap-item-type">
+                          {NODE_TYPE_INFO[normalizeNodeType(item.node.node_type)].label}
+                        </span>
                         <span className="roadmap-item-title">{item.node.title}</span>
                       </div>
                       {item.node.summary ? (

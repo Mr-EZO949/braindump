@@ -136,4 +136,19 @@ describe("validateExtractionOutput (compact v20+ output)", () => {
   it("still rejects a node list that isn't an array", () => {
     expect(() => validateExtractionOutput({ proposed_nodes: "nope" }, session)).toThrow();
   });
+
+  it("accepts the v2 types and maps a legacy concept to a note", () => {
+    const node = (local_ref: string, proposed_node_type: string) => ({
+      local_ref,
+      proposed_title: `Node ${local_ref}`,
+      proposed_node_type,
+      extraction_confidence: 0.9,
+    });
+    const out = validateExtractionOutput(
+      { proposed_nodes: [node("n1", "big_task"), node("n2", "area"), node("n3", "concept")] },
+      session,
+    );
+    expect(out.proposed_nodes.map((n) => n.proposed_node_type)).toEqual(["big_task", "area", "note"]);
+    expect(() => validateExtractionOutput({ proposed_nodes: [node("n1", "journal")] }, session)).toThrow();
+  });
 });

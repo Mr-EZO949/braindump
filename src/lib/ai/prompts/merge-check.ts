@@ -7,15 +7,15 @@
 // across calls. Rubric is ~300 tokens — below the 1024-token Anthropic cache
 // floor, so we do NOT apply cache_control on Claude for this task.
 
-export const MERGE_CHECK_PROMPT_VERSION = "merge-check-v1";
+export const MERGE_CHECK_PROMPT_VERSION = "merge-check-v2";
 
 const RUBRIC_BLOCK = `You are evaluating whether two knowledge-graph nodes represent the same real-world entity and should be merged. The two nodes are provided in the Session block below.
 
 Rules:
-- "same_entity" is true ONLY if both nodes clearly refer to the same concept, project, task, or goal — not merely related topics.
+- "same_entity" is true ONLY if both nodes clearly refer to the same thing (goal, project, big task, task, habit, area, class, idea or note) — not merely related topics.
 - A node titled "Learn React" and one titled "React.js study plan" are likely the same entity.
 - A node titled "Financial independence" and one titled "SaaS revenue goal" are NOT the same entity (even if related).
-- Different types (e.g. goal vs task) can still be the same entity if they clearly describe the same thing.
+- Different types (e.g. goal vs task) can still be the same entity if they clearly describe the same thing. Older nodes often carry an earlier type for the same item: a "task" or "project" that is really a big task, a "goal" or "concept" that is really an area.
 - confidence reflects how certain you are (0 = totally unsure, 1 = certain).
 
 Respond with ONLY valid JSON (no markdown):

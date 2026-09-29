@@ -19,13 +19,15 @@ import type { NodeType, WorkspaceProfileAreaType } from "@/types/graph";
 
 export const runtime = "nodejs";
 
+// Life domains are areas (node types v2); the "project" category names one
+// specific venture ("BrainDump"), so it stays a project.
 const AREA_TYPE_TO_NODE_TYPE: Record<WorkspaceProfileAreaType, NodeType> = {
-  academic: "concept",
+  academic: "area",
   project: "project",
-  career: "project",
-  health: "concept",
-  life_admin: "concept",
-  personal: "concept",
+  career: "area",
+  health: "area",
+  life_admin: "area",
+  personal: "area",
 };
 
 interface AreaInput {

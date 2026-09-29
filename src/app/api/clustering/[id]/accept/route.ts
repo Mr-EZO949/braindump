@@ -15,7 +15,7 @@ import { getImportanceLabel } from "@/lib/graph/importance";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import type { NodeType } from "@/types/graph";
 
-const ALLOWED_TYPES = new Set<NodeType>(["goal", "project", "concept", "class", "idea"]);
+const ALLOWED_TYPES = new Set<NodeType>(["area", "goal", "project", "big_task", "class"]);
 
 export async function POST(
   _req: NextRequest,
@@ -51,7 +51,10 @@ export async function POST(
     child_node_ids: string[];
   };
 
-  const nodeType = (ALLOWED_TYPES.has(suggested_node_type as NodeType) ? suggested_node_type : "concept") as NodeType;
+  // Suggestions made before node types v2 may say "concept" — a grouping, so an area.
+  const nodeType: NodeType = ALLOWED_TYPES.has(suggested_node_type as NodeType)
+    ? (suggested_node_type as NodeType)
+    : "area";
 
   // Lookup workspace root for auto-anchoring the umbrella.
   const { data: workspaceRow } = await supabase

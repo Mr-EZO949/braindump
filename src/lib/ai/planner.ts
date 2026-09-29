@@ -4,6 +4,7 @@
 
 import type { NodeType } from "@/types/graph";
 import { todayLocalISO } from "@/lib/habits/streak";
+import { KNOWLEDGE_TYPES, STRUCTURE_TYPES } from "@/lib/graph/node-types";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any;
@@ -30,15 +31,20 @@ const PRIMARY_NODE_TYPE_PRIORITY: Record<NodeType, number> = {
   // task and habit are the most actionable units — both anchor the plan
   task: 120,
   habit: 98,
+  // a big task with no steps yet plans as one "work session" block; once it
+  // has steps it's a cluster anchor and its steps are planned instead
+  big_task: 112,
   // goal frames direction but isn't itself executable in a session
   goal: 104,
   // project contains tasks but isn't actionable on its own
   project: 70,
   // class is a container for sessions/exams; the sessions are what plan
   class: 62,
-  // concept/idea are reference/ideation — surface only when nothing else is doing
-  concept: 46,
+  // idea/note/area are never planned (NON_ACTIONABLE_TYPES); the numbers only
+  // keep the map total
   idea: 36,
+  note: 30,
+  area: 20,
 };
 const NODE_TYPE_PRIORITY_FALLBACK = 40;
 
@@ -679,9 +685,9 @@ export async function buildPlannerCandidates(params: {
     }
   }
 
-  // Hard-exclude class anchors — they're always containers (a course is the
-  // wrapper around its tasks/exams; the course itself isn't actionable).
-  const NON_ACTIONABLE_TYPES = new Set<NodeType>(["class"]);
+  // Hard-exclude structure and knowledge — a course or an area is the wrapper
+  // around its work, and ideas/notes aren't committed work (node-types.ts).
+  const NON_ACTIONABLE_TYPES: ReadonlySet<NodeType> = new Set([...STRUCTURE_TYPES, ...KNOWLEDGE_TYPES]);
 
   // Resolve a node's project cluster: its belongs_to parent, else itself.
   const belongsToParentOf = (nodeId: string): string => {

@@ -22,12 +22,14 @@ const MAX_DURATION = 180;
 const DEFAULT_BY_TYPE: Record<string, number> = {
   task: 30,
   habit: 45,
+  // a big task is scheduled as one work session until it has steps
+  big_task: 60,
   project: 60,
   goal: 60,
-  concept: 30,
   class: 30,
   idea: 30,
-  question: 15,
+  note: 15,
+  area: 30,
 };
 
 type NodeInput = {

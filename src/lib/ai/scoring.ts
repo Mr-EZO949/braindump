@@ -109,10 +109,12 @@ function sigmoid(x: number): number {
 export function urgency(node: NodeRow): number {
   const typeBase: Record<string, number> = {
     task: 50,
+    big_task: 49,
     goal: 47,
     project: 41,
-    concept: 28,
+    area: 27,
     class: 26,
+    note: 22,
     idea: 20,
     habit: 48,
   };

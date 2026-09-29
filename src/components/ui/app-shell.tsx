@@ -80,6 +80,8 @@ import { TopCommandBar } from "@/components/ui/top-command-bar";
 import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
 import { classifyTaskSize } from "@/lib/ai/sizing";
 import { needsNextAction } from "@/lib/graph/next-action";
+import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
+import { NODE_TYPE_INFO, NODE_TYPES, normalizeNodeType } from "@/lib/graph/node-types";
 import type { RailTab, ChatMessage, ChatScope, Nudge, PendingAction } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, NodeType, Workspace } from "@/types/graph";
 import { localDateISO } from "@/lib/time/local-date";
@@ -120,7 +122,7 @@ const defaultCreateNodeDraft: CreateNodeInput = {
   custom_type: "",
   importance_index: 58,
   manual_weight: null,
-  node_type: "concept",
+  node_type: "task",
   raw_text: "",
   summary: "",
   body: "",
@@ -128,22 +130,12 @@ const defaultCreateNodeDraft: CreateNodeInput = {
   target_date: "",
 };
 
-const nodeColorByType: Record<Exclude<CreateNodeInput["node_type"], "custom">, string> = {
-  class: "#96784d",
-  concept: "#677480",
-  goal: "#d8d0c4",
-  habit: "#4a7c6b",
-  project: "#8c4a57",
-  task: "#a35258",
-};
+// One palette for every surface (src/lib/graph/node-colors.ts).
+const nodeColorByType = NODE_COLOR_BY_TYPE;
 
-const baseEditableNodeTypes = new Set<CreateNodeInput["node_type"]>([
-  "goal",
-  "project",
-  "task",
-  "concept",
-  "class",
-]);
+// Every current type opens in the sheet as itself; a legacy value (e.g. an
+// old "concept" row) opens as its v2 equivalent.
+const baseEditableNodeTypes = new Set<CreateNodeInput["node_type"]>(NODE_TYPES);
 
 const importanceFilterOptions = [
   { label: "All importance", value: "all" },
@@ -187,13 +179,11 @@ function isRecentCompletion(node: Node, cutoffMs: number): boolean {
 }
 
 function formatNodeTypeLabel(nodeType: string) {
-  return nodeType
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
+  return NODE_TYPE_INFO[normalizeNodeType(nodeType)].label;
 }
 
 function createDraftFromNode(node: Node): CreateNodeInput {
-  const resolvedType = node.node_type.toLowerCase();
+  const resolvedType = normalizeNodeType(node.node_type.toLowerCase(), node.node_type as NodeType);
   const nodeType = baseEditableNodeTypes.has(resolvedType as CreateNodeInput["node_type"])
     ? (resolvedType as Exclude<CreateNodeInput["node_type"], "custom">)
     : "custom";
@@ -1872,7 +1862,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     const payload = {
       color:
         createNodeDraft.node_type === "custom"
-          ? nodeColorByType.concept
+          ? nodeColorByType.note
           : nodeColorByType[createNodeDraft.node_type],
       importance: getImportanceLabel(createNodeDraft.importance_index),
       importance_index: createNodeDraft.importance_index,
@@ -2010,7 +2000,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     const payload = {
       color:
         editNodeDraft.node_type === "custom"
-          ? nodeColorByType.concept
+          ? nodeColorByType.note
           : nodeColorByType[editNodeDraft.node_type],
       importance: getImportanceLabel(editNodeDraft.importance_index),
       importance_index: editNodeDraft.importance_index,
@@ -2923,7 +2913,10 @@ export function AppShell({ initialUser }: AppShellProps) {
       }
       const goalOrProjectNodes = acceptedNodes.filter(
         (n) =>
-          (n.node_type === "goal" || n.node_type === "project" || n.node_type === "habit") &&
+          (n.node_type === "goal" ||
+            n.node_type === "project" ||
+            n.node_type === "big_task" ||
+            n.node_type === "habit") &&
           !parentIds.has(n.id),
       );
 

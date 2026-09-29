@@ -15,6 +15,7 @@ import { localDateISO } from "@/lib/time/local-date";
 import type { NodeStatus } from "@/types/graph";
 
 import type { ToolContext, ToolDefinition } from "./read-only";
+import { NODE_TYPES } from "@/lib/graph/node-types";
 
 // ---------------------------------------------------------------------------
 // Shared vocabularies
@@ -29,14 +30,20 @@ function importanceFromIndex(idx: number): ImportanceLabel {
   return "low";
 }
 
-const VALID_NODE_TYPES = new Set([
-  "goal",
-  "project",
-  "task",
-  "concept",
-  "class",
-  "habit",
-]);
+const VALID_NODE_TYPES: ReadonlySet<string> = new Set(NODE_TYPES);
+
+// Tool-schema text for every node_type field — Haiku leans on the schema
+// more than the system prompt when it fills a tool call ("pass the stats
+// final" came back as a task with the bare "Node type" description).
+const NODE_TYPE_FIELD_DESCRIPTION =
+  "task = one sitting (email the prof, solve 5 problems). big_task = ONE deliverable that takes several sittings (pass an exam, write the thesis, build a site). project = several different parts. goal = a measurable outcome, ideally dated. habit = repeats on a cadence. area = an ongoing part of life (Health, Career). class = a course. idea = might do, not committed. note = something to remember (a person, advice, a fact).";
+
+// The model's node_type as a stored value: tolerate "Big task" / "big-task"
+// and the retired "concept" (→ note), so an old habit doesn't fail the tool.
+function toolNodeType(raw: unknown): string {
+  const t = typeof raw === "string" ? raw.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
+  return t === "concept" ? "note" : t;
+}
 
 // Edge types Claude is allowed to propose. Keeps the surface small and
 // semantically meaningful — the inference pipeline uses a wider set, but
@@ -143,8 +150,8 @@ const PROPOSE_NODE: ToolDefinition = {
         },
         node_type: {
           type: "string",
-          enum: ["goal", "project", "task", "concept", "class", "habit"],
-          description: "Node type",
+          enum: [...NODE_TYPES],
+          description: NODE_TYPE_FIELD_DESCRIPTION,
         },
         importance_index: {
           type: "integer",
@@ -190,8 +197,7 @@ const PROPOSE_NODE: ToolDefinition = {
       return { accepted: false, error: "title must be 120 characters or fewer" };
     }
 
-    const nodeType =
-      typeof args.node_type === "string" ? args.node_type.toLowerCase() : "";
+    const nodeType = toolNodeType(args.node_type);
     if (!VALID_NODE_TYPES.has(nodeType)) {
       return {
         accepted: false,
@@ -313,7 +319,8 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
               summary: { type: "string" },
               node_type: {
                 type: "string",
-                enum: ["goal", "project", "task", "concept", "class", "habit"],
+                enum: [...NODE_TYPES],
+                description: NODE_TYPE_FIELD_DESCRIPTION,
               },
               importance_index: { type: "integer", minimum: 0, maximum: 100 },
               parent_node_id: {
@@ -380,8 +387,7 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
       if (title.length > 120) {
         return { accepted: false, error: `nodes[${i}].title must be ≤120 chars` };
       }
-      const nodeType =
-        typeof n.node_type === "string" ? n.node_type.toLowerCase() : "";
+      const nodeType = toolNodeType(n.node_type);
       if (!VALID_NODE_TYPES.has(nodeType)) {
         return {
           accepted: false,
@@ -664,7 +670,8 @@ const UPDATE_NODE: ToolDefinition = {
         summary: { type: "string", description: "New summary (set to empty string to clear)" },
         node_type: {
           type: "string",
-          enum: ["goal", "project", "task", "concept", "class", "habit"],
+          enum: [...NODE_TYPES],
+          description: NODE_TYPE_FIELD_DESCRIPTION,
         },
         importance_index: { type: "integer", minimum: 0, maximum: 100 },
         target_date: {
@@ -713,7 +720,7 @@ const UPDATE_NODE: ToolDefinition = {
       patch.summary = summary.length > 0 ? summary.slice(0, 2000) : null;
     }
     if (typeof args.node_type === "string") {
-      const nt = args.node_type.toLowerCase();
+      const nt = toolNodeType(args.node_type);
       if (!VALID_NODE_TYPES.has(nt)) {
         return {
           accepted: false,
@@ -964,7 +971,8 @@ const PROPOSE_CHANGES_BATCH: ToolDefinition = {
               title: { type: "string" },
               node_type: {
                 type: "string",
-                enum: ["goal", "project", "task", "concept", "class", "habit"],
+                enum: [...NODE_TYPES],
+                description: NODE_TYPE_FIELD_DESCRIPTION,
               },
               summary: { type: "string" },
               parent_node_id: { type: "string" },
@@ -1014,8 +1022,7 @@ const PROPOSE_CHANGES_BATCH: ToolDefinition = {
             results.push({ kind: "create_node", ok: false, error: "title required" });
             break;
           }
-          const nodeType =
-            typeof change.node_type === "string" ? change.node_type.toLowerCase() : "";
+          const nodeType = toolNodeType(change.node_type);
           if (!VALID_NODE_TYPES.has(nodeType)) {
             results.push({
               kind: "create_node",

@@ -89,7 +89,8 @@ const IMPORTANCE_BONUS_AUXILIARY = 0.05;
  *   the prereq clears).
  *
  *   CHILD_BY_TYPE orders by how *actionable* the child is — tasks first,
- *   then projects, then containers (class), with concept/idea as fallback.
+ *   then big tasks and projects, then containers (class), with everything
+ *   else (area, note, idea) as the fallback.
  *
  *   SUPPORT comes last because supports are auxiliary by definition.
  */
@@ -97,9 +98,10 @@ const FOCUS_PRIORITY = {
   HARD_PREREQ: 100,
   CHILD_BY_TYPE: {
     task: 82,
+    big_task: 78,
     project: 74,
     class: 66,
-    concept: 60,
+    other: 60,
   },
   SUPPORT: 58,
 } as const;
@@ -149,7 +151,7 @@ function calculateChildFocusPriority(linkedNode: Node): number {
   const base =
     FOCUS_PRIORITY.CHILD_BY_TYPE[
       linkedNode.node_type as keyof typeof FOCUS_PRIORITY.CHILD_BY_TYPE
-    ] ?? FOCUS_PRIORITY.CHILD_BY_TYPE.concept;
+    ] ?? FOCUS_PRIORITY.CHILD_BY_TYPE.other;
   return (
     base + Math.round(getImportanceIndex(linkedNode) * IMPORTANCE_BONUS_DEFAULT)
   );
@@ -332,13 +334,15 @@ function upsertFocusItem(grouped: Map<string, FocusItem>, item: FocusItem) {
 }
 
 function allowsFocusPlan(node: ChatNodeContext) {
-  return ["goal", "project", "concept", "class", "habit"].includes(node.node_type);
+  return ["goal", "project", "big_task", "area", "class", "habit"].includes(node.node_type);
 }
 
 function createChildActionTitle(node: Node) {
   switch (node.node_type) {
     case "task":
       return `Complete ${node.title}`;
+    case "big_task":
+      return `Take the next step on ${node.title}`;
     case "project":
       return `Advance ${node.title}`;
     case "class":

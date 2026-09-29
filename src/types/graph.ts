@@ -1,11 +1,16 @@
+// Node taxonomy v2 (docs/node-types.md; rules and helpers in
+// src/lib/graph/node-types.ts). "concept" is retired: old rows were migrated
+// to area/note, and normalizeNodeType maps any straggler to note.
 export type NodeType =
-  | "project"
-  | "task"
-  | "class"
-  | "concept"
-  | "idea"
   | "goal"
-  | "habit";
+  | "project"
+  | "big_task"
+  | "task"
+  | "habit"
+  | "area"
+  | "class"
+  | "idea"
+  | "note";
 
 // Added in AI Phase 1A — lifecycle status for nodes and edges.
 export type NodeStatus = "active" | "completed" | "paused" | "archived";
@@ -130,7 +135,7 @@ export interface CreateNodeInput {
   // When set in the edit sheet, writes to nodes.manual_weight — overrides
   // the scorer for this node. null in create flow (scorer decides).
   manual_weight: number | null;
-  node_type: "goal" | "task" | "project" | "concept" | "class" | "habit" | "custom";
+  node_type: NodeType | "custom";
   raw_text: string;
   summary: string;
   // Optional long-form context (so what / why it matters / what's next).

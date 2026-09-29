@@ -16,6 +16,7 @@ import { classifyTaskSize } from "@/lib/ai/sizing";
 import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/types/chat";
 import type { GraphData, NodeStatus } from "@/types/graph";
 import type { ChatSessionMeta } from "@/lib/chat/sessions";
+import { NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
 
 type LinkCategory =
   | "parent"
@@ -119,12 +120,12 @@ function getScoreTier(score: number): string {
   return "Low priority";
 }
 
-// User-facing category label. Goals/projects are the big, breakdown-able items
-// — shown as "Objective"; tasks stay "Task". Other types are title-cased.
+// User-facing category label (node types v2). Goals and projects keep the
+// Round-1 "Objective" group name in front of their type.
 function nodeCategoryLabel(nodeType: string): string {
-  if (nodeType === "goal" || nodeType === "project") return "Objective";
-  if (nodeType === "task") return "Task";
-  return nodeType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const type = normalizeNodeType(nodeType);
+  const label = NODE_TYPE_INFO[type].label;
+  return type === "goal" || type === "project" ? `Objective · ${label}` : label;
 }
 
 // Human labels for the raw signal names persisted by computeWorkspaceScores.
@@ -581,7 +582,7 @@ export function ContextRail({
                 ) : pendingSizeBreakdown ? (
                   <div className="flex flex-col gap-2.5">
                     <p className="text-[12.5px] leading-snug text-(--color-text-secondary)">
-                      This looks like more than one sitting. Have AI break it down?
+                      This looks like a big task — more than one sitting. Break it into steps?
                     </p>
                     <p className="line-clamp-2 rounded-md border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.025)] px-3 py-2 text-[12px] italic text-(--color-text-muted)">
                       {pendingSizeBreakdown.title}
@@ -599,14 +600,14 @@ export function ContextRail({
                         type="button"
                         onClick={() => onResolveSizeBreakdown?.("full")}
                         className="flex-1 rounded-full border border-[rgba(213,58,71,0.55)] bg-[rgba(213,58,71,0.95)] px-3 py-2 text-[12px] font-semibold text-white"
-                        title="AI generates a full multi-phase roadmap (a deep tree of sub-tasks). Uses more tokens."
+                        title="AI lists every step to finish it (4–8 one-sitting tasks). Uses more tokens."
                       >
-                        AI roadmap
+                        All steps
                       </button>
                     </div>
                     <p className="text-[11px] leading-snug text-(--color-text-muted)">
-                      Quick tasks = a few next actions. AI roadmap = a full multi-phase
-                      breakdown — more thorough, uses more tokens.
+                      Quick tasks = the next 1–3 actions. All steps = everything it takes,
+                      in order — more thorough, uses more tokens.
                     </p>
                     <button
                       type="button"
@@ -905,6 +906,7 @@ export function ContextRail({
                           {onSuggestSteps &&
                           (selectedNode.node_type === "project" ||
                             selectedNode.node_type === "goal" ||
+                            selectedNode.node_type === "big_task" ||
                             classifyTaskSize(selectedNode.title) !== "task") ? (
                             <>
                               <button

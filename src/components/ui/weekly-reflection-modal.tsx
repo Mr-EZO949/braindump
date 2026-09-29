@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { CloseIcon, ChartBarIcon } from "@/components/ui/icons";
+import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 
 type DailyBucket = {
   date: string;
@@ -52,16 +53,8 @@ const MOOD_OPTIONS = [
   { value: "burnt-out", label: "Burnt out" },
 ];
 
-const TYPE_COLORS: Record<string, string> = {
-  goal: "#f0a755",
-  project: "#6b8cef",
-  task: "#ef6b7a",
-  class: "#a07fd8",
-  concept: "#5cc7b8",
-  habit: "#7fc987",
-  idea: "#eacf5a",
-  question: "#9aa6b2",
-};
+// One palette for every surface; legacy "concept" rows render as notes.
+const TYPE_COLORS: Record<string, string> = { ...NODE_COLOR_BY_TYPE, concept: NODE_COLOR_BY_TYPE.note };
 
 function moodStorageKey(workspaceId: string, weekStart: string): string {
   return `braindump:weekly-mood:${workspaceId}:${weekStart}`;

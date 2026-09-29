@@ -103,20 +103,24 @@ function PricingCards({ variant = "hero" }: PricingCardsProps) {
 
 const NC: Record<string, string> = {
   task:     "#a35258",
+  big_task: "#a35258",
   goal:     "#d8d0c4",
   idea:     "#5c7a6e",
-  concept:  "#677480",
-  question: "#7a6b5c",
-  journal:  "#6b6b8a",
+  note:     "#677480",
+  area:     "#8a847c",
+  habit:    "#4a7c6b",
   project:  "#8c4a57",
   class:    "#96784d",
 };
+
+// Display form of a node type ("big_task" → "big task").
+const typeText = (type: string) => type.replace(/_/g, " ");
 
 // ── Demo data ─────────────────────────────────────────────
 
 const DEMO_THOUGHTS = [
   { text: "finish the proposal before Friday",  type: "task", title: "Finish proposal" },
-  { text: "want to learn Rust this year",        type: "goal", title: "Learn Rust" },
+  { text: "want to learn Rust this year",        type: "project", title: "Learn Rust" },
   { text: "auth bug still broken in prod",        type: "task", title: "Fix auth bug" },
   { text: "meeting with Sarah at 3pm tomorrow",   type: "task", title: "Meeting: Sarah" },
   { text: "idea: embeddings for internal search", type: "idea", title: "Embeddings" },
@@ -148,25 +152,25 @@ const WHAT_NOW_CHIPS = [
 
 const MARQUEE_R1 = [
   { t: "Redesign the onboarding flow", type: "task" },
-  { t: "Learn distributed systems",    type: "goal" },
-  { t: "What is vector search?",       type: "question" },
-  { t: "Had a breakthrough today",     type: "journal" },
-  { t: "Event sourcing pattern",       type: "concept" },
+  { t: "Learn distributed systems",    type: "project" },
+  { t: "Vector search basics",         type: "note" },
+  { t: "Pass the CS229 final",         type: "big_task" },
+  { t: "Event sourcing pattern",       type: "note" },
   { t: "API gateway project",          type: "project" },
   { t: "Cache with Redis streams",     type: "idea" },
   { t: "Stanford CS229",               type: "class" },
-  { t: "Ship v2 this sprint",          type: "task" },
-  { t: "Master WebGL shaders",         type: "goal" },
+  { t: "Ship v2 this sprint",          type: "big_task" },
+  { t: "Health & fitness",             type: "area" },
 ];
 
 const MARQUEE_R2 = [
   { t: "Fix auth session bug",              type: "task" },
-  { t: "How does RAFT consensus work?",     type: "question" },
-  { t: "Feeling overwhelmed, need focus",   type: "journal" },
-  { t: "Graph neural networks",             type: "concept" },
+  { t: "RAFT consensus notes",              type: "note" },
+  { t: "Gym 3× a week",                     type: "habit" },
+  { t: "Graph neural networks",             type: "note" },
   { t: "Mobile app rebuild",                type: "project" },
   { t: "Use embeddings for semantic search", type: "idea" },
-  { t: "Read Designing Data-Intensive Apps", type: "goal" },
+  { t: "Read Designing Data-Intensive Apps", type: "big_task" },
   { t: "MIT 6.824",                         type: "class" },
   { t: "Deploy staging env",                type: "task" },
   { t: "Build a CLI tool for deploys",      type: "idea" },
@@ -175,11 +179,11 @@ const MARQUEE_R2 = [
 // Review showcase data
 const REVIEW_ITEMS = [
   { type: "task",     title: "Finish proposal",       status: "accepted" as const },
-  { type: "goal",     title: "Learn Rust",             status: "accepted" as const },
+  { type: "project",  title: "Learn Rust",             status: "accepted" as const },
   { type: "idea",     title: "Embedding search",       status: "pending"  as const },
   { type: "task",     title: "Fix auth bug",           status: "accepted" as const },
-  { type: "question", title: "Auth ↔ Search link?",    status: "rejected" as const },
-  { type: "journal",  title: "Roadmap clarity",        status: "accepted" as const },
+  { type: "note",     title: "Auth ↔ Search link?",    status: "rejected" as const },
+  { type: "big_task", title: "Write the roadmap",      status: "accepted" as const },
 ];
 
 // ── Grain overlay ─────────────────────────────────────────
@@ -222,10 +226,10 @@ const CONTEXT_NODES = [
   { angle:  -45, t: "task",     label: "Auth bug" },
   { angle:    0, t: "idea",     label: "Embed search" },
   { angle:   45, t: "habit",    label: "Spanish 10m" },
-  { angle:   90, t: "journal",  label: "Tue: stuck" },
+  { angle:   90, t: "area",     label: "Career" },
   { angle:  135, t: "project",  label: "API rebuild" },
-  { angle:  180, t: "concept",  label: "RAFT" },
-  { angle: -135, t: "question", label: "What blocks?" },
+  { angle:  180, t: "note",     label: "RAFT" },
+  { angle: -135, t: "big_task", label: "Pass the final" },
 ];
 
 function ContextCore() {
@@ -667,8 +671,8 @@ const HUB_OUTCOMES = [
   { type: "idea",     icon: "⇄", label: "Connect",  example: "“link Spanish to my Mexico trip”" },
   { type: "goal",     icon: "✓", label: "Complete", example: "“I shipped the auth fix”" },
   { type: "project",  icon: "⏱", label: "Schedule", example: "“block 2h Friday for the proposal”" },
-  { type: "concept",  icon: "⌫", label: "Archive",  example: "“archive my old job hunt”" },
-  { type: "question", icon: "◎", label: "Plan",     example: "“what should I work on next hour?”" },
+  { type: "note",     icon: "⌫", label: "Archive",  example: "“archive my old job hunt”" },
+  { type: "area",     icon: "◎", label: "Plan",     example: "“what should I work on next hour?”" },
 ];
 
 function ControlHubDemo() {
@@ -807,7 +811,7 @@ function ReviewShowcase() {
                 initial={{ opacity: 0, x: -16 }}
                 animate={v ? { opacity: 1, x: 0 } : {}}
                 transition={{ delay: 0.15 + i * 0.08, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}>
-                <span className={styles.reviewType} style={{ color: c }}>{item.type}</span>
+                <span className={styles.reviewType} style={{ color: c }}>{typeText(item.type)}</span>
                 <span className={styles.reviewTitle}>{item.title}</span>
                 <motion.span
                   className={`${styles.reviewStatus} ${styles[`review_${item.status}`]}`}
@@ -978,7 +982,7 @@ export function ThoughtDemo({ showHead = true }: { showHead?: boolean } = {}) {
                     initial={{ scale: 0.88, opacity: 0, y: 6 }}
                     animate={i < visiblePills ? { scale: 1, opacity: 1, y: 0 } : { scale: 0.88, opacity: 0, y: 6 }}
                     transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}>
-                    <span className={styles.pillType} style={{ color: c, background: `${c}22` }}>{th.type}</span>
+                    <span className={styles.pillType} style={{ color: c, background: `${c}22` }}>{typeText(th.type)}</span>
                     <span className={styles.pillTitle}>{th.title}</span>
                   </motion.div>
                 );

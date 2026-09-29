@@ -15,6 +15,7 @@ import { ensureWorkspaceRoot } from "@/lib/graph/ensure-workspace-root";
 import { scoreNodesJudgment } from "@/lib/ai/judgment";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import type { NodeType, WorkspaceProfile } from "@/types/graph";
+import { KNOWLEDGE_TYPES, normalizeNodeType } from "@/lib/graph/node-types";
 import type { ExtractionSoftLink } from "@/types/ai";
 
 interface ReviewAction {
@@ -33,9 +34,6 @@ interface ReviewAction {
   };
 }
 
-const VALID_NODE_TYPES = new Set<NodeType>([
-  "project", "task", "class", "concept", "idea", "goal", "habit",
-]);
 
 type AcceptedPair = {
   created: {
@@ -182,9 +180,8 @@ export async function POST(req: NextRequest) {
       // run); fall back to null so accept doesn't break the response.
       const body = ((proposal as { proposed_body?: string | null }).proposed_body ?? null) || null;
       const rawType = action.edits?.proposed_node_type ?? (proposal.proposed_node_type as string);
-      const nodeType: NodeType = VALID_NODE_TYPES.has(rawType as NodeType)
-        ? (rawType as NodeType)
-        : "concept";
+      // Legacy "concept" (proposals made before node types v2) → note.
+      const nodeType: NodeType = normalizeNodeType(rawType);
 
       const importanceIndex = 50; // Neutral default — scoring engine will update in Phase 7
 
@@ -781,13 +778,12 @@ export async function POST(req: NextRequest) {
           ? ((workspaceRow as { profile_payload?: WorkspaceProfile | null }).profile_payload ?? null)
           : null;
 
-      // Skip judgment on low-leverage types (ideas) — they rarely drive the
+      // Skip judgment on knowledge (ideas, notes) — they rarely drive the
       // graph's focus ranking, and a Haiku call per extraction-accept adds up
-      // fast when a brain dump creates 10+ ideas. Ideas fall back to heuristic
-      // scoring only; actionable types (task/goal/project/class/habit) still
-      // get judged.
+      // fast when a brain dump creates 10+ of them. They fall back to
+      // heuristic scoring only; work and structure types still get judged.
       const judgmentCandidates = acceptedPairs.filter(
-        (pair) => pair.created.node_type !== "idea",
+        (pair) => !KNOWLEDGE_TYPES.has(pair.created.node_type as NodeType),
       );
       if (judgmentCandidates.length > 0) {
         await scoreNodesJudgment({

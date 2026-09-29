@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "r
 import type { EdgeRelationOptionId } from "@/lib/graph/relationships";
 import { ChevronDownIcon, CloseIcon } from "@/components/ui/icons";
 import { getImportanceLabel } from "@/lib/graph/importance";
+import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
+import { NODE_FAMILY_LABEL, NODE_TYPE_INFO, NODE_TYPES } from "@/lib/graph/node-types";
 import type { CreateNodeInput } from "@/types/graph";
 
 type SharedNodeSheetProps = {
@@ -119,52 +121,20 @@ type EditNodeSheetProps = {
   submitting: boolean;
 };
 
-const presetTypes = [
-  {
-    description: "North-star motivation or enduring direction.",
-    label: "Goal",
-    value: "goal",
-  },
-  {
-    description: "A concrete venture, build, or system.",
-    label: "Project",
-    value: "project",
-  },
-  {
-    description: "An actionable next step or deliverable.",
-    label: "Task",
-    value: "task",
-  },
-  {
-    description: "A reusable idea, model, or supporting concept.",
-    label: "Concept",
-    value: "concept",
-  },
-  {
-    description: "A course, subject, or formal class branch.",
-    label: "Class",
-    value: "class",
-  },
-  {
-    description: "A recurring routine, practice, or daily commitment.",
-    label: "Habit",
-    value: "habit",
-  },
-  {
-    description: "Use a custom label when the presets do not fit.",
-    label: "Custom type",
-    value: "custom",
-  },
-] as const;
+// The nine node types, grouped by family, each described by the one question
+// it answers (src/lib/graph/node-types.ts, docs/node-types.md).
+const presetTypes = NODE_TYPES.map((value) => ({
+  value,
+  label: NODE_TYPE_INFO[value].label,
+  description: NODE_TYPE_INFO[value].question,
+  family: NODE_TYPE_INFO[value].family,
+}));
 
-const typeAccentByPreset: Record<Exclude<CreateNodeInput["node_type"], "custom">, string> = {
-  class: "#9c7a49",
-  concept: "#70808d",
-  goal: "#ddd6cc",
-  habit: "#4a7c6b",
-  project: "#955460",
-  task: "#bb4b58",
-};
+const presetFamilies = (["direction", "work", "structure", "thinking"] as const).map((family) => ({
+  family,
+  label: NODE_FAMILY_LABEL[family],
+  types: presetTypes.filter((item) => item.family === family),
+}));
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -230,7 +200,7 @@ function SharedNodeSheet({
     custom_type: "",
     importance_index: 58,
     manual_weight: null,
-    node_type: "concept",
+    node_type: "task",
     raw_text: "",
     summary: "",
     body: "",
@@ -271,10 +241,10 @@ function SharedNodeSheet({
   const previewAccent =
     safeDraft.node_type === "custom"
       ? "rgba(223,214,204,0.9)"
-      : typeAccentByPreset[safeDraft.node_type];
+      : NODE_COLOR_BY_TYPE[safeDraft.node_type];
   const previewWidth = getPreviewWidth(safeDraft.importance_index);
   const previewHeight = getPreviewHeight(safeDraft.importance_index);
-  const taskPreview = safeDraft.node_type === "task";
+  const taskPreview = safeDraft.node_type === "task" || safeDraft.node_type === "big_task";
   const sliderProgress = `${safeDraft.importance_index}%`;
   const title = mode === "create" ? "Create node" : "Edit node";
   const kicker = mode === "create" ? "New Thought" : "Selected Thought";
@@ -476,27 +446,37 @@ function SharedNodeSheet({
                   </button>
 
                   <div className={`graph-type-menu ${typeMenuOpen ? "graph-type-menu-open" : ""}`}>
-                    {presetTypes.map((item) => {
-                      const active = item.value === safeDraft.node_type;
+                    {presetFamilies.map((group) => (
+                      <div className="graph-type-family" key={group.family}>
+                        <span className="graph-type-family-label">{group.label}</span>
+                        {group.types.map((item) => {
+                          const active = item.value === safeDraft.node_type;
 
-                      return (
-                        <button
-                          className={`graph-type-option ${active ? "graph-type-option-active" : ""}`}
-                          key={item.value}
-                          onClick={() => {
-                            onChangeField("node_type", item.value);
-                            if (item.value !== "custom") {
-                              onChangeField("custom_type", "");
-                            }
-                            setTypeMenuOpen(false);
-                          }}
-                          type="button"
-                        >
-                          <span className="graph-type-option-label">{item.label}</span>
-                          <span className="graph-type-option-copy">{item.description}</span>
-                        </button>
-                      );
-                    })}
+                          return (
+                            <button
+                              className={`graph-type-option ${active ? "graph-type-option-active" : ""}`}
+                              key={item.value}
+                              onClick={() => {
+                                onChangeField("node_type", item.value);
+                                onChangeField("custom_type", "");
+                                setTypeMenuOpen(false);
+                              }}
+                              type="button"
+                            >
+                              <span className="graph-type-option-label">
+                                <i
+                                  aria-hidden="true"
+                                  className="graph-type-option-dot"
+                                  style={{ background: NODE_COLOR_BY_TYPE[item.value] }}
+                                />
+                                {item.label}
+                              </span>
+                              <span className="graph-type-option-copy">{item.description}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
                   </div>
                 </div>
 

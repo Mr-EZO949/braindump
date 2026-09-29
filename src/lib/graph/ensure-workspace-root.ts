@@ -72,12 +72,13 @@ export async function ensureWorkspaceRoot(params: {
       title,
       summary: ROOT_SUMMARY,
       raw_text: null,
-      node_type: "goal",
+      // The root is the user's whole life, never a goal (node types v2).
+      node_type: "area",
       importance: getImportanceLabel(ROOT_IMPORTANCE),
       importance_index: ROOT_IMPORTANCE,
       manual_weight: ROOT_IMPORTANCE,
       manual_weight_set_at: new Date().toISOString(),
-      color: NODE_COLOR_BY_TYPE.goal,
+      color: NODE_COLOR_BY_TYPE.area,
       status: "active",
     })
     .select("id")

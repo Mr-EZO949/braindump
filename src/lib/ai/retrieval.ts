@@ -18,6 +18,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { NodeType } from "@/types/graph";
 import { embedTexts, matchNodesByVector } from "./embeddings";
 import { titleTokens } from "./resolution";
+import { CONTAINER_TYPES } from "@/lib/graph/node-types";
 
 export const MAX_CONTEXT_NODES = 30;
 // Slots kept for structural anchors (top Objectives) after relevance hits.
@@ -35,7 +36,6 @@ const LEXICAL_IGNORE = new Set([
   "project", "task", "goal", "work", "plan", "new", "thing", "stuff", "get", "make", "do",
 ]);
 
-const CONTAINER_TYPES = new Set<string>(["goal", "project", "class", "concept"]);
 
 export interface RetrievalNode {
   id: string;

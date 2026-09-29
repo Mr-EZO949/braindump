@@ -1,3 +1,4 @@
+import type { NodeType } from "@/types/graph";
 // Eval fixtures — Phase 5.6 + Phase 9
 // Manually annotated ground truth for regression testing extraction, edge inference,
 // assistant, and planner prompts.
@@ -63,7 +64,7 @@ export interface PlannerFixture {
     id: string;
     title: string;
     summary: string | null;
-    node_type: "task" | "project" | "concept" | "goal" | "idea" | "class";
+    node_type: NodeType;
   }>;
   /** Minimum number of blocks expected. */
   min_blocks: number;
@@ -101,7 +102,7 @@ export const BRAIN_DUMP_FIXTURES: BrainDumpFixture[] = [
     id: "bd-03",
     input: "Reading Atomic Habits. Key idea: systems beat goals. Apply this to my workout routine.",
     expected_nodes: [
-      { title_contains: "Atomic Habits", node_type: "concept" },
+      { title_contains: "Atomic Habits", node_type: "note" },
       { title_contains: "workout", node_type: "task" },
     ],
   },
@@ -192,7 +193,7 @@ export const BRAIN_DUMP_FIXTURES: BrainDumpFixture[] = [
     input:
       "Under student errands I need to renew my parking pass, update my student ID, and pay the tuition installment.",
     expected_nodes: [
-      { title_contains: "Student Errands", node_type: "concept" },
+      { title_contains: "Student Errands", node_type: "area" },
       { title_contains: "parking pass", node_type: "task" },
       { title_contains: "student ID", node_type: "task" },
       { title_contains: "tuition", node_type: "task" },
@@ -344,7 +345,7 @@ export const BRAIN_DUMP_FIXTURES: BrainDumpFixture[] = [
     input: "Giving a talk at ReactConf on server components. Outline: problem statement, how server components work, live demo, migration tips. Slides need to be done by Friday.",
     expected_nodes: [
       { title_contains: "ReactConf", node_type: "project" },
-      { title_contains: "server components", node_type: "concept" },
+      { title_contains: "server components", node_type: "note" },
       { title_contains: "slides", node_type: "task" },
       { title_contains: "demo", node_type: "task" },
     ],
@@ -382,8 +383,8 @@ export const BRAIN_DUMP_FIXTURES: BrainDumpFixture[] = [
     input: "Reading list for Q2: Designing Data-Intensive Applications, The Staff Engineer's Path, Clean Architecture. Want to apply the learnings to the current backend refactor.",
     expected_nodes: [
       { title_contains: "reading", node_type: "project" },
-      { title_contains: "Data-Intensive", node_type: "concept" },
-      { title_contains: "Staff Engineer", node_type: "concept" },
+      { title_contains: "Data-Intensive", node_type: "big_task" },
+      { title_contains: "Staff Engineer", node_type: "big_task" },
     ],
     expected_links: [
       {
@@ -519,8 +520,8 @@ export const ASSISTANT_FIXTURES: AssistantFixture[] = [
     message: "Why is the ML project connected to Linear Algebra?",
     context: `Selected node: ML Project — Building a machine learning model for climate prediction.
 Connected nodes:
-- Linear Algebra (concept) — Mathematical foundation including vectors, matrices, and transformations. Edge: prerequisite_for, confidence 0.85.
-- Climate Dataset (concept) — Historical weather data from NOAA. Edge: belongs_to, confidence 0.9.
+- Linear Algebra (note) — Mathematical foundation including vectors, matrices, and transformations. Edge: prerequisite_for, confidence 0.85.
+- Climate Dataset (note) — Historical weather data from NOAA. Edge: belongs_to, confidence 0.9.
 Workspace: 12 nodes, 8 edges.`,
     scope: "node:ml-project",
     answer_must_contain: ["linear algebra", "ml"],
@@ -530,7 +531,7 @@ Workspace: 12 nodes, 8 edges.`,
     id: "asst-02",
     mode: "explain",
     message: "What should I focus on?",
-    context: `Workspace overview: 3 active goals, 8 active tasks, 4 concepts.
+    context: `Workspace overview: 3 active goals, 8 active tasks, 4 notes.
 Top nodes by importance:
 - Finish Thesis Proposal (task, score 82)
 - Learn PyTorch (goal, score 71)
@@ -760,7 +761,7 @@ export const MERGE_FIXTURES: MergeFixture[] = [
     node_a_type: "goal",
     node_b_title: "PyTorch Tutorial",
     node_b_summary: "Official beginner tutorial covering tensors, autograd, and simple neural nets.",
-    node_b_type: "concept",
+    node_b_type: "note",
     similarity: 0.86,
     expected_same_entity: false,
   },

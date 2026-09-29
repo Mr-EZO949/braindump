@@ -167,10 +167,10 @@ export async function POST(req: NextRequest) {
   }
 
   // Cost optimization: run edge INFERENCE only where it pays off. Every node is
-  // embedded above (so it stays searchable), but a leaf task/habit that
+  // embedded above (so it stays searchable), but a leaf task/habit/note that
   // extraction already nested under a parent rarely needs cross-links — the
-  // valuable connections are between branch-level nodes (goals, projects,
-  // concepts) and any still-orphaned node. Skipping already-parented leaves
+  // valuable connections are between branch-level nodes (goals, projects, big
+  // tasks, areas) and any still-orphaned node. Skipping already-parented leaves
   // cuts the number of inferEdge (Haiku) calls on a deep dump by ~60-70%
   // without losing the links that matter.
   const { data: parentEdges } = await supabase
@@ -187,7 +187,7 @@ export async function POST(req: NextRequest) {
   );
   const analysisNodeIds = normalizedNodeIds.filter((id) => {
     const type = nodeTypeById.get(id);
-    const isLeafType = type === "task" || type === "habit";
+    const isLeafType = type === "task" || type === "habit" || type === "note";
     return !(isLeafType && parentedNodeIds.has(id));
   });
 

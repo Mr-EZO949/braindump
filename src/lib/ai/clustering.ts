@@ -201,12 +201,12 @@ async function nameCluster(
 Children:
 ${childList}
 
-Allowed node_types: goal, project, concept, class, idea
-- goal: a desired outcome the children all support
-- project: an active initiative the children are part of
-- concept: a domain / topic / theme grouping
+Allowed node_types: area, goal, project, big_task, class
+- area: a part of life the children belong to, with no finish line ("Health", "Career", "Life Admin") — the usual answer for a domain grouping
+- goal: a measurable outcome the children all serve ("Run a half-marathon under 1:50 by November") — only when there is a real finish line you could verify
+- project: an active initiative with several different parts that the children are part of
+- big_task: one deliverable the children are the steps of ("Pass the ML exam")
 - class: a course or formal study
-- idea: a speculative grouping
 
 REJECT (respond with {"title": null, "node_type": null}) if the only honest umbrella would be:
 - A time-window like "Weekly Priorities", "This Week's Tasks", "Monthly Goals", "Q3 Focus"
@@ -253,7 +253,7 @@ No prose, no markdown.`;
     // Explicit refusal — Haiku decided no clean domain umbrella applies.
     if (parsed.title === null || parsed.node_type === null) return null;
     if (typeof parsed.title !== "string" || typeof parsed.node_type !== "string") return null;
-    const allowed = new Set(["goal", "project", "concept", "class", "idea"]);
+    const allowed = new Set(["area", "goal", "project", "big_task", "class"]);
     if (!allowed.has(parsed.node_type)) return null;
     // Defensive fallback: even if Haiku ignored the rejection rules above,
     // catch the worst patterns client-side so we never persist them.

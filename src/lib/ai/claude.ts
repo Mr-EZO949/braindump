@@ -87,10 +87,13 @@ function baseRun(
   };
 }
 
-// Strips markdown code fences if Claude wraps JSON in ```json ... ```
+// Strips markdown code fences if Claude wraps JSON in ```json ... ``` — including
+// an opening fence it never closes (seen on long extraction output), which
+// otherwise fails the parse and costs a full retry.
 function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  return fenced ? fenced[1].trim() : text.trim();
+  if (fenced) return fenced[1].trim();
+  return text.trim().replace(/^```(?:json)?\s*/, "");
 }
 
 function malformedResponse(params: {

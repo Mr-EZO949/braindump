@@ -10,6 +10,8 @@ import type {
   RerankOutput,
   MergeCheckOutput,
 } from "@/types/ai";
+import { isNodeType } from "@/lib/graph/node-types";
+import { MERGE_CHECK_PROMPT_VERSION } from "./prompts/merge-check";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,15 +37,6 @@ function isBoolean(v: unknown): v is boolean {
 // Extraction output
 // ---------------------------------------------------------------------------
 
-const VALID_NODE_TYPES = new Set([
-  "project",
-  "task",
-  "class",
-  "concept",
-  "idea",
-  "goal",
-  "habit",
-]);
 
 const VALID_EXTRACTION_SOFT_LINK_TYPES = new Set([
   "supports",
@@ -84,7 +77,9 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
       throw new Error(`proposed_nodes[${i}] missing proposed_title`);
     if (!isString(n.proposed_node_type))
       throw new Error(`proposed_nodes[${i}] missing proposed_node_type`);
-    if (!VALID_NODE_TYPES.has(n.proposed_node_type))
+    // Legacy "concept" from a model that slips into the old taxonomy → note.
+    if (n.proposed_node_type === "concept") n.proposed_node_type = "note";
+    if (!isNodeType(n.proposed_node_type))
       throw new Error(
         `proposed_nodes[${i}] unknown node type: ${n.proposed_node_type}`
       );
@@ -439,7 +434,7 @@ export function validateMergeCheckOutput(raw: unknown): MergeCheckOutput {
     prompt_version:
       isString(raw.prompt_version) && raw.prompt_version.trim()
         ? raw.prompt_version
-        : "merge-check-v1",
+        : MERGE_CHECK_PROMPT_VERSION,
   };
 }
 

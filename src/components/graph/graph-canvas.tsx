@@ -26,6 +26,13 @@ import {
   findStructuralCycleBreaks,
   getStructuralParentCandidate,
 } from "@/lib/graph/structure";
+import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
+import {
+  BREAKDOWN_TYPES,
+  CHECKABLE_TYPES,
+  OBJECTIVE_TYPES,
+  normalizeNodeType,
+} from "@/lib/graph/node-types";
 import type { Edge, EdgeType, GraphData, Node, NodeType } from "@/types/graph";
 
 type GraphCanvasProps = {
@@ -138,25 +145,18 @@ type EdgeVisualStyle = {
   strokeWidth: number;
 };
 
-type VisualNodeType = "goal" | "project" | "task" | "concept" | "class" | "habit";
-
-const nodeTypeCueMap: Record<VisualNodeType, string> = {
-  goal: "#f0a755",
-  project: "#6b8cef",
-  task: "#ef6b7a",
-  class: "#a07fd8",
-  concept: "#5cc7b8",
-  habit: "#7fc987",
-};
-
+// Sibling order under a parent: direction and structure first, then work,
+// knowledge last.
 const nodeTypeBranchOrder: Record<NodeType, number> = {
   goal: 0,
-  concept: 1,
+  area: 1,
   project: 2,
   idea: 3,
-  class: 4,
-  task: 7,
   habit: 3,
+  class: 4,
+  big_task: 6,
+  task: 7,
+  note: 8,
 };
 
 const edgeStrengthMap: Record<EdgeType, number> = {
@@ -241,20 +241,6 @@ function rgba(hex: string, alpha: number) {
   const color = hexToRgb(hex);
 
   return `rgba(${color.red}, ${color.green}, ${color.blue}, ${alpha})`;
-}
-
-function getVisualNodeType(nodeType: NodeType): VisualNodeType {
-  switch (nodeType) {
-    case "goal":
-    case "project":
-    case "task":
-    case "class":
-    case "concept":
-      return nodeType;
-    case "idea":
-    default:
-      return "concept";
-  }
 }
 
 function trimLine(line: string, maxLength: number) {
@@ -397,10 +383,14 @@ function getAnchorScore(node: Node, childCount: number, depth: number, hasParent
 // Per-type size bands for createNodeLayout (see the comment there). With a
 // floor of 0.3 for Objectives and a ceiling of 0.82 for leaves, an Objective
 // beats an equally important task at every score (0.3 + 0.7s > 0.82s for s ≤ 1).
-const OBJECTIVE_NODE_TYPES: ReadonlySet<string> = new Set(["goal", "project"]);
+// Big tasks sit a notch above tasks; notes stay small; areas are structure,
+// not ranked work, so they keep one constant size.
 const LEAF_NODE_TYPES: ReadonlySet<string> = new Set(["task", "habit"]);
 const OBJECTIVE_SIZE_FLOOR = 0.3;
 const LEAF_SIZE_CEILING = 0.82;
+const BIG_TASK_SIZE_FLOOR = 0.12;
+const NOTE_SIZE_CEILING = 0.5;
+const AREA_SIZE = 0.42;
 
 function createNodeLayout(node: Node, importanceScore: number) {
   const normalizedScore = normalizeImportanceScore(importanceScore);
@@ -410,13 +400,22 @@ function createNodeLayout(node: Node, importanceScore: number) {
   // per type rather than an additive boost (the old "+0.2 then clamp" flattened
   // every important Objective to the same max size):
   //   Objective        → [OBJECTIVE_SIZE_FLOOR, 1]   (always ≥ an equal-score task)
+  //   big task         → [BIG_TASK_SIZE_FLOOR, LEAF_SIZE_CEILING]
   //   task / habit     → [0, LEAF_SIZE_CEILING]      (pills stay pills)
+  //   note             → [0, NOTE_SIZE_CEILING]
+  //   area             → AREA_SIZE (constant — structure isn't ranked)
   //   everything else  → [0, 1]                      (unchanged)
-  const sizeScale = OBJECTIVE_NODE_TYPES.has(node.node_type)
+  const sizeScale = OBJECTIVE_TYPES.has(node.node_type)
     ? OBJECTIVE_SIZE_FLOOR + (1 - OBJECTIVE_SIZE_FLOOR) * normalizedScore
-    : LEAF_NODE_TYPES.has(node.node_type)
-      ? LEAF_SIZE_CEILING * normalizedScore
-      : normalizedScore;
+    : node.node_type === "big_task"
+      ? BIG_TASK_SIZE_FLOOR + (LEAF_SIZE_CEILING - BIG_TASK_SIZE_FLOOR) * normalizedScore
+      : LEAF_NODE_TYPES.has(node.node_type)
+        ? LEAF_SIZE_CEILING * normalizedScore
+        : node.node_type === "note"
+          ? NOTE_SIZE_CEILING * normalizedScore
+          : node.node_type === "area"
+            ? AREA_SIZE
+            : normalizedScore;
   const visualTier = getVisualTierFromScore(importanceScore);
   const fontSize = lerp(
     importanceVisualBounds.minFontSize,
@@ -443,7 +442,7 @@ function createNodeLayout(node: Node, importanceScore: number) {
   const hash = hashString(node.id);
 
   return {
-    categoryColor: nodeTypeCueMap[getVisualNodeType(node.node_type)],
+    categoryColor: NODE_COLOR_BY_TYPE[normalizeNodeType(node.node_type)],
     depth: 0,
     driftAmplitudeX: lerp(2.9, 1.1, sizeScale),
     driftAmplitudeY: lerp(2.4, 0.9, sizeScale),
@@ -1674,6 +1673,28 @@ export function GraphCanvas({
     [graphData],
   );
 
+  // Step progress for big tasks and projects: how many of their direct work
+  // children are done. Drawn as ticks (big task) or a thin bar (project).
+  const workProgressByNode = useMemo(() => {
+    const byId = new Map(graphData.nodes.map((n) => [n.id, n]));
+    const progress = new Map<string, { done: number; total: number }>();
+    childrenByParent.forEach((childIds, parentId) => {
+      const parent = byId.get(parentId);
+      if (!parent || (parent.node_type !== "big_task" && parent.node_type !== "project")) return;
+      let done = 0;
+      let total = 0;
+      for (const childId of childIds) {
+        const child = byId.get(childId);
+        if (!child || child.status === "archived") continue;
+        if (!CHECKABLE_TYPES.has(child.node_type) && child.node_type !== "project") continue;
+        total += 1;
+        if (child.status === "completed") done += 1;
+      }
+      if (total > 0) progress.set(parentId, { done, total });
+    });
+    return progress;
+  }, [childrenByParent, graphData.nodes]);
+
   // Set of all node IDs that are hidden because an ancestor is collapsed.
   const hiddenNodeIds = useMemo(() => {
     if (collapsedNodeIds.size === 0) return new Set<string>();
@@ -2805,12 +2826,17 @@ export function GraphCanvas({
             const topBandId = `node-top-band-${node.id}`;
             const actionWashId = `node-action-wash-${node.id}`;
             const bigOutlineId = `node-big-outline-${node.id}`;
-            const actionable = node.node_type === "task";
-            // "Big" nodes — goals and projects — are outcomes that break down
-            // into steps, not single actions. Mark them with a persistent
-            // gradient-red OUTLINE (never a full fill) so the big-vs-actionable
-            // distinction is legible at a glance (testing journal #3).
-            const isBig = node.node_type === "goal" || node.node_type === "project";
+            // Node types v2 (docs/node-types.md): tasks and big tasks share the
+            // red action wash; the gradient-red OUTLINE marks only work that
+            // needs breaking down — big tasks (journal #3) — while goals and
+            // projects carry size & weight instead. Areas are hollow hubs,
+            // ideas get a dashed outline.
+            const actionable = CHECKABLE_TYPES.has(node.node_type);
+            const isBig = BREAKDOWN_TYPES.has(node.node_type);
+            const isObjective = OBJECTIVE_TYPES.has(node.node_type);
+            const isArea = node.node_type === "area";
+            const isIdea = node.node_type === "idea";
+            const workProgress = workProgressByNode.get(node.id) ?? null;
             const topBandOpacity = actionable
               ? selected
                 ? 0.28
@@ -2925,10 +2951,12 @@ export function GraphCanvas({
                   />
                   <rect
                     fill="url(#node-base-surface)"
+                    fillOpacity={isArea ? 0.35 : 1}
                     height={node.height}
                     rx={nodeRadius}
-                    stroke={visual.border}
-                    strokeWidth={selected ? 1.55 : hovered ? 1.2 : 1}
+                    stroke={isArea ? rgba(node.categoryColor, 0.7) : visual.border}
+                    strokeDasharray={isIdea ? "5 4" : undefined}
+                    strokeWidth={selected ? 1.55 : hovered ? 1.2 : isArea ? 1.2 : 1}
                     width={node.width}
                     x={-node.width / 2}
                     y={-node.height / 2}
@@ -3006,15 +3034,68 @@ export function GraphCanvas({
                       y={-(node.height - 1) / 2}
                     />
                   ) : null}
+                  {workProgress ? (
+                    isBig ? (
+                      // Big task: one tick per step, filled when done.
+                      <g style={{ pointerEvents: "none" }}>
+                        {Array.from({ length: Math.min(workProgress.total, 10) }, (_, index) => {
+                          const count = Math.min(workProgress.total, 10);
+                          const tickWidth = Math.min(9, (node.width - nodeRadius * 2) / count - 3);
+                          const span = count * tickWidth + (count - 1) * 3;
+                          return (
+                            <rect
+                              fill={
+                                index < Math.round((workProgress.done / workProgress.total) * count)
+                                  ? "rgba(228,96,110,0.95)"
+                                  : theme === "light"
+                                    ? "rgba(0,0,0,0.14)"
+                                    : "rgba(255,255,255,0.16)"
+                              }
+                              height={2.6}
+                              key={index}
+                              rx={1.3}
+                              width={Math.max(tickWidth, 2)}
+                              x={-span / 2 + index * (tickWidth + 3)}
+                              y={node.height / 2 - 7}
+                            />
+                          );
+                        })}
+                      </g>
+                    ) : (
+                      // Project: a thin progress bar along the bottom edge.
+                      <g style={{ pointerEvents: "none" }}>
+                        <rect
+                          fill={theme === "light" ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.12)"}
+                          height={2.4}
+                          rx={1.2}
+                          width={node.width - nodeRadius * 2}
+                          x={-(node.width - nodeRadius * 2) / 2}
+                          y={node.height / 2 - 7}
+                        />
+                        <rect
+                          fill={rgba(node.categoryColor, 0.9)}
+                          height={2.4}
+                          rx={1.2}
+                          width={(node.width - nodeRadius * 2) * (workProgress.done / workProgress.total)}
+                          x={-(node.width - nodeRadius * 2) / 2}
+                          y={node.height / 2 - 7}
+                        />
+                      </g>
+                    )
+                  ) : null}
                   {skipLabel ? null : (
                     <text
                       fill={visual.text}
-                      fontFamily="var(--font-geist-sans), sans-serif"
-                      fontSize={node.fontSize}
+                      fontFamily={
+                        isArea
+                          ? "var(--font-geist-mono), ui-monospace, monospace"
+                          : "var(--font-geist-sans), sans-serif"
+                      }
+                      fontSize={isArea ? node.fontSize * 0.82 : node.fontSize}
                       // Objectives carry a heavier title than task pills — the
                       // "weight" half of the size-&-weight distinction (#3).
-                      fontWeight={isBig ? 680 : 540}
-                      letterSpacing="-0.02em"
+                      fontWeight={isObjective ? 680 : isArea ? 500 : 540}
+                      letterSpacing={isArea ? "0.08em" : "-0.02em"}
                       textAnchor="middle"
                       textDecoration={node.status === "completed" ? "line-through" : undefined}
                       y={initialY}
@@ -3025,7 +3106,7 @@ export function GraphCanvas({
                           key={`${node.id}-${line}`}
                           x={0}
                         >
-                          {line}
+                          {isArea ? line.toUpperCase() : line}
                         </tspan>
                       ))}
                     </text>

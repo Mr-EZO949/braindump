@@ -9,9 +9,11 @@ const fallbackBucketIndex: Record<Importance, number> = {
 const fallbackTypeOffset: Record<Node["node_type"], number> = {
   goal: 8,
   project: 4,
-  concept: 2,
+  area: 2,
   class: 0,
+  big_task: -2,
   idea: -3,
+  note: -4,
   task: -9,
   habit: 6,
 };

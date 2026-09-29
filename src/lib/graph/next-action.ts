@@ -1,6 +1,6 @@
 // Dead-end detection for the Focus flow.
 //
-// When Focus surfaces a container node (project / class / goal) that has no
+// When Focus surfaces a container node (big task / project / class / goal) that has no
 // actionable child, focusing on it dead-ends the user — there's nothing
 // concrete to do. The caller uses this to fire ONE light next-action
 // suggestion at that moment (demand-driven, only when the user actually picks
@@ -8,11 +8,12 @@
 
 import type { Edge, Node, NodeType } from "@/types/graph";
 
-// Node types that hold sub-work and can be "empty".
-const CONTAINER_TYPES = new Set<NodeType>(["project", "class", "goal"]);
-// Child types that count as a real next step. A concept/note child doesn't
-// make a project actionable; a task/sub-project/sub-goal does.
-const WORKABLE_TYPES = new Set<NodeType>(["task", "project", "goal"]);
+// Node types that hold sub-work and can be "empty". A big task with no steps
+// is the main case: Focus offers to break it down instead of dead-ending.
+const CONTAINER_TYPES = new Set<NodeType>(["big_task", "project", "class", "goal"]);
+// Child types that count as a real next step. A note/idea child doesn't
+// make a project actionable; a task/big task/sub-project/sub-goal does.
+const WORKABLE_TYPES = new Set<NodeType>(["task", "big_task", "project", "goal"]);
 
 // "paused" counts as live on purpose: if every task under a project is paused,
 // the user has explicitly parked them — re-suggesting work would nag, not help.

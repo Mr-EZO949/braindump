@@ -82,7 +82,8 @@ describe("ensureWorkspaceRoot", () => {
     const insert = calls.find((c) => c.op === "insert");
     expect(insert?.payload?.title).toBe("ezo");
     expect(insert?.payload?.status).toBe("active");
-    expect(insert?.payload?.node_type).toBe("goal");
+    // The root is the user's whole life — an area, never a goal (node types v2).
+    expect(insert?.payload?.node_type).toBe("area");
     // Pinned low so the root never dominates the canvas.
     expect(insert?.payload?.manual_weight).toBe(30);
 

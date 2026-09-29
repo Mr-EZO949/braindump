@@ -315,7 +315,7 @@ export function pickExistingParentForNode(params: {
         score += 1;
       }
 
-      if (candidate.node_type === "concept" || candidate.node_type === "project") {
+      if (candidate.node_type === "area" || candidate.node_type === "project") {
         score += 1;
       }
 

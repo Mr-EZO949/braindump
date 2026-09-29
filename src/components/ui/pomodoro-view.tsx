@@ -62,7 +62,7 @@ export function PomodoroView({ graphData, focusTimer }: PomodoroViewProps) {
     () =>
       graphData.nodes.filter(
         (n) =>
-          (n.node_type === "task" || n.node_type === "project") &&
+          (n.node_type === "task" || n.node_type === "big_task" || n.node_type === "project") &&
           n.status !== "archived" &&
           n.status !== "completed",
       ),

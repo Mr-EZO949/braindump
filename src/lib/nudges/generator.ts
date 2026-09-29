@@ -80,7 +80,7 @@ async function findStaleGoalsAndProjects(
     .from("nodes")
     .select("id, user_id, workspace_id, title, node_type, status, updated_at")
     .eq("status", "active")
-    .in("node_type", ["goal", "project"])
+    .in("node_type", ["goal", "project", "big_task"])
     .lt("updated_at", cutoff);
 
   if (error || !nodes || nodes.length === 0) return [];
@@ -310,7 +310,7 @@ async function findTopPriority(
       "id, user_id, workspace_id, title, node_type, status, updated_at, current_importance_score, target_date",
     )
     .eq("status", "active")
-    .in("node_type", ["task", "goal", "project", "habit"])
+    .in("node_type", ["task", "big_task", "goal", "project", "habit"])
     .not("current_importance_score", "is", null);
 
   if (error || !nodes || nodes.length === 0) return [];

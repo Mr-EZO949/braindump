@@ -186,3 +186,20 @@ describe("findIntraDumpDuplicates — the same item emitted twice by ONE dump", 
     expect(dropped.get("n3")).toBe("n1");
   });
 });
+
+describe("judgeSameItem — big tasks (node types v2)", () => {
+  const bigTask = (title: string) => ({ title, node_type: "big_task" });
+
+  it("matches an old task retyped as a big task", () => {
+    expect(judgeSameItem(task("Pass ML Exam"), bigTask("Pass ML Exam"), 0.97).same).toBe(true);
+  });
+
+  it("matches an old project retyped as a big task", () => {
+    expect(judgeSameItem(project("Test BrainDump"), bigTask("Test BrainDump"), 0.96).same).toBe(true);
+  });
+
+  it("still separates an area from a task with similar words", () => {
+    const area = { title: "Health", node_type: "area" };
+    expect(judgeSameItem(area, task("Health checkup"), 0.9).certainlyDistinct).toBe(true);
+  });
+});

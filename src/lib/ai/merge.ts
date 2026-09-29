@@ -21,20 +21,26 @@ import {
   isMalformedAIResponseError,
 } from "@/lib/ai/errors";
 import { persistAIRun } from "@/lib/ai/telemetry";
+import { normalizeNodeType } from "@/lib/graph/node-types";
 
 // ---------------------------------------------------------------------------
 // Type compatibility
 // Only suggest merging nodes whose types are plausibly the same entity.
 // ---------------------------------------------------------------------------
 
+// Old graphs typed the same thing inconsistently ("Pass ML Exam" as task,
+// project or goal), so big tasks are compatible with both neighbours; areas
+// replaced grouping concepts and notes replaced knowledge concepts.
 const COMPATIBLE_TYPES: Record<string, Set<string>> = {
-  goal:    new Set(["goal", "project"]),
-  project: new Set(["project", "goal", "task"]),
-  task:    new Set(["task", "project", "concept", "idea"]),
-  concept: new Set(["concept", "idea", "task"]),
-  class:   new Set(["class", "concept"]),
-  idea:    new Set(["idea", "concept", "task"]),
-  habit:   new Set(["habit", "task", "goal"]),
+  goal:     new Set(["goal", "project", "big_task", "area"]),
+  project:  new Set(["project", "goal", "big_task", "task"]),
+  big_task: new Set(["big_task", "task", "project", "goal"]),
+  task:     new Set(["task", "big_task", "project", "idea"]),
+  area:     new Set(["area", "goal", "class"]),
+  class:    new Set(["class", "area"]),
+  idea:     new Set(["idea", "note", "task"]),
+  note:     new Set(["note", "idea"]),
+  habit:    new Set(["habit", "task", "goal"]),
 };
 
 function typesAreCompatible(a: string, b: string): boolean {
@@ -88,7 +94,7 @@ export async function detectDuplicates(params: {
     const topMatch = matches.find(
       (m) =>
         m.similarity >= AI_DEDUP.SIMILARITY_THRESHOLD &&
-        typesAreCompatible(node.node_type ?? "concept", m.node_type),
+        typesAreCompatible(normalizeNodeType(node.node_type), normalizeNodeType(m.node_type)),
     );
 
     if (!topMatch) continue;
@@ -103,7 +109,7 @@ export async function detectDuplicates(params: {
         new_node: {
           title: node.title,
           summary: node.summary,
-          node_type: (node.node_type ?? "concept") as NodeType,
+          node_type: normalizeNodeType(node.node_type),
         },
         existing_node: {
           title: topMatch.title,
@@ -209,7 +215,7 @@ export async function detectDuplicates(params: {
       new_node_id: node.id,
       new_node_title: node.title,
       new_node_summary: node.summary,
-      new_node_type: node.node_type ?? "concept",
+      new_node_type: normalizeNodeType(node.node_type),
       existing_node_id: topMatch.node_id,
       existing_node_title: topMatch.title,
       existing_node_summary: topMatch.summary,

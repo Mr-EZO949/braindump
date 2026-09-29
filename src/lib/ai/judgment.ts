@@ -43,7 +43,8 @@ function truncate(text: string | null | undefined, max: number): string {
 function buildSystemPrompt(): string {
   return [
     "You are a ranking assistant that scores how important individual nodes are in a user's thinking graph.",
-    "Each node is a task, goal, project, class, concept, idea, or habit.",
+    "Each node is a goal (a measurable outcome), project (a body of work), big_task (one deliverable that takes several sittings), task (one sitting), habit, area (an ongoing part of life — structure, not work), class, idea, or note (something to remember).",
+    "Areas and notes are context: score an area by how active the life domain is, and a note low unless the user's focus depends on it.",
     "",
     "Rate importance 0–100 where:",
     "- 90–100: critical, central to the user's current focus (a top-level goal they've named, or a task blocking it)",
@@ -195,7 +196,7 @@ export async function scoreNodesJudgment(params: {
       run_type: runType,
       provider: "claude",
       model_name: AI_MODELS.CLAUDE_HAIKU,
-      prompt_version: "judgment_v1",
+      prompt_version: "judgment_v2",
       input_hash: null,
       output_hash: null,
       input_tokens: usage ? totalInputTokens(usage) : null,

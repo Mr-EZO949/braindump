@@ -5,11 +5,13 @@ import { motion } from "framer-motion";
 import { CloseIcon } from "@/components/ui/icons";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { classifyDumpSize, DUMP_SIZE_LABEL } from "@/lib/ai/dump-size";
+import { NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
 import type { NodeType } from "@/types/graph";
 import type { ProposedNode } from "@/types/ai";
 
-const NODE_TYPES: NodeType[] = [
-  "task", "project", "goal", "habit", "concept", "idea", "class",
+// Work types first — they're what a dump usually produces.
+const TYPE_OPTIONS: NodeType[] = [
+  "task", "big_task", "project", "goal", "habit", "area", "class", "idea", "note",
 ];
 
 // ---------------------------------------------------------------------------
@@ -463,7 +465,7 @@ export function ProposedNodesReview({
           const edit = edits[proposal.id];
           const isChecked = checked.has(proposal.id);
           const isEditing = editingId === proposal.id;
-          const color = NODE_COLOR_BY_TYPE[edit.proposed_node_type] ?? "#677480";
+          const color = NODE_COLOR_BY_TYPE[normalizeNodeType(edit.proposed_node_type)];
           const existingParentTitle = proposal.existing_parent_node_id
             ? existingNodeTitles[proposal.existing_parent_node_id] ?? null
             : null;
@@ -519,7 +521,7 @@ export function ProposedNodesReview({
                         }
                         value={edit.proposed_node_type}
                       >
-                        {NODE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                        {TYPE_OPTIONS.map((t) => <option key={t} value={t}>{NODE_TYPE_INFO[t].label}</option>)}
                       </select>
                       <button className="prn-done" onClick={() => setEditingId(null)} type="button">
                         Done
@@ -530,7 +532,9 @@ export function ProposedNodesReview({
                   <div className="prn-body">
                     <div className="prn-body-top">
                       <span className="prn-node-name">{edit.proposed_title}</span>
-                      <span className="prn-type-label" style={{ color }}>{edit.proposed_node_type}</span>
+                      <span className="prn-type-label" style={{ color }}>
+                        {NODE_TYPE_INFO[normalizeNodeType(edit.proposed_node_type)].label}
+                      </span>
                     </div>
                     {edit.proposed_summary && (
                       <p className="prn-desc">{edit.proposed_summary}</p>

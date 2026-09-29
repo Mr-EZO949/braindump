@@ -1,6 +1,6 @@
 // POST /api/nodes/suggest-steps
-// Given an accepted goal or project node, uses the LLM to suggest actionable
-// sub-tasks/steps. Returns brain-dump-style text that the client feeds into
+// Given an accepted goal, project or big task, uses the LLM to suggest
+// actionable sub-tasks/steps. Returns brain-dump-style text that the client feeds into
 // the extraction pipeline via /api/entries.
 
 import { after, NextRequest, NextResponse } from "next/server";
@@ -9,6 +9,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { AI_MODELS, AI_TEMPERATURE, claudeRequestTuning } from "@/lib/ai/config";
 import { recordClaudeRun } from "@/lib/ai/telemetry";
 import { readClaudeUsage } from "@/lib/ai/usage";
+import { NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
 
 // Light mode's output contract — a flat list of immediate next actions.
 const OUTPUT_FORMAT = `Output format — write as a brain dump that the extraction engine can parse:
@@ -23,12 +24,13 @@ Only output the brain dump text. No preamble, no explanation, no markdown.`;
 // Full mode's output contract — a two-level TREE (phases → tasks) so the
 // roadmap reads as structure the user can navigate, not a flat wall of tasks.
 // The nesting (a "Under [phase]:" block per phase) is what the extraction
-// engine turns into sub-parents beneath the goal.
+// engine turns into sub-parents beneath the goal. Each phase is one stage with
+// a finish line, so it's labelled — and extracted as — a big task.
 const OUTPUT_FORMAT_GROUPED = `Output format — write as a brain dump the extraction engine parses into a TREE. Group the steps under 2–4 short PHASES (logical stages, in order). Each phase is its own heading with its tasks nested under it:
 
 Under "[parent title]":
-- Phase: [phase name]. [one line — what this phase covers]
-- Phase: [phase name]. [one line]
+- Big task: [phase name]. [one line — what this phase covers]
+- Big task: [phase name]. [one line]
 
 Under "[phase name]":
 - Task: [step title]. [summary]
@@ -43,13 +45,13 @@ Give every phase its own "Under [phase name]:" block. Keep it to 2–4 phases, 2
 // Full roadmap — the whole breakdown, grouped into phases.
 const STEP_SYSTEM_PROMPT_FULL = `You are a task-breakdown assistant for BrainDump, a graph-based planning tool.
 
-Given a goal or project, generate 4–8 concrete, actionable steps — and ORGANIZE them into 2–4 short phases so the result is a high-level tree, not a flat list. Each step is a task that can be checked off; each phase is a stage that groups related tasks.
+Given a goal or project, generate 4–8 concrete, actionable steps — and ORGANIZE them into 2–4 short phases so the result is a high-level tree, not a flat list. Each step is a task that can be checked off in one sitting; each phase is a stage with its own finish line that groups related tasks.
 
 Rules:
 - Read the Description for the CURRENT state — what is already done, in progress, or live. Do NOT propose steps for work that's already complete; start from where things actually stand, not from scratch. (If a survey is described as "already live", don't suggest designing or launching it — pick up at analysis/write-up.)
 - If the Description names a blocker — waiting on a person, a decision, or input that isn't ready — make the unblocking action an EARLY step and sequence the rest after it.
 - Tailor every step to THIS specific situation. Never output a generic textbook sequence that ignores the Description.
-- Phases should be natural stages for THIS goal (e.g. "Prep", "Build", "Launch"), named for what they contain — not generic "Phase 1/2/3". Order them so earlier phases unblock later ones.
+- Phases should be natural stages for THIS goal, named for the deliverable that finishes them ("Collect the survey data", "Build the MVP", "Launch the beta") — not generic "Prep" or "Phase 1/2/3". Order them so earlier phases unblock later ones.
 - Put each task under the phase it belongs to. Every phase must hold at least one task.
 - If the workspace's other active items are listed, do NOT propose steps that duplicate them, and sequence your steps around their deadlines and dependencies — if a step must happen before or is blocked by another item, order it accordingly and say so in its summary.
 - Be specific and practical, not generic. "Take a full-length SAT practice test" is better than "Practice".
@@ -61,10 +63,27 @@ Rules:
 
 ${OUTPUT_FORMAT_GROUPED}`;
 
+// Full roadmap for a BIG TASK — one deliverable, so its steps are a flat list
+// of one-sitting tasks (a big task holds only steps; node types v2).
+const STEP_SYSTEM_PROMPT_STEPS = `You are a task-breakdown assistant for BrainDump, a graph-based planning tool.
+
+Given a big task — one deliverable that takes several sittings — generate 4–8 concrete steps, in the order they should happen. Each step is a task that can be finished in one sitting and checked off.
+
+Rules:
+- Read the Description for the CURRENT state — what is already done, in progress, or live. Do NOT propose steps for work that's already complete; start from where things actually stand.
+- If the Description names a blocker — waiting on a person, a decision, or input that isn't ready — make the unblocking action an EARLY step.
+- Tailor every step to THIS specific situation. Never output a generic textbook sequence that ignores the Description.
+- If the workspace's other active items are listed, do NOT propose steps that duplicate them, and sequence your steps around their deadlines.
+- DIRECT WORK, NOT PLANNING-TO-PLAN. Never propose "make a study plan", "create a schedule", "outline your approach", "research how to start", "gather resources", "break this into tasks". (Only exception: a genuine one-time unblock the Description names.)
+- For studying, steps are concrete DOSES of the real material: "Watch lecture 3", "Solve 5 practice problems from chapter 2", "Do last year's midterm". Not "review the material".
+- Keep titles short (under 60 characters) but descriptive, with a one-sentence summary each.
+
+${OUTPUT_FORMAT}`;
+
 // Light — just enough to get unstuck. For paralysis relief, not planning.
 const STEP_SYSTEM_PROMPT_LIGHT = `You are a task-breakdown assistant for BrainDump, a tool for people who get stuck starting things.
 
-Given a goal or project, generate ONLY the 1–3 most immediate, concrete next actions — the smallest things the user can do right now to get moving. This is not a full plan; it's the first push past the blank page.
+Given a goal, project or big task, generate ONLY the 1–3 most immediate, concrete next actions — the smallest things the user can do right now to get moving. This is not a full plan; it's the first push past the blank page.
 
 Rules:
 - Each step must be doable in one short sitting. "Open a new doc and write the title" beats "Draft the report".
@@ -121,8 +140,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Accept any node type — the user explicitly asked for a breakdown, so
-  // even a "concept" or "task" or "idea" gets its own roadmap. The model's
-  // output will land in the standard review queue regardless.
+  // even a "task" or "idea" gets its own roadmap (a task that gains steps
+  // becomes a big task). The model's output lands in the standard review
+  // queue regardless.
+  const parentType = normalizeNodeType(node_type, "project");
+  const parentLabel = NODE_TYPE_INFO[parentType].label;
 
   // Verify workspace ownership
   const { data: workspace } = await supabase
@@ -161,14 +183,21 @@ export async function POST(req: NextRequest) {
   const client = new Anthropic({ apiKey: claudeKey });
   const usageScope = { supabase, userId: user.id, workspaceId: workspace_id };
   const userPrompt =
-    (summary ? `Goal/Project: "${title}"\nDescription: ${summary}` : `Goal/Project: "${title}"`) +
+    (summary ? `${parentLabel}: "${title}"\nDescription: ${summary}` : `${parentLabel}: "${title}"`) +
     (cleanInstructions
       ? `\n\nUser's directions for this breakdown (follow these): ${cleanInstructions}`
       : "") +
     contextBlock;
 
+  // Big tasks and tasks break into a flat list of steps; goals and projects
+  // into phases (each phase a big task) with steps under them.
+  const flatSteps = parentType === "big_task" || parentType === "task";
   const systemPrompt =
-    stepMode === "light" ? STEP_SYSTEM_PROMPT_LIGHT : STEP_SYSTEM_PROMPT_FULL;
+    stepMode === "light"
+      ? STEP_SYSTEM_PROMPT_LIGHT
+      : flatSteps
+        ? STEP_SYSTEM_PROMPT_STEPS
+        : STEP_SYSTEM_PROMPT_FULL;
   // Light wants 1–3 steps, so a single step is a valid result — only escalate
   // if it came back empty. Full wants a real roadmap, so <2 steps is too thin.
   const minSteps = stepMode === "light" ? 1 : 2;
@@ -195,7 +224,7 @@ export async function POST(req: NextRequest) {
         scope: usageScope,
         source: "suggest-steps",
         model,
-        promptVersion: `suggest-steps:${stepMode}`,
+        promptVersion: `suggest-steps-v2:${stepMode === "light" ? "light" : flatSteps ? "steps" : "full"}`,
         usage: readClaudeUsage(response.usage),
         latencyMs: Date.now() - startedAt,
       }),

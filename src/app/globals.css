@@ -4921,6 +4921,44 @@ input[type="search"]::-webkit-search-results-decoration {
   transform: translateY(0) scale(1);
 }
 
+/* Node types v2: the picker lists the nine types grouped by family. */
+.graph-type-menu {
+  max-height: min(62vh, 520px);
+  overflow-y: auto;
+}
+
+.graph-type-family {
+  display: grid;
+  gap: 4px;
+}
+
+.graph-type-family + .graph-type-family {
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border-faint);
+}
+
+.graph-type-family-label {
+  padding: 2px 12px 2px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.graph-type-family .graph-type-option {
+  padding: 9px 12px 8px;
+}
+
+.graph-type-option-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  vertical-align: 1px;
+}
+
 .graph-type-option {
   display: block;
   width: 100%;
@@ -15284,6 +15322,54 @@ input[type="search"]::-webkit-search-results-decoration {
 .todos-row-wrap > .list-view-row {
   flex: 1;
   grid-template-columns: auto 1fr auto;
+}
+
+/* Node types v2 — big tasks list their step progress and expand to show
+   their steps, indented beneath them. */
+.todos-row-wrap[data-step] {
+  padding-left: 30px;
+}
+
+.list-view-row[data-big-task] {
+  box-shadow: inset 2px 0 0 rgba(213, 58, 71, 0.55);
+}
+
+.todos-steps {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.todos-expand {
+  flex-shrink: 0;
+  width: 26px;
+  align-self: center;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  transition: transform var(--motion-fast), background var(--motion-fast);
+}
+
+.todos-expand:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.todos-expand[data-expanded] svg {
+  transform: rotate(180deg);
 }
 
 .todos-row-check {
