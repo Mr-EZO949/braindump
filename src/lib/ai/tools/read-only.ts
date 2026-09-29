@@ -443,7 +443,7 @@ const RERANK_IMPORTANCE: ToolDefinition = {
   schema: {
     name: "rerank_importance",
     description:
-      "Re-rank the importance of every node in the current workspace using an LLM judgment pass, then recompute the graph-wide scores so the ripple flows to neighbors. Use this ONLY when the user explicitly asks to re-rank, re-prioritize, or re-score importance (e.g. 'rerank my graph', 'what matters most now has changed, redo the importance'). Not for answering 'what should I work on' — use get_workspace_summary for that. Rate-limited to a few runs per day.",
+      "Re-judge how significant every node in the workspace is (an LLM pass), then recompute the graph-wide scores. Use this ONLY when the user explicitly asks to re-rank or re-score everything (e.g. 'rerank my graph', 'my whole situation changed, redo the importance'). For changes to specific nodes — done, waiting, a deadline, stakes, focus, can-wait — use update_priorities instead. Not for answering 'what should I work on'. Rate-limited to a few runs per day.",
     input_schema: {
       type: "object",
       properties: {
@@ -547,10 +547,20 @@ const RERANK_IMPORTANCE: ToolDefinition = {
       workspaceId: ctx.workspaceId,
     });
 
+    if (results.length === 0) {
+      // The judgment pass failed (logged in ai_runs) — say so instead of
+      // reporting a successful rerank of nothing.
+      return {
+        ok: false,
+        error: "The re-rank didn't go through — scores are unchanged. Try again in a minute.",
+      };
+    }
+
     await computeWorkspaceScores({
       workspaceId: ctx.workspaceId,
       userId: ctx.userId,
       supabase: ctx.supabase,
+      today: ctx.today,
     }).catch(() => {});
 
     const top = [...results]
