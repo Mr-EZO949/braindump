@@ -1,14 +1,23 @@
 // Plain-question chat turns on Gemini Flash-Lite (see chat-router.ts).
 //
 // No tools: the model answers from the same graph snapshot the Claude
-// assistant gets, and replies with the single word HANDOFF when the turn needs
-// an action or data the snapshot doesn't show. The chat route then runs the
-// normal Claude loop, so a routing miss costs one small call, never a wrong or
-// missing action. The first few characters are held back until we know the
-// reply isn't a hand-off, so HANDOFF never reaches the user.
+// assistant gets. It returns JSON whose FIRST field, needs_action, says
+// whether the turn needs an action or data the snapshot doesn't show; then the
+// chat route runs the normal Claude loop (tools). Only a needs_action=false
+// reply reaches the user.
 //
-// Streams over the REST SSE endpoint directly: the installed
-// @google/generative-ai SDK predates thinkingConfig.
+// Why a separate first field (2026-09-29): the old rule "reply with the single
+// word HANDOFF" asks the model to NOT answer, and Flash-Lite answered anyway —
+// on 20 "tell the app something" questions ("is it ok if I skip italian for a
+// while?", "I bombed the midterm, is the final worth it?") it handed off 16/20,
+// so 2 in 20 were silently lost after the router. Deciding first caught 20/20
+// with 0/12 false hand-offs on plain questions (docs/ranking.md).
+//
+// One non-streaming call (a 1–3 sentence answer is ~1s), so the decision is
+// always read before anything is sent; anything unreadable hands off — a miss
+// costs one tiny call, never a wrong answer. REST directly: the installed
+// @google/generative-ai SDK predates thinkingConfig. The function keeps its
+// streaming-era name so the chat route is untouched.
 
 import { AI_MODELS } from "./config";
 import type { HistoryTurn } from "./chat-memory";
@@ -16,9 +25,8 @@ import { trimHistory } from "./chat-memory";
 import { geminiCostUSD, type GeminiUsage } from "./usage";
 import type { AssistantMode } from "@/types/ai";
 
-export const ASSISTANT_QA_PROMPT_VERSION = "assistant-qa-v2";
+export const ASSISTANT_QA_PROMPT_VERSION = "assistant-qa-v3";
 
-const HANDOFF = "HANDOFF";
 
 const MODE_FOCUS: Record<AssistantMode, string> = {
   explain: "Focus: help them understand their graph — why things matter and what to weigh.",
@@ -35,11 +43,13 @@ export function buildQASystemPrompt(params: {
 
 This turn you can only TALK. You cannot add, change, complete, schedule or look up anything. Answer from the Graph context below and the conversation.
 
-Reply with exactly the single word ${HANDOFF} and nothing else when:
-- the user wants anything changed or recorded — add/capture, complete, archive, rename, move, connect, schedule, plan — or reports something they did or decided, or how something went or changed (an exam taken, a result in, something over, moved, postponed or dropped);
+First set needs_action. It is TRUE when:
+- the user wants anything changed or recorded — add/capture, complete, archive, rename, move, connect, schedule, plan, prioritize ("make X my main thing", "can I skip X for a while");
+- the user tells you ANY fact about their situation the graph doesn't show yet — something done, over, taken, passed, failed, handed in, approved, cancelled, dropped, a date that moved, what rides on it — even when the message is also a question ("now that the exam is over, what next?" → true);
 - answering needs something the Graph context doesn't show: their calendar, what they did recently, a node's full description, what's inside a node, how nodes are connected (no connections are shown), or a node that isn't listed.
+It is FALSE only for a pure question about what the Graph context already shows. When needs_action is true, leave reply empty.
 
-Otherwise answer:
+When needs_action is false, reply:
 - 1–3 sentences (under ~60 words): the answer, then at most one next step. Longer only when they ask for a breakdown or explanation — then short bullets.
 - Refer to nodes by their exact titles. Never invent nodes, dates, deadlines or facts. Never show ids, and never quote the "importance N/100" numbers — they're the app's internal ranking.
 - No preamble, no "great question", no restating their question, no menu of offers.
@@ -59,7 +69,28 @@ function thinkingConfig(model: string): Record<string, unknown> {
   return model.startsWith("gemini-2.5") ? { thinkingBudget: 0 } : { thinkingLevel: "minimal" };
 }
 
-interface StreamChunk {
+// needs_action first, then the reply (propertyOrdering) — the model commits
+// to the decision before it starts answering.
+const QA_RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: { needs_action: { type: "BOOLEAN" }, reply: { type: "STRING" } },
+  required: ["needs_action", "reply"],
+  propertyOrdering: ["needs_action", "reply"],
+};
+
+/** The model's JSON → decision; null when it can't be read (→ hand off). */
+export function parseQADecision(text: string): { needsAction: boolean; reply: string } | null {
+  try {
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const parsed = JSON.parse((fenced ? fenced[1] : text).trim()) as { needs_action?: unknown; reply?: unknown };
+    if (typeof parsed.needs_action !== "boolean") return null;
+    return { needsAction: parsed.needs_action, reply: typeof parsed.reply === "string" ? parsed.reply.trim() : "" };
+  } catch {
+    return null;
+  }
+}
+
+interface GenerateResponse {
   candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
   usageMetadata?: {
     promptTokenCount?: number;
@@ -88,93 +119,46 @@ export async function streamQAAnswer(params: {
   const result = <K extends QAResult["kind"]>(kind: K, extra: object = {}) =>
     ({ kind, usage, costUSD: geminiCostUSD(model, usage), model, ...extra }) as QAResult;
 
-  let res: Response;
+  let json: GenerateResponse;
   try {
-    res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": params.apiKey },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: params.systemPrompt }] },
-          contents,
-          generationConfig: { temperature: 0.4, maxOutputTokens: 1024, thinkingConfig: thinkingConfig(model) },
-        }),
-        signal: params.signal,
-      },
-    );
-  } catch (err) {
-    return result("error", { error: err instanceof Error ? err.message : String(err) });
-  }
-  if (!res.ok || !res.body) {
-    const body = await res.text().catch(() => "");
-    return result("error", { error: `gemini ${res.status}: ${body.slice(0, 300)}` });
-  }
-
-  // Hold output until it can't be a hand-off: the reply either starts with
-  // HANDOFF or, once it has diverged from it, is released as it streams.
-  let text = "";
-  let released = false;
-  const release = () => {
-    if (!released && text) params.onText(text);
-    released = true;
-  };
-  const isHandoff = () => text.trim().toUpperCase().startsWith(HANDOFF);
-  const couldBeHandoff = () => {
-    const head = text.trimStart().toUpperCase();
-    return HANDOFF.startsWith(head) || head.startsWith(HANDOFF);
-  };
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!line.startsWith("data:")) continue;
-        let chunk: StreamChunk;
-        try {
-          chunk = JSON.parse(line.slice(5));
-        } catch {
-          continue;
-        }
-        const m = chunk.usageMetadata;
-        if (m) {
-          usage = {
-            prompt: m.promptTokenCount ?? usage.prompt,
-            cached: m.cachedContentTokenCount ?? usage.cached,
-            output: (m.candidatesTokenCount ?? 0) + (m.thoughtsTokenCount ?? 0) || usage.output,
-          };
-        }
-        const piece = (chunk.candidates?.[0]?.content?.parts ?? [])
-          .filter((p) => !p.thought && typeof p.text === "string")
-          .map((p) => p.text)
-          .join("");
-        if (!piece) continue;
-        if (released) {
-          params.onText(piece);
-          text += piece;
-          continue;
-        }
-        text += piece;
-        if (!couldBeHandoff()) release();
-      }
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": params.apiKey },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: params.systemPrompt }] },
+        contents,
+        generationConfig: {
+          temperature: 0.4,
+          maxOutputTokens: 1024,
+          thinkingConfig: thinkingConfig(model),
+          responseMimeType: "application/json",
+          responseSchema: QA_RESPONSE_SCHEMA,
+        },
+      }),
+      signal: params.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return result("error", { error: `gemini ${res.status}: ${body.slice(0, 300)}` });
     }
+    json = (await res.json()) as GenerateResponse;
   } catch (err) {
-    if (released) return result("answered", { text });
     return result("error", { error: err instanceof Error ? err.message : String(err) });
   }
 
-  if (!released) {
-    if (!text.trim()) return result("error", { error: "empty reply" });
-    if (isHandoff()) return result("handoff");
-  }
-  release();
-  return result("answered", { text });
+  const m = json.usageMetadata ?? {};
+  usage = {
+    prompt: m.promptTokenCount ?? 0,
+    cached: m.cachedContentTokenCount ?? 0,
+    output: (m.candidatesTokenCount ?? 0) + (m.thoughtsTokenCount ?? 0),
+  };
+  const text = (json.candidates?.[0]?.content?.parts ?? [])
+    .filter((p) => !p.thought && typeof p.text === "string")
+    .map((p) => p.text)
+    .join("");
+  const decision = parseQADecision(text);
+  // Unreadable, flagged, or an empty "answer" → Claude takes the turn.
+  if (!decision || decision.needsAction || !decision.reply) return result("handoff");
+  params.onText(decision.reply);
+  return result("answered", { text: decision.reply });
 }

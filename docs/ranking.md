@@ -222,6 +222,28 @@ history note now says the changes no longer apply); the anti-freeze nudge sat
 on top of the Focus dialog. Still variable: ask_choice lead-in sometimes
 repeats the options in text.
 
+## Chat routing: does an update ever get lost? (2026-09-29)
+
+Plain questions go to Gemini Flash-Lite with **no tools** (cheap); anything
+that changes the graph must reach Claude. A miss is silent — a friendly answer
+and no update — so it was measured on a labeled set: 26 messages that should
+update something (most phrased as questions: "is it ok if I skip italian for a
+while?", "I bombed the midterm, is the final worth it?") and 16 plain questions,
+10 of them held out from tuning.
+
+| | updates reaching Claude | plain Qs wrongly sent to Claude |
+|---|---|---|
+| router rules alone | 14/26 | 0/16 |
+| Gemini, old "reply with the word HANDOFF" | 16/20 | 0/12 |
+| Gemini, `needs_action` decided first (JSON schema) | 25/26 | 0/16 |
+| **router + Gemini (shipped, assistant-qa-v3)** | **26/26** | **0/16** |
+
+Before: 2 in 20 updates were silently answered instead of applied. Two layers
+now: the router sends outcome words (over, took, passed, missed, pushed, moved,
+waiting, pass/fail, got into, results…) straight to Claude; Gemini decides
+`needs_action` as its first JSON field before writing any reply, and anything
+unreadable hands off. Cost of the study: $0.028.
+
 ## AI importance rerank (`judgment.ts`, `judgment_v3`)
 
 Judges *significance only* (timing is the pressure signal). Nodes go in as short
