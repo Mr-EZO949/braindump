@@ -49,9 +49,13 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getClaims() verifies the session JWT locally against the project's
+  // (cached) ES256 signing keys — getUser() made a round trip to Supabase Auth
+  // in front of EVERY API call. Route handlers still call getUser() themselves.
+  const { data: claimsData } = await supabase.auth.getClaims();
+  const user = claimsData?.claims
+    ? { email: typeof claimsData.claims.email === "string" ? claimsData.claims.email : undefined }
+    : null;
 
   if (isEmailAllowed(user?.email)) {
     return response;
