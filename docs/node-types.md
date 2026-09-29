@@ -31,9 +31,9 @@ Each type answers one question. The family says how the node **ends**.
 
 | Family | Type | The question | Examples | How it ends |
 |---|---|---|---|---|
-| **Direction** — why | `goal` | Is it an outcome you'll *know* you reached (a number, an event, a yes/no), ideally by a date? | Internship in Milan by November · 1450+ on the SAT · Half-marathon under 1:50 | **Achieved** (you confirm) or dropped |
+| **Direction** — why | `goal` | Is it a *result* you'll know you reached — pass it, land it, hit the number — ideally by a date? | Pass Machine Learning · Internship in Milan by November · 1450+ on the SAT | **Achieved** (you confirm) or dropped |
 | **Work** — what you do | `project` | Is it a body of work with several *different* parts or deliverables? | Launch BrainDump beta · Internship search · Portfolio site | Done when its parts are done (you confirm) |
-| | `big_task` **new** | Is it *one* thing with one finish line that takes several sittings? | Pass the ML exam · Write the thesis · Test BrainDump · Prep the Q3 deck | Checked off (prompted when its last step is done) |
+| | `big_task` **new** | Is it *one piece of work* you do or produce, over several sittings? | Write the thesis · Test BrainDump · Crash-course Italian · Prep the Q3 deck | Checked off |
 | | `task` | Can you finish it in one sitting (~2h or less)? | Email the professor · Solve 5 practice problems · Book the flight | Checked off |
 | | `habit` | Does it repeat on a stated cadence? | Gym 3×/week · Daily stretching · Italian media daily | Never — tracked per day/week |
 | **Structure** — where | `area` **new** | Is it a part of life you keep maintaining, with no finish? | University · Health · Career · Money · Life admin | Never |
@@ -45,8 +45,11 @@ Tie-breakers the prompts and UI use:
 
 - task vs big_task: **one sitting?** If you'd break it into steps before starting, it's a
   big task. A task that gets children is promoted to big_task automatically.
-- big_task vs project: **one finish line?** "Pass the ML exam" has one (the exam); "Launch
-  the beta" has several deliverables (landing page, onboarding, payments) → project.
+- goal vs big_task (owner's call, 2026-09-29): **a result or a piece of work?** "Pass the ML
+  exam" / "Pass Machine Learning" is a result → goal; "Write the ML project report" is work
+  → big task.
+- big_task vs project: **one piece of work?** "Write my thesis" → big task; "Launch the
+  beta" has several different deliverables (landing page, onboarding, payments) → project.
 - goal vs area: **could you say "done"?** "Money independence" can't be ticked → area
   (and the assistant may ask what a measurable version would be). "Earn €1,000/month from
   side projects by March" → goal.
@@ -58,15 +61,15 @@ Tie-breakers the prompts and UI use:
 
 | Parent | Allowed children |
 |---|---|
-| root, area | goal, project, class, big_task, task, habit, idea, note (areas don't nest) |
-| goal | project, big_task, task, habit, note |
-| class | big_task (exams, assignments), task, habit, note |
+| root, area | anything, including sub-areas (the root is an area) |
+| goal | goal (milestone), project, big_task, task, habit, note |
+| class | goal (pass it), big_task (assignments), task, habit, note |
 | project | big_task, task, habit, idea, note |
-| big_task | task (its steps), note |
+| big_task | big_task (a phase), task (a step), note — so it can carry a deep roadmap |
 | task, habit, idea, note | none (a note can hang under anything as a leaf) |
 
 The rules are enforced softly: prompts follow them, and one deterministic fix runs on
-save (task gets a child → big_task). Nothing blocks the user from breaking them manually.
+save (task gets a child step or phase → big_task). Nothing blocks the user from breaking them manually.
 
 ## Where each type shows up
 
@@ -111,17 +114,24 @@ save (task gets a child → big_task). Nothing blocks the user from breaking the
   task match an old task or project with the same meaning.
 - **Prompts:** one "Node types" section in extract-v22 (each type's question, tie-breakers,
   nesting), every example re-typed (clusters → area, "Make Money" → area, "Pass X" →
-  big_task); light prompt got the same questions plus the heading → area rule;
-  assistant-v18 + the chat tools' node_type field description; breakdowns: big task →
-  flat step list, goal/project → phases that are big tasks; merge-check-v2; judgment_v2.
+  goal since the follow-up); light prompt got the same questions plus the heading → area
+  rule; assistant + the chat tools' node_type field description; breakdowns: "AI roadmap"
+  = phases (each a big task) with steps for every type, "Quick tasks" = 1–3 next actions;
+  merge-check-v2; judgment_v2.
 - **UI:** canvas — big task = red pill + gradient-red outline + step ticks, project = thin
   progress bar, goal/project keep size & weight, area = hollow hub with a mono uppercase
   label at constant size, idea = dashed outline, note = small; one palette everywhere;
   create sheet = the nine types grouped by family with their questions (the broken
   "Custom type" option is gone); Todos lists big tasks with "2/5 steps" and expands to
   their steps; human labels in review, roadmap, detail panel, filters.
-- **Not built (cosmetic, from the design page):** goal target mark, habit cadence dots,
-  class term tag.
+- **Markers:** goal target badge, class term tag ("FALL ’26"), habit cadence dots (one per
+  weekly target, filled by this week's check-ins) — verified in the browser with
+  `.claude/skills/verifier-webapp/verify-node-types.mjs`.
+- **Follow-up (owner feedback, same day):** passing an exam/course is a goal, a big task is
+  a piece of work; big tasks hold phases and get deep AI roadmaps (phases → steps); areas
+  may nest; a task holding a project phase is promoted too; step progress counts hidden
+  completed steps; prompts extract-v23 / extract-light-v3 / assistant-v19. The eval below
+  ran BEFORE this change (exams came out as big tasks then).
 - **Eval (live, ~$0.30):** first Round-1 dump from scratch → every "Pass X exam" a big
   task, Make Money and fitness areas, internship a dated goal, reselling an idea; follow-up
   against the real workspace attaches to old-typed nodes without duplicates, notes for
