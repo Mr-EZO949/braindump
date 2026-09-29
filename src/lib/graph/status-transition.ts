@@ -209,85 +209,53 @@ export async function transitionNodeStatus(params: {
   if (newStatus === "archived") updatePayload.archived_at = nowIso;
   else if (previousStatus === "archived") updatePayload.archived_at = null;
 
-  const { error: updateError } = await supabase
-    .from("nodes")
-    .update(updatePayload)
-    .eq("id", nodeId)
-    .eq("user_id", userId);
+  // Latency matters here — this runs on every "mark done" tap — so the work
+  // is staged into as few sequential round trips as the dependencies allow:
+  //   1. update the node  ‖  read the workspace graph (for the subtree cascade)
+  //   2. lifecycle/feedback events, edge (un)orphaning, the subtree update and
+  //      its events — all in parallel
+  //   3. prerequisite cascades, score recompute, row refresh, planner sync and
+  //      habit logs — all in parallel
+  const touchesCompletion =
+    newStatus === "completed" || (newStatus === "active" && previousStatus === "completed");
+  const workspaceId = node.workspace_id as string | null;
+  const loadWorkspaceGraph = Boolean(workspaceId && touchesCompletion);
+
+  const [{ error: updateError }, workspaceGraph] = await Promise.all([
+    supabase.from("nodes").update(updatePayload).eq("id", nodeId).eq("user_id", userId),
+    loadWorkspaceGraph
+      ? Promise.all([
+          supabase
+            .from("nodes")
+            .select("id, title, status, completed_at, node_type")
+            .eq("workspace_id", workspaceId)
+            .eq("user_id", userId),
+          supabase
+            .from("edges")
+            .select("source_node_id, target_node_id, edge_type, status")
+            .eq("workspace_id", workspaceId)
+            .eq("user_id", userId),
+        ])
+      : null,
+  ]);
   if (updateError) {
     return { kind: "error", httpStatus: 500, error: updateError.message };
   }
 
-  // Lifecycle event (append-only).
-  const { data: le } = await supabase
-    .from("lifecycle_events")
-    .insert({
-      node_id: nodeId,
-      user_id: userId,
-      previous_status: previousStatus,
-      new_status: newStatus,
-      cascade_triggered: false,
-    })
-    .select("id")
-    .single();
-
-  // Feedback event (best-effort; skipped when there's no matching enum value).
-  const feedbackType = FEEDBACK_EVENT[`${previousStatus}->${newStatus}`];
-  if (feedbackType && node.workspace_id) {
-    await supabase.from("feedback_events").insert({
-      user_id: userId,
-      workspace_id: node.workspace_id,
-      event_type: feedbackType,
-      entity_type: "node",
-      entity_id: nodeId,
-      metadata: { previous_status: previousStatus, new_status: newStatus },
-    });
-  }
-
-  // Edge lifecycle: archive orphans every connected edge; unarchive restores.
-  // (Completing does NOT orphan — a done task stays attached to its parent.)
-  if (newStatus === "archived") {
-    await supabase
-      .from("edges")
-      .update({ status: "orphaned", updated_at: nowIso })
-      .eq("user_id", userId)
-      .or(`source_node_id.eq.${nodeId},target_node_id.eq.${nodeId}`);
-  } else if (newStatus === "active" && previousStatus === "archived") {
-    await supabase
-      .from("edges")
-      .update({ status: "active", updated_at: nowIso })
-      .eq("user_id", userId)
-      .eq("status", "orphaned")
-      .or(`source_node_id.eq.${nodeId},target_node_id.eq.${nodeId}`);
-  }
-
   let autoCompletedNodeIds: string[] = [];
   let autoReopenedNodeIds: string[] = [];
-  const newlyAvailable: Array<{ id: string; title: string }> = [];
-  const touchesCompletion =
-    newStatus === "completed" || (newStatus === "active" && previousStatus === "completed");
+  const workspaceNodeRows = (workspaceGraph?.[0].data ?? []) as Array<
+    WorkspaceNodeRow & { node_type?: string | null }
+  >;
+  const workspaceEdgeRows = (workspaceGraph?.[1].data ?? []) as WorkspaceEdgeRow[];
 
-  if (node.workspace_id && touchesCompletion) {
-    const [{ data: workspaceNodes }, { data: workspaceEdges }] = await Promise.all([
-      supabase
-        .from("nodes")
-        .select("id, title, status, completed_at")
-        .eq("workspace_id", node.workspace_id)
-        .eq("user_id", userId),
-      supabase
-        .from("edges")
-        .select("source_node_id, target_node_id, edge_type, status")
-        .eq("workspace_id", node.workspace_id)
-        .eq("user_id", userId),
-    ]);
-
-    const workspaceNodeRows = (workspaceNodes ?? []) as WorkspaceNodeRow[];
-    const workspaceEdgeRows = (workspaceEdges ?? []) as WorkspaceEdgeRow[];
-
+  if (workspaceGraph) {
+    // The graph was read alongside the node's own update, so exclude the node
+    // itself explicitly (a belongs_to cycle could otherwise pull it back in).
     if (newStatus === "completed") {
       autoCompletedNodeIds = collectBelongsToDescendantIds({
         edges: workspaceEdgeRows,
-        includeNode: (n) => n.status !== "completed" && n.status !== "archived",
+        includeNode: (n) => n.id !== nodeId && n.status !== "completed" && n.status !== "archived",
         nodes: workspaceNodeRows,
         rootNodeId: nodeId,
       });
@@ -298,149 +266,189 @@ export async function transitionNodeStatus(params: {
         ? collectBelongsToDescendantIds({
             edges: workspaceEdgeRows,
             includeNode: (n) =>
-              n.status === "completed" && n.completed_at === parentCompletedAt,
+              n.id !== nodeId && n.status === "completed" && n.completed_at === parentCompletedAt,
             nodes: workspaceNodeRows,
             rootNodeId: nodeId,
           })
         : [];
     }
+  }
+  const affectedDescendantNodeIds =
+    newStatus === "completed" ? autoCompletedNodeIds : autoReopenedNodeIds;
+  const previousStatusByNodeId = new Map(
+    workspaceNodeRows.map((n) => [n.id, n.status ?? "active"]),
+  );
 
-    const affectedDescendantNodeIds =
-      newStatus === "completed" ? autoCompletedNodeIds : autoReopenedNodeIds;
-    if (affectedDescendantNodeIds.length > 0) {
-      await supabase
-        .from("nodes")
-        .update({
-          status: newStatus,
-          completed_at: newStatus === "completed" ? nowIso : null,
-          updated_at: nowIso,
-        })
-        .eq("user_id", userId)
-        .in("id", affectedDescendantNodeIds);
+  // Feedback event (best-effort; skipped when there's no matching enum value).
+  const feedbackType = FEEDBACK_EVENT[`${previousStatus}->${newStatus}`];
 
-      const previousStatusByNodeId = new Map(
-        workspaceNodeRows.map((n) => [n.id, n.status ?? "active"]),
-      );
-
-      const { data: childLifecycleEvents } = await supabase
-        .from("lifecycle_events")
-        .insert(
-          affectedDescendantNodeIds.map((childId) => ({
-            node_id: childId,
-            user_id: userId,
-            previous_status: previousStatusByNodeId.get(childId) ?? "active",
-            new_status: newStatus,
-            cascade_triggered: false,
-          })),
-        )
-        .select("id, node_id");
-
-      await supabase.from("feedback_events").insert(
-        affectedDescendantNodeIds.map((childId) => ({
+  const [{ data: le }, , , childEventsResult] = await Promise.all([
+    // Lifecycle event (append-only).
+    supabase
+      .from("lifecycle_events")
+      .insert({
+        node_id: nodeId,
+        user_id: userId,
+        previous_status: previousStatus,
+        new_status: newStatus,
+        cascade_triggered: false,
+      })
+      .select("id")
+      .single(),
+    feedbackType && workspaceId
+      ? supabase.from("feedback_events").insert({
           user_id: userId,
-          workspace_id: node.workspace_id,
-          event_type: newStatus === "completed" ? "complete_node" : "reopen_node",
+          workspace_id: workspaceId,
+          event_type: feedbackType,
           entity_type: "node",
-          entity_id: childId,
-          metadata: {
-            previous_status: previousStatusByNodeId.get(childId) ?? "active",
-            new_status: newStatus,
-            triggered_by_parent_id: nodeId,
-            cascade: "belongs_to_subtree",
-          },
-        })),
-      );
+          entity_id: nodeId,
+          metadata: { previous_status: previousStatus, new_status: newStatus },
+        })
+      : null,
+    // Edge lifecycle: archive orphans every connected edge; unarchive restores.
+    // (Completing does NOT orphan — a done task stays attached to its parent.)
+    newStatus === "archived"
+      ? supabase
+          .from("edges")
+          .update({ status: "orphaned", updated_at: nowIso })
+          .eq("user_id", userId)
+          .or(`source_node_id.eq.${nodeId},target_node_id.eq.${nodeId}`)
+      : newStatus === "active" && previousStatus === "archived"
+        ? supabase
+            .from("edges")
+            .update({ status: "active", updated_at: nowIso })
+            .eq("user_id", userId)
+            .eq("status", "orphaned")
+            .or(`source_node_id.eq.${nodeId},target_node_id.eq.${nodeId}`)
+        : null,
+    // The belongs_to subtree follows the node (complete ↔ reopen).
+    affectedDescendantNodeIds.length > 0
+      ? Promise.all([
+          supabase
+            .from("lifecycle_events")
+            .insert(
+              affectedDescendantNodeIds.map((childId) => ({
+                node_id: childId,
+                user_id: userId,
+                previous_status: previousStatusByNodeId.get(childId) ?? "active",
+                new_status: newStatus,
+                cascade_triggered: false,
+              })),
+            )
+            .select("id, node_id"),
+          supabase
+            .from("nodes")
+            .update({
+              status: newStatus,
+              completed_at: newStatus === "completed" ? nowIso : null,
+              updated_at: nowIso,
+            })
+            .eq("user_id", userId)
+            .in("id", affectedDescendantNodeIds),
+          supabase.from("feedback_events").insert(
+            affectedDescendantNodeIds.map((childId) => ({
+              user_id: userId,
+              workspace_id: workspaceId,
+              event_type: newStatus === "completed" ? "complete_node" : "reopen_node",
+              entity_type: "node",
+              entity_id: childId,
+              metadata: {
+                previous_status: previousStatusByNodeId.get(childId) ?? "active",
+                new_status: newStatus,
+                triggered_by_parent_id: nodeId,
+                cascade: "belongs_to_subtree",
+              },
+            })),
+          ),
+        ])
+      : null,
+  ]);
+  const childLifecycleEvents = (childEventsResult?.[0].data ?? []) as Array<{
+    id: string;
+    node_id: string;
+  }>;
 
-      for (const lifecycleEvent of childLifecycleEvents ?? []) {
-        const cascade = await runPrerequisiteCascade({
-          triggeredByNodeId: lifecycleEvent.node_id as string,
-          newStatus,
-          workspaceId: node.workspace_id,
-          userId,
-          lifecycleEventId: lifecycleEvent.id as string,
-          supabase,
-        });
-        newlyAvailable.push(...cascade.newlyAvailable);
-      }
-    }
-
-    if (le?.id) {
-      const cascade = await runPrerequisiteCascade({
-        triggeredByNodeId: nodeId,
-        newStatus,
-        workspaceId: node.workspace_id,
-        userId,
-        lifecycleEventId: le.id,
-        supabase,
-      });
-      newlyAvailable.push(...cascade.newlyAvailable);
-    }
-  }
-
-  // Refresh the affected rows (and recompute scores so the UI updates at once).
-  let updatedNode: unknown = null;
-  let updatedNodes: unknown[] = [];
-  let recomputedScores: unknown[] = [];
-  const affectedNodeIds = [nodeId, ...autoCompletedNodeIds, ...autoReopenedNodeIds];
-
-  if (node.workspace_id && recompute) {
-    const scoreResult = await computeWorkspaceScores({
-      workspaceId: node.workspace_id,
-      userId,
-      supabase,
-    });
-    recomputedScores = scoreResult.nodeUpdates;
-  }
-
-  const { data: refreshedNodes } = await supabase
-    .from("nodes")
-    .select("*")
-    .in("id", affectedNodeIds)
-    .eq("user_id", userId);
-  updatedNodes = refreshedNodes ?? [];
-  updatedNode =
-    (refreshedNodes ?? []).find((n: { id: string }) => n.id === nodeId) ?? null;
-
-  // Keep planner ↔ graph in sync: completing checks off linked plan_tasks
-  // (including the auto-completed subtree); reopening un-checks them.
-  const cascadedNodeIds = (updatedNodes as Array<{ id?: string | null }>)
-    .map((n) => (typeof n?.id === "string" ? n.id : null))
-    .filter((id): id is string => id !== null);
-
-  let updatedTaskIds: string[] = [];
-  if (cascadedNodeIds.length > 0) {
-    if (newStatus === "completed") {
-      const { data: doneTasks } = await supabase
-        .from("plan_tasks")
-        .update({ done: true })
-        .in("node_id", cascadedNodeIds)
-        .eq("user_id", userId)
-        .eq("done", false)
-        .select("id");
-      updatedTaskIds = (doneTasks ?? []).map((row: { id: string }) => row.id);
-    } else if (previousStatus === "completed") {
-      const { data: reopenedTasks } = await supabase
-        .from("plan_tasks")
-        .update({ done: false })
-        .in("node_id", cascadedNodeIds)
-        .eq("user_id", userId)
-        .eq("done", true)
-        .select("id");
-      updatedTaskIds = (reopenedTasks ?? []).map((row: { id: string }) => row.id);
-    }
-  }
-
+  // Everything below reads the statuses written above and nothing else here
+  // writes them, so it all runs in parallel.
+  const cascadeTriggers =
+    workspaceId && touchesCompletion
+      ? [
+          ...childLifecycleEvents.map((event) => ({ nodeId: event.node_id, eventId: event.id })),
+          ...(le?.id ? [{ nodeId, eventId: le.id as string }] : []),
+        ]
+      : [];
+  // Deduped: the id list feeds .in() filters.
+  const affectedNodeIds = [...new Set([nodeId, ...autoCompletedNodeIds, ...autoReopenedNodeIds])];
+  const nodeTypeById = new Map(workspaceNodeRows.map((n) => [n.id, n.node_type ?? null]));
   // A habit swept up in a PARENT's completion (e.g. the goal it serves was
   // finished) is completed with it; still record today's completion so its
   // history is honest. The user's local day — not UTC.
-  if (newStatus === "completed") {
-    const habitNodeIds = (updatedNodes as Array<{ id?: string | null; node_type?: string | null }>)
-      .filter((n) => isRecurringNodeType(n.node_type) && typeof n.id === "string")
-      .map((n) => n.id as string);
-    for (const habitId of habitNodeIds) {
-      await logHabitCompletion({ supabase, userId, nodeId: habitId, date: today, source: "plan_task" });
-    }
-  }
+  const sweptHabitIds =
+    newStatus === "completed"
+      ? autoCompletedNodeIds.filter((id) => isRecurringNodeType(nodeTypeById.get(id)))
+      : [];
+  // Keep planner ↔ graph in sync: completing checks off linked plan_tasks
+  // (including the auto-completed subtree); reopening un-checks them.
+  const planTaskToggle =
+    newStatus === "completed" ? true : previousStatus === "completed" ? false : null;
+
+  const [cascades, scoreResult, { data: refreshedNodes }, planTasksResult] = await Promise.all([
+    Promise.all(
+      cascadeTriggers.map((trigger) =>
+        runPrerequisiteCascade({
+          triggeredByNodeId: trigger.nodeId,
+          newStatus: newStatus as "completed" | "active",
+          workspaceId: workspaceId as string,
+          userId,
+          lifecycleEventId: trigger.eventId,
+          supabase,
+        }),
+      ),
+    ),
+    workspaceId && recompute
+      ? computeWorkspaceScores({ workspaceId, userId, supabase })
+      : null,
+    // Refresh the affected rows (scores are patched in below so the UI
+    // updates at once).
+    supabase.from("nodes").select("*").in("id", affectedNodeIds).eq("user_id", userId),
+    planTaskToggle !== null
+      ? supabase
+          .from("plan_tasks")
+          .update({ done: planTaskToggle })
+          .in("node_id", affectedNodeIds)
+          .eq("user_id", userId)
+          .eq("done", !planTaskToggle)
+          .select("id")
+      : null,
+    Promise.all(
+      sweptHabitIds.map((habitId) =>
+        logHabitCompletion({ supabase, userId, nodeId: habitId, date: today, source: "plan_task" }),
+      ),
+    ),
+  ]);
+
+  const newlyAvailable = cascades.flatMap((cascade) => cascade.newlyAvailable);
+  const recomputedScores: unknown[] = scoreResult?.nodeUpdates ?? [];
+  // The refresh ran alongside the score write, so overlay the fresh scores.
+  const scoreById = new Map((scoreResult?.nodeUpdates ?? []).map((u) => [u.id, u]));
+  const updatedNodes: unknown[] = ((refreshedNodes ?? []) as Array<{ id: string }>).map((row) => {
+    const score = scoreById.get(row.id);
+    return score
+      ? {
+          ...row,
+          current_importance_score: score.current_importance_score,
+          importance_index: score.importance_index,
+          importance: score.importance,
+          importance_reason: score.importance_reason,
+          importance_top_signals: score.importance_top_signals,
+        }
+      : row;
+  });
+  const updatedNode =
+    (updatedNodes as Array<{ id: string }>).find((n) => n.id === nodeId) ?? null;
+  const updatedTaskIds = ((planTasksResult?.data ?? []) as Array<{ id: string }>).map(
+    (row) => row.id,
+  );
 
   const dedupedNewlyAvailable = [
     ...new Map(newlyAvailable.map((item) => [item.id, item])).values(),

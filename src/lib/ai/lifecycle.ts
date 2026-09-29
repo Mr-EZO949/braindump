@@ -266,40 +266,59 @@ export async function runPrerequisiteCascade(params: {
   const newlyAvailable: Array<{ id: string; title: string }> = [];
 
   if (newStatus === "completed") {
-    const { data: completedNodes } = await supabase
-      .from("nodes")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId)
-      .eq("status", "completed");
+    // One parallel round trip for everything the per-target checks need
+    // (previously two sequential queries per downstream node).
+    const [{ data: completedNodes }, { data: allPrereqEdges }, { data: targetNodes }] =
+      await Promise.all([
+        supabase
+          .from("nodes")
+          .select("id")
+          .eq("workspace_id", workspaceId)
+          .eq("user_id", userId)
+          .eq("status", "completed"),
+        supabase
+          .from("edges")
+          .select("source_node_id, target_node_id")
+          .in("target_node_id", downstreamIds)
+          .eq("user_id", userId)
+          .in("edge_type", ["prerequisite_for", "required_for"])
+          .eq("status", "active"),
+        supabase
+          .from("nodes")
+          .select("id, title, status")
+          .in("id", downstreamIds)
+          .eq("user_id", userId),
+      ]);
 
     const completedIds = new Set<string>(
       (completedNodes ?? []).map((node) => node.id as string),
     );
     completedIds.add(triggeredByNodeId);
 
+    const prereqEdgesByTarget = new Map<string, Array<{ source_node_id: string }>>();
+    for (const edge of (allPrereqEdges ?? []) as Array<{
+      source_node_id: string;
+      target_node_id: string;
+    }>) {
+      const list = prereqEdgesByTarget.get(edge.target_node_id) ?? [];
+      list.push({ source_node_id: edge.source_node_id });
+      prereqEdgesByTarget.set(edge.target_node_id, list);
+    }
+    const targetNodeById = new Map(
+      ((targetNodes ?? []) as Array<{ id: string; title: string; status: string | null }>).map(
+        (node) => [node.id, node],
+      ),
+    );
+
     for (const targetId of downstreamIds) {
-      const { data: prereqEdges } = await supabase
-        .from("edges")
-        .select("source_node_id")
-        .eq("target_node_id", targetId)
-        .eq("user_id", userId)
-        .in("edge_type", ["prerequisite_for", "required_for"])
-        .eq("status", "active");
+      const prereqEdges = prereqEdgesByTarget.get(targetId);
 
       if (!prereqEdges?.length) continue;
 
-      const allSatisfied = (
-        prereqEdges as Array<{ source_node_id: string }>
-      ).every((edge) => completedIds.has(edge.source_node_id));
+      const allSatisfied = prereqEdges.every((edge) => completedIds.has(edge.source_node_id));
       if (!allSatisfied) continue;
 
-      const { data: targetNode } = await supabase
-        .from("nodes")
-        .select("id, title, status")
-        .eq("id", targetId)
-        .eq("user_id", userId)
-        .single();
+      const targetNode = targetNodeById.get(targetId);
 
       if (
         !targetNode ||
@@ -340,11 +359,13 @@ export async function runPrerequisiteCascade(params: {
   }
 
   if (cascadeRows.length > 0) {
-    await supabase.from("cascade_results").insert(cascadeRows);
-    await supabase
-      .from("lifecycle_events")
-      .update({ cascade_triggered: true })
-      .eq("id", lifecycleEventId);
+    await Promise.all([
+      supabase.from("cascade_results").insert(cascadeRows),
+      supabase
+        .from("lifecycle_events")
+        .update({ cascade_triggered: true })
+        .eq("id", lifecycleEventId),
+    ]);
   }
 
   return { newlyAvailable, cascadeCount: cascadeRows.length };
@@ -493,26 +514,21 @@ export async function recomputeWorkspaceEdgeDecay(params: {
     }
   }
 
-  if (edgeScoreRows.length > 0) {
-    await supabase
-      .from("edge_scores")
-      .upsert(edgeScoreRows, { onConflict: "edge_id" });
-  }
-
-  if (edgeStatusUpdates.length > 0) {
-    await Promise.all(
-      edgeStatusUpdates.map((update) =>
-        supabase
-          .from("edges")
-          .update({
-            status: update.status,
-            updated_at: now.toISOString(),
-          })
-          .eq("id", update.id)
-          .eq("user_id", userId),
-      ),
-    );
-  }
+  await Promise.all([
+    edgeScoreRows.length > 0
+      ? supabase.from("edge_scores").upsert(edgeScoreRows, { onConflict: "edge_id" })
+      : null,
+    ...edgeStatusUpdates.map((update) =>
+      supabase
+        .from("edges")
+        .update({
+          status: update.status,
+          updated_at: now.toISOString(),
+        })
+        .eq("id", update.id)
+        .eq("user_id", userId),
+    ),
+  ]);
 
   return {
     active,

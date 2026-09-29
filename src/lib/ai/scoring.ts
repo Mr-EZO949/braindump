@@ -383,6 +383,31 @@ export type NodeScoreUpdate = {
   importance_top_signals: string[];
 };
 
+type StoredScoreRow = {
+  current_importance_score?: number | null;
+  importance_index?: number | null;
+  importance?: string | null;
+  importance_reason?: string | null;
+  importance_top_signals?: string[] | null;
+};
+
+// True when a node's stored score columns differ from the freshly computed
+// ones (or the row wasn't loaded) — only those rows need a write.
+export function scoreFieldsChanged(
+  stored: StoredScoreRow | undefined,
+  update: NodeScoreUpdate,
+): boolean {
+  if (!stored) return true;
+  return (
+    stored.current_importance_score !== update.current_importance_score ||
+    stored.importance_index !== update.importance_index ||
+    stored.importance !== update.importance ||
+    (stored.importance_reason ?? null) !== update.importance_reason ||
+    JSON.stringify(stored.importance_top_signals ?? null) !==
+      JSON.stringify(update.importance_top_signals)
+  );
+}
+
 export async function computeWorkspaceScores(params: {
   workspaceId: string;
   userId: string;
@@ -394,15 +419,71 @@ export async function computeWorkspaceScores(params: {
 }> {
   const { workspaceId, userId, supabase } = params;
 
-  // 1. Fetch all non-archived nodes
-  const { data: nodes } = await supabase
-    .from("nodes")
-    .select("id, node_type, status, created_at, workspace_id, manual_weight, target_date")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .neq("status", "archived");
+  // Edge decay reads only edges, node statuses and edge feedback — nothing
+  // this function writes — so it runs alongside the score computation.
+  const edgeDecay = recomputeWorkspaceEdgeDecay({ workspaceId, userId, supabase });
+  // Awaited below; this only keeps an early failure from surfacing as an
+  // unhandled rejection while the score reads are in flight.
+  edgeDecay.catch(() => {});
+
+  // Every read below is independent, so they go out as ONE parallel round
+  // trip — this runs on every "mark done", where each sequential trip is
+  // user-visible latency.
+  const [
+    { data: nodes },
+    { data: workspaceEdges },
+    { data: feedbackEvents },
+    { data: judgments },
+    { data: edgeFeedbackEvents },
+  ] = await Promise.all([
+    // 1. All non-archived nodes, with their stored scores so unchanged rows
+    //    can skip the write below.
+    supabase
+      .from("nodes")
+      .select(
+        "id, node_type, status, created_at, workspace_id, manual_weight, target_date, current_importance_score, importance_index, importance, importance_reason, importance_top_signals",
+      )
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", userId)
+      .neq("status", "archived"),
+    // 2. All edges (orphaned ones only matter for the edge-confirmation count).
+    supabase
+      .from("edges")
+      .select("id, source_node_id, target_node_id, edge_type, status")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", userId),
+    // 3. Node feedback that drives the user_confirmation signal — only the
+    //    event types userConfirmation() reads.
+    supabase
+      .from("feedback_events")
+      .select("event_type, entity_id, entity_type, metadata, created_at")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", userId)
+      .eq("entity_type", "node")
+      .in("event_type", ["accept_node", "boost_node", "demote_node"]),
+    // 4. Latest AI judgment per node (ai_judgment_score signal + reason).
+    // The reason gets surfaced to the user as the "why is this ranked here?"
+    // text, so we keep it alongside the numeric score.
+    supabase
+      .from("ai_node_judgments")
+      .select("node_id, score, reason, computed_at")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", userId)
+      .order("computed_at", { ascending: false }),
+    // 5. Confirmed edges (user_confirmation signal on both endpoints).
+    supabase
+      .from("feedback_events")
+      .select("entity_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", userId)
+      .eq("event_type", "confirm_edge")
+      .eq("entity_type", "edge"),
+  ]);
 
   if (!nodes || nodes.length === 0) {
+    // Nothing to score. The edge pass started above still finishes (with
+    // every node archived it only re-derives edge weights — harmless).
+    await edgeDecay.catch(() => null);
     return {
       edgeDecaySummary: { active: 0, decayed: 0, recomputed: 0, stale: 0 },
       recomputed: 0,
@@ -410,31 +491,11 @@ export async function computeWorkspaceScores(params: {
     };
   }
 
-  // 2. Fetch active edges
-  const { data: edges } = await supabase
-    .from("edges")
-    .select("source_node_id, target_node_id, edge_type, status")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .neq("status", "orphaned");
-
-  // 3. Fetch feedback events for this workspace (drives user_confirmation signal)
-  const nodeIds = nodes.map((n) => n.id as string);
-  const { data: feedbackEvents } = await supabase
-    .from("feedback_events")
-    .select("event_type, entity_id, entity_type, metadata, created_at")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId);
-
-  // 4. Fetch latest AI judgment per node (ai_judgment_score signal + reason).
-  // The reason gets surfaced to the user as the "why is this ranked here?"
-  // text, so we keep it alongside the numeric score.
-  const { data: judgments } = await supabase
-    .from("ai_node_judgments")
-    .select("node_id, score, reason, computed_at")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .order("computed_at", { ascending: false });
+  // Same rows as `.neq("status", "orphaned")` (SQL: NULL status excluded too).
+  const edges = (workspaceEdges ?? []).filter(
+    (edge) => edge.status !== null && edge.status !== undefined && edge.status !== "orphaned",
+  );
+  const nodeIds = new Set(nodes.map((n) => n.id as string));
 
   const aiJudgmentByNode = new Map<string, number>();
   const aiJudgmentReasonByNode = new Map<string, string>();
@@ -483,31 +544,18 @@ export async function computeWorkspaceScores(params: {
   const feedbackByNode = new Map<string, FeedbackRow[]>();
   const edgeConfirmationCountByNode = new Map<string, number>();
   for (const ev of (feedbackEvents ?? []) as FeedbackRow[]) {
-    if (ev.entity_type === "node" && nodeIds.includes(ev.entity_id)) {
+    if (ev.entity_type === "node" && nodeIds.has(ev.entity_id)) {
       const id = ev.entity_id;
       if (!feedbackByNode.has(id)) feedbackByNode.set(id, []);
       feedbackByNode.get(id)!.push(ev);
     }
   }
 
-  const { data: edgeFeedbackEvents } = await supabase
-    .from("feedback_events")
-    .select("entity_id")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .eq("event_type", "confirm_edge")
-    .eq("entity_type", "edge");
-
   if (edgeFeedbackEvents && edgeFeedbackEvents.length > 0) {
-    const edgeIds = edgeFeedbackEvents.map((row) => row.entity_id as string);
-    const { data: confirmedEdges } = await supabase
-      .from("edges")
-      .select("id, source_node_id, target_node_id")
-      .in("id", edgeIds)
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId);
+    const edgeIds = new Set(edgeFeedbackEvents.map((row) => row.entity_id as string));
+    const confirmedEdges = (workspaceEdges ?? []).filter((edge) => edgeIds.has(edge.id as string));
 
-    for (const edge of confirmedEdges ?? []) {
+    for (const edge of confirmedEdges) {
       const sourceId = edge.source_node_id as string;
       const targetId = edge.target_node_id as string;
       edgeConfirmationCountByNode.set(
@@ -657,38 +705,46 @@ export async function computeWorkspaceScores(params: {
   }
 
   // ---------------------------------------------------------------------------
-  // Upsert node_scores (one row per node per version)
+  // Persist. The three writes are independent, so they run in parallel:
+  //   - node_scores upsert (one row per node per version)
+  //   - final_score materialized onto nodes — only rows whose stored values
+  //     differ (one completion moves a handful of scores, not the whole
+  //     workspace; writing every node was one HTTP request per node)
+  //   - edge decay (started at the top; reads only edges/statuses/feedback)
   // ---------------------------------------------------------------------------
-  if (scoreRows.length > 0) {
-    await supabase
-      .from("node_scores")
-      .upsert(scoreRows, { onConflict: "node_id,score_version" });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Materialize final_score onto nodes.current_importance_score (batch)
-  // ---------------------------------------------------------------------------
-  await Promise.all(
-    nodeUpdates.map((update) =>
-      supabase
-        .from("nodes")
-        .update({
-          current_importance_score: update.current_importance_score,
-          importance_index: update.importance_index,
-          importance: update.importance,
-          importance_reason: update.importance_reason,
-          importance_top_signals: update.importance_top_signals,
-        })
-        .eq("id", update.id)
-        .eq("user_id", userId)
-      )
+  const storedById = new Map(nodeRows.map((node) => [node.id, node as StoredScoreRow]));
+  const changedUpdates = nodeUpdates.filter((update) =>
+    scoreFieldsChanged(storedById.get(update.id), update),
   );
 
-  const edgeDecaySummary = await recomputeWorkspaceEdgeDecay({
-    workspaceId,
-    userId,
-    supabase,
-  });
+  // Rows getting identical values share one UPDATE … WHERE id IN (…) — a
+  // finished subtree all drops to 0 at once.
+  const updatesByValues = new Map<string, { fields: Record<string, unknown>; ids: string[] }>();
+  for (const update of changedUpdates) {
+    const fields = {
+      current_importance_score: update.current_importance_score,
+      importance_index: update.importance_index,
+      importance: update.importance,
+      importance_reason: update.importance_reason,
+      importance_top_signals: update.importance_top_signals,
+    };
+    const key = JSON.stringify(fields);
+    const group = updatesByValues.get(key) ?? { fields, ids: [] as string[] };
+    group.ids.push(update.id);
+    updatesByValues.set(key, group);
+  }
+
+  const [, , edgeDecaySummary] = await Promise.all([
+    scoreRows.length > 0
+      ? supabase.from("node_scores").upsert(scoreRows, { onConflict: "node_id,score_version" })
+      : null,
+    Promise.all(
+      [...updatesByValues.values()].map(({ fields, ids }) =>
+        supabase.from("nodes").update(fields).in("id", ids).eq("user_id", userId),
+      ),
+    ),
+    edgeDecay,
+  ]);
 
   return { edgeDecaySummary, recomputed: scoreRows.length, nodeUpdates };
 }
