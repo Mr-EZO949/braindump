@@ -730,13 +730,17 @@ export async function POST(req: NextRequest) {
   // ---------------------------------------------------------------------------
   const toReject = actions.filter((a) => a.action === "reject");
 
-  if (toReject.length > 0) {
-    await supabase
-      .from("proposed_nodes")
-      .update({ proposal_status: "rejected" })
-      .in("id", toReject.map((a) => a.id))
-      .eq("user_id", user.id);
+  // Marked rejected in the same round trip as the feedback insert below.
+  const rejectWrite =
+    toReject.length > 0
+      ? supabase
+          .from("proposed_nodes")
+          .update({ proposal_status: "rejected" })
+          .in("id", toReject.map((a) => a.id))
+          .eq("user_id", user.id)
+      : null;
 
+  if (toReject.length > 0) {
     feedbackRows.push(
       ...toReject.map((a) => ({
         user_id: user.id,
@@ -752,11 +756,39 @@ export async function POST(req: NextRequest) {
   // ---------------------------------------------------------------------------
   // Write all feedback events in one shot
   // ---------------------------------------------------------------------------
-  if (feedbackRows.length > 0) {
-    await supabase.from("feedback_events").insert(feedbackRows);
-  }
+  await Promise.all([
+    rejectWrite,
+    feedbackRows.length > 0 ? supabase.from("feedback_events").insert(feedbackRows) : null,
+  ]);
 
   let rescoredAcceptedNodes: Array<Record<string, unknown>> = acceptedNodes;
+
+  // Retroactive clustering pass — runs AFTER acceptance so freshly-created
+  // nodes (with embeddings now persisted) are eligible for grouping. Best-
+  // effort; failures here don't block the response. Suggestions are
+  // persisted to cluster_suggestions and surface either via the returned
+  // payload (clients can show them in a dedicated review section) or on
+  // the next /api/entries call. It reads nodes, edges and embeddings — never
+  // scores — so it runs alongside the judgment → rescore chain below instead
+  // of after it.
+  const clusteringPass: Promise<Awaited<ReturnType<typeof runClusteringPass>>> =
+    acceptedPairs.length > 0
+      ? Promise.all(
+          Array.from(new Set(acceptedPairs.map((pair) => pair.created.workspace_id))).map(
+            (wsId) =>
+              runClusteringPass({
+                supabase,
+                userId: user.id,
+                workspaceId: wsId,
+              }),
+          ),
+        )
+          .then((passes) => passes.flat())
+          .catch((err) => {
+            console.error("[review] clustering pass failed", err);
+            return [];
+          })
+      : Promise.resolve([]);
 
   // Phase 7 — recompute scores for the affected workspace and return fresh node rows.
   if (acceptedPairs.length > 0) {
@@ -826,32 +858,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Retroactive clustering pass — runs AFTER acceptance so freshly-created
-  // nodes (with embeddings now persisted) are eligible for grouping. Best-
-  // effort; failures here don't block the response. Suggestions are
-  // persisted to cluster_suggestions and surface either via the returned
-  // payload (clients can show them in a dedicated review section) or on
-  // the next /api/entries call.
-  let clusterSuggestions: Awaited<ReturnType<typeof runClusteringPass>> = [];
-  if (acceptedPairs.length > 0) {
-    const workspaceIdsTouched = Array.from(
-      new Set(acceptedPairs.map((pair) => pair.created.workspace_id)),
-    );
-    try {
-      const passes = await Promise.all(
-        workspaceIdsTouched.map((wsId) =>
-          runClusteringPass({
-            supabase,
-            userId: user.id,
-            workspaceId: wsId,
-          }),
-        ),
-      );
-      clusterSuggestions = passes.flat();
-    } catch (err) {
-      console.error("[review] clustering pass failed", err);
-    }
-  }
+  const clusterSuggestions = await clusteringPass;
 
   return NextResponse.json({
     accepted_nodes: rescoredAcceptedNodes,

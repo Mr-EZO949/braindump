@@ -154,12 +154,21 @@ export async function POST(req: NextRequest) {
   // ---------------------------------------------------------------------------
   // Verify workspace belongs to user
   // ---------------------------------------------------------------------------
-  const { data: workspace, error: wsError } = await supabase
-    .from("workspaces")
-    .select("id")
-    .eq("id", workspace_id)
-    .eq("user_id", user.id)
-    .single();
+  // (with the rate-limit count — max N brain dumps per hour — in the same
+  // round trip; both are read-only)
+  const [{ data: workspace, error: wsError }, rl] = await Promise.all([
+    supabase
+      .from("workspaces")
+      .select("id")
+      .eq("id", workspace_id)
+      .eq("user_id", user.id)
+      .single(),
+    checkEntryRateLimit({
+      supabase,
+      userId: user.id,
+      maxPerHour: AI_RATE_LIMITS.EXTRACTIONS_PER_HOUR,
+    }),
+  ]);
 
   if (wsError || !workspace) {
     return NextResponse.json(
@@ -168,12 +177,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Rate limit: max N brain dumps per hour
-  const rl = await checkEntryRateLimit({
-    supabase,
-    userId: user.id,
-    maxPerHour: AI_RATE_LIMITS.EXTRACTIONS_PER_HOUR,
-  });
   if (!rl.allowed) return rateLimitResponse(rl);
 
   // ---------------------------------------------------------------------------
@@ -354,15 +357,17 @@ export async function POST(req: NextRequest) {
   // the AI uses it for provenance, but we append a marker the
   // acceptance route detects + strips before persisting.
   if (result.autoCompleteLocalRefs.length > 0) {
-    for (const localRef of result.autoCompleteLocalRefs) {
-      await supabase
-        .from("proposed_nodes")
-        .update({
-          source_span: "[[AUTO_COMPLETE]]",
-        })
-        .eq("raw_entry_id", rawEntry.id)
-        .eq("local_ref", localRef);
-    }
+    await Promise.all(
+      result.autoCompleteLocalRefs.map((localRef) =>
+        supabase
+          .from("proposed_nodes")
+          .update({
+            source_span: "[[AUTO_COMPLETE]]",
+          })
+          .eq("raw_entry_id", rawEntry.id)
+          .eq("local_ref", localRef),
+      ),
+    );
   }
 
   // Note: clustering runs AFTER acceptance (in proposals/nodes/review)

@@ -244,8 +244,8 @@ export async function runExtraction(params: {
     parentOf: Map<string, string>;
   } = { workspaceContext: undefined, promptNodes: [], activeNodes: [], parentOf: new Map() };
 
-  // Mark raw_entry as processing
-  await supabase
+  // Mark raw_entry as processing — in the same round trip as the context reads.
+  const markProcessing = supabase
     .from("raw_entries")
     .update({ status: "processing" })
     .eq("id", rawEntryId);
@@ -253,13 +253,16 @@ export async function runExtraction(params: {
   let providerResult;
   try {
     const rubricCacheTtl = chooseRubricCacheTtl().catch(() => null);
-    const profile = await buildWorkspaceProfileContext({
-      workspaceId,
-      userId,
-      supabase,
-      includeAnchors: false,
-    });
-    const parentOf = await loadParentMap(supabase, workspaceId, userId);
+    const [, profile, parentOf] = await Promise.all([
+      markProcessing,
+      buildWorkspaceProfileContext({
+        workspaceId,
+        userId,
+        supabase,
+        includeAnchors: false,
+      }),
+      loadParentMap(supabase, workspaceId, userId),
+    ]);
     const retrieval = await retrieveRelevantNodes({
       supabase,
       userId,

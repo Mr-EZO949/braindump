@@ -292,41 +292,42 @@ export async function runClusteringPass(params: {
 }): Promise<ClusterSuggestion[]> {
   const { supabase, userId, workspaceId } = params;
 
-  // Find the workspace's bootstrap root — eligibility is keyed on it.
-  const { data: workspaceRow } = await supabase
-    .from("workspaces")
-    .select("bootstrap_root_node_id")
-    .eq("id", workspaceId)
-    .eq("user_id", userId)
-    .maybeSingle();
+  // The bootstrap root (eligibility is keyed on it), all active nodes, and the
+  // active belongs_to edges — one parallel round trip.
+  const [{ data: workspaceRow }, { data: nodeRows }, { data: edgeRows }] = await Promise.all([
+    supabase
+      .from("workspaces")
+      .select("bootstrap_root_node_id")
+      .eq("id", workspaceId)
+      .eq("user_id", userId)
+      .maybeSingle(),
+    supabase
+      .from("nodes")
+      .select("id, title, summary, node_type, status")
+      .eq("user_id", userId)
+      .eq("workspace_id", workspaceId)
+      .eq("status", "active"),
+    supabase
+      .from("edges")
+      .select("source_node_id, target_node_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", userId)
+      .eq("edge_type", "belongs_to")
+      .eq("status", "active"),
+  ]);
   const rootId = workspaceRow?.bootstrap_root_node_id as string | null | undefined;
   if (!rootId) return [];
-
-  // Pull all active nodes in the workspace + their embeddings.
-  const { data: nodeRows } = await supabase
-    .from("nodes")
-    .select("id, title, summary, node_type, status")
-    .eq("user_id", userId)
-    .eq("workspace_id", workspaceId)
-    .eq("status", "active");
   if (!nodeRows || nodeRows.length === 0) return [];
 
   const nodeIds = nodeRows.map((n) => n.id as string);
+  const nodeIdSet = new Set(nodeIds);
 
   // Eligibility: only nodes whose ONLY belongs_to edge points at the root,
   // or who have no belongs_to edge at all. Nodes already nested under a
   // meaningful parent stay put.
-  const { data: edgeRows } = await supabase
-    .from("edges")
-    .select("source_node_id, target_node_id")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .eq("edge_type", "belongs_to")
-    .eq("status", "active")
-    .in("source_node_id", nodeIds);
-
   const parentByChild = new Map<string, string>();
   for (const e of edgeRows ?? []) {
+    if (!nodeIdSet.has(e.source_node_id as string)) continue;
     parentByChild.set(e.source_node_id as string, e.target_node_id as string);
   }
 
@@ -336,6 +337,7 @@ export async function runClusteringPass(params: {
     return !parent || parent === rootId;
   });
   if (eligibleIds.length < MIN_CLUSTER_SIZE_TIGHT) return [];
+  const eligibleIdSet = new Set(eligibleIds);
 
   // Fetch embeddings.
   const { data: embeddingRows } = await supabase
@@ -359,7 +361,7 @@ export async function runClusteringPass(params: {
   const candidates: CandidateNode[] = [];
   for (const row of nodeRows) {
     const id = row.id as string;
-    if (!eligibleIds.includes(id)) continue;
+    if (!eligibleIdSet.has(id)) continue;
     const embedding = embByNode.get(id);
     if (!embedding) continue;
     candidates.push({
@@ -379,19 +381,21 @@ export async function runClusteringPass(params: {
   // Filter against dismissed signatures + already-pending suggestions
   // (don't double-propose between passes).
   const signatures = clusters.map((c) => clusterSignature(c.map((n) => n.id)));
-  const { data: dismissed } = await supabase
-    .from("dismissed_clusters")
-    .select("signature_hash")
-    .eq("user_id", userId)
-    .eq("workspace_id", workspaceId)
-    .in("signature_hash", signatures);
-  const { data: pending } = await supabase
-    .from("cluster_suggestions")
-    .select("signature_hash")
-    .eq("user_id", userId)
-    .eq("workspace_id", workspaceId)
-    .eq("proposal_status", "pending_review")
-    .in("signature_hash", signatures);
+  const [{ data: dismissed }, { data: pending }] = await Promise.all([
+    supabase
+      .from("dismissed_clusters")
+      .select("signature_hash")
+      .eq("user_id", userId)
+      .eq("workspace_id", workspaceId)
+      .in("signature_hash", signatures),
+    supabase
+      .from("cluster_suggestions")
+      .select("signature_hash")
+      .eq("user_id", userId)
+      .eq("workspace_id", workspaceId)
+      .eq("proposal_status", "pending_review")
+      .in("signature_hash", signatures),
+  ]);
   const skip = new Set([
     ...((dismissed ?? []).map((d) => d.signature_hash as string)),
     ...((pending ?? []).map((d) => d.signature_hash as string)),

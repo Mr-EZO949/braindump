@@ -57,16 +57,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "workspace_id is required" }, { status: 400 });
   }
 
-  const { data: workspace } = await supabase
-    .from("workspaces")
-    .select("id")
-    .eq("id", workspace_id)
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (!workspace) {
-    return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
-  }
-
   // The user's local date: prefer what the client sent, else the bd_tz
   // cookie — never the server's UTC date (overdue tasks were off by a day).
   const today = isISODate(client_today) ? client_today : await getRequestToday();
@@ -76,13 +66,22 @@ export async function POST(req: NextRequest) {
 
   // Only fetch data rendered in the Focus dialog. The previous response also
   // loaded today's schedule and weekly statistics, which this dialog no
-  // longer uses.
+  // longer uses. The ownership check rides in the same round trip — every
+  // query here is read-only and scoped to this user.
   const [
+    { data: workspace },
     plannerResult,
     yesterdayCompletionsResult,
     overdueResult,
     quietGoalsResult,
   ] = await Promise.all([
+    supabase
+      .from("workspaces")
+      .select("id")
+      .eq("id", workspace_id)
+      .eq("user_id", user.id)
+      .maybeSingle(),
+
     buildPlannerCandidates({
       workspaceId: workspace_id,
       userId: user.id,
@@ -121,6 +120,10 @@ export async function POST(req: NextRequest) {
       .order("updated_at", { ascending: true })
       .limit(3),
   ]);
+
+  if (!workspace) {
+    return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  }
 
   // ── top focus ────────────────────────────────────────────────────────────
   const top = plannerResult.candidates.slice(0, 3).map((c) => ({

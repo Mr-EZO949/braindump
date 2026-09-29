@@ -129,13 +129,26 @@ export async function POST(req: NextRequest) {
   const parentType = normalizeNodeType(node_type, "project");
   const parentLabel = NODE_TYPE_INFO[parentType].label;
 
-  // Verify workspace ownership
-  const { data: workspace } = await supabase
-    .from("workspaces")
-    .select("id")
-    .eq("id", workspace_id)
-    .eq("user_id", user.id)
-    .single();
+  // Verify workspace ownership, and load workspace context so the breakdown
+  // fits the bigger picture: sequence around real deadlines/dependencies and
+  // don't duplicate work that already exists. One round trip — the context
+  // read is scoped to this user either way.
+  const [{ data: workspace }, { data: wsNodes }] = await Promise.all([
+    supabase
+      .from("workspaces")
+      .select("id")
+      .eq("id", workspace_id)
+      .eq("user_id", user.id)
+      .single(),
+    supabase
+      .from("nodes")
+      .select("title, node_type, target_date")
+      .eq("workspace_id", workspace_id)
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .order("target_date", { ascending: true, nullsFirst: false })
+      .limit(40),
+  ]);
 
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
@@ -145,17 +158,6 @@ export async function POST(req: NextRequest) {
   if (!claudeKey) {
     return NextResponse.json({ error: "AI not configured" }, { status: 500 });
   }
-
-  // Workspace context so the breakdown fits the bigger picture: sequence around
-  // real deadlines/dependencies and don't duplicate work that already exists.
-  const { data: wsNodes } = await supabase
-    .from("nodes")
-    .select("title, node_type, target_date")
-    .eq("workspace_id", workspace_id)
-    .eq("user_id", user.id)
-    .eq("status", "active")
-    .order("target_date", { ascending: true, nullsFirst: false })
-    .limit(40);
   const contextBlock =
     wsNodes && wsNodes.length > 0
       ? `\n\nOther active items already in this workspace — do NOT duplicate these, and sequence your steps around their deadlines and dependencies:\n${wsNodes
