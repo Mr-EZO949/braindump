@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   dependencyPressure,
   blocksPenalty,
@@ -9,8 +9,12 @@ import {
   type EdgeRow,
   type FeedbackRow,
   type NodeRow,
+  freshness,
+  importanceRaw,
+  type ImportanceSignals,
   plannerScore,
-  urgency,
+  semanticScore,
+  typePrior,
 } from "./scoring";
 
 // ---------------------------------------------------------------------------
@@ -74,54 +78,62 @@ function makeFeedbackEvent(
 // dependencyPressure
 // ---------------------------------------------------------------------------
 
-describe("urgency — deadline term (v8)", () => {
-  // urgency() reads the clock (age decay + days-until-deadline). Freeze it at a
-  // fixed instant for the WHOLE block and derive every date from that instant —
-  // otherwise dates computed at collection time drift from the clock the code
-  // reads a few ms later, which made exact/boundary assertions flaky
-  // (e.g. "14.0000000077 ≤ 14").
-  const NOW = new Date("2026-01-15T12:00:00.000Z");
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-  const inDays = (d: number) => new Date(NOW.getTime() + d * 86_400_000).toISOString();
-  const created = NOW.toISOString();
+describe("importance v9 — semantic, pressure, steering", () => {
+  const base: ImportanceSignals = {
+    semantic: 52,
+    pressure: 0,
+    goalAlignment: 58,
+    centrality: 30,
+    freshness: 0,
+    userConfirmation: 12,
+    dependencyPressure: 1,
+    blocksPenalty: 0,
+    blockerBonus: 0,
+    steer: 0,
+  };
 
-  it("adds nothing without a target_date", () => {
-    expect(urgency(makeNode("a", { created_at: created }))).toBe(
-      urgency(makeNode("b", { created_at: created, target_date: null })),
+  it("a goal outranks a task at equal signals (v7 invariant)", () => {
+    const goal = semanticScore({ nodeType: "goal", aiJudgment: 70, stakes: "normal" });
+    const task = semanticScore({ nodeType: "task", aiJudgment: 70, stakes: "normal" });
+    expect(goal).toBeGreaterThan(task);
+    expect(typePrior("goal")).toBeGreaterThan(typePrior("task"));
+  });
+
+  it("blends the AI judgment with the type prior; the prior alone without one", () => {
+    expect(semanticScore({ nodeType: "task", aiJudgment: null, stakes: "normal" })).toBe(typePrior("task"));
+    expect(semanticScore({ nodeType: "task", aiJudgment: 100, stakes: "normal" })).toBeCloseTo(
+      0.7 * 100 + 0.3 * typePrior("task"),
+      5,
     );
   });
 
-  it("a task due today outranks an identical no-deadline task (fixes the eval inversion)", () => {
-    const dueToday = urgency(
-      makeNode("due", { created_at: created, target_date: inDays(0) }),
-    );
-    const noDeadline = urgency(makeNode("none", { created_at: created }));
-    expect(dueToday).toBeGreaterThan(noDeadline);
+  it("stakes shift the semantic weight both ways", () => {
+    const s = (stakes: "low" | "normal" | "high") => semanticScore({ nodeType: "goal", aiJudgment: 60, stakes });
+    expect(s("high")).toBeGreaterThan(s("normal"));
+    expect(s("low")).toBeLessThan(s("normal"));
   });
 
-  it("tapers with distance and is bounded (~+14 today → +7 at 7d → 0 at ≥14d)", () => {
-    const u = (d: number | null) =>
-      urgency(
-        makeNode("n", {
-          node_type: "concept",
-          created_at: created,
-          target_date: d === null ? null : inDays(d),
-        }),
-      );
-    const today = u(0);
-    const week = u(7);
-    const far = u(20);
-    const none = u(null);
-    expect(today).toBeGreaterThan(week);
-    expect(week).toBeGreaterThan(far);
-    expect(far).toBe(none); // ≥14 days away adds nothing
-    expect(today - none).toBeLessThanOrEqual(14); // bounded — can't dominate
+  it("a task due tomorrow clearly outranks an identical undated task", () => {
+    const dueTomorrow = importanceRaw({ ...base, pressure: 95 });
+    const undated = importanceRaw(base);
+    expect(dueTomorrow - undated).toBeGreaterThan(20);
+  });
+
+  it("pressure is bounded: at most +28 raw points", () => {
+    expect(importanceRaw({ ...base, pressure: 100 }) - importanceRaw(base)).toBeCloseTo(28, 5);
+  });
+
+  it("steering moves the score ±14 per unit and a demote can't go below 0", () => {
+    expect(importanceRaw({ ...base, steer: 1 }) - importanceRaw(base)).toBeCloseTo(14, 5);
+    expect(importanceRaw({ ...base, steer: -1 })).toBeLessThan(importanceRaw(base));
+    expect(importanceRaw({ ...base, semantic: 0, goalAlignment: 0, centrality: 0, userConfirmation: 0, steer: -2 })).toBe(0);
+  });
+
+  it("freshness fades from 100 to 0 over three weeks", () => {
+    const now = Date.parse("2026-10-01T00:00:00Z");
+    expect(freshness("2026-10-01T00:00:00Z", now)).toBe(100);
+    expect(freshness("2026-09-20T12:00:00Z", now)).toBeCloseTo(50, 0);
+    expect(freshness("2026-08-01T00:00:00Z", now)).toBe(0);
   });
 });
 

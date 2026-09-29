@@ -105,6 +105,29 @@ describe("transitionNodeStatus — guards", () => {
     expect((result as { error: string }).error).toMatch(/archived/);
   });
 
+  it("lets a waiting (paused) node complete directly and clears its hold", async () => {
+    const { client, calls } = fakeSupabase({
+      id: "g-1",
+      status: "paused",
+      node_type: "goal",
+      workspace_id: "ws-1",
+      completed_at: null,
+    });
+    const result = await transitionNodeStatus({
+      supabase: client,
+      userId: "user-1",
+      nodeId: "g-1",
+      newStatus: "completed",
+      today: "2026-10-15",
+      recomputeScores: false,
+    }).catch((error: unknown) => ({ kind: "threw", error }));
+    // The guard allows it (this minimal fake can't run the rest of the
+    // completion cascade, so only the guard and the node write are asserted).
+    expect(result).not.toMatchObject({ kind: "error", httpStatus: 422 });
+    const update = calls.find((c) => c.table === "nodes" && c.method === "update");
+    expect(update?.args[0]).toMatchObject({ status: "completed", waiting_for: null, resume_on: null });
+  });
+
   it("returns 404 for a node outside the user's scope", async () => {
     const { client } = fakeSupabase(null);
     const result = await transitionNodeStatus({

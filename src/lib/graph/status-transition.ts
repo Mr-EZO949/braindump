@@ -9,7 +9,8 @@
 // and completing a HABIT via chat or a dump marked the whole habit done.
 //
 // Semantics:
-//   active ↔ completed, active ↔ paused, any → archived, archived → active.
+//   active ↔ completed, active ↔ paused, paused → completed, any → archived,
+//   archived → active.
 //   Habits RECUR: "completing" one logs the user's local day and leaves the
 //     node active (never status=completed).
 //   On complete: auto-complete active belongs_to descendants, run prerequisite
@@ -28,13 +29,16 @@ import type { NodeStatus } from "@/types/graph";
 export const VALID_TRANSITIONS: Record<NodeStatus, NodeStatus[]> = {
   active: ["completed", "paused", "archived"],
   completed: ["active", "archived"],
-  paused: ["active", "archived"],
+  // paused → completed: "waiting for the result" → "I passed" (ranking v2).
+  paused: ["active", "completed", "archived"],
   archived: ["active"],
 };
 
 // Feedback event type per transition (where the enum has a matching value).
 const FEEDBACK_EVENT: Partial<Record<string, string>> = {
   "active->completed": "complete_node",
+  "active->paused": "hold_node",
+  "paused->completed": "complete_node",
   "completed->active": "reopen_node",
   "paused->active": "reopen_node",
   "archived->active": "reopen_node",
@@ -206,6 +210,12 @@ export async function transitionNodeStatus(params: {
   const updatePayload: Record<string, unknown> = { status: newStatus, updated_at: nowIso };
   if (newStatus === "completed") updatePayload.completed_at = nowIso;
   else if (previousStatus === "completed") updatePayload.completed_at = null;
+  // Leaving a hold ends the "waiting for …" (ranking v2): resuming, finishing
+  // or dropping a node that was waiting on a result clears the reason.
+  if (previousStatus === "paused" && newStatus !== "paused") {
+    updatePayload.waiting_for = null;
+    updatePayload.resume_on = null;
+  }
   if (newStatus === "archived") updatePayload.archived_at = nowIso;
   else if (previousStatus === "archived") updatePayload.archived_at = null;
 
@@ -406,7 +416,7 @@ export async function transitionNodeStatus(params: {
       ),
     ),
     workspaceId && recompute
-      ? computeWorkspaceScores({ workspaceId, userId, supabase })
+      ? computeWorkspaceScores({ workspaceId, userId, supabase, today })
       : null,
     // Refresh the affected rows (scores are patched in below so the UI
     // updates at once).

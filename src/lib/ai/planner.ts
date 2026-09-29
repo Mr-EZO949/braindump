@@ -5,11 +5,25 @@
 import type { NodeType } from "@/types/graph";
 import { todayLocalISO } from "@/lib/habits/streak";
 import { KNOWLEDGE_TYPES, STRUCTURE_TYPES } from "@/lib/graph/node-types";
+import {
+  createRankingContext,
+  daysBetween,
+  relativeDue,
+  type RankNode,
+} from "@/lib/graph/priority-signals";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any;
 
 const MAX_CANDIDATES = 20;
+// Focus's hero + alternatives: at most one step per deadline among these.
+const FOCUS_HEAD_SIZE = 3;
+// Nodes loaded per workspace: candidates plus the parents their deadlines,
+// stakes and holds are inherited from.
+const MAX_NODES_LOADED = 400;
+// Lifecycle/chat history window for momentum, rotation and neglect.
+const HISTORY_WINDOW_DAYS = 7;
+const STEER_WINDOW_DAYS = 30;
 const MAX_MANUAL_ITEMS = 6;
 const RECENTLY_UNBLOCKED_WINDOW_HOURS = 24;
 const RECENT_PLAN_WINDOW_DAYS = 7;
@@ -69,7 +83,34 @@ const PLANNER_BONUSES = {
   UNLOCKS_PER_DEPENDENT: 18,
   /** Bonus cap so a chain-hub doesn't dwarf urgency signals. */
   UNLOCKS_MAX_BONUS: 72,
+  /**
+   * Ranking v2: deadline pressure (0–100, lead-time aware, inherited from a
+   * dated parent) × this = up to +260. Replaces the old flat +240 that only
+   * fired for calendar entries — node deadlines used to be invisible here.
+   */
+  DEADLINE_PER_PRESSURE: 2.6,
+  /** Later open steps of the same deadline get this share — Focus shows the
+   *  next step of each deadline, not three steps of the same exam. */
+  DEADLINE_SIBLING_FACTOR: 0.55,
+  /**
+   * "Focus on X" per unit of (decaying) steering. An explicit instruction
+   * beats a leftover (CARRIED_OVER) and ties a due habit, but an imminent
+   * deadline (pressure ≳ 85) still wins.
+   */
+  STEER: 220,
+  /** Yesterday's cluster still has deadline pressure → keep going on it. */
+  MOMENTUM: 60,
+  /** A dated cluster untouched for 3+ days: +20 per day past 2, capped. */
+  NEGLECT_PER_DAY: 20,
+  NEGLECT_MAX: 80,
+  /** A waiting node whose check-back date arrived: one quick decision. */
+  CHECK_BACK: 330,
 } as const;
+
+/** Momentum replaces rotation when the cluster's deadline pressure is at least this. */
+const MOMENTUM_MIN_PRESSURE = 40;
+/** Carried over this many times → suggest breaking it down instead. */
+const CARRIED_OVER_BREAKDOWN_AT = 3;
 
 /**
  * Negative contributions. Penalties are smaller than the corresponding
@@ -133,6 +174,8 @@ export interface PlannerCandidate {
   current_importance_score: number | null;
   recently_unblocked: boolean;
   planning_signals: string[];
+  /** A waiting node whose check-back date arrived — a decision, not work to schedule. */
+  check_back?: boolean;
 }
 
 export interface PlannerManualItem {
@@ -158,6 +201,12 @@ type NodeRow = {
   body: string | null;
   title: string;
   habit_target_per_week: number | null;
+  created_at: string;
+  target_date: string | null;
+  stakes: number | null;
+  waiting_for: string | null;
+  resume_on: string | null;
+  reading_order: number | null;
 };
 
 type EdgeRow = {
@@ -266,6 +315,10 @@ function buildPlannerPreferenceHints(feedbackEvents: PlanFeedbackEventRow[]) {
 // instead of a wall of arithmetic, and makes each piece individually
 // testable.
 
+function capitalize(text: string): string {
+  return text ? text[0].toUpperCase() + text.slice(1) : text;
+}
+
 function nodeTypeBasePriority(nodeType: NodeType): number {
   return PRIMARY_NODE_TYPE_PRIORITY[nodeType] ?? NODE_TYPE_PRIORITY_FALLBACK;
 }
@@ -368,19 +421,62 @@ export function computePlannerPriority(params: {
   prerequisiteCount: number;
   unlocksCount: number;
   rotationDemoted: boolean;
+  /** Ranking v2 — deadline pressure 0–100 (own or inherited). */
+  deadlinePressure?: number;
+  /** 1 for the next open step of a deadline, DEADLINE_SIBLING_FACTOR for later ones. */
+  siblingFactor?: number;
+  /** Net decaying steering, roughly −2…2. */
+  steer?: number;
+  momentum?: boolean;
+  /** Days a dated cluster has gone untouched (0 = touched recently). */
+  neglectDays?: number;
 }): number {
   return (
     nodeTypeBasePriority(params.nodeType) +
     (params.recentlyUnblocked ? PLANNER_BONUSES.RECENTLY_UNBLOCKED : 0) +
     (params.dueSoon ? PLANNER_BONUSES.DUE_SOON : 0) +
+    deadlineBonus(params.deadlinePressure ?? 0, params.siblingFactor ?? 1) +
     (params.cadenceDue ? PLANNER_BONUSES.CADENCE_DUE : 0) +
     (params.carriedOver ? PLANNER_BONUSES.CARRIED_OVER : 0) +
     unlocksBonus(params.unlocksCount) -
     prerequisitePenalty(params.prerequisiteCount) -
     blockerPenalty(params.blockerCount) -
     (params.rotationDemoted ? PLANNER_PENALTIES.ROTATION : 0) +
+    (params.momentum ? PLANNER_BONUSES.MOMENTUM : 0) +
+    neglectBonus(params.neglectDays ?? 0) +
+    Math.round(PLANNER_BONUSES.STEER * (params.steer ?? 0)) +
     importanceContribution(params.currentImportanceScore)
   );
+}
+
+export function deadlineBonus(pressure: number, siblingFactor = 1): number {
+  return Math.round(PLANNER_BONUSES.DEADLINE_PER_PRESSURE * pressure * siblingFactor);
+}
+
+export function neglectBonus(neglectDays: number): number {
+  if (neglectDays < 3) return 0;
+  return Math.min(PLANNER_BONUSES.NEGLECT_MAX, PLANNER_BONUSES.NEGLECT_PER_DAY * (neglectDays - 2));
+}
+
+/**
+ * Rotation vs momentum for a candidate whose cluster was worked yesterday.
+ * With deadline pressure, keep going (switching costs more than it helps);
+ * without it, rotate to neglected work — but only when there is some.
+ */
+export function rhythmFor(params: {
+  clusterTouchedYesterday: boolean;
+  untouchedClusterAvailable: boolean;
+  deadlinePressure: number;
+}): { momentum: boolean; rotationDemoted: boolean } {
+  if (!params.clusterTouchedYesterday) return { momentum: false, rotationDemoted: false };
+  if (params.deadlinePressure >= MOMENTUM_MIN_PRESSURE) return { momentum: true, rotationDemoted: false };
+  return {
+    momentum: false,
+    rotationDemoted: rotationDemoted({
+      clusterTouchedYesterday: true,
+      untouchedClusterAvailable: params.untouchedClusterAvailable,
+    }),
+  };
 }
 
 function sortManualItems(a: PlanTaskRow, b: PlanTaskRow) {
@@ -439,6 +535,12 @@ export async function buildPlannerCandidates(params: {
   const todayStartMs = Date.parse(`${todayDate}T00:00:00.000Z`) + tzOffsetMin * 60_000;
   const todayStart = new Date(todayStartMs).toISOString();
   const yesterdayStart = new Date(todayStartMs - 24 * 60 * 60 * 1000).toISOString();
+  const historyStart = new Date(
+    todayStartMs - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const steerAfter = new Date(
+    Date.now() - STEER_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
   // ISO weekday from the date string (parsed at noon UTC to dodge any edge):
   // Mon=1 … Sun=7.
   const rawDow = new Date(`${todayDate}T12:00:00.000Z`).getUTCDay();
@@ -459,16 +561,19 @@ export async function buildPlannerCandidates(params: {
     lifecycleSinceYesterdayResult,
     habitCompletionsThisWeekResult,
     chatSessionsSinceYesterdayResult,
+    steerEventsResult,
   ] = await Promise.all([
+    // Active AND paused: paused nodes (and everything under them) are on hold,
+    // and a paused node whose check-back date arrived comes back into Focus.
     params.supabase
       .from("nodes")
       .select(
-        "id, title, summary, body, node_type, status, current_importance_score, habit_target_per_week",
+        "id, title, summary, body, node_type, status, current_importance_score, habit_target_per_week, created_at, target_date, stakes, waiting_for, resume_on, reading_order",
       )
       .eq("workspace_id", params.workspaceId)
       .eq("user_id", params.userId)
-      .or("status.eq.active,status.is.null")
-      .limit(MAX_CANDIDATES * 5),
+      .or("status.eq.active,status.eq.paused,status.is.null")
+      .limit(MAX_NODES_LOADED),
 
     params.supabase
       .from("edges")
@@ -522,13 +627,14 @@ export async function buildPlannerCandidates(params: {
       .in("event_type", ["accept_node", "reject_node"])
       .gte("created_at", feedbackAfter),
 
-    // Rhythm: status changes since yesterday → today-done filter + rotation.
-    // lifecycle_events has user_id but no workspace_id; activeIds scopes it.
+    // Rhythm: status changes this past week → today-done filter, rotation /
+    // momentum (yesterday) and neglect (3+ days). lifecycle_events has user_id
+    // but no workspace_id; the workspace's edges and nodes scope it below.
     params.supabase
       .from("lifecycle_events")
       .select("node_id, new_status, created_at")
       .eq("user_id", params.userId)
-      .gte("created_at", yesterdayStart),
+      .gte("created_at", historyStart),
 
     // Rhythm: this week's habit completions → cadence-due + today-done.
     params.supabase
@@ -537,23 +643,64 @@ export async function buildPlannerCandidates(params: {
       .eq("user_id", params.userId)
       .gte("completed_on", weekMonday),
 
-    // Rhythm: chat scope touched yesterday → rotation (a cluster you talked
-    // about yesterday counts as "worked", not just completions).
+    // Rhythm: chats scoped to a node this past week (a cluster you talked
+    // about counts as "worked", not just completions).
     params.supabase
       .from("chat_sessions")
       .select("scope_node_id, last_message_at")
       .eq("workspace_id", params.workspaceId)
       .eq("user_id", params.userId)
-      .gte("last_message_at", yesterdayStart),
+      .gte("last_message_at", historyStart),
+
+    // Steering: "focus on X" / "X can wait" (decaying boost/demote events).
+    params.supabase
+      .from("feedback_events")
+      .select("event_type, entity_id, created_at")
+      .eq("workspace_id", params.workspaceId)
+      .eq("user_id", params.userId)
+      .eq("entity_type", "node")
+      .in("event_type", ["boost_node", "demote_node"])
+      .gte("created_at", steerAfter),
   ]);
 
-  const rawNodes = (nodesResult.data ?? []) as NodeRow[];
+  const loadedNodes = (nodesResult.data ?? []) as NodeRow[];
+  // Candidates come from active nodes; paused ones only feed holds/check-backs.
+  const rawNodes = loadedNodes.filter((node) => (node.status ?? "active") === "active");
   const edgeRows = (edgesResult.data ?? []) as EdgeRow[];
   const planTasks = (planTasksResult.data ?? []) as PlanTaskRow[];
   const feedbackEvents = (planFeedbackEventsResult.data ?? []) as PlanFeedbackEventRow[];
 
-  const nodeById = new Map(rawNodes.map((node) => [node.id, node]));
+  const nodeById = new Map(loadedNodes.map((node) => [node.id, node]));
   const activeIds = new Set(rawNodes.map((node) => node.id));
+
+  // Ranking v2 signals: node deadlines (own or inherited), stakes, decaying
+  // steering and holds — the same math as the importance score.
+  const rankCtx = createRankingContext({
+    nodes: loadedNodes as RankNode[],
+    edges: edgeRows,
+    today: todayDate,
+    steerEvents: (steerEventsResult.data ?? []) as Array<{
+      event_type: string;
+      entity_id: string;
+      created_at: string;
+    }>,
+  });
+
+  // Parent of ANY node in this workspace (completed ones too — completing a
+  // step is the main way a cluster gets "worked").
+  const clusterParentOf = new Map<string, string>();
+  for (const edge of edgeRows) {
+    if (edge.edge_type === "belongs_to") {
+      if (!clusterParentOf.has(edge.source_node_id)) {
+        clusterParentOf.set(edge.source_node_id, edge.target_node_id);
+      }
+    } else if (edge.edge_type === "contains") {
+      if (!clusterParentOf.has(edge.target_node_id)) {
+        clusterParentOf.set(edge.target_node_id, edge.source_node_id);
+      }
+    }
+  }
+  const inWorkspace = (nodeId: string) => nodeById.has(nodeId) || clusterParentOf.has(nodeId);
 
   const recentlyUnblockedIds = new Set<string>();
   for (const row of (cascadeResult.data ?? []) as Array<{ affected_node_id: string }>) {
@@ -562,10 +709,11 @@ export async function buildPlannerCandidates(params: {
     }
   }
 
-  const carriedOverNodeIds = new Set<string>();
+  // How many recent accepted plans left this node undone (one pending block each).
+  const carriedOverCountByNode = new Map<string, number>();
   for (const row of (recentPlanBlocksResult.data ?? []) as Array<{ node_id: string }>) {
     if (row.node_id && activeIds.has(row.node_id)) {
-      carriedOverNodeIds.add(row.node_id);
+      carriedOverCountByNode.set(row.node_id, (carriedOverCountByNode.get(row.node_id) ?? 0) + 1);
     }
   }
 
@@ -608,25 +756,21 @@ export async function buildPlannerCandidates(params: {
   }
   // Nodes touched *yesterday* (strictly) — a completion/status change or a chat
   // scoped to them. Used for rotation: rotate away from yesterday's cluster.
+  // Completed steps count (that's how a cluster usually gets worked).
   const touchedYesterdayNodeIds = new Set<string>();
+  // Latest touch per node this past week — for neglect.
+  const lastTouchByNode = new Map<string, string>();
+  const noteTouch = (nodeId: string, at: string) => {
+    const prev = lastTouchByNode.get(nodeId);
+    if (!prev || at > prev) lastTouchByNode.set(nodeId, at);
+    if (at >= yesterdayStart && at < todayStart) touchedYesterdayNodeIds.add(nodeId);
+  };
   for (const row of lifecycleRows) {
-    if (
-      row.created_at >= yesterdayStart &&
-      row.created_at < todayStart &&
-      activeIds.has(row.node_id)
-    ) {
-      touchedYesterdayNodeIds.add(row.node_id);
-    }
+    if (inWorkspace(row.node_id)) noteTouch(row.node_id, row.created_at);
   }
   for (const row of chatRows) {
-    if (
-      row.scope_node_id &&
-      row.last_message_at &&
-      row.last_message_at >= yesterdayStart &&
-      row.last_message_at < todayStart &&
-      activeIds.has(row.scope_node_id)
-    ) {
-      touchedYesterdayNodeIds.add(row.scope_node_id);
+    if (row.scope_node_id && row.last_message_at && inWorkspace(row.scope_node_id)) {
+      noteTouch(row.scope_node_id, row.last_message_at);
     }
   }
 
@@ -689,27 +833,51 @@ export async function buildPlannerCandidates(params: {
   // around its work, and ideas/notes aren't committed work (node-types.ts).
   const NON_ACTIONABLE_TYPES: ReadonlySet<NodeType> = new Set([...STRUCTURE_TYPES, ...KNOWLEDGE_TYPES]);
 
-  // Resolve a node's project cluster: its belongs_to parent, else itself.
-  const belongsToParentOf = (nodeId: string): string => {
-    const out = outgoingEdgesByNode.get(nodeId) ?? [];
-    const parentEdge = out.find(
-      (e) => e.edge_type === "belongs_to" && activeIds.has(e.target_node_id),
-    );
-    return parentEdge ? parentEdge.target_node_id : nodeId;
-  };
-  // Which clusters were worked yesterday (map each touched node to its cluster).
+  // Resolve a node's project cluster: its parent, else itself.
+  const belongsToParentOf = (nodeId: string): string => clusterParentOf.get(nodeId) ?? nodeId;
+  // Which clusters were worked yesterday, and when each was last touched.
   const clustersTouchedYesterday = new Set<string>();
   for (const nodeId of touchedYesterdayNodeIds) {
     clustersTouchedYesterday.add(belongsToParentOf(nodeId));
   }
+  const lastTouchByCluster = new Map<string, string>();
+  for (const [nodeId, at] of lastTouchByNode) {
+    for (const key of [nodeId, belongsToParentOf(nodeId)]) {
+      const prev = lastTouchByCluster.get(key);
+      if (!prev || at > prev) lastTouchByCluster.set(key, at);
+    }
+  }
 
-  // Surfaceable actionable nodes: not a container, not a class, not done today.
+  // Surfaceable actionable nodes: not a container, not a class, not done
+  // today, and not parked under a paused parent (waiting for a result).
   const actionableNodes = rawNodes.filter((node) => {
     if (NON_ACTIONABLE_TYPES.has(node.node_type)) return false;
     if (isClusterAnchor.has(node.id)) return false;
     if (doneTodayIds.has(node.id)) return false; // today-awareness: hide what's done
+    if (rankCtx.hold(node.id) !== "none") return false;
     return true;
   });
+
+  // Next step per deadline: steps sharing a dated parent are ordered by the
+  // user's reading order, then age; only the first gets full deadline weight.
+  const siblingIndex = new Map<string, number>();
+  const stepsByDeadlineOwner = new Map<string, NodeRow[]>();
+  for (const node of actionableNodes) {
+    const dl = rankCtx.deadline(node.id);
+    if (!dl || !dl.inherited) continue;
+    const list = stepsByDeadlineOwner.get(dl.ownerId) ?? [];
+    list.push(node);
+    stepsByDeadlineOwner.set(dl.ownerId, list);
+  }
+  for (const steps of stepsByDeadlineOwner.values()) {
+    steps
+      .sort(
+        (a, b) =>
+          (a.reading_order ?? Number.MAX_SAFE_INTEGER) - (b.reading_order ?? Number.MAX_SAFE_INTEGER) ||
+          a.created_at.localeCompare(b.created_at),
+      )
+      .forEach((node, index) => siblingIndex.set(node.id, index));
+  }
   // Only rotate-demote when there's somewhere else to send the user — never
   // demote a single-project user's only cluster into emptiness.
   const untouchedClusterAvailable = actionableNodes.some(
@@ -747,7 +915,8 @@ export async function buildPlannerCandidates(params: {
       const planningSignals: string[] = [];
       const dueSoonDate = dueSoonNodeDates.get(node.id);
       const dueSoon = Boolean(dueSoonDate);
-      const carriedOver = carriedOverNodeIds.has(node.id);
+      const carriedOverCount = carriedOverCountByNode.get(node.id) ?? 0;
+      const carriedOver = carriedOverCount > 0;
       const recentlyUnblocked = recentlyUnblockedIds.has(node.id);
       const completionsThisWeek = habitCompletionsThisWeekByNode.get(node.id) ?? 0;
       const cadenceIsDue = cadenceDue({
@@ -756,19 +925,55 @@ export async function buildPlannerCandidates(params: {
         doneToday: doneTodayIds.has(node.id),
         dayOfWeek: isoDayOfWeek,
       });
-      const isRotationDemoted = rotationDemoted({
-        clusterTouchedYesterday: clustersTouchedYesterday.has(
-          belongsToParentOf(node.id),
-        ),
+
+      const deadline = rankCtx.deadline(node.id);
+      const pressure = deadline?.pressure ?? 0;
+      const isNextStep = (siblingIndex.get(node.id) ?? 0) === 0;
+      const siblingFactor = isNextStep ? 1 : PLANNER_BONUSES.DEADLINE_SIBLING_FACTOR;
+      const cluster = belongsToParentOf(node.id);
+      const rhythm = rhythmFor({
+        clusterTouchedYesterday: clustersTouchedYesterday.has(cluster),
         untouchedClusterAvailable,
+        deadlinePressure: pressure,
       });
+      // Neglect only counts for dated work that has existed a few days, and
+      // (like momentum) it's a fact about the cluster — only its next step gets it.
+      let neglectDays = 0;
+      if (pressure > 0 && isNextStep) {
+        const lastTouch = lastTouchByCluster.get(cluster) ?? lastTouchByCluster.get(node.id);
+        const sinceTouch = lastTouch ? daysBetween(lastTouch, todayDate) : HISTORY_WINDOW_DAYS;
+        neglectDays = Math.min(sinceTouch, daysBetween(node.created_at, todayDate));
+      }
+      const steer = rankCtx.steer(node.id);
+      const stakes = rankCtx.stakes(node.id);
+
+      // Order = what the Focus hero line should say first.
+      if (deadline && pressure >= 20) {
+        if (deadline.daysLeft < 0) {
+          planningSignals.push(`${capitalize(relativeDue(deadline.daysLeft))} — done, moved or dropped?`);
+        } else {
+          const owner = deadline.inherited ? nodeById.get(deadline.ownerId)?.title : null;
+          planningSignals.push(
+            `${owner ? `"${owner}" ${relativeDue(deadline.daysLeft)}` : capitalize(relativeDue(deadline.daysLeft))}` +
+              ` · ~${deadline.sessionsLeft} session${deadline.sessionsLeft === 1 ? "" : "s"} left`,
+          );
+        }
+      }
 
       if (recentlyUnblocked) {
         planningSignals.push("Ready to start");
       }
 
+      if (steer >= 0.3) {
+        planningSignals.push("You asked to focus on this");
+      }
+
       if (dueSoon && dueSoonDate) {
-        planningSignals.push(`Due soon (${dueSoonDate})`);
+        planningSignals.push(`On your calendar (${dueSoonDate})`);
+      }
+
+      if (stakes === "high") {
+        planningSignals.push("High stakes");
       }
 
       if (cadenceIsDue) {
@@ -780,8 +985,18 @@ export async function buildPlannerCandidates(params: {
         );
       }
 
-      if (carriedOver) {
+      if (carriedOverCount >= CARRIED_OVER_BREAKDOWN_AT) {
+        planningSignals.push(`Carried over ${carriedOverCount}× — break it into a smaller first step?`);
+      } else if (carriedOver) {
         planningSignals.push("Carried over from a recent accepted plan");
+      }
+
+      if (rhythm.momentum && isNextStep) {
+        planningSignals.push("Keep going — you worked on this yesterday");
+      }
+
+      if (neglectBonus(neglectDays) > 0) {
+        planningSignals.push(`Untouched for ${neglectDays} days`);
       }
 
       if (unlocksTitles.length > 0) {
@@ -803,7 +1018,12 @@ export async function buildPlannerCandidates(params: {
         blockerCount: blockerTitles.length,
         prerequisiteCount: prerequisiteTitles.length,
         unlocksCount: unlocksTitles.length,
-        rotationDemoted: isRotationDemoted,
+        rotationDemoted: rhythm.rotationDemoted,
+        momentum: rhythm.momentum && isNextStep,
+        deadlinePressure: pressure,
+        siblingFactor,
+        steer,
+        neglectDays,
       });
 
       return {
@@ -818,21 +1038,70 @@ export async function buildPlannerCandidates(params: {
           planning_signals: planningSignals,
         } satisfies PlannerCandidate,
         priority,
+        deadlineOwner: deadline?.ownerId ?? null,
       };
     })
+    // A waiting node whose check-back date arrived: one quick decision
+    // (resume, done, or drop) — surfaced near the top.
+    .concat(
+      loadedNodes
+        .filter((node) => node.status === "paused" && rankCtx.hold(node.id) === "check_back")
+        .map((node) => ({
+          candidate: {
+            id: node.id,
+            title: node.title,
+            summary: node.summary,
+            body: node.body,
+            node_type: node.node_type,
+            current_importance_score: node.current_importance_score,
+            recently_unblocked: false,
+            check_back: true,
+            planning_signals: [
+              node.waiting_for
+                ? `Check back: waiting for ${node.waiting_for}`
+                : "Paused — time to check back",
+            ],
+          } satisfies PlannerCandidate,
+          priority: PLANNER_BONUSES.CHECK_BACK + importanceContribution(node.current_importance_score),
+          deadlineOwner: null,
+        })),
+    )
     .sort((a, b) => {
       if (b.priority !== a.priority) {
         return b.priority - a.priority;
       }
 
       return (b.candidate.current_importance_score ?? 0) - (a.candidate.current_importance_score ?? 0);
-    })
-    .slice(0, MAX_CANDIDATES)
-    .map((entry) => entry.candidate);
+    });
 
   return {
-    candidates,
+    candidates: diversifyHead(candidates, FOCUS_HEAD_SIZE)
+      .slice(0, MAX_CANDIDATES)
+      .map((entry) => entry.candidate),
     manual_items: manualItems,
     preference_hints: preferenceHints,
   };
 }
+
+// Focus shows its top few as "the next move + alternatives". Alternatives that
+// are just the next steps of the same deadline aren't choices, so the head
+// takes at most one step per deadline; everything else keeps its order after.
+export function diversifyHead<T extends { deadlineOwner: string | null }>(
+  sorted: T[],
+  headSize: number,
+): T[] {
+  const head: T[] = [];
+  const rest: T[] = [];
+  const owners = new Set<string>();
+  for (const entry of sorted) {
+    if (head.length < headSize && (!entry.deadlineOwner || !owners.has(entry.deadlineOwner))) {
+      head.push(entry);
+      if (entry.deadlineOwner) owners.add(entry.deadlineOwner);
+    } else {
+      rest.push(entry);
+    }
+  }
+  return [...head, ...rest];
+}
+
+

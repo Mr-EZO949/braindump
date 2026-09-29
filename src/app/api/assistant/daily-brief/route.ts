@@ -133,6 +133,7 @@ export async function POST(req: NextRequest) {
     node_type: c.node_type,
     current_importance_score: c.current_importance_score,
     planning_signals: c.planning_signals,
+    check_back: c.check_back ?? false,
   }));
 
   // ── yesterday wins ───────────────────────────────────────────────────────

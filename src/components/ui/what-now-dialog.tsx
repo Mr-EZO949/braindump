@@ -21,6 +21,8 @@ type TopNode = {
   node_type: NodeType;
   current_importance_score: number | null;
   planning_signals: string[];
+  // A waiting item whose check-back day arrived — a decision, not a work block.
+  check_back?: boolean;
 };
 
 type LockInData = {
@@ -197,7 +199,7 @@ export function WhatNowDialog({
       setScheduleError("Not signed in.");
       return;
     }
-    const top = data?.top ?? [];
+    const top = (data?.top ?? []).filter((node) => !node.check_back);
     if (top.length === 0) return;
 
     setScheduling(true);

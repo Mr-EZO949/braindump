@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { cadenceDue, computePlannerPriority, rotationDemoted } from "./planner";
+import {
+  cadenceDue,
+  computePlannerPriority,
+  deadlineBonus,
+  diversifyHead,
+  neglectBonus,
+  rhythmFor,
+  rotationDemoted,
+} from "./planner";
 
 // Minimal "do nothing" baseline. Lets each test toggle exactly one signal
 // to verify its isolated contribution.
@@ -233,5 +241,68 @@ describe("rotationDemoted", () => {
     expect(
       rotationDemoted({ clusterTouchedYesterday: false, untouchedClusterAvailable: true }),
     ).toBe(false);
+  });
+});
+
+describe("Focus v2 — deadlines, steering, rhythm", () => {
+  it("deadline pressure adds up to +260, and later steps of the same deadline get 55%", () => {
+    expect(deadlineBonus(100)).toBe(260);
+    expect(deadlineBonus(0)).toBe(0);
+    expect(deadlineBonus(100, 0.55)).toBe(143);
+    const next = computePlannerPriority({ ...BASE, deadlinePressure: 90 });
+    const later = computePlannerPriority({ ...BASE, deadlinePressure: 90, siblingFactor: 0.55 });
+    expect(next).toBeGreaterThan(later);
+  });
+
+  it("a step of an exam two days out beats a carried-over undated task", () => {
+    const examStep = computePlannerPriority({ ...BASE, deadlinePressure: 95 });
+    const leftover = computePlannerPriority({ ...BASE, carriedOver: true });
+    expect(examStep).toBeGreaterThan(leftover);
+  });
+
+  it("just-unblocked still outranks a full deadline (existing invariant holds)", () => {
+    expect(computePlannerPriority({ ...BASE, recentlyUnblocked: true })).toBeGreaterThan(
+      computePlannerPriority({ ...BASE, deadlinePressure: 100 }) - 30,
+    );
+  });
+
+  it("a fresh 'focus on X' (+220) lifts an undated task over a carried-over one, not over a looming deadline", () => {
+    const focused = computePlannerPriority({ ...BASE, steer: 1 });
+    expect(focused).toBeGreaterThan(computePlannerPriority({ ...BASE, carriedOver: true }));
+    expect(focused).toBeLessThan(computePlannerPriority({ ...BASE, deadlinePressure: 95 }));
+    expect(computePlannerPriority({ ...BASE, steer: -1 })).toBe(-100);
+  });
+
+  it("neglect starts at 3 untouched days and caps at +80", () => {
+    expect(neglectBonus(2)).toBe(0);
+    expect(neglectBonus(3)).toBe(20);
+    expect(neglectBonus(5)).toBe(60);
+    expect(neglectBonus(30)).toBe(80);
+  });
+
+  it("yesterday's cluster: keep going when it has deadline pressure, rotate when it doesn't", () => {
+    expect(
+      rhythmFor({ clusterTouchedYesterday: true, untouchedClusterAvailable: true, deadlinePressure: 70 }),
+    ).toEqual({ momentum: true, rotationDemoted: false });
+    expect(
+      rhythmFor({ clusterTouchedYesterday: true, untouchedClusterAvailable: true, deadlinePressure: 10 }),
+    ).toEqual({ momentum: false, rotationDemoted: true });
+    expect(
+      rhythmFor({ clusterTouchedYesterday: true, untouchedClusterAvailable: false, deadlinePressure: 0 }),
+    ).toEqual({ momentum: false, rotationDemoted: false });
+    expect(
+      rhythmFor({ clusterTouchedYesterday: false, untouchedClusterAvailable: true, deadlinePressure: 90 }),
+    ).toEqual({ momentum: false, rotationDemoted: false });
+  });
+});
+
+describe("diversifyHead", () => {
+  it("keeps one step per deadline in the head and the rest in order after it", () => {
+    const e = (id: string, deadlineOwner: string | null) => ({ id, deadlineOwner });
+    const out = diversifyHead(
+      [e("a1", "A"), e("a2", "A"), e("a3", "A"), e("x", null), e("b1", "B"), e("y", null)],
+      3,
+    ).map((x) => x.id);
+    expect(out).toEqual(["a1", "x", "b1", "a2", "a3", "y"]);
   });
 });

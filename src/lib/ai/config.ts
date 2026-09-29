@@ -305,3 +305,47 @@ export const AI_RATE_LIMITS = {
   // Full-workspace AI rerank: 5 per 24h (rolling)
   RERANK_IMPORTANCE_PER_DAY: 5,
 } as const;
+
+// ---------------------------------------------------------------------------
+// Ranking v2 (docs/ranking.md) — deadline pressure, stakes, steering, holds.
+// Pure math lives in src/lib/graph/priority-signals.ts; importance in
+// scoring.ts (v9), start priority in planner.ts. Change numbers HERE.
+// ---------------------------------------------------------------------------
+
+export const RANKING = {
+  // Work sessions (~1–2h) a user realistically gives one deadline per day.
+  // Converts "5 steps left" into days of runway for the slack calculation.
+  SESSIONS_PER_DAY: 2,
+  // Pressure starts rising when slack (days left − days of work) drops below
+  // this many days, and is full at zero slack.
+  PRESSURE_HORIZON_DAYS: 10,
+  // Stakes stretch or shrink the horizon (high stakes → start caring earlier)
+  // and scale the pressure itself.
+  STAKES_HORIZON_FACTOR: { low: 0.6, normal: 1, high: 1.4 },
+  STAKES_PRESSURE_FACTOR: { low: 0.8, normal: 1, high: 1.15 },
+  // Semantic-weight shift for stakes (points on the 0–100 semantic signal).
+  STAKES_SEMANTIC_SHIFT: 10,
+  // Work estimate in sessions: a task is one sitting, a big task without steps
+  // is ~3, and a dated goal/project/class with nothing under it yet is ~3.
+  SESSIONS_TASK: 1,
+  SESSIONS_BIG_TASK: 3,
+  SESSIONS_UNKNOWN_OWNER: 3,
+  SESSIONS_CAP: 30,
+  // Overdue: full pressure for this many days past the date, then fades.
+  OVERDUE_GRACE_DAYS: 2,
+  OVERDUE_FADE_PER_DAY: 10,
+  OVERDUE_FLOOR: 40,
+  // How far up the parent chain a deadline / stakes / steering is inherited.
+  MAX_INHERIT_DEPTH: 6,
+  // Inherited pressure on descendants (importance). The deadline's owner gets
+  // full pressure; its open steps a little less so the owner stays biggest.
+  INHERITED_PRESSURE_FACTOR: 0.85,
+  // Steering ("focus on X" / "X can wait") decays with this half-life.
+  STEER_HALF_LIFE_DAYS: 7,
+  STEER_CAP: 2,
+  STEER_INHERIT_FACTOR: 0.8,
+  // Hold factors on importance.
+  HOLD_SELF_FACTOR: 0.32,
+  HOLD_CHECK_BACK_FACTOR: 0.6,
+  HOLD_ANCESTOR_FACTOR: 0.5,
+} as const;

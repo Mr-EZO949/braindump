@@ -284,19 +284,13 @@ const TOP_PRIORITY_UNTOUCHED_DAYS = 2;
 // act on) and toward imminent deadlines. The ranking eval showed raw
 // importance alone points at goals ("Land an Internship") and ignores due
 // dates — useless as a "start here" signal. This is selection-only; it never
-// touches the stored importance score.
+// touches the stored importance score. Since importance v9 (ranking v2) the
+// stored score already carries lead-time-aware deadline pressure — own and
+// inherited from dated parents, refreshed nightly — so no separate due bonus.
 function startPriority(n: NodeRow): number {
   const score = n.current_importance_score ?? 0;
   const actionableBonus = n.node_type === "goal" ? 0 : 15;
-  let dueBonus = 0;
-  if (n.target_date) {
-    const days =
-      (new Date(n.target_date).getTime() - Date.now()) / (24 * 60 * 60 * 1000);
-    if (days <= 14) {
-      dueBonus = Math.max(0, Math.min(30, Math.round(((14 - days) / 14) * 30)));
-    }
-  }
-  return score + actionableBonus + dueBonus;
+  return score + actionableBonus;
 }
 
 async function findTopPriority(

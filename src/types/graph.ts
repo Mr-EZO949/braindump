@@ -62,6 +62,11 @@ export interface Node {
   // When set, overrides the heuristic scorer for this node.
   manual_weight?: number | null;
   manual_weight_set_at?: string | null;
+  // Ranking v2 (docs/ranking.md): -1 low · null normal · 1 high stakes, and
+  // what a paused node is waiting on + when to check back.
+  stakes?: number | null;
+  waiting_for?: string | null;
+  resume_on?: string | null;
   // Optional ISO date deadline. Drives the Roadmap view: any goal/project
   // with a target_date appears there grouped by month/quarter. Null means
   // no deadline — the node lives only in the timeless graph view.
