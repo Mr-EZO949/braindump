@@ -132,11 +132,18 @@ function nodeCategoryLabel(nodeType: string): string {
 // Anything not in the map renders the raw snake_case name as a fallback.
 const SIGNAL_LABELS: Record<string, string> = {
   urgency: "Urgency",
+  deadline: "Deadline",
   goal_alignment: "Goal alignment",
   ai_judgment: "AI judgment",
+  node_type: "Node type",
   centrality: "Graph centrality",
+  freshness: "New",
   user_confirmation: "User confirmation",
   blocker_resolved_bonus: "Just unblocked",
+  steering: "You prioritized",
+  deprioritized: "You said it can wait",
+  stakes: "High stakes",
+  on_hold: "On hold",
 };
 
 export function ContextRail({
@@ -716,9 +723,16 @@ export function ContextRail({
                     <span className="detail-tag">{selectedNode.importance}</span>
                     {selectedNode.status && selectedNode.status !== "active" && (
                       <span className={`detail-tag detail-tag--${selectedNode.status}`}>
-                        {selectedNode.status}
+                        {selectedNode.status === "paused" && selectedNode.waitingFor
+                          ? "waiting"
+                          : selectedNode.status}
                       </span>
                     )}
+                    {selectedNode.stakes === 1 ? (
+                      <span className="detail-tag detail-tag--stakes">high stakes</span>
+                    ) : selectedNode.stakes === -1 ? (
+                      <span className="detail-tag">low stakes</span>
+                    ) : null}
                   </div>
 
                   {/* Score — compact inline + why */}

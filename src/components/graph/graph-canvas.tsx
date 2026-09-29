@@ -1434,6 +1434,8 @@ function getEdgeVisualStyle(
 function getNodeVisualState(options: {
   archived: boolean;
   completed: boolean;
+  /** Paused, or under a paused parent ("waiting for the result"). */
+  held: boolean;
   hovered: boolean;
   inHoveredNeighborhood: boolean;
   inSelectedNeighborhood: boolean;
@@ -1445,6 +1447,7 @@ function getNodeVisualState(options: {
   const {
     archived,
     completed,
+    held,
     hovered,
     inHoveredNeighborhood,
     inSelectedNeighborhood,
@@ -1578,6 +1581,21 @@ function getNodeVisualState(options: {
     };
   }
 
+  if (held) {
+    // Ranking v2: on hold (waiting for a result, parked) — still readable and
+    // clickable, but visibly stepped back, alongside the smaller score size.
+    return {
+      border: borderToken(0.07),
+      surfaceTintOpacity: 0.12,
+      glowOpacity: 0,
+      heatOpacity: 0,
+      opacity: 0.55,
+      shadowOpacity: 0.12,
+      text: TEXT_DIM,
+      topSheenOpacity: sheen(0.24),
+    };
+  }
+
   return {
     border: borderToken(0.14),
     surfaceTintOpacity: 0.22,
@@ -1690,6 +1708,20 @@ export function GraphCanvas({
     () => buildPrimaryStructuralTree(graphData).childrenByParent,
     [graphData],
   );
+
+  // Paused nodes and everything under them — drawn stepped back (ranking v2).
+  const heldNodeIds = useMemo(() => {
+    const held = new Set<string>();
+    const walk = (nodeId: string) => {
+      if (held.has(nodeId)) return;
+      held.add(nodeId);
+      for (const child of childrenByParent.get(nodeId) ?? []) walk(child);
+    };
+    for (const node of graphData.nodes) {
+      if (node.status === "paused") walk(node.id);
+    }
+    return held;
+  }, [childrenByParent, graphData.nodes]);
 
   // This week's check-ins per habit, for the cadence dots.
   const habitWeekDone = useHabitWeekProgress(graphData.nodes);
@@ -2803,6 +2835,7 @@ export function GraphCanvas({
             const visual = getNodeVisualState({
               archived: node.status === "archived",
               completed: node.status === "completed",
+              held: heldNodeIds.has(node.id) && node.status !== "completed" && node.status !== "archived",
               hovered,
               inHoveredNeighborhood,
               inSelectedNeighborhood,
