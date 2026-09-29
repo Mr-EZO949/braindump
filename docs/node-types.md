@@ -1,7 +1,11 @@
-# Node types v2 — proposal (2026-09-29, awaiting owner sign-off)
+# Node types v2 (approved and built 2026-09-29)
 
-Status: **proposed, not built.** The live taxonomy is still
-`project | task | class | concept | idea | goal | habit` (see AGENTS.md → Node types).
+Status: **built** — code in `src/lib/graph/node-types.ts` (the one place type rules
+live), migration `supabase/migrations/20260929000000_node_types_v2.sql`, prompts
+extract-v22 / extract-light-v2 / assistant-v18. The owner approved all four
+recommendations below (keep class, outline → big task, backfill structure only,
+"Note"). Old graphs don't convert one-to-one, so Round 2 tests the types with new
+dumps; the migration only backfills what the structure proves.
 
 ## Why
 
@@ -93,7 +97,38 @@ save (task gets a child → big_task). Nothing blocks the user from breaking the
   ("Objective" stays the group label for goal + project).
 - Create sheet: types grouped by family, each with its one-line question.
 
-## Build plan (after sign-off)
+## What was built (2026-09-29)
+
+- **Migration** (apply before the build reaches prod): allows `big_task`, `area`,
+  `note` (keeps `concept` allowed so the old build works until deploy); backfills roots
+  → area, concepts with children → area / without → note, tasks with task/big task/habit
+  children → big_task; trigger `promote_task_with_children` keeps "a task that gains a
+  step becomes a big task" true on every edge write. No model pass over old goals — they
+  stay goals until the user retypes them.
+- **Logic:** scoring/planner/Focus/next-action/nudges/retrieval/auto-apply/merge/dedup
+  tables all know the new types. Planner never schedules areas, classes, ideas or notes;
+  a big task with steps plans its steps, without steps one work session. Dedup lets a big
+  task match an old task or project with the same meaning.
+- **Prompts:** one "Node types" section in extract-v22 (each type's question, tie-breakers,
+  nesting), every example re-typed (clusters → area, "Make Money" → area, "Pass X" →
+  big_task); light prompt got the same questions plus the heading → area rule;
+  assistant-v18 + the chat tools' node_type field description; breakdowns: big task →
+  flat step list, goal/project → phases that are big tasks; merge-check-v2; judgment_v2.
+- **UI:** canvas — big task = red pill + gradient-red outline + step ticks, project = thin
+  progress bar, goal/project keep size & weight, area = hollow hub with a mono uppercase
+  label at constant size, idea = dashed outline, note = small; one palette everywhere;
+  create sheet = the nine types grouped by family with their questions (the broken
+  "Custom type" option is gone); Todos lists big tasks with "2/5 steps" and expands to
+  their steps; human labels in review, roadmap, detail panel, filters.
+- **Not built (cosmetic, from the design page):** goal target mark, habit cadence dots,
+  class term tag.
+- **Eval (live, ~$0.30):** first Round-1 dump from scratch → every "Pass X exam" a big
+  task, Make Money and fitness areas, internship a dated goal, reselling an idea; follow-up
+  against the real workspace attaches to old-typed nodes without duplicates, notes for
+  people/advice, Life Admin area, "lose 5 kg by March" a goal with habits; light probes
+  and chat (Haiku) type big tasks, tasks, notes, areas and goals correctly.
+
+## Build plan (as proposed)
 
 1. Migration: allow `big_task`, `area`, `note` in `nodes_node_type_check`; keep `concept`
    until the backfill ran, then drop it.
@@ -110,7 +145,7 @@ save (task gets a child → big_task). Nothing blocks the user from breaking the
 5. Eval: ~10 real Round-1 dumps before/after — "Pass X" must type as big_task every time,
    no goal-vs-area flips; report $/dump.
 
-## Open decisions for the owner
+## Decisions (all approved 2026-09-29, as recommended)
 
 1. Keep `class` (recommended — students are core users and courses behave differently), or
    fold it into `area`?
