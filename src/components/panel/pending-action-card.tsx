@@ -4,6 +4,11 @@
 // to /api/assistant/chat/resume; the streaming response from that endpoint
 // is threaded back into the same assistant message by the caller.
 
+import {
+  describePriorityChange,
+  parsePriorityChanges,
+  PRIORITY_ACTION_GLYPH,
+} from "@/lib/graph/priority-changes";
 import type { PendingAction } from "@/types/chat";
 
 interface PendingActionCardProps {
@@ -19,6 +24,7 @@ const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
   propose_edge: { verb: "Connect", noun: "nodes" },
   propose_merge: { verb: "Merge", noun: "nodes" },
   update_node: { verb: "Edit", noun: "node" },
+  update_priorities: { verb: "Update", noun: "priorities" },
   archive_node: { verb: "Archive", noun: "node" },
   complete_node: { verb: "Complete", noun: "node" },
   add_task_to_calendar: { verb: "Schedule", noun: "task" },
@@ -153,6 +159,9 @@ export function PendingActionCard({ action, disabled, onResolve }: PendingAction
 
   const isBatch = action.toolName === "propose_nodes_batch";
   const isChangesBatch = action.toolName === "propose_changes_batch";
+  const priorityParse =
+    action.toolName === "update_priorities" ? parsePriorityChanges(action.toolInput) : null;
+  const priorityChanges = priorityParse?.ok ? priorityParse.changes : null;
   const batchNodes = isBatch && isBatchNodeList(action.toolInput.nodes)
     ? (action.toolInput.nodes as BatchNode[])
     : null;
@@ -161,7 +170,7 @@ export function PendingActionCard({ action, disabled, onResolve }: PendingAction
     : null;
 
   const entries =
-    isBatch || isChangesBatch
+    isBatch || isChangesBatch || priorityChanges
       ? [] // batch cards render their own lists below
       : Object.entries(action.toolInput).filter(
           ([, value]) => renderField(value) !== null,
@@ -224,6 +233,17 @@ export function PendingActionCard({ action, disabled, onResolve }: PendingAction
               +{changes.length - 12} more
             </li>
           ) : null}
+        </ul>
+      ) : null}
+
+      {priorityChanges ? (
+        <ul className="pending-action-batch-list">
+          {priorityChanges.map((change, idx) => (
+            <li className="pending-action-batch-item" key={idx}>
+              <span className="pending-action-batch-type">{PRIORITY_ACTION_GLYPH[change.action]}</span>
+              <span className="pending-action-batch-title">{describePriorityChange(change)}</span>
+            </li>
+          ))}
         </ul>
       ) : null}
 

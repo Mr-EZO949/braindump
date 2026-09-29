@@ -661,7 +661,7 @@ const UPDATE_NODE: ToolDefinition = {
   schema: {
     name: "update_node",
     description:
-      "Edit an existing node's title, summary, type, importance, or target_date deadline. Only supply the fields you want to change. Requires Accept.",
+      "Edit an existing node's title, summary, type, body, or target_date deadline. Only supply the fields you want to change. importance_index pins a permanent manual importance (0–100) — only when the user names a number; for 'X matters more/less', stakes, focus or waiting use update_priorities. Requires Accept.",
     input_schema: {
       type: "object",
       properties: {
@@ -730,9 +730,13 @@ const UPDATE_NODE: ToolDefinition = {
       patch.node_type = nt;
     }
     if (typeof args.importance_index === "number") {
+      // importance_index alone is overwritten by the next score recompute, so
+      // a chat-set importance pins manual_weight — the scorer's hard override.
       const idx = Math.max(0, Math.min(100, Math.round(args.importance_index)));
       patch.importance_index = idx;
       patch.importance = importanceFromIndex(idx);
+      patch.manual_weight = idx;
+      patch.manual_weight_set_at = new Date().toISOString();
     }
     if (typeof args.target_date === "string") {
       const td = args.target_date.trim();
@@ -771,6 +775,16 @@ const UPDATE_NODE: ToolDefinition = {
         accepted: false,
         error: `Failed to update node: ${updateErr?.message ?? "unknown error"}`,
       };
+    }
+    // Deadline, type and importance all move the score — resize now, not at
+    // the next unrelated event.
+    if ("target_date" in patch || "manual_weight" in patch || "node_type" in patch) {
+      await computeWorkspaceScores({
+        workspaceId: ctx.workspaceId,
+        userId: ctx.userId,
+        supabase: ctx.supabase,
+        today: ctx.today,
+      }).catch(() => {});
     }
     return {
       accepted: true,
@@ -1209,6 +1223,7 @@ const PROPOSE_CHANGES_BATCH: ToolDefinition = {
         workspaceId: ctx.workspaceId,
         userId: ctx.userId,
         supabase: ctx.supabase,
+        today: ctx.today,
       }).catch((err: unknown) => {
         console.warn("[mutations] batch score recompute failed:", err);
       });

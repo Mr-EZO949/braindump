@@ -4,6 +4,7 @@
 
 import { AI_TOKEN_BUDGETS, AI_ASSISTANT } from "./config";
 import { matchNodes, type MatchedNode } from "./embeddings";
+import { stakesLevel } from "@/lib/graph/priority-signals";
 
 // ---------------------------------------------------------------------------
 // Token estimator — chars/4 approximation (standard estimate for English prose)
@@ -87,7 +88,7 @@ export async function buildAssistantContext(params: {
   const [nodesResult, edgesResult, feedbackResult, recentlyCompletedResult, planResult, userProfileResult, semanticMatches] = await Promise.all([
     params.supabase
       .from("nodes")
-      .select("id, title, summary, node_type, importance, current_importance_score, status, target_date")
+      .select("id, title, summary, node_type, importance, current_importance_score, status, target_date, stakes, waiting_for, resume_on")
       .eq("workspace_id", params.workspaceId)
       .eq("user_id", params.userId)
       .neq("status", "archived"),
@@ -151,6 +152,9 @@ export async function buildAssistantContext(params: {
     current_importance_score: number | null;
     status: string;
     target_date: string | null;
+    stakes: number | null;
+    waiting_for: string | null;
+    resume_on: string | null;
   };
   type EdgeRow = {
     id: string;
@@ -170,6 +174,12 @@ export async function buildAssistantContext(params: {
 
   const nodeById = new Map(allNodes.map((n) => [n.id, n]));
   const activeNodes = allNodes.filter((n) => n.status !== "completed");
+  // "paused (waiting for exam result until 2026-10-15)" — the assistant needs
+  // the hold to answer "what about Stats?" and to resume it later.
+  const statusLabel = (n: NodeRow) =>
+    n.status === "paused" && n.waiting_for
+      ? `paused (waiting for ${n.waiting_for}${n.resume_on ? ` until ${n.resume_on}` : ""})`
+      : n.status;
 
   // Sort active nodes by score desc for priority ordering (id breaks ties so
   // the order — and the cached context bytes — are deterministic).
@@ -201,8 +211,9 @@ export async function buildAssistantContext(params: {
         `ID: ${sel.id}`,
         `Type: ${sel.node_type}`,
         `Importance: ${sel.importance}${sel.current_importance_score != null ? ` (score: ${Math.round(sel.current_importance_score)})` : ""}`,
-        `Status: ${sel.status}`,
+        `Status: ${statusLabel(sel)}`,
         sel.target_date ? `Due: ${sel.target_date}` : null,
+        sel.stakes != null && sel.stakes !== 0 ? `Stakes: ${stakesLevel(sel.stakes)}` : null,
         sel.summary ? `Summary: ${sel.summary}` : null,
         neighborTitles.length > 0 ? `Connected to: ${neighborTitles.join(", ")}` : null,
         neighborEdges.length > 0
@@ -282,7 +293,7 @@ export async function buildAssistantContext(params: {
     const parts = [
       `${node.title} [${node.node_type}]`,
       summarySnippet,
-      `score: ${Math.round(score)}, status: ${node.status}${node.target_date ? `, due: ${node.target_date}` : ""}`,
+      `score: ${Math.round(score)}, status: ${statusLabel(node)}${node.target_date ? `, due: ${node.target_date}` : ""}${node.stakes != null && node.stakes !== 0 ? `, stakes: ${stakesLevel(node.stakes)}` : ""}`,
       `id: ${node.id}`,
     ].filter(Boolean);
     const text = parts.join(" — ");
