@@ -174,6 +174,30 @@ Psychology's pressure rises; its next step leads Focus. On the check-back day
 Stats returns to Focus as one decision. (`ranking-scenario.test.ts` runs this
 story through the real scorer and Focus builder.)
 
+## Dumps → priorities (`dump-priorities.ts`, `dump-priorities-v1`)
+
+The same facts arrive in the dump box too ("did the stats exam, waiting for
+results, psych moved to friday"), and extraction only creates nodes and
+completes them. So every user dump that touches existing nodes gets one small
+Haiku read, in parallel with extraction (no added wait):
+
+- Input: the dump + the existing nodes retrieval already picked for it (short
+  refs, with status / due / stakes). No relevant existing node → no call.
+- Output: the facts only — `wait`, `resume`, `deadline` (the user's date words,
+  resolved in code), `stakes`, `focus`, `deprioritize`, `drop`. Completions stay
+  with extraction; when both touch a node, the read's `wait` wins over
+  extraction's "did". Ambiguous outcomes aren't acted on — the dump summary asks
+  about them in chat instead.
+- The facts go through `applyPriorityChanges` (same as chat) and the
+  deterministic ranking reranks. The dump's summary in chat carries the same
+  applied card with Undo, and the changed nodes pulse.
+- Haiku never scores nodes here: scoring stays deterministic (free, stable,
+  explainable).
+
+Cost: ~570 input + 20–120 output tokens, **$0.0007–0.0012 per dump**
+(measured, 3 synthetic dumps: wait + moved date, "didn't take psychology" → asked,
+venting → nothing; all right).
+
 ## AI importance rerank (`judgment.ts`, `judgment_v3`)
 
 Judges *significance only* (timing is the pressure signal). Nodes go in as short
