@@ -582,7 +582,7 @@ export function ContextRail({
                 ) : pendingSizeBreakdown ? (
                   <div className="flex flex-col gap-2.5">
                     <p className="text-[12.5px] leading-snug text-(--color-text-secondary)">
-                      This looks like a big task — more than one sitting. Break it into steps?
+                      This looks like a big task — more than one sitting. Have AI break it down?
                     </p>
                     <p className="line-clamp-2 rounded-md border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.025)] px-3 py-2 text-[12px] italic text-(--color-text-muted)">
                       {pendingSizeBreakdown.title}
@@ -600,14 +600,14 @@ export function ContextRail({
                         type="button"
                         onClick={() => onResolveSizeBreakdown?.("full")}
                         className="flex-1 rounded-full border border-[rgba(213,58,71,0.55)] bg-[rgba(213,58,71,0.95)] px-3 py-2 text-[12px] font-semibold text-white"
-                        title="AI lists every step to finish it (4–8 one-sitting tasks). Uses more tokens."
+                        title="AI builds a full roadmap: phases with concrete steps under each. Uses more tokens."
                       >
-                        All steps
+                        AI roadmap
                       </button>
                     </div>
                     <p className="text-[11px] leading-snug text-(--color-text-muted)">
-                      Quick tasks = the next 1–3 actions. All steps = everything it takes,
-                      in order — more thorough, uses more tokens.
+                      Quick tasks = the next 1–3 actions. AI roadmap = phases with steps
+                      under each — more thorough, uses more tokens.
                     </p>
                     <button
                       type="button"

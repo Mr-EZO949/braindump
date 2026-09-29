@@ -32,10 +32,10 @@ import { normalizeNodeType } from "@/lib/graph/node-types";
 // project or goal), so big tasks are compatible with both neighbours; areas
 // replaced grouping concepts and notes replaced knowledge concepts.
 const COMPATIBLE_TYPES: Record<string, Set<string>> = {
-  goal:     new Set(["goal", "project", "big_task", "area"]),
+  goal:     new Set(["goal", "project", "big_task", "task", "area"]),
   project:  new Set(["project", "goal", "big_task", "task"]),
   big_task: new Set(["big_task", "task", "project", "goal"]),
-  task:     new Set(["task", "big_task", "project", "idea"]),
+  task:     new Set(["task", "big_task", "project", "goal", "idea"]),
   area:     new Set(["area", "goal", "class"]),
   class:    new Set(["class", "area"]),
   idea:     new Set(["idea", "note", "task"]),

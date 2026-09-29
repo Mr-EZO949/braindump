@@ -81,6 +81,7 @@ import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
 import { classifyTaskSize } from "@/lib/ai/sizing";
 import { needsNextAction } from "@/lib/graph/next-action";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
+import { computeWorkProgress } from "@/lib/graph/work-progress";
 import { NODE_TYPE_INFO, NODE_TYPES, normalizeNodeType } from "@/lib/graph/node-types";
 import type { RailTab, ChatMessage, ChatScope, Nudge, PendingAction } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, NodeType, Workspace } from "@/types/graph";
@@ -654,6 +655,10 @@ export function AppShell({ initialUser }: AppShellProps) {
       }
     }
   }, [appMode, freezeNudgeAllowed, freezeNudgeDismissed, stepSuggestionOpen, needsActionNodes.length]);
+
+  // Big task / project progress counts done steps even while the canvas
+  // hides completed nodes, so it's computed from the full graph.
+  const workProgressByNode = useMemo(() => computeWorkProgress(graphData), [graphData]);
 
   const filteredGraphData = useMemo(() => {
     const minimumImportance =
@@ -3749,6 +3754,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 edgeConnectionUpdateSubmittingId={edgeUpdateSubmittingId}
                 edgeConnections={selectedNodeConnections}
                 graphData={filteredGraphData}
+                workProgressByNode={workProgressByNode}
                 graphLoading={graphLoading}
                 graphImportanceFilter={importanceFilter}
                 graphSearchValue={graphSearchValue}

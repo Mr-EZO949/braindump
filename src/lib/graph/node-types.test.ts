@@ -35,12 +35,12 @@ describe("node taxonomy v2", () => {
     }
   });
 
-  it("only lets containers hold work, and a big task holds only steps", () => {
+  it("only lets containers hold work; a big task holds phases and steps", () => {
     for (const type of NODE_TYPES) {
       const holdsWork = [...ALLOWED_CHILDREN[type]].some((child) => child !== "note");
       expect(holdsWork).toBe(CONTAINER_TYPES.has(type));
     }
-    expect([...ALLOWED_CHILDREN.big_task].sort()).toEqual(["note", "task"]);
+    expect([...ALLOWED_CHILDREN.big_task].sort()).toEqual(["big_task", "note", "task"]);
     expect(ALLOWED_CHILDREN.note.size).toBe(0);
   });
 

@@ -26,8 +26,8 @@ export const NODE_TYPE_INFO: Record<
   goal: {
     label: "Goal",
     family: "direction",
-    question: "An outcome you'll know you reached — a number, an event, a yes/no — ideally by a date.",
-    examples: "Internship in Milan by November · 1450+ on the SAT",
+    question: "A result you'll know you reached — pass it, land it, hit the number — ideally by a date.",
+    examples: "Pass Machine Learning · Internship in Milan by November · 1450+ on the SAT",
   },
   project: {
     label: "Project",
@@ -38,8 +38,8 @@ export const NODE_TYPE_INFO: Record<
   big_task: {
     label: "Big task",
     family: "work",
-    question: "One thing with one finish line that takes several sittings.",
-    examples: "Pass the ML exam · Write the thesis",
+    question: "One piece of work you do or produce, over several sittings.",
+    examples: "Write the thesis · Test BrainDump · Crash-course Italian",
   },
   task: {
     label: "Task",
@@ -133,12 +133,15 @@ export const CONTAINER_TYPES: ReadonlySet<NodeType> = new Set([
 // prompts follow it; nothing blocks a manual edit. The one enforced rule — a
 // task that gains a child step becomes a big task — is the DB trigger
 // promote_task_with_children (migration 20260929000000).
+// Areas may hold sub-areas (the root is an area; "University" can hold "This
+// Semester's Courses"); goals may hold milestone goals; a big task holds its
+// phases (big tasks) and steps, so it can carry a deep roadmap.
 export const ALLOWED_CHILDREN: Record<NodeType, ReadonlySet<NodeType>> = {
-  area: new Set(["goal", "project", "class", "big_task", "task", "habit", "idea", "note"]),
-  goal: new Set(["project", "big_task", "task", "habit", "note"]),
-  class: new Set(["big_task", "task", "habit", "note"]),
+  area: new Set(["area", "goal", "project", "class", "big_task", "task", "habit", "idea", "note"]),
+  goal: new Set(["goal", "project", "big_task", "task", "habit", "note"]),
+  class: new Set(["goal", "big_task", "task", "habit", "note"]),
   project: new Set(["big_task", "task", "habit", "idea", "note"]),
-  big_task: new Set(["task", "note"]),
+  big_task: new Set(["big_task", "task", "note"]),
   task: new Set(["note"]),
   habit: new Set(["note"]),
   idea: new Set(["note"]),

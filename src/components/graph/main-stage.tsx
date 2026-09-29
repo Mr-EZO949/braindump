@@ -9,6 +9,7 @@ import { NetworkIcon, PencilIcon, PlusIcon, SearchIcon } from "@/components/ui/i
 import type { LocalGraphCameraView } from "@/lib/graph/data";
 import type { EdgeRelationOptionId } from "@/lib/graph/relationships";
 import type { CreateNodeInput, GraphData } from "@/types/graph";
+import type { WorkProgress } from "@/lib/graph/work-progress";
 
 type MainStageProps = {
   createNodeDraft: CreateNodeInput | null;
@@ -47,6 +48,7 @@ type MainStageProps = {
     title: string;
   }>;
   graphData: GraphData;
+  workProgressByNode?: ReadonlyMap<string, WorkProgress>;
   graphImportanceFilter: string;
   graphImportanceFilterOptions: Array<{
     label: string;
@@ -102,6 +104,7 @@ type MainStageProps = {
 };
 
 export function MainStage({
+  workProgressByNode,
   createNodeDraft,
   createNodeError,
   createNodeSubmitting,
@@ -194,6 +197,7 @@ export function MainStage({
         </div>
       </div>
       <GraphCanvas
+        workProgressByNode={workProgressByNode}
         focusNodeId={selectedNodeId}
         focusRequestKey={focusRequestKey}
         graphData={graphData}

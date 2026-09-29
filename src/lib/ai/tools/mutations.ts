@@ -36,7 +36,7 @@ const VALID_NODE_TYPES: ReadonlySet<string> = new Set(NODE_TYPES);
 // more than the system prompt when it fills a tool call ("pass the stats
 // final" came back as a task with the bare "Node type" description).
 const NODE_TYPE_FIELD_DESCRIPTION =
-  "task = one sitting (email the prof, solve 5 problems). big_task = ONE deliverable that takes several sittings (pass an exam, write the thesis, build a site). project = several different parts. goal = a measurable outcome, ideally dated. habit = repeats on a cadence. area = an ongoing part of life (Health, Career). class = a course. idea = might do, not committed. note = something to remember (a person, advice, a fact).";
+  "task = one sitting (email the prof, solve 5 problems). big_task = one piece of work over several sittings (write the thesis, build a site). project = several different parts. goal = a result to reach, ideally dated (pass an exam, land a job, hit a number). habit = repeats on a cadence. area = an ongoing part of life (Health, Career). class = a course. idea = might do, not committed. note = something to remember (a person, advice, a fact).";
 
 // The model's node_type as a stored value: tolerate "Big task" / "big-task"
 // and the retired "concept" (→ note), so an old habit doesn't fail the tool.

@@ -27,6 +27,10 @@ import {
   getStructuralParentCandidate,
 } from "@/lib/graph/structure";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
+import { useHabitWeekProgress } from "@/lib/habits/week-progress";
+import type { WorkProgress } from "@/lib/graph/work-progress";
+
+const EMPTY_WORK_PROGRESS: ReadonlyMap<string, WorkProgress> = new Map();
 import {
   BREAKDOWN_TYPES,
   CHECKABLE_TYPES,
@@ -37,6 +41,9 @@ import type { Edge, EdgeType, GraphData, Node, NodeType } from "@/types/graph";
 
 type GraphCanvasProps = {
   editMode: boolean;
+  // Step progress for big tasks and projects, from the full (unfiltered)
+  // graph — see src/lib/graph/work-progress.ts.
+  workProgressByNode?: ReadonlyMap<string, WorkProgress>;
   focusNodeId: string | null;
   focusRequestKey: number;
   graphData: GraphData;
@@ -144,6 +151,16 @@ type EdgeVisualStyle = {
   stroke: string;
   strokeWidth: number;
 };
+
+// "FALL ’26"-style term tag for a class, from when the course was added.
+function classTermLabel(createdAt: string | null | undefined): string | null {
+  if (!createdAt) return null;
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return null;
+  const month = date.getMonth(); // 0 = January
+  const term = month >= 7 ? "FALL" : month >= 5 ? "SUMMER" : "SPRING";
+  return `${term} ’${String(date.getFullYear()).slice(-2)}`;
+}
 
 // Sibling order under a parent: direction and structure first, then work,
 // knowledge last.
@@ -1599,6 +1616,7 @@ function updateAmbientGlow(
 
 export function GraphCanvas({
   editMode,
+  workProgressByNode = EMPTY_WORK_PROGRESS,
   focusNodeId,
   focusRequestKey,
   graphData,
@@ -1673,27 +1691,8 @@ export function GraphCanvas({
     [graphData],
   );
 
-  // Step progress for big tasks and projects: how many of their direct work
-  // children are done. Drawn as ticks (big task) or a thin bar (project).
-  const workProgressByNode = useMemo(() => {
-    const byId = new Map(graphData.nodes.map((n) => [n.id, n]));
-    const progress = new Map<string, { done: number; total: number }>();
-    childrenByParent.forEach((childIds, parentId) => {
-      const parent = byId.get(parentId);
-      if (!parent || (parent.node_type !== "big_task" && parent.node_type !== "project")) return;
-      let done = 0;
-      let total = 0;
-      for (const childId of childIds) {
-        const child = byId.get(childId);
-        if (!child || child.status === "archived") continue;
-        if (!CHECKABLE_TYPES.has(child.node_type) && child.node_type !== "project") continue;
-        total += 1;
-        if (child.status === "completed") done += 1;
-      }
-      if (total > 0) progress.set(parentId, { done, total });
-    });
-    return progress;
-  }, [childrenByParent, graphData.nodes]);
+  // This week's check-ins per habit, for the cadence dots.
+  const habitWeekDone = useHabitWeekProgress(graphData.nodes);
 
   // Set of all node IDs that are hidden because an ancestor is collapsed.
   const hiddenNodeIds = useMemo(() => {
@@ -2837,6 +2836,12 @@ export function GraphCanvas({
             const isArea = node.node_type === "area";
             const isIdea = node.node_type === "idea";
             const workProgress = workProgressByNode.get(node.id) ?? null;
+            const markerSurface = theme === "light" ? "#fbf9f4" : "rgba(16,16,19,0.96)";
+            const habitTarget =
+              node.node_type === "habit" && node.habit_target_per_week
+                ? clamp(Math.round(node.habit_target_per_week), 1, 7)
+                : 0;
+            const classTerm = node.node_type === "class" ? classTermLabel(node.created_at) : null;
             const topBandOpacity = actionable
               ? selected
                 ? 0.28
@@ -3082,6 +3087,63 @@ export function GraphCanvas({
                         />
                       </g>
                     )
+                  ) : null}
+                  {habitTarget > 0 ? (
+                    // Habit: one dot per weekly target, filled as this week's
+                    // check-ins come in.
+                    <g style={{ pointerEvents: "none" }}>
+                      {Array.from({ length: habitTarget }, (_, index) => (
+                        <circle
+                          cx={-((habitTarget - 1) * 7) / 2 + index * 7}
+                          cy={node.height / 2 - 6.5}
+                          fill={
+                            index < Math.min(habitWeekDone.get(node.id) ?? 0, habitTarget)
+                              ? node.categoryColor
+                              : "none"
+                          }
+                          key={index}
+                          r={2.3}
+                          stroke={rgba(node.categoryColor, 0.85)}
+                          strokeWidth={0.9}
+                        />
+                      ))}
+                    </g>
+                  ) : null}
+                  {node.node_type === "goal" && !skipLabel ? (
+                    // Goal: a small target on the top edge — an outcome to reach.
+                    <g
+                      style={{ pointerEvents: "none" }}
+                      transform={`translate(${Math.min(-node.width / 2 + nodeRadius + 6, -8)}, ${-node.height / 2})`}
+                    >
+                      <circle fill={markerSurface} r={7} stroke={node.categoryColor} strokeWidth={1.4} />
+                      <circle fill="none" r={3.9} stroke={node.categoryColor} strokeWidth={1} />
+                      <circle fill={node.categoryColor} r={1.6} />
+                    </g>
+                  ) : null}
+                  {classTerm && !skipLabel ? (
+                    // Class: the term it belongs to, on the top edge.
+                    <g style={{ pointerEvents: "none" }} transform={`translate(0, ${-node.height / 2})`}>
+                      <rect
+                        fill={markerSurface}
+                        height={13}
+                        rx={6.5}
+                        stroke={rgba(node.categoryColor, 0.7)}
+                        strokeWidth={0.9}
+                        width={classTerm.length * 5.4 + 12}
+                        x={-(classTerm.length * 5.4 + 12) / 2}
+                        y={-6.5}
+                      />
+                      <text
+                        fill={node.categoryColor}
+                        fontFamily="var(--font-geist-mono), ui-monospace, monospace"
+                        fontSize={8}
+                        letterSpacing="0.06em"
+                        textAnchor="middle"
+                        y={2.8}
+                      >
+                        {classTerm}
+                      </text>
+                    </g>
                   ) : null}
                   {skipLabel ? null : (
                     <text

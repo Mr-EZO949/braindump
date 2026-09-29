@@ -37,10 +37,14 @@
 //   deliverable that takes several sittings; area (not goal/concept) for life
 //   domains and groupings; note for things to remember. "concept" is gone.
 //   Every example below was re-typed to match.
+// v23 (owner feedback): passing an exam/course is a GOAL (a result), a big_task
+//   is a piece of WORK you do or produce; big tasks can hold phases (deep
+//   roadmaps); areas may nest (the root is an area); product feature ideas keep
+//   their own "[Product] Feature Ideas" cluster, as before v22.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v22";
+export const EXTRACT_PROMPT_VERSION = "extract-v23";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -89,27 +93,28 @@ Actionability rule (IMPORTANT — apply before extracting any task):
 - If a fragment is BOTH vague AND repeated/emphatic (user clearly cares but can't articulate it), prefer raising a clarifying_question over inventing a fake task.
 
 Node types (IMPORTANT — each type answers ONE question; pick the first that fits):
-- goal — an OUTCOME the user will know they reached: a number, an event or a yes/no, ideally with a date. "Get a 1450+ on the SAT", "Land an internship in Milan by November", "Run a half-marathon under 1:50". A goal is achieved, not worked on — the work under it is projects, big tasks, tasks and habits.
-  - NOT a goal: aspirations with no finish line ("be a better student", "money independence", "personal success", "stay consistent", "get in shape") → area. A routine ("resume the gym 3×/week") → habit. One deliverable ("pass the calculus exam") → big_task.
+- goal — a RESULT the user will know they reached: pass it, land it, hit the number — ideally with a date. "Pass Machine Learning", "Pass the calculus exam", "Get a 1450+ on the SAT", "Land an internship in Milan by November", "Run a half-marathon under 1:50", "Fix my sleep schedule". A goal is achieved, not worked on — the work under it is projects, big tasks, tasks and habits.
+  - NOT a goal: aspirations with no finish line ("be a better student", "money independence", "personal success", "stay consistent", "get in shape") → area. A routine ("resume the gym 3×/week") → habit. A piece of work to produce ("write the report") → big_task.
 - project — a body of work with several DIFFERENT parts or deliverables: "Internship search", "Launch the BrainDump beta", "Portfolio site", "Learn React" (tutorials + a practice app + …).
-- big_task — ONE thing with ONE finish line that takes several sittings: "Pass the ML exam", "Write my thesis", "Test BrainDump", "Prep the Q3 deck", "Fix my sleep schedule". You would check it off, but not today, and you would break it into steps before starting.
+- big_task — ONE piece of WORK the user does or produces, over several sittings: "Write my thesis", "Test BrainDump", "Prep the Q3 deck", "Crash-course Italian", "Build my portfolio site". You would check it off, but not today, and you would break it into steps (or phases) before starting.
 - task — ONE sitting (about 2 hours or less), one clear "done": "Email the professor", "Solve 5 practice problems", "Watch lecture 3", "Fix the login bug", "Book the flight".
 - habit — repeats on a stated cadence (see Habit vs task rule).
 - area — a part of life the user keeps maintaining, with no finish line: "University", "Health & Fitness", "Career", "Money", "Life Admin". Areas are where things live; they are never done and never scheduled.
-- class — a course the user is taking this term: "Linear Algebra", "Stats 302". Exams and assignments in it are big tasks or tasks under it.
+- class — a course the user is taking this term: "Linear Algebra", "Stats 302". Passing it is a goal under it; assignments and projects in it are big tasks or tasks.
 - idea — something the user MIGHT do but hasn't committed to: "maybe resell clothes from Milan", "an extension that summarizes lectures".
 - note — something to REMEMBER, not do: a person and their role ("Noah Kim — my TA"), advice ("Sarah said stay through the refactor"), a fact, reference material, a decision already made. Notes never hold children.
 
 Tie-breakers:
 - task vs big_task: one sitting? If you'd want to break it into steps to start it, it's a big_task. If it already IS a step, it's a task.
-- big_task vs project: one finish line? "Pass the ML exam" has one (the exam) → big_task. "Launch the beta" has several deliverables → project.
+- goal vs big_task: is it a RESULT you reach (pass, land, get, hit, reach) → goal; a piece of WORK you do or produce (write, build, test, prepare) → big_task. "Pass the ML exam" → goal; "Write the ML project report" → big_task.
+- big_task vs project: one piece of work? "Write my thesis" → big_task. "Launch the beta" has several different deliverables → project.
 - goal vs area: could the user say "done"? No → area. If they gave a measurable target, it's a goal ("earn €1,000/month from side projects by March").
 - note vs idea: knowledge → note; a possible thing to do → idea.
 - Do NOT invent child steps for a big_task here — creating it with the right type is the whole job; breakdown happens later, on demand.
 - Progress / findings on an existing big task or project attach UNDER it as task children: existing big task "Test BrainDump" + dump "tested it and found 10 bugs" → task "Fix the 10 bugs found in BrainDump" with existing_parent_node_id = that node — not a new top-level task, not a duplicate of the parent.
 
 Nesting (a node's parent must be able to hold it):
-- area → anything except another area; goal → project, big_task, task, habit, note; class → big_task, task, habit, note; project → big_task, task, habit, idea, note; big_task → task (its steps), note.
+- area → anything (including a sub-area); goal → goal (a milestone), project, big_task, task, habit, note; class → goal, big_task, task, habit, note; project → big_task, task, habit, idea, note; big_task → big_task (a phase), task (a step), note.
 - task, habit, idea and note hold nothing (a note may hang under any node).
 
 Habit vs task rule (choose node_type for recurring behaviors):
@@ -198,7 +203,7 @@ Semantic clustering rule (IMPORTANT — apply this actively):
 - Good cluster examples:
   - 5 university courses → cluster: "This Semester's Courses" (node_type: area)
   - gym + journaling + skincare → cluster: "Health & Wellness" (node_type: area)
-  - multiple feature ideas for a named product → the product's project "[Product Name]" holding them as ideas (create the project if it doesn't exist)
+  - multiple feature ideas for a named product → cluster: "[Product Name] Feature Ideas" (node_type: area)
   - rent + parking pass + mom's birthday gift → cluster: "Life Admin" (node_type: area)
   - multiple marketing tasks for a product → cluster: "[Product Name] Marketing" (node_type: project)
   - multiple product backlog tasks → cluster: "[Product Name] Backlog" (node_type: project)

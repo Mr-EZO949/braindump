@@ -44,7 +44,8 @@ SET node_type = CASE
 END
 WHERE n.node_type = 'concept';
 
--- 2c. A task that already has work under it is a big task.
+-- 2c. A task that already has work under it is a big task (its children may be
+-- phases stored as projects, e.g. an older AI roadmap's "Phase:" nodes).
 UPDATE nodes n
 SET node_type = 'big_task'
 WHERE n.node_type = 'task'
@@ -55,12 +56,12 @@ WHERE n.node_type = 'task'
     WHERE e.target_node_id = n.id
       AND e.edge_type = 'belongs_to'
       AND e.status IS DISTINCT FROM 'user_rejected'
-      AND c.node_type IN ('task', 'big_task', 'habit')
+      AND c.node_type IN ('task', 'big_task', 'habit', 'project')
   );
 
--- 3. Keep it that way: when a task gains a child step (task / big task /
--- habit — a note or idea hanging under it doesn't count), it becomes a big
--- task. Runs for every write path (review accept, auto-apply, chat, manual
+-- 3. Keep it that way: when a task gains a child step or phase (task / big
+-- task / habit / project — a note or idea hanging under it doesn't count), it
+-- becomes a big task. Runs for every write path (review accept, auto-apply, chat, manual
 -- edges). SECURITY DEFINER so it works under RLS; it only touches the edge
 -- owner's own node.
 CREATE OR REPLACE FUNCTION public.promote_task_with_children()
@@ -79,7 +80,7 @@ BEGIN
       AND EXISTS (
         SELECT 1 FROM nodes c
         WHERE c.id = NEW.source_node_id
-          AND c.node_type IN ('task', 'big_task', 'habit')
+          AND c.node_type IN ('task', 'big_task', 'habit', 'project')
       );
   END IF;
   RETURN NEW;

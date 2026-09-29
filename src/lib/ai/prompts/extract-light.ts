@@ -10,6 +10,7 @@
 //
 // v2: node types v2 (docs/node-types.md) — big_task / area / note, goal only
 // for verifiable outcomes; old types in the existing list are still the same item.
+// v3: passing an exam/course is a goal (a result); big_task = a piece of work.
 //
 // Same output schema and the same Session block as extract.ts, so the rest of
 // the pipeline (resolution, auto-apply, completions) is unchanged. Longer
@@ -17,7 +18,7 @@
 
 import { buildExtractionVariableBlock, type ExtractionPromptParams } from "./extract";
 
-export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v2";
+export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v3";
 
 const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to the user's existing knowledge graph. Most of these updates report things the user just did, plus a few new things to do. Keep the graph sparse: propose only what the dump clearly states.
 
@@ -35,9 +36,9 @@ const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to t
 - proposed_body: only if the dump gave a real stake, next step or detail (≤300 chars); otherwise leave it out.
 - Pick the type by its one question:
   - task — one sitting, one clear "done" ("email the professor", "solve 5 practice problems").
-  - big_task — ONE thing with one finish line that takes several sittings ("pass the calculus exam", "write the thesis", "fix my sleep schedule").
+  - big_task — ONE piece of work they do or produce, over several sittings ("write the thesis", "test BrainDump", "build my portfolio site").
   - project — a body of work with several different parts ("internship search", "launch the beta").
-  - goal — only an outcome with a verifiable finish line, ideally dated ("1450+ on the SAT", "internship in Milan by November"). Aspirations without one ("get in shape", "make money") are areas.
+  - goal — a RESULT they'll know they reached, ideally dated ("pass the calculus exam", "1450+ on the SAT", "internship in Milan by November"). Aspirations without a finish line ("get in shape", "make money") are areas.
   - habit — only with an explicit cadence ("daily", "every morning", "3× a week").
   - area — an ongoing part of life with no finish line ("Health", "Career", "Life Admin").
   - class — a course this term. idea — something they might do, not committed. note — something to remember: a person and their role, advice, a fact, a decision already made.

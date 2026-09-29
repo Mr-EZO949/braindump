@@ -130,7 +130,10 @@ export function judgeSameItem(
   if (similarity < DEDUP_SIMILARITY_FLOOR) {
     return { same: false, certainlyDistinct: true, reason: "not similar enough" };
   }
-  if (!levelsCanMatch(a.node_type, b.node_type)) {
+  // Different levels are different items — unless the titles are the same
+  // words: then it's one item typed differently by an older graph ("Pass ML
+  // Exam" as a task then, a goal now).
+  if (!levelsCanMatch(a.node_type, b.node_type) && !sameTokenSet(a.title, b.title)) {
     return { same: false, certainlyDistinct: true, reason: "a container and an item inside it" };
   }
 

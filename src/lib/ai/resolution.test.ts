@@ -198,6 +198,11 @@ describe("judgeSameItem — big tasks (node types v2)", () => {
     expect(judgeSameItem(project("Test BrainDump"), bigTask("Test BrainDump"), 0.96).same).toBe(true);
   });
 
+  it("matches an old task retyped as a goal only when the titles are the same words", () => {
+    expect(judgeSameItem(task("Pass ML Exam"), goal("Pass ML Exam"), 0.97).same).toBe(true);
+    expect(judgeSameItem(task("Pass ML Exam practice"), goal("Pass ML Exam"), 0.93).certainlyDistinct).toBe(true);
+  });
+
   it("still separates an area from a task with similar words", () => {
     const area = { title: "Health", node_type: "area" };
     expect(judgeSameItem(area, task("Health checkup"), 0.9).certainlyDistinct).toBe(true);

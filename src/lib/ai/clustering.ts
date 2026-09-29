@@ -203,9 +203,9 @@ ${childList}
 
 Allowed node_types: area, goal, project, big_task, class
 - area: a part of life the children belong to, with no finish line ("Health", "Career", "Life Admin") — the usual answer for a domain grouping
-- goal: a measurable outcome the children all serve ("Run a half-marathon under 1:50 by November") — only when there is a real finish line you could verify
+- goal: a result the children all serve ("Pass Machine Learning", "Run a half-marathon under 1:50 by November") — only when there is a real finish line you could verify
 - project: an active initiative with several different parts that the children are part of
-- big_task: one deliverable the children are the steps of ("Pass the ML exam")
+- big_task: one piece of work the children are the steps of ("Write the thesis")
 - class: a course or formal study
 
 REJECT (respond with {"title": null, "node_type": null}) if the only honest umbrella would be:
