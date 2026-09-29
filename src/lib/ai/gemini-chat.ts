@@ -16,7 +16,7 @@ import { trimHistory } from "./chat-memory";
 import { geminiCostUSD, type GeminiUsage } from "./usage";
 import type { AssistantMode } from "@/types/ai";
 
-export const ASSISTANT_QA_PROMPT_VERSION = "assistant-qa-v1";
+export const ASSISTANT_QA_PROMPT_VERSION = "assistant-qa-v2";
 
 const HANDOFF = "HANDOFF";
 
@@ -36,12 +36,12 @@ export function buildQASystemPrompt(params: {
 This turn you can only TALK. You cannot add, change, complete, schedule or look up anything. Answer from the Graph context below and the conversation.
 
 Reply with exactly the single word ${HANDOFF} and nothing else when:
-- the user wants anything changed or recorded — add/capture, complete, archive, rename, move, connect, schedule, plan — or reports something they did or decided;
+- the user wants anything changed or recorded — add/capture, complete, archive, rename, move, connect, schedule, plan — or reports something they did or decided, or how something went or changed (an exam taken, a result in, something over, moved, postponed or dropped);
 - answering needs something the Graph context doesn't show: their calendar, what they did recently, a node's full description, what's inside a node, how nodes are connected (no connections are shown), or a node that isn't listed.
 
 Otherwise answer:
 - 1–3 sentences (under ~60 words): the answer, then at most one next step. Longer only when they ask for a breakdown or explanation — then short bullets.
-- Refer to nodes by their exact titles. Never invent nodes, dates, deadlines or facts. Never show ids.
+- Refer to nodes by their exact titles. Never invent nodes, dates, deadlines or facts. Never show ids, and never quote the "importance N/100" numbers — they're the app's internal ranking.
 - No preamble, no "great question", no restating their question, no menu of offers.
 - Use their name rarely — at most in a greeting or an encouraging nudge, never to open an ordinary answer.
 ${MODE_FOCUS[params.mode]}${params.todayLine}

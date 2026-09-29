@@ -32,6 +32,14 @@ describe("parsePriorityChanges", () => {
     expect(parsePriorityChanges({ changes: [{ node_id: "n1", action: "deadline", target_date: "soonish" }] }, { today: "2026-10-07" }).ok).toBe(false);
   });
 
+  it("drops a check-back that isn't in the future", () => {
+    const result = parsePriorityChanges(
+      { changes: [{ node_id: "n1", action: "wait", waiting_for: "exam result", date_words: "today" }] },
+      { today: "2026-10-07" },
+    );
+    expect(result).toMatchObject({ ok: true, changes: [{ check_back_on: null }] });
+  });
+
   it("trusts the user's words over a date the model worked out", () => {
     const result = parsePriorityChanges(
       { changes: [{ node_id: "n1", action: "deadline", target_date: "2026-10-10", date_words: "this friday" }] },

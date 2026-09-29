@@ -198,6 +198,30 @@ Cost: ~570 input + 20–120 output tokens, **$0.0007–0.0012 per dump**
 (measured, 3 synthetic dumps: wait + moved date, "didn't take psychology" → asked,
 venting → nothing; all right).
 
+## End-to-end check (2026-09-29, real app, throwaway user, $0.038)
+
+One pass through the real flow (login → seeded exam story → Focus → chat →
+Undo → Brain Dump box), with DB checks after each step:
+
+- Chat "did the stats exam today, now waiting… psych moved to this friday" →
+  Haiku, one call, applied card, no Accept; Friday resolved right; **Undo**
+  restored status and date exactly.
+- "i didn't take psychology" → ask with all three options; "Not yet" changed
+  nothing.
+- Dump "sent my masters draft to my prof, waiting to hear back. psych is
+  pass/fail… buy printer ink" → Sonnet extract-light made the new node; the
+  Haiku priority read set the draft waiting and psych low stakes; summary card
+  with Undo. Dump cost: Sonnet $0.0065 + priority read $0.0010 + areas $0.0009.
+- Focus: a goal due today led; the check-back item sat at #2 tagged "check back".
+
+Fixed from it: a wait "today" set the check-back to today (now dropped when not
+in the future); Gemini answered "…now that the exam is over?" instead of handing
+off (outcome words now route to Haiku — Flash-Lite ignored the prompt rule even
+after it was sharpened); after Undo the model still stated the undone date (the
+history note now says the changes no longer apply); the anti-freeze nudge sat
+on top of the Focus dialog. Still variable: ask_choice lead-in sometimes
+repeats the options in text.
+
 ## AI importance rerank (`judgment.ts`, `judgment_v3`)
 
 Judges *significance only* (timing is the pressure signal). Nodes go in as short

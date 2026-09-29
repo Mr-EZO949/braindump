@@ -69,7 +69,7 @@ describe("applied marker", () => {
       "[Priorities updated: Stats exam — Waiting for exam result]",
     );
     expect(appliedActionNote({ ...action, status: "undone" })).toBe(
-      "[Priorities changed, then undone by the user: Stats exam — Waiting for exam result]",
+      "[The user UNDID these changes — they no longer apply; the Graph context shows the current state: Stats exam — Waiting for exam result]",
     );
   });
 });

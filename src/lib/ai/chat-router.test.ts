@@ -49,6 +49,25 @@ describe("looksLikePlainQuestion", () => {
     expect(looksLikePlainQuestion("which would you pick?", history.slice(0, 1))).toBe(true);
   });
 
+  // Outcome reports change the ranking — they need Claude's tools, even when
+  // phrased as a question (Gemini answered these instead of handing off).
+  it.each([
+    "is stats still important now that the exam is over?",
+    "is psych even worth stressing about now that I got into the masters program?",
+    "got my stats result back, did I pass?",
+    "psych got pushed back a week?",
+    "is it fine that psych is pass/fail?",
+  ])("keeps the outcome report %j on Claude", (message) => {
+    expect(looksLikePlainQuestion(message)).toBe(false);
+  });
+
+  it.each(["can psych wait?", "what should I focus on?", "why is psych so big?", "which goal matters most?"])(
+    "still sends the plain question %j to Q&A",
+    (message) => {
+      expect(looksLikePlainQuestion(message)).toBe(true);
+    },
+  );
+
   it("skips long messages", () => {
     expect(looksLikePlainQuestion(`why ${"so much stuff ".repeat(40)}?`)).toBe(false);
   });

@@ -4528,6 +4528,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       freezeNudgeAllowed &&
       !freezeNudgeDismissed &&
       !stepSuggestionOpen &&
+      !whatNowOpen &&
       needsActionNodes.length > 0 ? (
         <div className="freeze-nudge" role="status">
           <span className="freeze-nudge-text">

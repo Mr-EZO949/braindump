@@ -114,7 +114,11 @@ export function parsePriorityChanges(
         if (checkBack === undefined) {
           return { ok: false, error: `${at}.check_back_on must be YYYY-MM-DD or a day like "friday"` };
         }
-        changes.push({ action, node_id, title, waiting_for, check_back_on: checkBack, reason });
+        // "did the exam today, now waiting" — "today" is when they did it, not
+        // when to check back. A check-back on or before today would put the
+        // node straight back in Focus (e2e 2026-09-29), so it's dropped.
+        const future = checkBack && options.today && checkBack <= options.today ? null : checkBack;
+        changes.push({ action, node_id, title, waiting_for, check_back_on: future, reason });
         break;
       }
       case "deadline": {
