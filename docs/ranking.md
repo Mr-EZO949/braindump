@@ -111,12 +111,41 @@ What the user says in chat that changes *what matters*, not *what exists*:
    `deprioritize` · `drop`.
 4. **Ambiguous outcome → ask first** (`ask_choice`). "I didn't take psychology":
    not yet (keep it), missed it (retake date or drop?), never enrolled (drop).
-5. **One card** for all changes; Accept applies them, recomputes once, and the
-   graph refresh resizes the nodes. The reply names what went up and down.
+5. **Applies at once, with Undo** (since 2026-09-30, assistant-v21). One call
+   for all changes; they apply in order, scores recompute once, the graph
+   reloads (node sizes follow) and the changed nodes pulse once. The chat shows
+   an applied card — each node, its new state ("Waiting for exam result · check
+   back Oct 15", "Due Oct 9") and its importance move (↑ 26 / ↓ 47) — and an
+   **Undo**. No Accept gate: every priority change is reversible, so the safety
+   net moved from before to after (like calibrated auto-apply). The card is the
+   whole reply — no follow-up model call.
+   - Undo restores exactly the fields a change touched (status through the
+     status engine, then waiting_for / resume_on / stakes / target_date);
+     focus / can-wait are cancelled with an opposite steering event
+     (`feedback_events` is append-only; both decay alike, so they net to zero).
+     `POST /api/assistant/priorities/undo`.
+   - The thread history carries a note of what was applied (or undone), so the
+     next turn knows.
+   - Dates: the model copies the user's words into `date_words` ("this friday",
+     "next tuesday", "in 2 weeks", "oct 20") and the server resolves them
+     (`lib/time/relative-day.ts`). Haiku's own date for "this Friday" (said on a
+     Wednesday) was wrong in 7 of 9 runs even with the next 7 dates listed.
 6. **Venting with no new fact → no tool.** One or two sentences: acknowledge, then
    the assistant *names* the smallest next step (doesn't ask the user to pick).
    Venting that reveals stakes ("I need it for my masters") → propose
    `stakes: high` once.
+
+Surfaces:
+
+- **Focus check-back card.** A waiting item whose check-back day came leads Focus
+  as a calm amber card — "Check back · Stats final exam · Waiting for exam
+  result" — with **It's done ✓** and **Still waiting** (asks again in 7 days).
+  Both go through `POST /api/assistant/priorities` (same engine, no model, $0).
+- **Details.** A paused node shows what it's waiting on and when to check back
+  (red once the day has come); its primary action is **Resume** instead of
+  Start working. Chips/reason don't repeat what the tags and callout say.
+- **Graph.** Paused nodes and everything under them draw stepped back (muted,
+  smaller score); nodes whose priority just changed pulse once in brand red.
 
 A waiting (paused) node can be completed directly ("got my result, I passed") —
 `paused → completed` is a valid transition and logs `complete_node`. Leaving
@@ -129,6 +158,14 @@ produce the right tool call; "I didn't take psychology" asks with all three
 options; venting gets no tool and a named next step. Two fixes came out of it:
 the prompt now lists the next 7 dates (Haiku resolved "this Friday" on a
 Wednesday to the Sunday), and paused → completed.
+
+Second check (2026-09-30, assistant-v21, same workspace, 32 calls, $0.19 over
+six rounds): tool routing right in every run. Fixes: dates via `date_words`
+(3/3 right after; Haiku's own date was right in 2 of 9); the snapshot says "importance 78/100" instead of
+"score: 78" (Haiku read a stats node's score as the user's exam grade); venting
+replies must state a step, not ask. Still variable: "I didn't take psychology"
+sometimes offers only two of the three options (1 of 2 in the last round), and
+venting about a node with no step under it sometimes asks back (1 of 2).
 
 Example: "did the stats exam, waiting for results, psych got moved to Friday" →
 `wait` on *Pass the Stats final* (waiting_for "exam result") + `deadline` on
