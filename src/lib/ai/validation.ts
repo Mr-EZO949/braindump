@@ -65,6 +65,7 @@ const BUILDER_LINK_TYPES: ReadonlySet<string> = new Set([
 ]);
 const UUID = /^[0-9a-fA-F-]{36}$/;
 const MAX_BUILDER_CHANGES = 20;
+const MAX_SOFT_LINKS_PER_NODE = 2;
 
 const LOCAL_REF = /^[A-Za-z][\w-]{0,15}$/;
 
@@ -141,6 +142,11 @@ export interface ExtractionSession {
   prompt_version: string;
 }
 
+// One bad reference must never cost the whole output. Until 2026-09-30 a soft
+// link to an unknown local_ref threw here, the caller retried the full Sonnet
+// call, and a dump took 54 s instead of 21 (and paid twice). Now: a malformed
+// NODE is dropped, a malformed REFERENCE is dropped, and only an output with no
+// usable shape at all is rejected.
 export function validateExtractionOutput(raw: unknown, session: ExtractionSession): ExtractionOutput {
   if (!isObject(raw)) throw new Error("Extraction output must be an object");
   // An update with nothing new may leave the (empty) array out entirely.
@@ -149,57 +155,44 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
     throw new Error("Extraction output proposed_nodes is not an array");
 
   const seenLocalRefs = new Set<string>();
+  const dropped: string[] = [];
+  const drop = (i: number, why: string) => {
+    dropped.push(`proposed_nodes[${i}] ${why}`);
+    return [];
+  };
 
-  const nodes = raw.proposed_nodes.map((n: unknown, i: number) => {
-    if (!isObject(n)) throw new Error(`proposed_nodes[${i}] is not an object`);
-    if (!isString(n.proposed_title) || !n.proposed_title.trim())
-      throw new Error(`proposed_nodes[${i}] missing proposed_title`);
-    if (!isString(n.proposed_node_type))
-      throw new Error(`proposed_nodes[${i}] missing proposed_node_type`);
+  const nodes = raw.proposed_nodes.flatMap((n: unknown, i: number) => {
+    if (!isObject(n)) return drop(i, "is not an object");
+    if (!isString(n.proposed_title) || !n.proposed_title.trim()) return drop(i, "missing proposed_title");
+    if (!isString(n.proposed_node_type)) return drop(i, "missing proposed_node_type");
     // Legacy "concept" from a model that slips into the old taxonomy → note.
     if (n.proposed_node_type === "concept") n.proposed_node_type = "note";
-    if (!isNodeType(n.proposed_node_type))
-      throw new Error(
-        `proposed_nodes[${i}] unknown node type: ${n.proposed_node_type}`
-      );
-    if (!isString(n.local_ref) || !n.local_ref.trim())
-      throw new Error(`proposed_nodes[${i}] missing local_ref`);
+    if (!isNodeType(n.proposed_node_type)) return drop(i, `unknown node type: ${n.proposed_node_type}`);
+    if (!isString(n.local_ref) || !n.local_ref.trim()) return drop(i, "missing local_ref");
 
     const localRef = n.local_ref.trim();
-    if (seenLocalRefs.has(localRef))
-      throw new Error(`proposed_nodes[${i}] duplicate local_ref: ${localRef}`);
+    if (seenLocalRefs.has(localRef)) return drop(i, `duplicate local_ref: ${localRef}`);
     seenLocalRefs.add(localRef);
 
-    const primaryParentLocalRef =
+    let primaryParentLocalRef =
       isString(n.primary_parent_local_ref) && n.primary_parent_local_ref.trim()
         ? n.primary_parent_local_ref.trim()
         : null;
-    if (primaryParentLocalRef === localRef) {
-      throw new Error(`proposed_nodes[${i}] cannot parent itself`);
-    }
+    if (primaryParentLocalRef === localRef) primaryParentLocalRef = null;
 
-    const existingParentNodeId =
+    let existingParentNodeId =
       isString(n.existing_parent_node_id) && n.existing_parent_node_id.trim()
         ? n.existing_parent_node_id.trim()
         : null;
-    if (existingParentNodeId === localRef) {
-      throw new Error(`proposed_nodes[${i}] cannot attach to itself`);
-    }
-    if (primaryParentLocalRef && existingParentNodeId) {
-      throw new Error(
-        `proposed_nodes[${i}] cannot define both primary_parent_local_ref and existing_parent_node_id`
-      );
-    }
+    // A node has one parent; the one created in the same dump is the closer.
+    if (primaryParentLocalRef && existingParentNodeId) existingParentNodeId = null;
 
     const dependsOnLocalRefs = Array.isArray(n.depends_on_local_refs)
       ? n.depends_on_local_refs
           .filter(isString)
           .map((ref) => ref.trim())
-          .filter(Boolean)
+          .filter((ref) => ref && ref !== localRef)
       : [];
-    if (dependsOnLocalRefs.some((ref) => ref === localRef)) {
-      throw new Error(`proposed_nodes[${i}] cannot depend on itself`);
-    }
 
     // Soft links are best-effort: drop malformed entries silently rather than
     // failing the whole extraction. A single broken cross-link must not
@@ -253,7 +246,7 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
 
         return map;
       }, new Map<string, typeof softLinks[number]>()).values()
-    ).slice(0, 2);
+    ).slice(0, MAX_SOFT_LINKS_PER_NODE);
 
     // target_date — optional ISO date deadline. Drop anything that doesn't
     // match YYYY-MM-DD rather than rejecting the whole node, since the model
@@ -263,7 +256,7 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
         ? n.target_date
         : null;
 
-    return {
+    return [{
       local_ref: localRef,
       workspace_id: session.workspace_id,
       user_id: session.user_id,
@@ -297,39 +290,50 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
         : 0.5,
       source_span: isString(n.source_span) ? n.source_span : null,
       proposal_status: "pending_review" as const,
-    };
+    }];
   });
+
+  if (dropped.length > 0) {
+    console.warn("[validation] dropped malformed proposed nodes:", dropped.join("; "));
+    // Nothing usable in a non-empty list → that is a malformed answer.
+    if (nodes.length === 0) throw new Error(dropped[0]);
+  }
 
   const knownLocalRefs = new Set(nodes.map((node) => node.local_ref));
+  // A link from a NEW node to a node that already EXISTS ("the ML project could
+  // be the portfolio piece for the internship"): soft_links could only name a
+  // node from the same dump, so the model invented a copy of the existing goal
+  // to point at and the link died with the copy. It may now give the existing
+  // node's id; that becomes a "link" change, which can cross the two.
+  const linkChanges: BuilderChange[] = [];
 
-  nodes.forEach((node, index) => {
-    if (
-      node.primary_parent_local_ref &&
-      !knownLocalRefs.has(node.primary_parent_local_ref)
-    ) {
-      throw new Error(
-        `proposed_nodes[${index}] references unknown parent local_ref: ${node.primary_parent_local_ref}`
-      );
+  for (const node of nodes) {
+    const parentRef = node.primary_parent_local_ref;
+    if (parentRef && !knownLocalRefs.has(parentRef)) {
+      console.warn(`[validation] "${node.proposed_title}": unknown parent ref ${parentRef} dropped`);
+      node.primary_parent_local_ref = null;
+      // The model put an existing node's id in the same-dump field.
+      if (UUID.test(parentRef) && !node.existing_parent_node_id) node.existing_parent_node_id = parentRef;
     }
-
-    const invalidDependency = node.depends_on_local_refs.find(
-      (ref) => !knownLocalRefs.has(ref)
-    );
-    if (invalidDependency) {
-      throw new Error(
-        `proposed_nodes[${index}] references unknown dependency local_ref: ${invalidDependency}`
-      );
-    }
-
-    const invalidSoftLink = node.soft_links.find(
-      (link) => !knownLocalRefs.has(link.target_local_ref)
-    );
-    if (invalidSoftLink) {
-      throw new Error(
-        `proposed_nodes[${index}] references unknown soft link local_ref: ${invalidSoftLink.target_local_ref}`
-      );
-    }
-  });
+    node.depends_on_local_refs = node.depends_on_local_refs.filter((ref) => knownLocalRefs.has(ref));
+    node.soft_links = node.soft_links.filter((link) => {
+      if (knownLocalRefs.has(link.target_local_ref)) return true;
+      if (UUID.test(link.target_local_ref)) {
+        linkChanges.push({
+          kind: "link",
+          source: node.local_ref,
+          target: link.target_local_ref,
+          edge_type: link.edge_type === "prerequisite_for" ? "required_for" : link.edge_type,
+          rationale: link.rationale,
+        });
+      } else {
+        console.warn(
+          `[validation] "${node.proposed_title}": soft link to unknown ref ${link.target_local_ref} dropped`,
+        );
+      }
+      return false;
+    });
+  }
 
   // clarifying_questions is optional; drop malformed entries silently instead
   // of failing the whole extraction. Cap at 3 to keep the UI compact.
@@ -376,7 +380,7 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
 
   return {
     proposed_nodes: nodes,
-    changes: parseBuilderChanges(raw.changes),
+    changes: [...parseBuilderChanges(raw.changes), ...linkChanges].slice(0, MAX_BUILDER_CHANGES),
     clarifying_questions: clarifyingQuestions,
     complete_existing_node_ids: completeExistingNodeIds,
     auto_complete_local_refs: autoCompleteLocalRefs,

@@ -207,6 +207,9 @@ export async function executeWithRetry<T>(params: {
   onRetry?: (ctx: {
     attempt: number;
     error: NormalizedAIError;
+    // The error as thrown — a malformed-output error carries the tokens and
+    // cost of the call that produced it.
+    cause: unknown;
     nextDelayMs: number;
   }) => Promise<void> | void;
   shouldRetry?: (ctx: {
@@ -232,7 +235,7 @@ export async function executeWithRetry<T>(params: {
       }
 
       const nextDelayMs = backoffDelayMs(attempt);
-      await onRetry?.({ attempt, error: normalized, nextDelayMs });
+      await onRetry?.({ attempt, error: normalized, cause: error, nextDelayMs });
       await waitFor(nextDelayMs);
       attempt += 1;
     }

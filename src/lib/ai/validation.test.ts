@@ -180,6 +180,89 @@ describe("validateExtractionOutput (compact v20+ output)", () => {
   });
 });
 
+describe("validateExtractionOutput — one bad reference never costs the output", () => {
+  const n = (local_ref: string, extra: Record<string, unknown> = {}) => ({
+    local_ref,
+    proposed_title: `Node ${local_ref}`,
+    proposed_node_type: "task",
+    extraction_confidence: 0.9,
+    ...extra,
+  });
+  const EXISTING = "11111111-1111-4111-8111-111111111111";
+
+  it("drops a soft link, a dependency or a parent that names no node in the dump", () => {
+    const out = validateExtractionOutput(
+      {
+        proposed_nodes: [
+          n("n1"),
+          n("n2", {
+            primary_parent_local_ref: "n9",
+            depends_on_local_refs: ["n1", "n8"],
+            soft_links: [
+              { target_local_ref: "n6", edge_type: "supports" },
+              { target_local_ref: "n1", edge_type: "useful_for" },
+            ],
+          }),
+        ],
+      },
+      session,
+    );
+    expect(out.proposed_nodes).toHaveLength(2);
+    const second = out.proposed_nodes[1];
+    expect(second.primary_parent_local_ref).toBeNull();
+    expect(second.depends_on_local_refs).toEqual(["n1"]);
+    expect(second.soft_links.map((l) => l.target_local_ref)).toEqual(["n1"]);
+    expect(out.changes).toEqual([]);
+  });
+
+  it("turns a soft link to an EXISTING node into a link change", () => {
+    const out = validateExtractionOutput(
+      {
+        proposed_nodes: [
+          n("n1", { soft_links: [{ target_local_ref: EXISTING, edge_type: "prerequisite_for", rationale: "portfolio piece" }] }),
+        ],
+        changes: [{ kind: "move", node_id: EXISTING, new_parent: "n1" }],
+      },
+      session,
+    );
+    expect(out.proposed_nodes[0].soft_links).toEqual([]);
+    expect(out.changes).toEqual([
+      { kind: "move", node_id: EXISTING, new_parent: "n1" },
+      { kind: "link", source: "n1", target: EXISTING, edge_type: "required_for", rationale: "portfolio piece" },
+    ]);
+  });
+
+  it("reads an existing node's id in the same-dump parent field as the existing parent", () => {
+    const out = validateExtractionOutput({ proposed_nodes: [n("n1", { primary_parent_local_ref: EXISTING })] }, session);
+    expect(out.proposed_nodes[0]).toMatchObject({ primary_parent_local_ref: null, existing_parent_node_id: EXISTING });
+  });
+
+  it("keeps the same-dump parent when both parents are given, and ignores a self-reference", () => {
+    const out = validateExtractionOutput(
+      {
+        proposed_nodes: [
+          n("n1"),
+          n("n2", { primary_parent_local_ref: "n1", existing_parent_node_id: EXISTING }),
+          n("n3", { primary_parent_local_ref: "n3", depends_on_local_refs: ["n3"] }),
+        ],
+      },
+      session,
+    );
+    expect(out.proposed_nodes[1]).toMatchObject({ primary_parent_local_ref: "n1", existing_parent_node_id: null });
+    expect(out.proposed_nodes[2]).toMatchObject({ primary_parent_local_ref: null, depends_on_local_refs: [] });
+  });
+
+  it("drops a malformed node and keeps the rest; rejects only when nothing is usable", () => {
+    const out = validateExtractionOutput(
+      { proposed_nodes: [n("n1"), { local_ref: "n2", proposed_node_type: "task" }, n("n1"), n("n3", { primary_parent_local_ref: "n2" })] },
+      session,
+    );
+    expect(out.proposed_nodes.map((node) => node.local_ref)).toEqual(["n1", "n3"]);
+    expect(out.proposed_nodes[1].primary_parent_local_ref).toBeNull();
+    expect(() => validateExtractionOutput({ proposed_nodes: [{ local_ref: "n1" }] }, session)).toThrow();
+  });
+});
+
 describe("validateExtractionOutput — changes to existing nodes (extract-v25)", () => {
   const A = "aaaaaaaa-0000-4000-8000-000000000001";
   const B = "aaaaaaaa-0000-4000-8000-000000000002";

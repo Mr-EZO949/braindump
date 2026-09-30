@@ -360,16 +360,23 @@ export async function runBuilder(params: {
 
         return true;
       },
-      onRetry: async ({ attempt, error }) => {
+      onRetry: async ({ attempt, error, cause }) => {
+        // A call that answered with unusable output was still paid for: log
+        // what it cost, not a $0 row (one such retry went unlogged at ~$0.045).
+        const paid = isMalformedAIResponseError(cause) ? cause : null;
         await logFailedAIRun({
           supabase,
           userId,
           workspaceId,
           runType: "extract",
           provider: "claude",
-          modelName: AI_MODELS.CLAUDE_SONNET,
-          promptVersion: EXTRACT_PROMPT_VERSION,
+          modelName: paid?.modelName ?? AI_MODELS.CLAUDE_SONNET,
+          promptVersion: paid?.promptVersion ?? EXTRACT_PROMPT_VERSION,
           inputHash: hashText(rawText),
+          inputTokens: paid?.inputTokens,
+          outputTokens: paid?.outputTokens,
+          latencyMs: paid?.latencyMs,
+          estimatedCost: paid?.estimatedCost,
           status: "retrying",
           error: `Attempt ${attempt + 1} failed: ${error.message}`,
         });
