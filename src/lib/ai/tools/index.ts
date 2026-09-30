@@ -13,6 +13,7 @@ import { READ_ONLY_TOOLS, type ToolContext, type ToolDefinition } from "./read-o
 import { MUTATION_TOOLS } from "./mutations";
 import { PLANNER_MUTATION_TOOLS } from "./planner-mutations";
 import { PRIORITY_MUTATION_TOOLS } from "./priority-mutations";
+import { COMMITMENT_MUTATION_TOOLS } from "./commitment-mutations";
 import { INTERACTIVE_TOOLS } from "./interactive";
 import type { AppliedMarkerPayload } from "@/lib/chat/applied-marker";
 
@@ -21,14 +22,14 @@ export type { ToolContext, ToolDefinition, ToolSchema, ToolHandler } from "./rea
 // Read-only tools execute eagerly inside the agent loop. Mutation tools and
 // interactive tools (ask_choice) PAUSE the loop — the resume endpoint runs the
 // mutation handler after Accept, or feeds the user's pick back for ask_choice.
-// Direct tools (update_priorities) change the graph WITHOUT a pause: they run
-// eagerly and hand the browser an Undo instead (dispatchEager below). Only
-// fully reversible changes belong here.
+// Direct tools (update_priorities, set_commitments) change things WITHOUT a
+// pause: they run eagerly and hand the browser an Undo instead (dispatchEager
+// below). Only fully reversible changes belong here.
 const ALL_MUTATION_TOOLS: ToolDefinition[] = [
   ...MUTATION_TOOLS,
   ...PLANNER_MUTATION_TOOLS,
 ];
-const DIRECT_TOOLS: ToolDefinition[] = [...PRIORITY_MUTATION_TOOLS];
+const DIRECT_TOOLS: ToolDefinition[] = [...PRIORITY_MUTATION_TOOLS, ...COMMITMENT_MUTATION_TOOLS];
 const REGISTRY: ToolDefinition[] = [
   ...READ_ONLY_TOOLS,
   ...ALL_MUTATION_TOOLS,

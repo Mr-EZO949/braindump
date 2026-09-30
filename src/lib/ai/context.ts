@@ -5,6 +5,8 @@
 import { AI_TOKEN_BUDGETS, AI_ASSISTANT } from "./config";
 import { matchNodes, type MatchedNode } from "./embeddings";
 import { stakesLevel } from "@/lib/graph/priority-signals";
+import { describeCommitment, loadActiveCommitments } from "@/lib/planner/commitments";
+import { localDateISO } from "@/lib/time/local-date";
 
 // ---------------------------------------------------------------------------
 // Token estimator — chars/4 approximation (standard estimate for English prose)
@@ -61,6 +63,8 @@ export async function buildAssistantContext(params: {
   supabase: SupabaseClient;
   message: string;
   budget?: number;
+  /** The user's local date — which fixed commitments are still running. */
+  today?: string;
 }): Promise<AssembledContext> {
   const budget = params.budget ?? AI_TOKEN_BUDGETS.ASSISTANT_CHAT;
   const items: ContextItem[] = [];
@@ -85,7 +89,7 @@ export async function buildAssistantContext(params: {
   }).catch(() => [] as MatchedNode[]);
 
   // Load all workspace data in parallel
-  const [nodesResult, edgesResult, feedbackResult, recentlyCompletedResult, planResult, userProfileResult, semanticMatches] = await Promise.all([
+  const [nodesResult, edgesResult, feedbackResult, recentlyCompletedResult, planResult, userProfileResult, semanticMatches, commitments] = await Promise.all([
     params.supabase
       .from("nodes")
       .select("id, title, summary, node_type, importance, current_importance_score, status, target_date, stakes, waiting_for, resume_on")
@@ -138,6 +142,8 @@ export async function buildAssistantContext(params: {
       .maybeSingle(),
 
     semanticMatchPromise,
+
+    loadActiveCommitments(params.supabase, params.userId, params.today ?? localDateISO(new Date(), null)),
   ]);
 
   type PlanBlockRow = { title: string; block_type: string; duration_minutes: number; completion_status: string; node_id: string | null; start_offset: number };
@@ -278,6 +284,19 @@ export async function buildAssistantContext(params: {
         tokens: estimateTokens(text),
       });
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 2c. Fixed commitments — the user's busy weekly times (class, shift). Lets
+  // chat answer "when's stats?" without a tool and update/remove one by id.
+  // Ordered by start time then id, so the cached bytes stay stable.
+  // ---------------------------------------------------------------------------
+  if (commitments.length > 0) {
+    const lines = [...commitments]
+      .sort((a, b) => a.start_time.localeCompare(b.start_time) || a.id.localeCompare(b.id))
+      .map((c) => `- ${c.title}: ${describeCommitment(c, params.today)} — id: ${c.id}`);
+    const text = `[FIXED COMMITMENTS — weekly busy times]\n${lines.join("\n")}`;
+    items.push({ kind: "workspace_summary", id: "commitments", text, priority: 92, tokens: estimateTokens(text) });
   }
 
   // ---------------------------------------------------------------------------

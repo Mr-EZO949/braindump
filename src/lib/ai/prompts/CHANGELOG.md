@@ -80,7 +80,12 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 > source of truth, now mirrored by the derived `PROMPT_VERSIONS` map). The
 > intermediate v5–v9 changes predate this entry and weren't logged here.
 
-### assistant-v10 (current)
+### assistant-v22 (current)
+- New direct tool `set_commitments` + a "Fixed commitments" block: recurring busy times (class, shift, practice) are saved at once with an Undo; "every day" for a class/job = Mon–Fri; dates are the user's words (`until` / `from`), resolved in code; change/remove by the id in the snapshot's new `[FIXED COMMITMENTS]` list. One-offs stay `add_task_to_calendar`.
+- Why: "stats every day at 2pm" lived only as free text; Focus and the planner couldn't see busy time (docs/commitments.md).
+- v11–v21 are logged in STATUS.md's journal and docs/ranking.md, not here.
+
+### assistant-v10
 - Removed the `<plan>` time-block instruction + JSON example. It had no client consumer (app-shell parses only `<nodes>`/`<graph_edit>`/`<recompute_scores/>`), so asking the chat to "plan my afternoon" dumped raw JSON into the reply. Multi-block planning now routes to the dedicated Planner; single items use add_task_to_calendar.
 - Why: dead, token-wasting instruction that produced unconsumed output (found in v1.5 review).
 

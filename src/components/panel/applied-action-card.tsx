@@ -4,7 +4,9 @@
 // Accept/Reject gate for priority changes — they're fully reversible, so the
 // safety net is after the fact instead of in the way.
 
+import { isCommitmentAction } from "@/lib/chat/applied-marker";
 import { PRIORITY_ACTION_GLYPH, type PriorityAction } from "@/lib/graph/priority-changes";
+import { COMMITMENT_ACTION_GLYPH, type CommitmentAction } from "@/lib/planner/commitment-changes";
 import type { AppliedAction, AppliedActionItem } from "@/types/chat";
 
 interface AppliedActionCardProps {
@@ -36,18 +38,21 @@ export function AppliedActionCard({ action, onUndo }: AppliedActionCardProps) {
   const { status } = action;
   const undone = status === "undone";
   const canUndo = status === "applied" || status === "error";
+  // set_commitments: a schedule change — same card, its own words and glyphs.
+  const schedule = isCommitmentAction(action);
+  const heading = schedule ? "Schedule saved" : "Priorities updated";
 
   return (
     <div
       className={`applied-card${undone ? " applied-card--undone" : ""}`}
       role="group"
-      aria-label={undone ? "Priority change undone" : "Priorities updated"}
+      aria-label={undone ? "Change undone" : heading}
     >
       <div className="applied-card-head">
         <span className="applied-card-mark" aria-hidden="true">
           {undone ? "↺" : "✓"}
         </span>
-        <span className="applied-card-title">{undone ? "Undone — back to how it was" : "Priorities updated"}</span>
+        <span className="applied-card-title">{undone ? "Undone — back to how it was" : heading}</span>
         {canUndo ? (
           <button className="applied-card-undo" onClick={onUndo} type="button">
             Undo
@@ -59,8 +64,14 @@ export function AppliedActionCard({ action, onUndo }: AppliedActionCardProps) {
 
       <ul className="applied-card-list">
         {action.items.map((item, index) => {
-          const glyph = PRIORITY_ACTION_GLYPH[item.action as PriorityAction] ?? "•";
-          const raises = item.action === "stakes" ? item.detail === "High stakes" : RAISING.has(item.action);
+          const glyph = schedule
+            ? (COMMITMENT_ACTION_GLYPH[item.action as CommitmentAction] ?? "◷")
+            : (PRIORITY_ACTION_GLYPH[item.action as PriorityAction] ?? "•");
+          const raises = schedule
+            ? item.action === "add"
+            : item.action === "stakes"
+              ? item.detail === "High stakes"
+              : RAISING.has(item.action);
           const tone = raises ? "raise" : "quiet";
           return (
             <li

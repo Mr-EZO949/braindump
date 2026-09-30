@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   getToolSchemas,
+  isDirectTool,
   isPausingTool,
   isMutationTool,
   isReadOnlyTool,
@@ -23,6 +24,12 @@ describe("tool registry classification", () => {
   it("mutation tools pause the loop", () => {
     expect(isPausingTool("propose_node")).toBe(true);
     expect(isMutationTool("propose_node")).toBe(true);
+  });
+
+  it("set_commitments is a direct tool: registered, applies without a pause", () => {
+    expect(getToolSchemas().some((s) => s.name === "set_commitments")).toBe(true);
+    expect(isDirectTool("set_commitments")).toBe(true);
+    expect(isPausingTool("set_commitments")).toBe(false);
   });
 
   it("read-only tools do not pause and run eagerly", () => {

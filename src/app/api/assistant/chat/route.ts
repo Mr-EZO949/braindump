@@ -258,17 +258,18 @@ export async function POST(req: NextRequest) {
   // ---------------------------------------------------------------------------
   // Assemble context (Phase 8.2 + 8.3)
   // ---------------------------------------------------------------------------
+  // The user's local date (bd_tz cookie), not UTC — the model resolves
+  // "today"/"tomorrow" and the tools log habits against it.
+  const todayISO = await getRequestToday();
   const ctx = await buildAssistantContext({
     workspaceId: workspace_id,
     userId: user.id,
     selectedNodeId: selected_node_id ?? null,
     supabase,
     message: message.trim(),
+    today: todayISO,
   });
 
-  // The user's local date (bd_tz cookie), not UTC — the model resolves
-  // "today"/"tomorrow" and the tools log habits against it.
-  const todayISO = await getRequestToday();
   const systemPrompt = buildAssistantSystemPrompt(resolvedMode, todayISO);
   // Temporal awareness: a cheap, AI-free flag if the user keeps circling a node
   // across days without finishing it. Injected into the uncached message block.

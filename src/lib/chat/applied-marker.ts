@@ -81,7 +81,18 @@ export function createAppliedMarkerParser(): MarkerParser<Omit<AppliedAction, "s
  */
 export function appliedActionNote(action: AppliedAction): string {
   const list = action.items.map((item) => `${item.title} — ${item.detail}`).join("; ");
+  const what = isCommitmentAction(action) ? "Fixed commitments" : "Priorities";
   return action.status === "undone"
-    ? `[Priorities changed, then undone by the user: ${list}]`
-    : `[Priorities updated: ${list}]`;
+    ? `[${what} changed, then undone by the user: ${list}]`
+    : `[${what} updated: ${list}]`;
+}
+
+/** set_commitments cards: a schedule change, not a priority change. */
+export function isCommitmentAction(action: Pick<AppliedAction, "toolName">): boolean {
+  return action.toolName === "set_commitments";
+}
+
+/** Where an applied card's Undo goes. */
+export function appliedUndoEndpoint(action: Pick<AppliedAction, "toolName">): string {
+  return isCommitmentAction(action) ? "/api/assistant/commitments/undo" : "/api/assistant/priorities/undo";
 }

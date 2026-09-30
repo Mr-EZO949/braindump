@@ -314,6 +314,7 @@ export async function POST(req: NextRequest) {
     selectedNodeId,
     supabase,
     message: lastUserQuestion(messages),
+    today: todayISO,
   });
   const { contextBlock } = buildAssistantUserPromptParts({
     message: "",
