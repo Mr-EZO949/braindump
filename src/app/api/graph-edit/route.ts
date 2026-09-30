@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { setNodeParent } from "@/lib/graph/hierarchy";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { getRequestToday } from "@/lib/time/request-date";
 import type { GraphEditOperation } from "@/types/graph";
@@ -82,29 +83,17 @@ export async function POST(req: NextRequest) {
           if ("error" in nodeRes) { results.push({ op: "move", success: false, error: nodeRes.error, node: op.node }); break; }
           if ("error" in parentRes) { results.push({ op: "move", success: false, error: parentRes.error, node: op.new_parent }); break; }
 
-          // Orphan existing belongs_to edge
-          await supabase
-            .from("edges")
-            .update({ status: "orphaned", updated_at: nowIso })
-            .eq("user_id", user.id)
-            .eq("source_node_id", nodeRes.id)
-            .eq("edge_type", "belongs_to")
-            .neq("status", "orphaned")
-            .neq("status", "user_rejected");
-
-          // Create new belongs_to edge
-          const { error: insertErr } = await supabase.from("edges").insert({
-            user_id: user.id,
-            workspace_id,
-            source_node_id: nodeRes.id,
-            target_node_id: parentRes.id,
-            edge_type: "belongs_to",
-            status: "active",
-            user_confirmed: true,
+          // Same writer as chat's move (cycle guard, old parent released).
+          const moved = await setNodeParent({
+            supabase,
+            userId: user.id,
+            workspaceId: workspace_id,
+            nodeId: nodeRes.id,
+            parentId: parentRes.id,
           });
 
-          if (insertErr) {
-            results.push({ op: "move", success: false, error: insertErr.message, node: op.node });
+          if (!moved.ok) {
+            results.push({ op: "move", success: false, error: moved.error, node: op.node });
           } else {
             results.push({ op: "move", success: true, node: op.node });
           }

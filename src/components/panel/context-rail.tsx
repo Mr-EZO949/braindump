@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import {
   getChatComposerCue,
@@ -200,6 +200,11 @@ export function ContextRail({
     setDirections("");
   }, [selectedNode?.id]);
   const linkedNodes = getLinkedNodePerspectives(graphData, selectedNode?.id ?? null);
+  // Chat's Accept cards name nodes by title instead of showing ids.
+  const nodeTitles = useMemo(
+    () => new Map(graphData.nodes.map((node) => [node.id, node.title])),
+    [graphData.nodes],
+  );
   const isHabitNode = selectedNode?.node_type === "habit";
   const linkedGroups = groupLinkedNodes(linkedNodes);
 
@@ -517,6 +522,7 @@ export function ContextRail({
                             {message.pendingAction ? (
                               <PendingActionCard
                                 action={message.pendingAction}
+                                nodeTitles={nodeTitles}
                                 disabled={pendingActionBusy}
                                 onResolve={(decision, choice) =>
                                   onResolvePendingAction(message.id, decision, choice)

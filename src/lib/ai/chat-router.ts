@@ -7,7 +7,9 @@
 //            the snapshot doesn't have, so a miss here costs one tiny call, not
 //            a wrong answer.
 //   haiku  — everything that might change the graph or needs a lookup tool.
-//   sonnet — structural edits and full planning (looksLikeStructuralEdit).
+//   sonnet — structural edits and full planning (looksLikeStructuralEdit),
+//            and the follow-ups of a restructure already under way in the
+//            thread (inStructuralThread).
 //
 // The qa test is deliberately conservative: any hint of an action, a
 // commitment, completed work or data outside the snapshot keeps the turn on
@@ -51,6 +53,24 @@ export function looksLikePlainQuestion(message: string, history: HistoryTurn[] =
   return true;
 }
 
+// A restructure rarely fits in one message. "yeah", "do it", "i don't see any
+// changes" carry no structural word, so on 2026-09-30 the turn that actually
+// rebuilt a branch ran on Haiku and put a project under its own task. If one of
+// the last few turns asked for (or offered) a restructure, the follow-up stays
+// on Sonnet. Long turns are skipped: a full brain dump trips the heuristic on
+// almost any wording and would pin the whole thread to Sonnet.
+const STRUCTURAL_THREAD_TURNS = 4;
+const STRUCTURAL_TURN_MAX_CHARS = 600;
+
+export function inStructuralThread(history: HistoryTurn[]): boolean {
+  return history
+    .slice(-STRUCTURAL_THREAD_TURNS)
+    .some(
+      (turn) =>
+        turn.body.length <= STRUCTURAL_TURN_MAX_CHARS && looksLikeStructuralEdit(turn.body),
+    );
+}
+
 export function routeChatMessage(params: {
   message: string;
   history: HistoryTurn[];
@@ -58,6 +78,7 @@ export function routeChatMessage(params: {
   qaEnabled: boolean;
 }): ChatRoute {
   if (looksLikeStructuralEdit(params.message)) return "sonnet";
+  if (inStructuralThread(params.history)) return "sonnet";
   if (
     params.qaEnabled &&
     params.mode !== "transform" &&

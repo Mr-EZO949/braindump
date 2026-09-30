@@ -10,6 +10,8 @@ interface PendingActionCardProps {
   action: PendingAction;
   disabled: boolean;
   onResolve: (decision: "accept" | "reject" | "choice", choice?: string) => void;
+  // Node id → title, so the card names nodes instead of showing UUIDs.
+  nodeTitles?: ReadonlyMap<string, string>;
 }
 
 const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
@@ -29,13 +31,20 @@ const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
 // propose_changes_batch carries a `changes` array of heterogeneous ops.
 type ChangeOp = {
   kind?: unknown;
+  local_ref?: unknown;
   title?: unknown;
   node_type?: unknown;
   node_id?: unknown;
+  parent_node_id?: unknown;
+  parent_local_ref?: unknown;
+  new_parent_node_id?: unknown;
+  new_parent_local_ref?: unknown;
   source_node_id?: unknown;
   target_node_id?: unknown;
   edge_type?: unknown;
 };
+
+type NameOf = (ref: unknown) => string;
 
 function isChangeList(value: unknown): value is ChangeOp[] {
   return Array.isArray(value) && value.every((v) => typeof v === "object" && v !== null);
@@ -43,31 +52,63 @@ function isChangeList(value: unknown): value is ChangeOp[] {
 
 const CHANGE_KIND_GLYPH: Record<string, string> = {
   create_node: "+",
+  move: "↳",
+  update: "✎",
   create_edge: "⇄",
   complete: "✓",
   archive: "⌫",
 };
 
-function shortId(value: unknown): string {
-  return typeof value === "string" && value.length >= 8 ? value.slice(0, 8) : "node";
+const HIERARCHY_EDGE_TYPES = new Set(["belongs_to", "contains"]);
+
+function edgeLabel(edgeType: unknown): string {
+  return typeof edgeType === "string" ? edgeType.replace(/_/g, " ") : "linked to";
 }
 
-function describeChange(op: ChangeOp): string {
+function typeLabel(nodeType: unknown): string {
+  return typeof nodeType === "string" ? nodeType.replace(/_/g, " ") : "";
+}
+
+// belongs_to / contains are a MOVE: who goes under whom.
+function hierarchyEnds(op: {
+  edge_type?: unknown;
+  source_node_id?: unknown;
+  target_node_id?: unknown;
+}): { child: unknown; parent: unknown } {
+  return op.edge_type === "contains"
+    ? { child: op.target_node_id, parent: op.source_node_id }
+    : { child: op.source_node_id, parent: op.target_node_id };
+}
+
+function describeChange(op: ChangeOp, nameOf: NameOf): string {
   const kind = typeof op.kind === "string" ? op.kind : "";
   switch (kind) {
     case "create_node": {
       const title = typeof op.title === "string" ? op.title : "(untitled)";
-      const type = typeof op.node_type === "string" ? ` · ${op.node_type}` : "";
-      return `${title}${type}`;
+      const type = typeLabel(op.node_type);
+      const parent = op.parent_node_id ?? op.parent_local_ref;
+      return `${title}${type ? ` · ${type}` : ""}${parent ? ` — under ${nameOf(parent)}` : ""}`;
+    }
+    case "move":
+      return `Move ${nameOf(op.node_id)} under ${nameOf(op.new_parent_node_id ?? op.new_parent_local_ref)}`;
+    case "update": {
+      const parts = [
+        typeof op.title === "string" ? `rename to "${op.title}"` : null,
+        typeof op.node_type === "string" ? `make it a ${typeLabel(op.node_type)}` : null,
+      ].filter(Boolean);
+      return `${nameOf(op.node_id)}: ${parts.length > 0 ? parts.join(", ") : "edit"}`;
     }
     case "create_edge": {
-      const type = typeof op.edge_type === "string" ? op.edge_type : "edge";
-      return `${shortId(op.source_node_id)} → ${shortId(op.target_node_id)} · ${type}`;
+      if (typeof op.edge_type === "string" && HIERARCHY_EDGE_TYPES.has(op.edge_type)) {
+        const { child, parent } = hierarchyEnds(op);
+        return `Move ${nameOf(child)} under ${nameOf(parent)}`;
+      }
+      return `${nameOf(op.source_node_id)} ${edgeLabel(op.edge_type)} ${nameOf(op.target_node_id)}`;
     }
     case "complete":
-      return `complete ${shortId(op.node_id)}`;
+      return `Complete ${nameOf(op.node_id)}`;
     case "archive":
-      return `archive ${shortId(op.node_id)}`;
+      return `Archive ${nameOf(op.node_id)}`;
     default:
       return kind || "(unknown)";
   }
@@ -98,7 +139,7 @@ function isBatchNodeList(value: unknown): value is BatchNode[] {
   return Array.isArray(value) && value.every((v) => typeof v === "object" && v !== null);
 }
 
-export function PendingActionCard({ action, disabled, onResolve }: PendingActionCardProps) {
+export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: PendingActionCardProps) {
   // ask_choice renders as a forced-choice question rather than an Accept/Reject
   // mutation card. The picked option resumes the loop as the tool result.
   if (action.toolName === "ask_choice") {
@@ -149,8 +190,6 @@ export function PendingActionCard({ action, disabled, onResolve }: PendingAction
     );
   }
 
-  const { verb, noun } = labelFor(action.toolName);
-
   const isBatch = action.toolName === "propose_nodes_batch";
   const isChangesBatch = action.toolName === "propose_changes_batch";
   const batchNodes = isBatch && isBatchNodeList(action.toolInput.nodes)
@@ -160,12 +199,50 @@ export function PendingActionCard({ action, disabled, onResolve }: PendingAction
     ? (action.toolInput.changes as ChangeOp[])
     : null;
 
+  // A node as the user knows it: its title, or — for a node this same batch
+  // creates — the title the batch gives it.
+  const localTitles = new Map<string, string>();
+  for (const op of changes ?? []) {
+    if (op.kind === "create_node" && typeof op.local_ref === "string" && typeof op.title === "string") {
+      localTitles.set(op.local_ref, op.title);
+    }
+  }
+  const nameOf: NameOf = (ref) =>
+    typeof ref === "string" && ref.length > 0
+      ? (localTitles.get(ref) ?? nodeTitles?.get(ref) ?? "a node")
+      : "a node";
+
+  // propose_edge with belongs_to / contains moves a node — say so.
+  const isEdge = action.toolName === "propose_edge";
+  const isMove =
+    isEdge &&
+    typeof action.toolInput.edge_type === "string" &&
+    HIERARCHY_EDGE_TYPES.has(action.toolInput.edge_type);
+  const { verb, noun } = isMove ? { verb: "Move", noun: "node" } : labelFor(action.toolName);
+  const edgeLine = !isEdge
+    ? null
+    : isMove
+      ? (() => {
+          const { child, parent } = hierarchyEnds(action.toolInput);
+          return `${nameOf(child)} → under ${nameOf(parent)}`;
+        })()
+      : `${nameOf(action.toolInput.source_node_id)} ${edgeLabel(action.toolInput.edge_type)} ${nameOf(action.toolInput.target_node_id)}`;
+
   const entries =
     isBatch || isChangesBatch
       ? [] // batch cards render their own lists below
-      : Object.entries(action.toolInput).filter(
-          ([, value]) => renderField(value) !== null,
-        );
+      : isEdge
+        ? Object.entries({ why: action.toolInput.explanation }).filter(
+            ([, value]) => renderField(value) !== null,
+          )
+        : Object.entries(action.toolInput)
+            .filter(([, value]) => renderField(value) !== null)
+            // Ids the graph can name are shown as titles ("node", "parent node").
+            .map(([key, value]): [string, unknown] =>
+              typeof value === "string" && /_node_id$|^node_id$/.test(key) && nodeTitles?.has(value)
+                ? [key.replace(/_id$/, "").replace(/_/g, " "), nodeTitles.get(value)]
+                : [key, value],
+            );
 
   const awaiting = action.status === "awaiting";
   const accepted = action.status === "accepted";
@@ -215,7 +292,7 @@ export function PendingActionCard({ action, disabled, onResolve }: PendingAction
             return (
               <li className="pending-action-batch-item" key={idx}>
                 <span className="pending-action-batch-type">{glyph}</span>
-                <span className="pending-action-batch-title">{describeChange(op)}</span>
+                <span className="pending-action-batch-title">{describeChange(op, nameOf)}</span>
               </li>
             );
           })}
@@ -224,6 +301,14 @@ export function PendingActionCard({ action, disabled, onResolve }: PendingAction
               +{changes.length - 12} more
             </li>
           ) : null}
+        </ul>
+      ) : null}
+
+      {edgeLine ? (
+        <ul className="pending-action-batch-list">
+          <li className="pending-action-batch-item">
+            <span className="pending-action-batch-title">{edgeLine}</span>
+          </li>
         </ul>
       ) : null}
 

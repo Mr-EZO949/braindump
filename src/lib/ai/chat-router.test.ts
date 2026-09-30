@@ -90,4 +90,35 @@ describe("routeChatMessage", () => {
   it("routes everything else to Haiku", () => {
     expect(routeChatMessage({ ...base, message: "mark the gym done" })).toBe("haiku");
   });
+
+  it("keeps the follow-ups of a restructure on Sonnet", () => {
+    // The 2026-09-30 thread: the restructure was offered, then "yeah", then a
+    // complaint — neither follow-up carries a structural word.
+    const history = [
+      {
+        role: "assistant" as const,
+        body: "You mentioned restructuring so 'BrainDump' becomes a separate project with 'Test & Market BrainDump' as a task under it — want me to convert it?",
+      },
+      { role: "user" as const, body: "yeah" },
+    ];
+    expect(routeChatMessage({ ...base, history, message: "i dont see any changes" })).toBe("sonnet");
+    expect(routeChatMessage({ ...base, history: history.slice(0, 1), message: "yeah" })).toBe("sonnet");
+  });
+
+  it("does not pin a thread to Sonnet because of a long dump or an old turn", () => {
+    const dump = {
+      role: "user" as const,
+      body: `${"i need to start making money and finish my exams. ".repeat(20)} add these under the project: a, b, c, d`,
+    };
+    expect(routeChatMessage({ ...base, history: [dump], message: "mark the gym done" })).toBe("haiku");
+    const old = [
+      { role: "user" as const, body: "split the ML exam into two projects" },
+      { role: "assistant" as const, body: "Done." },
+      { role: "user" as const, body: "thanks" },
+      { role: "assistant" as const, body: "Anything else?" },
+      { role: "user" as const, body: "the gym went well" },
+      { role: "assistant" as const, body: "Nice." },
+    ];
+    expect(routeChatMessage({ ...base, history: old, message: "mark the gym done" })).toBe("haiku");
+  });
 });

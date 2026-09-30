@@ -64,7 +64,7 @@ export function looksLikeStructuralEdit(text: string): boolean {
 
   // Reshaping the tree: split / merge / regroup / restructure.
   const RESHAPE =
-    /\b(split|break (it|them|this|that|down|up)|break .+ (into|down)|reparent|merge|combine|dedupe|deduplicate|nest|regroup|group .+ (under|into|together)|reorganiz|restructure)\b/;
+    /\b(split|break (it|them|this|that|down|up)|break .+ (into|down)|re-?parent\w*|re-?home\w*|merge|combine|dedupe|deduplicate|nest|regroup|group .+ (under|into|together)|reorganiz\w*|restructur\w*|convert .+ (into|to) (a |an |its own )?(new |separate |parent )*(project|area|goal|big task|task|parent)|(separate|its own|their own|a new|new parent) (project|area|goal|branch|parent))\b/;
 
   // Placing things in the hierarchy ("under the backlog", "move X under Y",
   // "it should belong to the ML exam").
@@ -72,7 +72,9 @@ export function looksLikeStructuralEdit(text: string): boolean {
     /\b(under|beneath|inside|into|below) (the |my |a |an |two |three )?(backlog|goal|project|task|node|area|parent|epic|exam|class)/;
   const PUT_UNDER =
     /\b(add|create|move|put|place|file|attach)\b.+\b(under|beneath|inside|into|as a (child|subtask|sub-task) of)\b/;
-  const BELONGS = /\bbelongs? (to|under|in)\b/;
+  // Also the negative ("shouldn't belong to", "doesn't go under") — a move.
+  const BELONGS =
+    /\b(belongs? (to|under|in)|(tasks?|steps?|children|parts?) (in|of|under|inside) (the|that|this|a) (project|goal|area|big task))\b/;
 
   // Building a whole plan (one per day or so) — not nudging one block.
   const FULL_PLAN = /\b(plan my|re-?plan|make me a schedule|time.?block)\b/;
