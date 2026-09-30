@@ -25,6 +25,10 @@ export const MAX_CONTEXT_NODES = 30;
 const STRUCTURAL_RESERVE = 6;
 const SEGMENT_TARGET_CHARS = 280;
 const MAX_SEGMENTS = 6;
+// A restructure needs to see what sits INSIDE the nodes it names ("make X its
+// own project" has to move X's steps too): the children of the top hits.
+const EXPAND_TOP_HITS = 4;
+const EXPAND_CHILDREN_EACH = 6;
 // Per-segment nearest neighbours, and a floor that only removes noise.
 const SEMANTIC_K = 6;
 const SEMANTIC_MIN_SIMILARITY = 0.5;
@@ -116,9 +120,20 @@ export function selectContextNodes(params: {
   lexical: Map<string, number>;
   rootNodeId: string | null;
   budget?: number;
+  // Also show the children of the most relevant hits (see EXPAND_TOP_HITS).
+  expandChildren?: boolean;
 }): ContextNodeForPrompt[] {
   const budget = params.budget ?? MAX_CONTEXT_NODES;
   const byId = new Map(params.nodes.map((n) => [n.id, n]));
+  const childrenOf = new Map<string, string[]>();
+  if (params.expandChildren) {
+    for (const [child, parent] of params.parentOf) {
+      if (!byId.has(child)) continue;
+      const list = childrenOf.get(parent);
+      if (list) list.push(child);
+      else childrenOf.set(parent, [child]);
+    }
+  }
 
   const relevance = new Map<string, number>();
   for (const [id, sim] of params.semantic) relevance.set(id, sim);
@@ -143,12 +158,18 @@ export function selectContextNodes(params: {
   // Relevance hits first, each followed by its parent + grandparent so the
   // model sees WHERE it lives and can attach new children at the right level.
   const relevantCap = Math.max(budget - STRUCTURAL_RESERVE, 1);
-  for (const id of ranked) {
+  for (const [rank, id] of ranked.entries()) {
     if (selected.length >= relevantCap) break;
     add(id);
     const parent = params.parentOf.get(id);
     add(parent);
     add(parent ? params.parentOf.get(parent) : undefined);
+    if (rank < EXPAND_TOP_HITS && id !== params.rootNodeId) {
+      for (const child of (childrenOf.get(id) ?? []).slice(0, EXPAND_CHILDREN_EACH)) {
+        if (selected.length >= relevantCap) break;
+        add(child);
+      }
+    }
   }
 
   // Structural skeleton: the most important Objectives, so a dump about a new
@@ -196,6 +217,7 @@ export async function retrieveRelevantNodes(params: {
   nodes: RetrievalNode[];
   parentOf: Map<string, string>;
   rootNodeId: string | null;
+  expandChildren?: boolean;
 }): Promise<{ contextNodes: ContextNodeForPrompt[]; stats: RetrievalStats }> {
   const segments = segmentDump(params.rawText);
   const semantic = new Map<string, number>();
@@ -242,6 +264,7 @@ export async function retrieveRelevantNodes(params: {
     semantic,
     lexical,
     rootNodeId: params.rootNodeId,
+    expandChildren: params.expandChildren,
   });
 
   return {

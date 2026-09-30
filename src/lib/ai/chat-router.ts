@@ -6,16 +6,23 @@
 //            hand the turn to Claude if it turns out to need an action or data
 //            the snapshot doesn't have, so a miss here costs one tiny call, not
 //            a wrong answer.
-//   haiku  — everything that might change the graph or needs a lookup tool.
-//   sonnet — structural edits and full planning (looksLikeStructuralEdit),
-//            and the follow-ups of a restructure already under way in the
-//            thread (inStructuralThread).
+//   haiku  — everything else: it answers, acts through its tools, and hands
+//            structural work — a restructure, a multi-item capture — to the
+//            graph builder through build_graph (tools/build.ts), where Sonnet
+//            runs on a narrow prompt instead of carrying the whole chat turn.
+//   sonnet — only a GENERATED breakdown ("break X down", "a roadmap for Y")
+//            and its follow-ups: the steps are written by the chat model
+//            itself, so they are only as good as it is.
+//
+// Until 2026-09-30 every structural edit ran its whole turn on Sonnet
+// (looksLikeStructuralEdit): 8 of 19 chat calls and 71% of chat spend on the
+// price-test days, $0.038 + $0.014 per edit against $0.013 for the builder.
 //
 // The qa test is deliberately conservative: any hint of an action, a
 // commitment, completed work or data outside the snapshot keeps the turn on
 // Claude, which has the tools.
 
-import { looksLikeStructuralEdit } from "@/lib/graph/dump-heuristic";
+import { looksLikeBrainDump, looksLikeBreakdownAsk, looksLikeRestructure } from "@/lib/graph/dump-heuristic";
 import type { AssistantMode } from "@/types/ai";
 import type { HistoryTurn } from "./chat-memory";
 
@@ -53,22 +60,36 @@ export function looksLikePlainQuestion(message: string, history: HistoryTurn[] =
   return true;
 }
 
-// A restructure rarely fits in one message. "yeah", "do it", "i don't see any
-// changes" carry no structural word, so on 2026-09-30 the turn that actually
-// rebuilt a branch ran on Haiku and put a project under its own task. If one of
-// the last few turns asked for (or offered) a restructure, the follow-up stays
-// on Sonnet. Long turns are skipped: a full brain dump trips the heuristic on
-// almost any wording and would pin the whole thread to Sonnet.
-const STRUCTURAL_THREAD_TURNS = 4;
-const STRUCTURAL_TURN_MAX_CHARS = 600;
+// A breakdown rarely fits in one message. "yeah", "do it", "make it deeper"
+// carry no breakdown word, so if one of the last few turns asked for (or
+// offered) one, the follow-up stays on Sonnet. Long turns are skipped: a full
+// brain dump can trip the heuristic on almost any wording and would pin the
+// whole thread to Sonnet.
+const BREAKDOWN_THREAD_TURNS = 4;
+const BREAKDOWN_TURN_MAX_CHARS = 600;
 
-export function inStructuralThread(history: HistoryTurn[]): boolean {
+export function inBreakdownThread(history: HistoryTurn[]): boolean {
   return history
-    .slice(-STRUCTURAL_THREAD_TURNS)
+    .slice(-BREAKDOWN_THREAD_TURNS)
     .some(
-      (turn) =>
-        turn.body.length <= STRUCTURAL_TURN_MAX_CHARS && looksLikeStructuralEdit(turn.body),
+      (turn) => turn.body.length <= BREAKDOWN_TURN_MAX_CHARS && looksLikeBreakdownAsk(turn.body),
     );
+}
+
+// Haiku, or Sonnet for a generated breakdown. The resume route asks again
+// with the original question so an Accept continues on the same model.
+export function usesSonnet(message: string, history: HistoryTurn[] = []): boolean {
+  return looksLikeBreakdownAsk(message) || inBreakdownThread(history);
+}
+
+// Not a route — a line in the (uncached) message block that points Haiku at
+// build_graph when the message reads like the builder's kind of work. The
+// model still decides: venting or a long question needs no tool at all.
+export function buildHint(message: string): string {
+  if (looksLikeBreakdownAsk(message)) return "";
+  return looksLikeRestructure(message) || looksLikeBrainDump(message)
+    ? "[Hint: if this message adds several things or reorganizes existing nodes (not just venting or a question), build_graph handles all of it in one card.]"
+    : "";
 }
 
 export function routeChatMessage(params: {
@@ -77,8 +98,7 @@ export function routeChatMessage(params: {
   mode: AssistantMode;
   qaEnabled: boolean;
 }): ChatRoute {
-  if (looksLikeStructuralEdit(params.message)) return "sonnet";
-  if (inStructuralThread(params.history)) return "sonnet";
+  if (usesSonnet(params.message, params.history)) return "sonnet";
   if (
     params.qaEnabled &&
     params.mode !== "transform" &&

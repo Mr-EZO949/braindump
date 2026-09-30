@@ -39,11 +39,19 @@ import { recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { buildAssistantContext } from "@/lib/ai/context";
-import { dispatchEager, dispatchTool, getToolSchemas, isReadOnlyTool, isPausingTool } from "@/lib/ai/tools";
+import {
+  dispatchTool,
+  getToolSchemas,
+  isDirectTool,
+  isReadOnlyTool,
+  runTurnTools,
+  type DeferredToolUse,
+} from "@/lib/ai/tools";
+import { BUILD_GRAPH_TOOL } from "@/lib/ai/tools/build";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
 import { resolveChoice } from "@/lib/ai/tools/interactive";
 import { actionSucceeded, confirmationFor, looksMultiStep } from "@/lib/ai/tools/confirmations";
-import { looksLikeStructuralEdit } from "@/lib/graph/dump-heuristic";
+import { usesSonnet } from "@/lib/ai/chat-router";
 import type { AssistantMode } from "@/types/ai";
 
 const MAX_TOOL_ROUNDS = 6;
@@ -63,12 +71,6 @@ function truncateToolContent(
       text: b.text.slice(0, TOOL_RESULT_MAX_CHARS) + "\n…[truncated]",
     };
   });
-}
-
-interface DeferredToolUse {
-  id: string;
-  name: string;
-  input: unknown;
 }
 
 // The original user question, dug out of the persisted message history so the
@@ -173,13 +175,43 @@ export async function POST(req: NextRequest) {
     // A new node's judgment + rescore run once the reply is out, so Accept
     // doesn't wait ~3 s on a model call (lib/graph/change-set.ts).
     defer: (work: () => Promise<void>) => after(work),
+    // For a build_graph the model proposes later in this same turn.
+    userMessage: lastUserQuestion(messages),
   };
 
-  // Match the initial turn's model tier: a structural-edit thread continues on
-  // Sonnet so the follow-up reasoning (and any next proposal) stays strong;
-  // chat and simple edits stay on Haiku. Derived from the original user question in the
-  // persisted history. See issue #19 + /api/assistant/chat.
-  const assistantModel = looksLikeStructuralEdit(lastUserQuestion(messages))
+  // A change set a BRAIN DUMP asked for (api/entries puts the builder's edits
+  // on a card). The thread behind it is a stand-in, not a conversation — no
+  // model ever continues it: Accept applies the set, Reject drops it.
+  if (
+    run.pending_tool_name === BUILD_GRAPH_TOOL &&
+    (run.pending_tool_input as { origin?: unknown } | null)?.origin === "dump"
+  ) {
+    await supabase.from("pending_chat_runs").delete().eq("id", run.id);
+    let reply = "OK — left as it is.";
+    if (decision === "accept") {
+      const result = await dispatchTool({
+        name: BUILD_GRAPH_TOOL,
+        input: run.pending_tool_input,
+        tool_use_id: run.pending_tool_use_id as string,
+        ctx: toolCtx,
+      });
+      reply = actionSucceeded(result.content, result.is_error)
+        ? confirmationFor(BUILD_GRAPH_TOOL, result.content)
+        : "Some of that didn't apply — tell me here what you want changed and I'll redo it.";
+    }
+    return new Response(reply, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "X-Resume-Decision": decision,
+        "X-Resume-Model": "none",
+      },
+    });
+  }
+
+  // Match the initial turn's model tier (chat-router.ts): a generated
+  // breakdown continues on Sonnet, everything else on Haiku. Derived from the
+  // original user question in the persisted history.
+  const assistantModel = usesSonnet(lastUserQuestion(messages))
     ? AI_MODELS.CLAUDE_SONNET
     : AI_MODELS.CLAUDE_HAIKU;
 
@@ -240,9 +272,20 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Deferred — read-only tools run fresh; any pausing tool (extra mutation or
-  // ask_choice) is auto-rejected because the UI only resolves one card per turn.
+  // Deferred — a call that already ran (a direct tool, a build with nothing
+  // to confirm) replays its result; read-only tools run fresh; any other
+  // pausing tool (extra mutation or ask_choice) is auto-rejected because the
+  // UI only resolves one card per turn.
   for (const def of deferred) {
+    if (def.result) {
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: def.id,
+        content: truncateToolContent(def.result.content),
+        is_error: def.result.is_error,
+      });
+      continue;
+    }
     if (!isReadOnlyTool(def.name)) {
       toolResults.push({
         type: "tool_result",
@@ -285,7 +328,8 @@ export async function POST(req: NextRequest) {
   if (
     decision === "accept" &&
     acceptedResult &&
-    deferred.length === 0 &&
+    // Direct tools that ran next to the card already showed their own.
+    deferred.every((d) => d.result && isDirectTool(d.name)) &&
     actionSucceeded(acceptedResult.content, acceptedResult.isError) &&
     !looksMultiStep(lastUserQuestion(messages)) &&
     (assistantModel === AI_MODELS.CLAUDE_HAIKU || run.pending_tool_name === "plan_day")
@@ -396,14 +440,19 @@ export async function POST(req: NextRequest) {
           );
           if (toolUseBlocks.length === 0) break;
 
-          // Same pause logic as the initial chat route — if Claude wants a
-          // pausing tool again (mutation or ask_choice), stash state and emit a
-          // new pause marker.
-          const firstPauseIdx = toolUseBlocks.findIndex((b) => isPausingTool(b.name));
-          if (firstPauseIdx >= 0) {
-            const pending = toolUseBlocks[firstPauseIdx];
-            const newDeferred = toolUseBlocks.filter((_, i) => i !== firstPauseIdx);
+          // Same as the initial chat route (tools/index.ts runTurnTools): if
+          // Claude wants another card, stash state and emit a new pause marker.
+          const turn = await runTurnTools(
+            toolUseBlocks.map((b: ToolUseBlock) => ({ id: b.id, name: b.name, input: b.input })),
+            toolCtx,
+          );
+          if (aborted) break;
+          // A direct tool's change reaches the browser as an applied card
+          // with an Undo.
+          for (const applied of turn.applied) send(encodeAppliedMarker(applied));
 
+          if (turn.pending) {
+            const pending = turn.pending;
             const { data: runRow, error: pendingErr } = await supabase
               .from("pending_chat_runs")
               .insert({
@@ -415,11 +464,7 @@ export async function POST(req: NextRequest) {
                 pending_tool_use_id: pending.id,
                 pending_tool_name: pending.name,
                 pending_tool_input: (pending.input ?? {}) as object,
-                deferred_tool_uses: newDeferred.map((b) => ({
-                  id: b.id,
-                  name: b.name,
-                  input: b.input ?? {},
-                })) as unknown as object,
+                deferred_tool_uses: turn.deferred as unknown as object,
               })
               .select("id")
               .single();
@@ -440,22 +485,7 @@ export async function POST(req: NextRequest) {
             break;
           }
 
-          const ran = await Promise.all(
-            toolUseBlocks.map((block: ToolUseBlock) =>
-              dispatchEager({
-                name: block.name,
-                input: block.input,
-                tool_use_id: block.id,
-                ctx: toolCtx,
-              }),
-            ),
-          );
-          // Same as the chat route: a direct tool's change reaches the
-          // browser as an applied card with an Undo.
-          for (const { applied } of ran) {
-            if (applied) send(encodeAppliedMarker(applied));
-          }
-          const results: ToolResultBlockParam[] = ran.map(({ result }) => ({
+          const results: ToolResultBlockParam[] = turn.results.map((result) => ({
             type: "tool_result" as const,
             tool_use_id: result.tool_use_id,
             content: truncateToolContent(result.content),

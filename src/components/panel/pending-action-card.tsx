@@ -18,6 +18,8 @@ const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
   propose_node: { verb: "Add", noun: "new node" },
   propose_nodes_batch: { verb: "Add", noun: "nodes" },
   propose_changes_batch: { verb: "Apply", noun: "changes" },
+  // The graph builder's change set (tools/build.ts) — same list of ops.
+  build_graph: { verb: "Apply", noun: "changes" },
   propose_edge: { verb: "Connect", noun: "nodes" },
   propose_merge: { verb: "Merge", noun: "nodes" },
   update_node: { verb: "Edit", noun: "node" },
@@ -191,7 +193,17 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
   }
 
   const isBatch = action.toolName === "propose_nodes_batch";
-  const isChangesBatch = action.toolName === "propose_changes_batch";
+  const isChangesBatch =
+    action.toolName === "propose_changes_batch" || action.toolName === "build_graph";
+  // The list scrolls; a builder plan is shown whole — nobody should accept
+  // changes they can't read.
+  const changeLimit = action.toolName === "build_graph" ? 40 : 12;
+  // What the builder wants the user to know before accepting (a new item
+  // that looks like an existing one).
+  const notes =
+    action.toolName === "build_graph" && Array.isArray(action.toolInput.notes)
+      ? (action.toolInput.notes as unknown[]).filter((n): n is string => typeof n === "string")
+      : [];
   const batchNodes = isBatch && isBatchNodeList(action.toolInput.nodes)
     ? (action.toolInput.nodes as BatchNode[])
     : null;
@@ -286,7 +298,7 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
 
       {isChangesBatch && changes ? (
         <ul className="pending-action-batch-list">
-          {changes.slice(0, 12).map((op, idx) => {
+          {changes.slice(0, changeLimit).map((op, idx) => {
             const kind = typeof op.kind === "string" ? op.kind : "";
             const glyph = CHANGE_KIND_GLYPH[kind] ?? "•";
             return (
@@ -296,11 +308,21 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
               </li>
             );
           })}
-          {changes.length > 12 ? (
+          {changes.length > changeLimit ? (
             <li className="pending-action-batch-more">
-              +{changes.length - 12} more
+              +{changes.length - changeLimit} more
             </li>
           ) : null}
+        </ul>
+      ) : null}
+
+      {notes.length > 0 ? (
+        <ul className="pending-action-batch-list">
+          {notes.map((note, idx) => (
+            <li className="pending-action-batch-more" key={idx}>
+              {note}
+            </li>
+          ))}
         </ul>
       ) : null}
 

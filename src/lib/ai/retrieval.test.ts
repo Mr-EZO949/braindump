@@ -72,6 +72,22 @@ describe("selectContextNodes", () => {
     expect(selected.find((n) => n.id === "child")?.parent_title).toBe("Clothes Reselling");
   });
 
+  it("shows what sits inside the top hits when a restructure needs it", () => {
+    const steps = [node("s1", "Fix the login bug", "task", 5), node("s2", "Write test cases", "task", 5)];
+    const params = {
+      nodes: [...nodes, ...steps],
+      parentOf: new Map([...parentOf, ["s1", "buried"], ["s2", "buried"]]),
+      semantic: new Map([["buried", 0.9]]),
+      lexical: new Map(),
+      rootNodeId: null,
+    };
+    const plain = selectContextNodes(params).map((n) => n.id);
+    expect(plain).not.toContain("s1");
+    const expanded = selectContextNodes({ ...params, expandChildren: true });
+    expect(expanded.map((n) => n.id)).toEqual(expect.arrayContaining(["buried", "child", "s1", "s2"]));
+    expect(expanded.find((n) => n.id === "s1")?.parent_title).toBe("Clothes Reselling");
+  });
+
   it("puts the root first and respects the budget", () => {
     const selected = selectContextNodes({
       nodes,

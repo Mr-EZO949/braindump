@@ -3,6 +3,8 @@
 // If validation fails the caller catches the error, logs the failure, and does not write.
 
 import type {
+  BuilderChange,
+  BuilderLinkType,
   ExtractionOutput,
   EdgeInferenceOutput,
   PlanOutput,
@@ -53,6 +55,83 @@ const EXTRACTION_SOFT_LINK_PRIORITY: Record<string, number> = {
   inspired_by: 2,
   related_to: 1,
 };
+
+const BUILDER_LINK_TYPES: ReadonlySet<string> = new Set([
+  "supports",
+  "useful_for",
+  "required_for",
+  "related_to",
+  "inspired_by",
+]);
+const UUID = /^[0-9a-fA-F-]{36}$/;
+const MAX_BUILDER_CHANGES = 20;
+
+const LOCAL_REF = /^[A-Za-z][\w-]{0,15}$/;
+
+// Edits to existing nodes. Best-effort like soft links: a malformed entry is
+// dropped, never a reason to discard the nodes around it. A target may be an
+// existing node id or a local_ref; the node being moved or updated must be an
+// existing one. Whether an id is in the workspace — and whether a local_ref
+// names a node this output actually proposes — is judged later, against the
+// graph (builder-ops.ts resolveBuilderChanges), which also knows what to do
+// when a move points at a parent the model forgot to create.
+export function parseBuilderChanges(raw: unknown): BuilderChange[] {
+  if (!Array.isArray(raw)) return [];
+  const ref = (value: unknown): string | null => {
+    if (!isString(value)) return null;
+    const trimmed = value.trim();
+    return UUID.test(trimmed) || LOCAL_REF.test(trimmed) ? trimmed : null;
+  };
+  const existing = (value: unknown): string | null =>
+    isString(value) && UUID.test(value.trim()) ? value.trim() : null;
+
+  const changes: BuilderChange[] = [];
+  for (const entry of raw) {
+    if (changes.length >= MAX_BUILDER_CHANGES) break;
+    if (!isObject(entry)) continue;
+    const before = changes.length;
+    if (entry.kind === "move") {
+      const nodeId = existing(entry.node_id);
+      const newParent = ref(entry.new_parent);
+      if (nodeId && newParent && nodeId !== newParent) {
+        changes.push({ kind: "move", node_id: nodeId, new_parent: newParent });
+      }
+    } else if (entry.kind === "update") {
+      const nodeId = existing(entry.node_id);
+      const title = isString(entry.title) && entry.title.trim() ? entry.title.trim().slice(0, 120) : undefined;
+      const rawType = entry.node_type === "concept" ? "note" : entry.node_type;
+      const nodeType = isNodeType(rawType) ? rawType : undefined;
+      const summary = isString(entry.summary) && entry.summary.trim() ? entry.summary.trim() : undefined;
+      if (nodeId && (title || nodeType || summary)) {
+        changes.push({
+          kind: "update",
+          node_id: nodeId,
+          ...(title ? { title } : {}),
+          ...(nodeType ? { node_type: nodeType } : {}),
+          ...(summary ? { summary } : {}),
+        });
+      }
+    } else if (entry.kind === "link") {
+      const source = ref(entry.source);
+      const target = ref(entry.target);
+      // "prerequisite_for" is the soft-link name for the same order.
+      const edgeType = entry.edge_type === "prerequisite_for" ? "required_for" : entry.edge_type;
+      if (source && target && source !== target && isString(edgeType) && BUILDER_LINK_TYPES.has(edgeType)) {
+        changes.push({
+          kind: "link",
+          source,
+          target,
+          edge_type: edgeType as BuilderLinkType,
+          rationale: isString(entry.rationale) && entry.rationale.trim() ? entry.rationale.trim() : null,
+        });
+      }
+    }
+    if (changes.length === before) {
+      console.warn("[validation] dropped a malformed builder change:", JSON.stringify(entry).slice(0, 300));
+    }
+  }
+  return changes;
+}
 
 // The model no longer echoes ids or the prompt version (extract v20) — the
 // server already knows them, so they come from the call instead.
@@ -297,6 +376,7 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
 
   return {
     proposed_nodes: nodes,
+    changes: parseBuilderChanges(raw.changes),
     clarifying_questions: clarifyingQuestions,
     complete_existing_node_ids: completeExistingNodeIds,
     auto_complete_local_refs: autoCompleteLocalRefs,

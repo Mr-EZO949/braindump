@@ -1,16 +1,22 @@
-// Extraction service — Phase 3
-// Runs the full extraction pipeline for a single raw_entry:
-//   1. Call Gemini to extract proposed nodes
-//   2. Write ai_run record
-//   3. Write proposed_nodes
-//   4. Update raw_entry status
-// Returns the saved proposed nodes on success.
-// On failure, marks the raw_entry as failed and stores the error — never throws to the caller.
+// The graph builder and the brain-dump extraction built on it.
+//
+// runBuilder — reads a piece of the user's text against their existing graph
+//   and works out what it changes: new nodes (deduplicated against the graph
+//   and against each other), edits to existing nodes (move / rename / link),
+//   completions, questions. Writes nothing but its ai_run. Chat's build_graph
+//   tool calls it directly (lib/ai/tools/build.ts).
+// runExtraction — a brain dump: runBuilder for a raw_entry, the new nodes
+//   saved as proposed_nodes for review, the edits returned as one change set.
+//   On failure, marks the raw_entry as failed — never throws to the caller.
+//
+// Spec: docs/unified-turn.md.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aiProvider } from "./index";
 import { AI_CONFIDENCE, AI_INGESTION, AI_MODELS } from "./config";
-import type { ExtractionOutput, ProposedNode } from "@/types/ai";
+import type { BuilderChange, ExtractionOutput, ProposedNode } from "@/types/ai";
+import type { ChangeOp } from "@/lib/graph/change-set";
+import { builderToOps, resolveBuilderChanges, splitRestructureSet } from "./builder-ops";
 import { buildWorkspaceProfileContext } from "./workspace-profile";
 import { retrieveRelevantNodes, type ContextNodeForPrompt } from "./retrieval";
 import { resolveProposalsAgainstGraph, type ResolutionMatch } from "./resolution";
@@ -29,6 +35,7 @@ import {
 } from "./errors";
 import { persistAIRun } from "./telemetry";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { looksLikeRestructure } from "@/lib/graph/dump-heuristic";
 
 // The extraction rubric is identical for every dump app-wide and the prompt
 // cache is shared across the API org, so caching it is a traffic question:
@@ -69,6 +76,10 @@ export interface ExtractionSuccess {
   // Proposals that closely match an existing node the resolver couldn't rule
   // on (e.g. an abbreviation). Held for review — never auto-applied.
   possibleDuplicates: Array<{ localRef: string; existingNodeId: string; existingTitle: string }>;
+  // Edits to EXISTING nodes the dump asked for ("X should be its own project
+  // with A and B in it") plus the new nodes they depend on — one change set
+  // for the caller to put in front of the user. Empty for most dumps.
+  restructure: ChangeOp[];
 }
 
 export interface ExtractionFailure {
@@ -218,28 +229,59 @@ export function rehomeResolvedProposals(params: {
 }
 
 // ---------------------------------------------------------------------------
-// runExtraction
+// runBuilder
 // ---------------------------------------------------------------------------
 
-export async function runExtraction(params: {
-  rawEntryId: string;
+type BuiltProposal = ExtractedProposal;
+
+export interface BuilderSuccess {
+  ok: true;
+  aiRunId: string;
+  // New nodes that survived the confidence floor and deduplication, with
+  // every reference re-homed onto what survived.
+  nodes: BuiltProposal[];
+  // Edits to existing nodes, validated against the workspace.
+  changes: BuilderChange[];
+  clarifyingQuestions: string[];
+  completeExistingNodeIds: string[];
+  autoCompleteLocalRefs: string[];
+  possibleDuplicates: Array<{ localRef: string; existingNodeId: string; existingTitle: string }>;
+}
+
+export interface BuilderFailure {
+  ok: false;
+  // Technical message (stored on the raw entry).
+  error: string;
+  // What the user is told.
+  userMessage: string;
+}
+
+export async function runBuilder(params: {
   rawText: string;
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
-  retryCount?: number;
   // The user's local date (YYYY-MM-DD) — resolves relative deadlines.
   today?: string;
   // Client cancel: aborts the provider call and skips retries.
   signal?: AbortSignal;
+  // ai_runs source: "extraction" for a dump, "assistant-build" from chat.
+  source?: string;
+  // Entities to link a malformed-output log to (the raw entry).
+  linkedEntityIds?: string[];
+  // Also show the builder what sits inside the most relevant nodes — a
+  // restructure has to move a node's steps with it.
+  expandChildren?: boolean;
+  // Work to do in the same round trip as the context reads.
+  alongside?: PromiseLike<unknown>;
   // Called with the existing nodes retrieval found relevant, BEFORE the
-  // extraction call — lets the caller start work that needs them (the dump
+  // model call — lets the caller start work that needs them (the dump
   // priority read) in parallel instead of after.
   onRetrieved?: (nodes: ContextNodeForPrompt[]) => void;
-}): Promise<ExtractionResult> {
-  const { rawEntryId, rawText, workspaceId, userId, supabase, today, signal } = params;
+}): Promise<BuilderSuccess | BuilderFailure> {
+  const { rawText, workspaceId, userId, supabase, today, signal } = params;
   // What the model sees: persona/workspace text + the existing nodes RELEVANT
-  // to this dump (retrieval), each with its parent. activeNodes feeds the
+  // to this text (retrieval), each with its parent. activeNodes feeds the
   // exact-title dedup + parent validation (whole workspace).
   let context: {
     workspaceContext: string | undefined;
@@ -248,17 +290,11 @@ export async function runExtraction(params: {
     parentOf: Map<string, string>;
   } = { workspaceContext: undefined, promptNodes: [], activeNodes: [], parentOf: new Map() };
 
-  // Mark raw_entry as processing — in the same round trip as the context reads.
-  const markProcessing = supabase
-    .from("raw_entries")
-    .update({ status: "processing" })
-    .eq("id", rawEntryId);
-
   let providerResult;
   try {
     const rubricCacheTtl = chooseRubricCacheTtl().catch(() => null);
     const [, profile, parentOf] = await Promise.all([
-      markProcessing,
+      params.alongside,
       buildWorkspaceProfileContext({
         workspaceId,
         userId,
@@ -275,6 +311,7 @@ export async function runExtraction(params: {
       nodes: profile.activeNodes,
       parentOf,
       rootNodeId: profile.rootNodeId,
+      expandChildren: params.expandChildren,
     });
     console.log("[extraction] retrieval", retrieval.stats);
     params.onRetrieved?.(retrieval.contextNodes);
@@ -284,8 +321,8 @@ export async function runExtraction(params: {
       activeNodes: profile.activeNodes,
       parentOf,
     };
-    // Short update dumps take the light path (slim prompt on Haiku). If its
-    // output is malformed, the retry falls back to the full prompt.
+    // Short texts take the light path (slim prompt). If its output is
+    // malformed, the retry falls back to the full prompt.
     let variant: "full" | "light" =
       rawText.trim().length <= AI_INGESTION.LIGHT_DUMP_MAX_CHARS ? "light" : "full";
     const rubric_cache_ttl = variant === "full" ? await rubricCacheTtl : null;
@@ -347,7 +384,7 @@ export async function runExtraction(params: {
         userId,
         workspaceId,
         error: err,
-        linkedEntityIds: [rawEntryId],
+        linkedEntityIds: params.linkedEntityIds ?? [],
       });
     } else {
       await logFailedAIRun({
@@ -363,8 +400,7 @@ export async function runExtraction(params: {
         error: errorText,
       });
     }
-    await markFailed(supabase, rawEntryId, errorText);
-    return { ok: false, error: normalized.userMessage };
+    return { ok: false, error: errorText, userMessage: normalized.userMessage };
   }
 
   const { output, run } = providerResult;
@@ -380,14 +416,13 @@ export async function runExtraction(params: {
     supabase,
     userId,
     workspaceId,
-    source: "extraction",
+    source: params.source ?? "extraction",
     run,
   });
 
   if (!aiRunId) {
     const errorText = "Failed to save ai_run";
-    await markFailed(supabase, rawEntryId, errorText);
-    return { ok: false, error: errorText };
+    return { ok: false, error: errorText, userMessage: errorText };
   }
 
   // Title-normalization helper for dedupe — strips case, punctuation, and
@@ -409,8 +444,15 @@ export async function runExtraction(params: {
       .sort()
       .join(" ");
   };
+  // A node this same output renames is about to stop carrying its old title,
+  // so that title can't make a new node a duplicate: "Test & Market BrainDump"
+  // becomes "Test BrainDump" while a new "Market BrainDump" is created.
+  const renamedIds = new Set(
+    output.changes.flatMap((c) => (c.kind === "update" && c.title ? [c.node_id] : [])),
+  );
   const existingTitleFingerprints = new Map<string, string>(); // fp → existing node id
   for (const n of allActiveNodes) {
+    if (renamedIds.has(n.id)) continue;
     const fp = normalizeTitle(n.title);
     // First writer wins — stable and good enough for a dedup key.
     if (fp.length > 0 && !existingTitleFingerprints.has(fp)) {
@@ -451,7 +493,7 @@ export async function runExtraction(params: {
   let intraDroppedCount = 0;
   // Same item emitted twice in THIS dump: dropped local_ref → kept local_ref.
   const droppedRefToKeptRef = new Map<string, string>();
-  let possibleDuplicates: ExtractionSuccess["possibleDuplicates"] = [];
+  let possibleDuplicates: BuilderSuccess["possibleDuplicates"] = [];
   // A node's identity is its PATH (parent › title): "Choose Stack…" under
   // Gym App and under Student Tracker are two different tasks.
   const activeTitleById = new Map(allActiveNodes.map((n) => [n.id, n.title]));
@@ -487,6 +529,8 @@ export async function runExtraction(params: {
       },
     });
     for (const [localRef, match] of resolution.duplicates) {
+      // See renamedIds above: the node it resembles is being renamed away.
+      if (renamedIds.has(match.existingId)) continue;
       droppedRefToExistingId.set(localRef, match.existingId);
       semanticDroppedCount++;
       console.log(
@@ -511,7 +555,12 @@ export async function runExtraction(params: {
       );
     }
     possibleDuplicates = [...resolution.possibleDuplicates.entries()]
-      .filter(([localRef]) => !resolution.duplicates.has(localRef) && !droppedRefToKeptRef.has(localRef))
+      .filter(
+        ([localRef, match]) =>
+          !droppedRefToExistingId.has(localRef) &&
+          !droppedRefToKeptRef.has(localRef) &&
+          !renamedIds.has(match.existingId),
+      )
       .map(([localRef, match]: [string, ResolutionMatch]) => ({
         localRef,
         existingNodeId: match.existingId,
@@ -551,6 +600,113 @@ export async function runExtraction(params: {
     );
   }
 
+  // Edits to existing nodes: every ref re-pointed at what survived dedup, and
+  // checked against the workspace (the model could emit a stale or foreign id).
+  const { changes, broken } = resolveBuilderChanges({
+    changes: output.changes,
+    activeNodeIds: validExistingParentIds,
+    survivingRefs: new Set(qualifiedNodes.flatMap((n) => (n.local_ref ? [n.local_ref] : []))),
+    droppedRefToExistingId,
+    droppedRefToKeptRef,
+  });
+  const lowConfidence = output.proposed_nodes.filter(
+    (n) => n.extraction_confidence < AI_CONFIDENCE.EXTRACTION_MIN,
+  );
+  // A reorganization the model left half-planned is not applied in part — the
+  // user is asked, and a line in chat redoes it (tools/build.ts).
+  const clarifyingQuestions = [...(output.clarifying_questions ?? [])];
+  if (broken.length > 0) {
+    const names = broken.flatMap((id) => (activeTitleById.has(id) ? [`"${activeTitleById.get(id)}"`] : []));
+    clarifyingQuestions.unshift(
+      `I couldn't work out the reorganization around ${names.slice(0, 2).join(" and ") || "one of your nodes"} — say in one line what should go where and I'll do it.`,
+    );
+  }
+  if (output.changes.length > 0 || lowConfidence.length > 0) {
+    console.log(
+      `[extraction] edits to existing nodes: ${changes.length} of ${output.changes.length} kept` +
+        (broken.length > 0 ? ` (${broken.length} node(s) with a half-planned move — asked instead)` : "") +
+        (lowConfidence.length > 0
+          ? `; ${lowConfidence.length} low-confidence node(s) left out: ${lowConfidence.map((n) => `"${n.proposed_title}"`).join(", ")}`
+          : ""),
+    );
+  }
+
+  return {
+    ok: true,
+    aiRunId,
+    nodes: qualifiedNodes,
+    changes,
+    clarifyingQuestions: clarifyingQuestions.slice(0, 3),
+    completeExistingNodeIds: [...completeExistingNodeIds],
+    // Only refs that still exist as proposals (a dropped duplicate's
+    // completion was redirected to the existing node above).
+    autoCompleteLocalRefs: [
+      ...new Set(
+        (output.auto_complete_local_refs ?? [])
+          .filter((ref) => !droppedRefToExistingId.has(ref))
+          .map((ref) => droppedRefToKeptRef.get(ref) ?? ref),
+      ),
+    ],
+    possibleDuplicates,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// runExtraction
+// ---------------------------------------------------------------------------
+
+export async function runExtraction(params: {
+  rawEntryId: string;
+  rawText: string;
+  workspaceId: string;
+  userId: string;
+  supabase: SupabaseClient;
+  retryCount?: number;
+  // The user's local date (YYYY-MM-DD) — resolves relative deadlines.
+  today?: string;
+  // Client cancel: aborts the provider call and skips retries.
+  signal?: AbortSignal;
+  // See runBuilder.
+  onRetrieved?: (nodes: ContextNodeForPrompt[]) => void;
+}): Promise<ExtractionResult> {
+  const { rawEntryId, rawText, workspaceId, userId, supabase } = params;
+
+  const built = await runBuilder({
+    rawText,
+    workspaceId,
+    userId,
+    supabase,
+    today: params.today,
+    signal: params.signal,
+    onRetrieved: params.onRetrieved,
+    source: "extraction",
+    linkedEntityIds: [rawEntryId],
+    // A dump that asks to reorganize needs to see inside the nodes it names.
+    expandChildren: looksLikeRestructure(rawText),
+    // Mark raw_entry as processing — in the same round trip as the context reads.
+    alongside: supabase.from("raw_entries").update({ status: "processing" }).eq("id", rawEntryId),
+  });
+  if (!built.ok) {
+    await markFailed(supabase, rawEntryId, built.error);
+    return { ok: false, error: built.userMessage };
+  }
+  const { aiRunId } = built;
+
+  // New nodes go to the review; edits to existing nodes — with the new nodes
+  // they depend on — are one change set for the caller to put on a card.
+  const { plain: qualifiedNodes, restructure: restructureNodes } = splitRestructureSet(
+    built.nodes,
+    built.changes,
+  );
+  const restructure = builderToOps({
+    nodes: restructureNodes,
+    changes: built.changes,
+    autoCompleteLocalRefs: built.autoCompleteLocalRefs,
+  });
+  const reviewRefs = new Set(qualifiedNodes.flatMap((n) => (n.local_ref ? [n.local_ref] : [])));
+  const autoCompleteLocalRefs = built.autoCompleteLocalRefs.filter((ref) => reviewRefs.has(ref));
+  const possibleDuplicates = built.possibleDuplicates.filter((dup) => reviewRefs.has(dup.localRef));
+
   if (qualifiedNodes.length === 0) {
     // No usable proposals — still mark as completed (not failed)
     await supabase
@@ -562,10 +718,11 @@ export async function runExtraction(params: {
       ok: true,
       aiRunId,
       proposedNodes: [],
-      clarifyingQuestions: output.clarifying_questions ?? [],
-      completeExistingNodeIds: [...completeExistingNodeIds],
+      clarifyingQuestions: built.clarifyingQuestions,
+      completeExistingNodeIds: built.completeExistingNodeIds,
       autoCompleteLocalRefs: [],
       possibleDuplicates: [],
+      restructure,
     };
   }
 
@@ -640,18 +797,11 @@ export async function runExtraction(params: {
       existing_parent_node_id:
         "existing_parent_node_id" in node ? node.existing_parent_node_id : null,
     })),
-    clarifyingQuestions: output.clarifying_questions ?? [],
-    completeExistingNodeIds: [...completeExistingNodeIds],
-    // Only refs that still exist as proposals (a dropped duplicate's
-    // completion was redirected to the existing node above).
-    autoCompleteLocalRefs: [
-      ...new Set(
-        (output.auto_complete_local_refs ?? [])
-          .filter((ref) => !droppedRefToExistingId.has(ref))
-          .map((ref) => droppedRefToKeptRef.get(ref) ?? ref),
-      ),
-    ],
+    clarifyingQuestions: built.clarifyingQuestions,
+    completeExistingNodeIds: built.completeExistingNodeIds,
+    autoCompleteLocalRefs,
     possibleDuplicates,
+    restructure,
   };
 }
 

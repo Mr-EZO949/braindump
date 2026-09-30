@@ -34,6 +34,11 @@ export interface ToolContext {
   // Runs work after the response has gone out (Next's `after`) — see
   // ChangeContext in lib/graph/change-set.ts.
   defer?: (work: () => Promise<void>) => void;
+  // The user's message this turn, word for word — build_graph hands it to the
+  // graph builder so the chat model doesn't have to restate a dump.
+  userMessage?: string;
+  // Aborted when the user hits Stop: cancels a builder call in flight.
+  signal?: AbortSignal;
 }
 
 export interface ToolSchema {

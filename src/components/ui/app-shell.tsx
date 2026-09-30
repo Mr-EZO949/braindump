@@ -2583,6 +2583,14 @@ export function AppShell({ initialUser }: AppShellProps) {
       priority_update?: (Omit<AppliedMarkerPayload, "tool_name"> & { unclear?: string[] }) | null;
       // Fixed weekly commitments the dump named (already saved).
       commitment_update?: Omit<AppliedMarkerPayload, "tool_name"> | null;
+      // Edits to existing nodes the dump asked for — one card to Accept
+      // (same payload as chat's pause marker).
+      pending_action?: {
+        run_id: string;
+        tool_use_id: string;
+        tool_name: string;
+        tool_input: Record<string, unknown>;
+      } | null;
     },
     workspaceId: string | null,
   ) => {
@@ -2603,6 +2611,8 @@ export function AppShell({ initialUser }: AppShellProps) {
       ? appliedActionFromPayload({ ...data.commitment_update, tool_name: "set_commitments" })
       : null;
     if (commitmentAction && workspaceId) clearFocusCache(workspaceId);
+    // Dump → a restructure of existing nodes: the same Accept card chat shows.
+    const restructure = data.pending_action ?? null;
 
     const buildSummary = (appliedCount: number, reviewCount: number) =>
       [
@@ -2616,7 +2626,7 @@ export function AppShell({ initialUser }: AppShellProps) {
             ? `I analyzed your dump and proposed ${reviewCount} node${reviewCount === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
             : priorityAction
               ? "Nothing new to add — I updated what matters instead:"
-              : commitmentAction
+              : commitmentAction || restructure
                 ? "Nothing new to add to the graph."
                 : "I went through your dump but didn't find anything new worth proposing.",
         completedTitles.length > 0
@@ -2671,6 +2681,24 @@ export function AppShell({ initialUser }: AppShellProps) {
               createdAt: nowIso,
               status: "ready" as const,
               appliedAction: { ...commitmentAction, status: "applied" as const },
+            },
+          ]
+        : []),
+      ...(restructure
+        ? [
+            {
+              id: `chat-restructure-${Math.random().toString(36).slice(2, 10)}`,
+              role: "assistant" as const,
+              body: "You also asked to reorganize what's already there — here's the change:",
+              createdAt: nowIso,
+              status: "ready" as const,
+              pendingAction: {
+                runId: restructure.run_id,
+                toolUseId: restructure.tool_use_id,
+                toolName: restructure.tool_name,
+                toolInput: restructure.tool_input,
+                status: "awaiting" as const,
+              },
             },
           ]
         : []),

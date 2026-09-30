@@ -179,3 +179,62 @@ describe("validateExtractionOutput (compact v20+ output)", () => {
     expect(market.soft_links.map((l) => l.target_local_ref)).toEqual(["x"]);
   });
 });
+
+describe("validateExtractionOutput — changes to existing nodes (extract-v25)", () => {
+  const A = "aaaaaaaa-0000-4000-8000-000000000001";
+  const B = "aaaaaaaa-0000-4000-8000-000000000002";
+  const newNode = { local_ref: "n1", proposed_title: "BrainDump", proposed_node_type: "project", extraction_confidence: 0.9 };
+
+  it("keeps well-formed moves, updates and links", () => {
+    const out = validateExtractionOutput(
+      {
+        proposed_nodes: [newNode],
+        changes: [
+          { kind: "move", node_id: A, new_parent: "n1" },
+          { kind: "update", node_id: A, title: " Test BrainDump ", node_type: "big_task" },
+          { kind: "link", source: A, target: B, edge_type: "prerequisite_for" },
+        ],
+      },
+      session,
+    );
+    expect(out.changes).toEqual([
+      { kind: "move", node_id: A, new_parent: "n1" },
+      { kind: "update", node_id: A, title: "Test BrainDump", node_type: "big_task" },
+      { kind: "link", source: A, target: B, edge_type: "required_for", rationale: null },
+    ]);
+  });
+
+  it("drops malformed entries without failing the nodes around them", () => {
+    const out = validateExtractionOutput(
+      {
+        proposed_nodes: [newNode],
+        changes: [
+          { kind: "move", node_id: "n1", new_parent: A }, // only existing nodes move
+          { kind: "move", node_id: A, new_parent: "not a ref at all" },
+          { kind: "move", node_id: A, new_parent: A },
+          { kind: "update", node_id: A }, // nothing to change
+          { kind: "update", node_id: A, node_type: "galaxy" },
+          { kind: "link", source: A, target: B, edge_type: "belongs_to" }, // a move, not a link
+          { kind: "archive", node_id: A },
+          "nonsense",
+        ],
+      },
+      session,
+    );
+    expect(out.proposed_nodes).toHaveLength(1);
+    expect(out.changes).toEqual([]);
+  });
+
+  it("keeps a move onto a local_ref it can't see — the graph step decides (and asks)", () => {
+    const out = validateExtractionOutput(
+      { proposed_nodes: [newNode], changes: [{ kind: "move", node_id: A, new_parent: "n11" }] },
+      session,
+    );
+    expect(out.changes).toEqual([{ kind: "move", node_id: A, new_parent: "n11" }]);
+  });
+
+  it("defaults to no changes", () => {
+    expect(validateExtractionOutput({ proposed_nodes: [newNode] }, session).changes).toEqual([]);
+  });
+});
+

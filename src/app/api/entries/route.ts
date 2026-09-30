@@ -15,6 +15,7 @@ import { applyCommitmentChanges } from "@/lib/ai/tools/commitment-mutations";
 import { suggestAreas } from "@/lib/ai/areas";
 import { getWorkspaceRootId } from "@/lib/graph/hierarchy";
 import { classifyDumpSize } from "@/lib/ai/dump-size";
+import { BUILD_GRAPH_TOOL, type BuildPlanInput } from "@/lib/ai/tools/build";
 import { AI_INGESTION, AI_FLAGS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { checkEntryRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
 import type { RawEntrySourceType } from "@/types/ai";
@@ -454,6 +455,57 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Edits to EXISTING nodes the dump asked for ("X should be its own project
+  // with A and B in it") — the builder's change set, shown as ONE card in the
+  // dump's chat thread and applied on Accept by the same writer chat uses
+  // (lib/graph/change-set.ts). Parked as a pending run so the usual resume
+  // endpoint handles the Accept; no model ever continues that thread.
+  // Until 2026-09-30 extraction could only ask a yes/no question here and
+  // chat had to redo the reasoning after the "yes".
+  let pendingAction: {
+    run_id: string;
+    tool_use_id: string;
+    tool_name: string;
+    tool_input: BuildPlanInput;
+  } | null = null;
+  if (result.restructure.length > 0 && !default_parent_node_id) {
+    const toolUseId = `dump_${rawEntry.id}`;
+    const toolInput: BuildPlanInput = { changes: result.restructure, origin: "dump" };
+    const { data: runRow, error: runError } = await supabase
+      .from("pending_chat_runs")
+      .insert({
+        user_id: user.id,
+        workspace_id,
+        selected_node_id: null,
+        mode: "explain",
+        messages: [
+          { role: "user", content: [{ type: "text", text: `User question: ${trimmed}` }] },
+          {
+            role: "assistant",
+            content: [{ type: "tool_use", id: toolUseId, name: BUILD_GRAPH_TOOL, input: {} }],
+          },
+        ],
+        pending_tool_use_id: toolUseId,
+        pending_tool_name: BUILD_GRAPH_TOOL,
+        pending_tool_input: toolInput,
+        // The user reviews the dump's new nodes first — a chat card's 15
+        // minutes would run out under them.
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      })
+      .select("id")
+      .single();
+    if (runError || !runRow) {
+      console.warn("[entries] could not park the dump's restructure:", runError?.message);
+    } else {
+      pendingAction = {
+        run_id: runRow.id as string,
+        tool_use_id: toolUseId,
+        tool_name: BUILD_GRAPH_TOOL,
+        tool_input: toolInput,
+      };
+    }
+  }
+
   // Note: clustering runs AFTER acceptance (in proposals/nodes/review)
   // rather than here. At this point the new nodes are still proposals
   // without embeddings, so clustering wouldn't see them and would miss
@@ -514,6 +566,9 @@ export async function POST(req: NextRequest) {
     priority_update: priorityUpdate(appliedPriorities),
     // Fixed weekly commitments the dump named (saved already, with an undo snapshot).
     commitment_update: commitmentUpdate,
+    // Edits to existing nodes, waiting for one Accept (same shape as chat's
+    // pause marker).
+    pending_action: pendingAction,
     // Life-area branches inferred from this dump that extraction did NOT already
     // turn into nodes — offered as optional chips in the review so the user can
     // add them as top-level branches (same as the wizard's step 2).

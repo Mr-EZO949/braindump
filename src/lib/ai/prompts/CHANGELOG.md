@@ -7,7 +7,13 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Extraction (`extract.ts`)
 
-### extract-v24 (current) · extract-light-v4
+### extract-v25 (current) · extract-light-v5 — the graph builder (2026-09-30)
+- Both prompts now EDIT existing nodes. New output field `changes`: `move` (node → new parent, an existing id or the local_ref of a node created in the same output), `update` (rename / retype), `link` (lateral edge). The v24 rule "extraction only adds → ask one yes/no question for chat to act on" is gone. Rules carried over from the assistant prompt's restructuring section: a new parent goes where its future children sit now; never a second copy of an existing node; keep a `useful_for` link when a node leaves a parent it still helps; the parent must be able to hold the child; every part the user names must exist afterwards (with the two wrong outcomes spelled out).
+- The existing-node list says its ids are for attaching, completing **or editing**. Retrieval also shows the children of the top hits when the text reads like a restructure (or the call comes from chat), so "make X its own project" can move X's steps with it.
+- Why: `docs/unified-turn.md` phase 2 — the same model that places a dump's nodes now does chat's restructures (through `build_graph`), instead of a whole chat turn on Sonnet.
+- Eval (synthetic workspace, throwaway user; $0.32 in total with the assistant-v24 runs below): light prompt 8/8 plans correct — new project + rename + move + new sibling (4×), move + `useful_for` link, two completions + a dated task, a move next to a new task, a 3-task update. $0.0088–0.0112 and 3–6 s per call. Full prompt on a 783-char dump (10 new nodes): move + link correct 2/2, but the new-parent restructure failed 3/3 — it renamed only, converted the fused node into the project itself, or moved nodes under a local_ref (`n11`) it never proposed. Not fixed in the prompt; `resolveBuilderChanges` now drops every edit to a node whose move is half-planned and the user gets a question instead. $0.041–0.064, 12.6–31 s.
+
+### extract-v24 · extract-light-v4
 - The intent-framed example named a fused "Test & market BrainDump" node, contradicting the project-with-parts rule two sections above it. The model copied the example: a real dump got one big task and no "BrainDump" project. The example now shows the project with its two children, and fusing two kinds of work into one "A & B" node is called out.
 - A grouping typed project ("Money Projects", created by the setup wizard) still holds projects. Without this line the parts of BrainDump were attached straight to it and the project node was skipped. (The wizard now creates every branch as an area.)
 - Lists of named items: one node per item. One eval run folded seven named exams into a single "clear the backlog" goal.
@@ -100,7 +106,14 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 > source of truth, now mirrored by the derived `PROMPT_VERSIONS` map). The
 > intermediate v5–v9 changes predate this entry and weren't logged here.
 
-### assistant-v23 (current)
+### assistant-v24 (current) — build_graph (2026-09-30)
+- New tool `build_graph`: the chat model hands a restructure or a multi-item capture to the graph builder (the extraction prompts above) instead of planning it itself. The "Restructuring" section shrank from five paragraphs of how-to (new parent placement, fused nodes, children, nesting) to a routing rule — one plain move is still `propose_edge`; anything more is `build_graph`. Those rules now live once, in the builder's prompt.
+- `propose_nodes_batch` is for steps the model itself writes (a breakdown); `propose_changes_batch` for a small mix or a bulk status change. Direct tools may share a turn with a card (the server no longer rejects them as a second action).
+- Routing: every chat turn is Haiku except a generated breakdown (`looksLikeBreakdownAsk`). A hint line in the message block points at `build_graph` when the message reads like a restructure or a dump.
+- `note` on `build_graph`: in the first eval Haiku filled it on every call, once with a wrong paraphrase ("finished the italian placement test" → "finished Italian Crash Course") that made the builder complete the wrong node. The description now forbids paraphrasing and the server ignores the note unless the message is a bare "yes" or is short.
+- Eval (one Haiku call each, prompt + tools + snapshot assembled as the route does): right tool 6/6 — `build_graph` for a new parent over existing nodes, a move that keeps a link and a multi-item update (2×); `propose_node` for "add a task … under the internship goal"; `complete_node` for "mark … as done". $0.0022–0.0026 per warm turn (14.3k input, 13.9k read from cache), $0.0285 on the first turn after the prompt changes.
+
+### assistant-v23
 - "Restructuring" block: a move is `propose_edge` belongs_to (the old parent link is replaced by the tool); a regroup is ONE `propose_changes_batch` — create the new parent (local_ref), rename the fused node, move it, create its sibling; a node that still helps its old parent keeps a useful_for / supports link in the same Accept. Never "I can't re-parent", never "in stages".
 - Every new node gets a parent_node_id.
 - Why (2026-09-30): re-parenting failed on the single-parent index and chat said it had no tool for it; a regroup was split across turns, created the project as a `contains` orphan, and the connection engine then nested it under its own task.

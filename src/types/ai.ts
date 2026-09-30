@@ -359,11 +359,23 @@ export interface ExtractionInput {
   variant?: "full" | "light";
 }
 
+// An edit to an EXISTING node the builder asks for alongside the nodes it adds
+// (extract-v25 / extract-light-v5). `new_parent`, `source` and `target` take an
+// existing node id or the local_ref of a node proposed in the same output.
+export type BuilderLinkType = "supports" | "useful_for" | "required_for" | "related_to" | "inspired_by";
+
+export type BuilderChange =
+  | { kind: "move"; node_id: string; new_parent: string }
+  | { kind: "update"; node_id: string; title?: string; node_type?: NodeType; summary?: string }
+  | { kind: "link"; source: string; target: string; edge_type: BuilderLinkType; rationale?: string | null };
+
 export interface ExtractionOutput {
   proposed_nodes: Omit<
     ProposedNode,
     "id" | "ai_run_id" | "raw_entry_id" | "created_at"
   >[];
+  // Moves, renames/retypes and lateral links on nodes that already exist.
+  changes: BuilderChange[];
   // Questions the extractor wants the user to answer before more nodes can
   // be usefully extracted — vague ideas, ambiguous references, meta-questions
   // like "idk what to focus on". Empty when the dump is fully actionable.

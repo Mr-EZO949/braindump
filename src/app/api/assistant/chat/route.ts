@@ -28,14 +28,14 @@ import {
   AI_RATE_LIMITS,
   claudeRequestTuning,
 } from "@/lib/ai/config";
-import { routeChatMessage } from "@/lib/ai/chat-router";
+import { buildHint, routeChatMessage } from "@/lib/ai/chat-router";
 import { ASSISTANT_QA_PROMPT_VERSION, buildQASystemPrompt, streamQAAnswer } from "@/lib/ai/gemini-chat";
 import { checkAIRunRateLimit } from "@/lib/ai/rate-limit";
 import { hashText, normalizeAIError } from "@/lib/ai/errors";
 import { persistAIRun, recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
-import { dispatchEager, getToolSchemas, isPausingTool } from "@/lib/ai/tools";
+import { getToolSchemas, runTurnTools } from "@/lib/ai/tools";
 import { looksMultiStep } from "@/lib/ai/tools/confirmations";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
 import { buildHistoryMessages, sanitizeHistory, type HistoryTurn } from "@/lib/ai/chat-memory";
@@ -146,10 +146,9 @@ export async function POST(req: NextRequest) {
 
   // Model routing (chat-router.ts): plain questions → Gemini Flash-Lite with no
   // tools (it hands back to Claude when the turn needs an action or a lookup);
-  // chat and simple edits (add one item, mark done, move a time, rename) →
-  // Haiku; a STRUCTURAL edit or full planning → Sonnet, since the model that
-  // emits the mutation is the one doing the structural reasoning
-  // (split-vs-replace, correct parent, batching). See issue #19.
+  // everything else → Haiku, which hands structural work (a restructure, a
+  // multi-item capture) to the graph builder through build_graph; only a
+  // generated breakdown still runs its turn on Sonnet.
   const geminiKey = process.env.GEMINI_API_KEY;
   const chatRoute = routeChatMessage({
     message,
@@ -286,6 +285,7 @@ export async function POST(req: NextRequest) {
     scope: ctx.scopeLabel,
     temporalFlag,
     relevantExtras: ctx.relevantExtras,
+    hint: buildHint(message),
   });
   // Persisted hash still uses the full prompt string so telemetry matches old rows.
   const userPromptForHash = `${contextBlock}\n\n${messageBlock}`;
@@ -302,12 +302,16 @@ export async function POST(req: NextRequest) {
   // Prompt-cache layout (static system 1h; graph context, history and last
   // message 5m): see src/lib/ai/assistant-cache.ts.
   const tools = getToolSchemas();
+  // Stop → cancels a builder call in flight (build_graph).
+  const toolAbort = new AbortController();
   const toolCtx = {
     supabase,
     userId: user.id,
     workspaceId: workspace_id,
     selectedNodeId: selected_node_id,
     today: todayISO,
+    userMessage: message.trim(),
+    signal: toolAbort.signal,
   };
 
   // The graph snapshot rides in the system prompt, where every turn of the
@@ -451,19 +455,23 @@ export async function POST(req: NextRequest) {
             break;
           }
 
-          // If Claude proposed a pausing tool (a mutation to confirm, or an
-          // ask_choice question), pause the loop. Persist the current history +
-          // the pending + deferred tool_use blocks so the resume endpoint can
-          // pick up where we left off once the user responds via the inline card.
-          const firstPauseIdx = toolUseBlocks.findIndex((b: ToolUseBlock) =>
-            isPausingTool(b.name),
+          // What the turn's tool calls come to (tools/index.ts runTurnTools):
+          // direct tools apply now, build_graph is planned by the graph
+          // builder, and the first call that needs the user becomes the card.
+          const turn = await runTurnTools(
+            toolUseBlocks.map((b: ToolUseBlock) => ({ id: b.id, name: b.name, input: b.input })),
+            toolCtx,
           );
-          if (firstPauseIdx >= 0) {
-            const pending = toolUseBlocks[firstPauseIdx];
-            const deferred = toolUseBlocks.filter(
-              (_: ToolUseBlock, i: number) => i !== firstPauseIdx,
-            );
+          if (aborted) break;
+          // A direct tool (update_priorities) already changed the graph —
+          // the browser shows what moved, with an Undo.
+          for (const applied of turn.applied) send(encodeAppliedMarker(applied));
 
+          // A card is pending: persist the history + the pending and deferred
+          // tool calls so the resume endpoint can pick up where we left off
+          // once the user responds.
+          if (turn.pending) {
+            const pending = turn.pending;
             const { data: runRow, error: pendingErr } = await supabase
               .from("pending_chat_runs")
               .insert({
@@ -475,11 +483,7 @@ export async function POST(req: NextRequest) {
                 pending_tool_use_id: pending.id,
                 pending_tool_name: pending.name,
                 pending_tool_input: (pending.input ?? {}) as object,
-                deferred_tool_uses: deferred.map((b: ToolUseBlock) => ({
-                  id: b.id,
-                  name: b.name,
-                  input: b.input ?? {},
-                })) as unknown as object,
+                deferred_tool_uses: turn.deferred as unknown as object,
               })
               .select("id")
               .single();
@@ -503,22 +507,7 @@ export async function POST(req: NextRequest) {
             break;
           }
 
-          const ran = await Promise.all(
-            toolUseBlocks.map((block: ToolUseBlock) =>
-              dispatchEager({
-                name: block.name,
-                input: block.input,
-                tool_use_id: block.id,
-                ctx: toolCtx,
-              }),
-            ),
-          );
-          // A direct tool (update_priorities) already changed the graph —
-          // the browser shows what moved, with an Undo.
-          for (const { applied } of ran) {
-            if (applied) send(encodeAppliedMarker(applied));
-          }
-          const toolResults: ToolResultBlockParam[] = ran.map(({ result }) => ({
+          const toolResults: ToolResultBlockParam[] = turn.results.map((result) => ({
             type: "tool_result" as const,
             tool_use_id: result.tool_use_id,
             content: truncateToolContent(result.content),
@@ -531,7 +520,7 @@ export async function POST(req: NextRequest) {
           // change needs no follow-up model call (it would only say "Done"
           // while re-sending the whole prompt). Failures and multi-step asks
           // still go back to the model.
-          const lone = ran.length === 1 ? ran[0].applied : null;
+          const lone = turn.results.length === 1 && turn.applied.length === 1 ? turn.applied[0] : null;
           if (
             lone &&
             lone.failed.length === 0 &&
@@ -593,6 +582,7 @@ export async function POST(req: NextRequest) {
       // stream so we stop burning tokens.
       aborted = true;
       qaAbort.abort();
+      toolAbort.abort();
       try {
         currentStreamRef?.abort();
       } catch {

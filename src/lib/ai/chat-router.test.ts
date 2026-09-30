@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { looksLikePlainQuestion, routeChatMessage } from "./chat-router";
+import { buildHint, looksLikePlainQuestion, routeChatMessage } from "./chat-router";
 
 describe("looksLikePlainQuestion", () => {
   it.each([
@@ -76,8 +76,20 @@ describe("looksLikePlainQuestion", () => {
 describe("routeChatMessage", () => {
   const base = { history: [], mode: "explain" as const, qaEnabled: true };
 
-  it("routes structural edits to Sonnet", () => {
-    expect(routeChatMessage({ ...base, message: "split the ML exam into two projects" })).toBe("sonnet");
+  it("routes only a generated breakdown to Sonnet", () => {
+    expect(routeChatMessage({ ...base, message: "break the thesis down into steps" })).toBe("sonnet");
+    expect(routeChatMessage({ ...base, message: "give me a roadmap for the internship search" })).toBe("sonnet");
+  });
+
+  it("keeps restructures and captures on Haiku — the builder does the structural work", () => {
+    expect(routeChatMessage({ ...base, message: "split the ML exam into two projects" })).toBe("haiku");
+    expect(
+      routeChatMessage({
+        ...base,
+        message: "braindump should be its own project with testing and marketing as tasks in it",
+      }),
+    ).toBe("haiku");
+    expect(routeChatMessage({ ...base, message: "plan my day from 8 to 12" })).toBe("haiku");
   });
 
   it("routes plain questions to Q&A only when enabled and not in transform mode", () => {
@@ -91,28 +103,23 @@ describe("routeChatMessage", () => {
     expect(routeChatMessage({ ...base, message: "mark the gym done" })).toBe("haiku");
   });
 
-  it("keeps the follow-ups of a restructure on Sonnet", () => {
-    // The 2026-09-30 thread: the restructure was offered, then "yeah", then a
-    // complaint — neither follow-up carries a structural word.
+  it("keeps the follow-ups of a breakdown on Sonnet", () => {
     const history = [
-      {
-        role: "assistant" as const,
-        body: "You mentioned restructuring so 'BrainDump' becomes a separate project with 'Test & Market BrainDump' as a task under it — want me to convert it?",
-      },
+      { role: "assistant" as const, body: "Want me to break 'Write my thesis' down into phases?" },
       { role: "user" as const, body: "yeah" },
     ];
-    expect(routeChatMessage({ ...base, history, message: "i dont see any changes" })).toBe("sonnet");
+    expect(routeChatMessage({ ...base, history, message: "make it a bit deeper" })).toBe("sonnet");
     expect(routeChatMessage({ ...base, history: history.slice(0, 1), message: "yeah" })).toBe("sonnet");
   });
 
   it("does not pin a thread to Sonnet because of a long dump or an old turn", () => {
     const dump = {
       role: "user" as const,
-      body: `${"i need to start making money and finish my exams. ".repeat(20)} add these under the project: a, b, c, d`,
+      body: `${"i need to start making money and finish my exams. ".repeat(20)} give me a roadmap for all of it`,
     };
     expect(routeChatMessage({ ...base, history: [dump], message: "mark the gym done" })).toBe("haiku");
     const old = [
-      { role: "user" as const, body: "split the ML exam into two projects" },
+      { role: "user" as const, body: "break the ML exam down into steps" },
       { role: "assistant" as const, body: "Done." },
       { role: "user" as const, body: "thanks" },
       { role: "assistant" as const, body: "Anything else?" },
@@ -120,5 +127,23 @@ describe("routeChatMessage", () => {
       { role: "assistant" as const, body: "Nice." },
     ];
     expect(routeChatMessage({ ...base, history: old, message: "mark the gym done" })).toBe("haiku");
+  });
+});
+
+describe("buildHint", () => {
+  it("points at build_graph for a restructure or a multi-item message", () => {
+    expect(buildHint("braindump should be its own project with testing and marketing in it")).toContain(
+      "build_graph",
+    );
+    expect(
+      buildHint("ok so this week: need to renew my passport, book the dentist, and start the stats problem set"),
+    ).toContain("build_graph");
+  });
+
+  it("stays out of simple edits, questions and breakdowns", () => {
+    expect(buildHint("mark the gym done")).toBe("");
+    expect(buildHint("add a task to email the prof under Career")).toBe("");
+    expect(buildHint("what should i focus on?")).toBe("");
+    expect(buildHint("break the thesis down into steps")).toBe("");
   });
 });

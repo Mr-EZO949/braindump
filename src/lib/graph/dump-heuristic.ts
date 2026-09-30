@@ -37,64 +37,44 @@ export function looksLikeBrainDump(text: string): boolean {
   );
 }
 
-// Should this chat turn run on the stronger model (Sonnet)? Only STRUCTURAL
-// graph edits and full planning — where the weaker model made bad calls
-// (issue #19: replacing a parent instead of adding children under it, wrong
-// level, un-batched splits). Simple edits — add one item, mark done, rename,
-// move a time, delete, set a deadline — are a single tool call with no
-// structural judgment, so they stay on Haiku: they're most chat turns, and
-// Sonnet costs 2–3× per turn.
+// Advice / how-to / opinion openers → discussion, not a command.
+const ADVICE_OPENER =
+  /^(how (do|to|can|should|would)|how's|what('s| is| are| would)|why |when should|where should|is it|are there|should i|do you think|what do you think|thoughts on|any (advice|tips|ideas))/;
+
+// Does the message ask the assistant to GENERATE a breakdown — steps, a
+// roadmap, phases the user did not list? That is the one kind of chat turn
+// that still runs on Sonnet (chat-router.ts): the steps are only as good as
+// the model that writes them. Everything else structural goes to the graph
+// builder through the build_graph tool (docs/unified-turn.md).
 //
-// Deliberately NOT gated on "?": editing asks are often polite questions
-// ("can you split this?"). We only bail on advice/how-to openers, which are
-// discussion, not commands.
-export function looksLikeStructuralEdit(text: string): boolean {
-  const raw = text.trim();
-  const t = raw.toLowerCase();
-  if (t.length < 3) return false;
+// Deliberately NOT gated on "?": asks are often polite questions ("can you
+// break this down?"). Only advice/how-to openers bail.
+export function looksLikeBreakdownAsk(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (t.length < 3 || ADVICE_OPENER.test(t)) return false;
+  return /\b(break (it|them|this|that) (down|up|into)|break .{1,60}? (down|up)\b|break .{1,60}? into (steps|phases|tasks|parts|pieces|chunks|milestones)|breakdown|roadmap|step[- ]by[- ]step|(sub-?tasks?|steps|phases|milestones) (for|to|of|under)\b)/.test(
+    t,
+  );
+}
 
-  // Advice / how-to / opinion openers → discussion, let the default model chat.
-  if (
-    /^(how (do|to|can|should|would)|how's|what('s| is| are| would)|why |when should|where should|is it|are there|should i|do you think|what do you think|thoughts on|any (advice|tips|ideas))/.test(
-      t,
-    )
-  ) {
-    return false;
-  }
+// Does the text ask to REORGANIZE nodes that already exist — regroup, split,
+// re-home, "X should be its own project", "X doesn't belong under Y"? Never a
+// route: it (a) hints the chat model toward build_graph and (b) tells the
+// builder's retrieval to also show what sits inside the nodes named. One plain
+// "move X under Y" and "merge X into Y" are left out — chat has direct tools
+// for those.
+export function looksLikeRestructure(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (t.length < 3 || ADVICE_OPENER.test(t)) return false;
 
-  // Reshaping the tree: split / merge / regroup / restructure.
   const RESHAPE =
-    /\b(split|break (it|them|this|that|down|up)|break .+ (into|down)|re-?parent\w*|re-?home\w*|merge|combine|dedupe|deduplicate|nest|regroup|group .+ (under|into|together)|reorganiz\w*|restructur\w*|convert .+ (into|to) (a |an |its own )?(new |separate |parent )*(project|area|goal|big task|task|parent)|(separate|its own|their own|a new|new parent) (project|area|goal|branch|parent))\b/;
-
-  // Placing things in the hierarchy ("under the backlog", "move X under Y",
-  // "it should belong to the ML exam").
-  const PLACEMENT =
-    /\b(under|beneath|inside|into|below) (the |my |a |an |two |three )?(backlog|goal|project|task|node|area|parent|epic|exam|class)/;
-  const PUT_UNDER =
-    /\b(add|create|move|put|place|file|attach)\b.+\b(under|beneath|inside|into|as a (child|subtask|sub-task) of)\b/;
-  // Also the negative ("shouldn't belong to", "doesn't go under") — a move.
+    /\b(split|re-?parent\w*|re-?home\w*|nest|regroup|group .+ (under|into|together)|reorganiz\w*|restructur\w*|convert .+ (into|to) (a |an |its own )?(new |separate |parent )*(project|area|goal|big task|task|parent)|(separate|its own|their own|a new|new parent) (project|area|goal|branch|parent))\b/;
+  // "it should belong to the ML exam" — and the negative ("shouldn't belong
+  // to", "doesn't go under"), which is a move too.
   const BELONGS =
     /\b(belongs? (to|under|in)|(tasks?|steps?|children|parts?) (in|of|under|inside) (the|that|this|a) (project|goal|area|big task))\b/;
 
-  // Building a whole plan (one per day or so) — not nudging one block.
-  const FULL_PLAN = /\b(plan my|re-?plan|make me a schedule|time.?block)\b/;
-
-  // Adding several things with structure in one go ("add a project X with
-  // tasks a, b, c", or a bulleted list).
-  const MULTI_ADD =
-    /\b(add|create)\b/.test(t) &&
-    (/\b(with|including) (\w+ )?(tasks?|steps?|subtasks?|sub-tasks?|children|phases?)\b/.test(t) ||
-      (t.match(/,/g)?.length ?? 0) >= 3 ||
-      /\n\s*([-*•]|\d+[.)])/.test(raw));
-
-  return (
-    RESHAPE.test(t) ||
-    PLACEMENT.test(t) ||
-    PUT_UNDER.test(t) ||
-    BELONGS.test(t) ||
-    FULL_PLAN.test(t) ||
-    MULTI_ADD
-  );
+  return RESHAPE.test(t) || BELONGS.test(t);
 }
 
 // Active projects and big tasks with no children — candidates for a "want a
