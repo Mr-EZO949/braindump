@@ -13,7 +13,7 @@ import { PomodoroView } from "@/components/ui/pomodoro-view";
 import { SectionBackdrop } from "@/components/ui/section-backdrop";
 import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
-import { WhatNowDialog } from "@/components/ui/what-now-dialog";
+import { clearFocusCache, WhatNowDialog } from "@/components/ui/what-now-dialog";
 import { WeeklyReflectionModal } from "@/components/ui/weekly-reflection-modal";
 import { DumpHistoryModal } from "@/components/ui/dump-history-modal";
 import {
@@ -81,7 +81,9 @@ import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
 import {
   appliedActionFromPayload,
   appliedActionNote,
+  appliedUndoEndpoint,
   createAppliedMarkerParser,
+  isCommitmentAction,
   type AppliedMarkerPayload,
 } from "@/lib/chat/applied-marker";
 import { classifyTaskSize } from "@/lib/ai/sizing";
@@ -1333,13 +1335,14 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     setStatus("undoing");
     try {
-      const res = await fetch("/api/assistant/priorities/undo", {
+      const res = await fetch(appliedUndoEndpoint(action), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ workspace_id: workspaceId, undo: action.undo, ...clientDayHints() }),
       });
       if (!res.ok) throw new Error("undo failed");
       setStatus("undone");
+      if (isCommitmentAction(action)) clearFocusCache(workspaceId);
     } catch {
       setStatus("error", "Couldn't undo that — try again.");
     }
@@ -1428,6 +1431,8 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     const attachApplied = (applied: Omit<AppliedAction, "status">) => {
       for (const item of applied.items) appliedNodeIds.add(item.nodeId);
+      // Busy time changed — Focus's cached list no longer knows it.
+      if (isCommitmentAction(applied) && selectedWorkspaceId) clearFocusCache(selectedWorkspaceId);
       setChatMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsgId ? { ...m, appliedAction: { ...applied, status: "applied" } } : m,
@@ -2576,6 +2581,8 @@ export function AppShell({ initialUser }: AppShellProps) {
       auto_apply_proposal_ids?: string[];
       // What the dump changed about existing priorities (already applied).
       priority_update?: (Omit<AppliedMarkerPayload, "tool_name"> & { unclear?: string[] }) | null;
+      // Fixed weekly commitments the dump named (already saved).
+      commitment_update?: Omit<AppliedMarkerPayload, "tool_name"> | null;
     },
     workspaceId: string | null,
   ) => {
@@ -2591,6 +2598,11 @@ export function AppShell({ initialUser }: AppShellProps) {
       ? appliedActionFromPayload({ ...data.priority_update, tool_name: "update_priorities" })
       : null;
     const unclear = data.priority_update?.unclear ?? [];
+    // Dump → fixed commitments: their own card (a message can hold one).
+    const commitmentAction = data.commitment_update
+      ? appliedActionFromPayload({ ...data.commitment_update, tool_name: "set_commitments" })
+      : null;
+    if (commitmentAction && workspaceId) clearFocusCache(workspaceId);
 
     const buildSummary = (appliedCount: number, reviewCount: number) =>
       [
@@ -2604,7 +2616,9 @@ export function AppShell({ initialUser }: AppShellProps) {
             ? `I analyzed your dump and proposed ${reviewCount} node${reviewCount === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
             : priorityAction
               ? "Nothing new to add — I updated what matters instead:"
-              : "I went through your dump but didn't find anything new worth proposing.",
+              : commitmentAction
+                ? "Nothing new to add to the graph."
+                : "I went through your dump but didn't find anything new worth proposing.",
         completedTitles.length > 0
           ? `I also marked ${completedTitles.length} existing item${completedTitles.length === 1 ? "" : "s"} done: ${completedTitles.slice(0, 3).join(", ")}${completedTitles.length > 3 ? "…" : ""}.`
           : null,
@@ -2648,6 +2662,18 @@ export function AppShell({ initialUser }: AppShellProps) {
         status: "ready" as const,
         ...(priorityAction ? { appliedAction: { ...priorityAction, status: "applied" as const } } : {}),
       },
+      ...(commitmentAction
+        ? [
+            {
+              id: `chat-commit-${Math.random().toString(36).slice(2, 10)}`,
+              role: "assistant" as const,
+              body: "Saved your fixed times — Focus and the planner will work around them:",
+              createdAt: nowIso,
+              status: "ready" as const,
+              appliedAction: { ...commitmentAction, status: "applied" as const },
+            },
+          ]
+        : []),
     ]);
     dumpInChatRef.current = true;
     setRightPanelOpen(true);

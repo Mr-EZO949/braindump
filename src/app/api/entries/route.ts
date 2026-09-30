@@ -11,6 +11,7 @@ import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { readDumpPriorities, statusTouchedIds, type DumpPriorityRead } from "@/lib/ai/dump-priorities";
 import { applyPriorityChanges } from "@/lib/ai/tools/priority-mutations";
+import { applyCommitmentChanges } from "@/lib/ai/tools/commitment-mutations";
 import { suggestAreas } from "@/lib/ai/areas";
 import { classifyDumpSize } from "@/lib/ai/dump-size";
 import { AI_INGESTION, AI_FLAGS, AI_RATE_LIMITS } from "@/lib/ai/config";
@@ -323,6 +324,16 @@ export async function POST(req: NextRequest) {
     }
     return unclear.length > 0 ? { applied: [], failed: [], undo: null, unclear } : null;
   };
+  // Fixed weekly commitments the dump named ("stats every day at 2pm") —
+  // same engine as chat's set_commitments; shown as its own card with Undo.
+  // Independent of extraction, so they save even if it fails.
+  const commitmentUpdate = await (async () => {
+    if (!priorities || priorities.commitments.length === 0) return null;
+    const applied = await applyCommitmentChanges(toolCtx, { changes: priorities.commitments }, "dump");
+    return applied.accepted && "undo" in applied
+      ? { applied: applied.applied, failed: applied.failed, undo: applied.undo }
+      : null;
+  })();
 
   if (!result.ok) {
     // Extraction failed — entry is saved, user can retry. The priority facts
@@ -335,6 +346,7 @@ export async function POST(req: NextRequest) {
         error: result.error,
         message: "Extraction failed. You can retry via POST /api/entries/:id/retry",
         priority_update: priorityUpdate(applied),
+        commitment_update: commitmentUpdate,
       },
       { status: 207 } // 207 = partial success (entry saved, extraction failed)
     );
@@ -473,6 +485,8 @@ export async function POST(req: NextRequest) {
     // What the dump changed about existing priorities (applied already, with
     // an undo snapshot), plus anything too ambiguous to act on.
     priority_update: priorityUpdate(appliedPriorities),
+    // Fixed weekly commitments the dump named (saved already, with an undo snapshot).
+    commitment_update: commitmentUpdate,
     // Life-area branches inferred from this dump that extraction did NOT already
     // turn into nodes — offered as optional chips in the review so the user can
     // add them as top-level branches (same as the wizard's step 2).

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseDumpPriorityResponse, statusTouchedIds } from "./dump-priorities";
+import { mentionsWeeklyTime, parseDumpPriorityResponse, statusTouchedIds } from "./dump-priorities";
 
 const TODAY = "2026-10-07"; // a Wednesday
 const nodes = [
@@ -52,7 +52,96 @@ describe("parseDumpPriorityResponse", () => {
   });
 
   it("is empty on anything that isn't JSON", () => {
-    expect(parseDumpPriorityResponse("Sure! Here are the changes:", nodes, TODAY)).toEqual({ changes: [], unclear: [] });
+    expect(parseDumpPriorityResponse("Sure! Here are the changes:", nodes, TODAY)).toEqual({
+      changes: [],
+      commitments: [],
+      unclear: [],
+    });
+  });
+});
+
+describe("parseDumpPriorityResponse — fixed commitments", () => {
+  const practice = {
+    ref: "c1",
+    id: "11111111-1111-4111-8111-111111111111",
+    title: "Volleyball practice",
+    node_id: null,
+    days: [2, 4],
+    start_time: "17:00",
+    end_time: "18:30",
+    starts_on: null,
+    ends_on: null,
+  };
+
+  const statsClass = { ref: "n1", id: "33333333-3333-4333-8333-333333333333", title: "Stats" };
+
+  it("turns adds, updates and removes into set_commitments rows", () => {
+    const read = parseDumpPriorityResponse(
+      JSON.stringify({
+        changes: [],
+        commitments: [
+          { action: "add", title: "Stats lecture", days: ["mon", "tue", "wed", "thu", "fri"], start: "14:00", until: "dec 20", node: "n1" },
+          { action: "update", ref: "c1", start: "18:00" },
+        ],
+      }),
+      [statsClass],
+      TODAY,
+      [practice],
+    );
+    expect(read.commitments).toEqual([
+      {
+        action: "add",
+        title: "Stats lecture",
+        days: ["mon", "tue", "wed", "thu", "fri"],
+        start_time: "14:00",
+        node_id: statsClass.id,
+        until: "dec 20",
+      },
+      { action: "update", commitment_id: practice.id, start_time: "18:00" },
+    ]);
+  });
+
+  it("picks up a commitment row filed under changes", () => {
+    const read = parseDumpPriorityResponse(
+      JSON.stringify({ changes: [{ ref: "c1", action: "update", start: "18:00" }], commitments: [] }),
+      nodes,
+      TODAY,
+      [practice],
+    );
+    expect(read.changes).toEqual([]);
+    expect(read.commitments).toEqual([{ action: "update", commitment_id: practice.id, start_time: "18:00" }]);
+  });
+
+  it("keeps a commitment whose end date it can't read, and asks about it", () => {
+    const read = parseDumpPriorityResponse(
+      JSON.stringify({
+        commitments: [
+          { action: "add", title: "Stats lecture", days: ["mon"], start: "14:00", until: "end of term" },
+          { action: "add", title: "No time", days: ["mon"] }, // no start → dropped
+          { action: "remove", ref: "c9" }, // unknown ref → dropped
+          { action: "remove", ref: "c1" },
+        ],
+      }),
+      nodes,
+      TODAY,
+      [practice],
+    );
+    expect(read.commitments).toEqual([
+      { action: "add", title: "Stats lecture", days: ["mon"], start_time: "14:00" },
+      { action: "remove", commitment_id: practice.id },
+    ]);
+    expect(read.unclear).toEqual(["When does Stats lecture end?"]);
+  });
+});
+
+describe("mentionsWeeklyTime", () => {
+  it("needs a clock time and a weekday or repeat word", () => {
+    expect(mentionsWeeklyTime("I have stats every day at 2pm")).toBe(true);
+    expect(mentionsWeeklyTime("work tue/thu 9:00 to 17:00")).toBe(true);
+    expect(mentionsWeeklyTime("practice on mondays at 6 pm")).toBe(true);
+    expect(mentionsWeeklyTime("call mom at 2pm")).toBe(false);
+    expect(mentionsWeeklyTime("finish the essay by friday")).toBe(false);
+    expect(mentionsWeeklyTime("ugh stats is killing me")).toBe(false);
   });
 });
 

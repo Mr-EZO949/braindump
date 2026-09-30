@@ -1,14 +1,19 @@
-// Dump → priorities: one small Haiku read per dump that touches existing
-// nodes (prompt: prompts/dump-priorities.ts). Runs in parallel with
-// extraction, so it adds no latency; the result goes through the same engine
-// as chat's update_priorities (applyPriorityChanges) and the deterministic
-// ranking reranks. ~$0.002 a dump; skipped when retrieval found no existing
-// node the dump could be about. Fail-soft: any error → no changes.
+// Dump → priorities + fixed commitments: one small Haiku read per dump that
+// touches existing nodes or names a weekly time (prompt:
+// prompts/dump-priorities.ts). Runs in parallel with extraction, so it adds no
+// latency; the results go through the same engines as chat's
+// update_priorities (applyPriorityChanges) and set_commitments
+// (applyCommitmentChanges), and the deterministic ranking reranks. ~$0.001 a
+// dump; skipped when retrieval found no existing node the dump could be about
+// AND the dump names no clock time on a weekday / "every …". Fail-soft: any
+// error → no changes.
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { parsePriorityChanges, PRIORITY_ACTIONS, type PriorityAction } from "@/lib/graph/priority-changes";
+import { describeCommitment, loadActiveCommitments, type Commitment } from "@/lib/planner/commitments";
+import { parseCommitmentChanges } from "@/lib/planner/commitment-changes";
 import { AI_MODELS } from "./config";
 import { hashText } from "./errors";
 import {
@@ -24,20 +29,97 @@ const DUMP_ACTIONS = new Set<PriorityAction>(["wait", "resume", "deadline", "sta
 const STATUS_ACTIONS = new Set<string>(["wait", "resume", "drop"]);
 const MAX_NODES = 40;
 const MAX_DUMP_CHARS = 4000;
-const MAX_OUTPUT_TOKENS = 400;
+const MAX_OUTPUT_TOKENS = 500;
 const MAX_UNCLEAR = 2;
 
 export interface DumpPriorityRead {
   /** update_priorities-shaped changes, each valid on its own; ready for applyPriorityChanges. */
   changes: Record<string, unknown>[];
+  /** set_commitments-shaped changes, each valid on its own; ready for applyCommitmentChanges. */
+  commitments: Record<string, unknown>[];
   /** Ambiguous outcomes the model didn't act on — asked back in chat. */
   unclear: string[];
 }
 
 type RefNode = { ref: string; id: string; title: string };
+type RefCommitment = Commitment & { ref: string };
+
+// A clock time ("2pm", "14:00", "noon") next to a weekday or a repeat word
+// ("every", "daily", "mondays"). Cheap gate for dumps that touch no existing
+// node: without it, "stats every day at 2pm" in a fresh workspace would never
+// reach the read.
+const CLOCK_RE = /\b(?:[01]?\d|2[0-3])(?::[0-5]\d)?\s?(?:am|pm|a\.m\.|p\.m\.)(?![a-z])|\b(?:[01]?\d|2[0-3])[:.][0-5]\d\b|\bnoon\b/i;
+const REPEAT_RE =
+  /\b(?:every|each|daily|weekdays?|weekends?|(?:mon|tues?|wednes|thurs?|fri|satur|sun)days?|mon|tue|wed|thu|fri|sat|sun)\b/i;
+
+export function mentionsWeeklyTime(dump: string): boolean {
+  return CLOCK_RE.test(dump) && REPEAT_RE.test(dump);
+}
 
 function str(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function parseJson(text: string): { changes?: unknown; commitments?: unknown; unclear?: unknown } | null {
+  try {
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    return JSON.parse((fenced ? fenced[1] : text).trim()) as { changes?: unknown; commitments?: unknown; unclear?: unknown };
+  } catch {
+    return null;
+  }
+}
+
+// Model rows → set_commitments rows, checked one at a time. An end date that
+// doesn't resolve is dropped (the commitment still saves) and asked about.
+function commitmentRows(
+  raw: unknown,
+  nodes: RefNode[],
+  commitments: RefCommitment[],
+  today: string,
+  unclear: string[],
+): Record<string, unknown>[] {
+  const byNodeRef = new Map(nodes.map((n) => [n.ref, n]));
+  const byRef = new Map(commitments.map((c) => [c.ref, c]));
+  const rows: Record<string, unknown>[] = [];
+  const touched = new Set<string>();
+  for (const item of Array.isArray(raw) ? raw : []) {
+    const row = (item ?? {}) as Record<string, unknown>;
+    const action = str(row.action);
+    const change: Record<string, unknown> = { action };
+    if (action === "add") {
+      change.title = str(row.title);
+      change.days = row.days;
+      change.start_time = str(row.start);
+      if (str(row.end)) change.end_time = str(row.end);
+      const node = byNodeRef.get(str(row.node));
+      if (node) change.node_id = node.id;
+    } else if (action === "update" || action === "remove") {
+      const existing = byRef.get(str(row.ref));
+      if (!existing || touched.has(existing.id)) continue;
+      change.commitment_id = existing.id;
+      if (action === "update") {
+        if (str(row.title)) change.title = str(row.title);
+        if (row.days) change.days = row.days;
+        if (str(row.start)) change.start_time = str(row.start);
+        if (str(row.end)) change.end_time = str(row.end);
+      }
+    } else {
+      continue;
+    }
+    if (action !== "remove" && str(row.until)) change.until = str(row.until);
+
+    const check = (c: Record<string, unknown>) => parseCommitmentChanges({ changes: [c] }, { today, existing: commitments }).ok;
+    let valid = check(change);
+    if (!valid && "until" in change) {
+      delete change.until;
+      valid = check(change);
+      if (valid) unclear.push(`When does ${str(change.title) || "that"} end?`);
+    }
+    if (!valid) continue;
+    if (typeof change.commitment_id === "string") touched.add(change.commitment_id);
+    rows.push(change);
+  }
+  return rows;
 }
 
 /**
@@ -46,14 +128,14 @@ function str(value: unknown): string {
  * whose check-back words don't resolve keeps the wait without the date. At
  * most one status move and one of each action per node.
  */
-export function parseDumpPriorityResponse(text: string, nodes: RefNode[], today: string): DumpPriorityRead {
-  let parsed: { changes?: unknown; unclear?: unknown };
-  try {
-    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    parsed = JSON.parse((fenced ? fenced[1] : text).trim()) as typeof parsed;
-  } catch {
-    return { changes: [], unclear: [] };
-  }
+export function parseDumpPriorityResponse(
+  text: string,
+  nodes: RefNode[],
+  today: string,
+  commitments: RefCommitment[] = [],
+): DumpPriorityRead {
+  const parsed = parseJson(text);
+  if (!parsed) return { changes: [], commitments: [], unclear: [] };
   const byRef = new Map(nodes.map((n) => [n.ref, n]));
   const changes: Record<string, unknown>[] = [];
   const unclear = (Array.isArray(parsed.unclear) ? parsed.unclear : [])
@@ -62,8 +144,17 @@ export function parseDumpPriorityResponse(text: string, nodes: RefNode[], today:
     .map((q) => q.slice(0, 160));
   const seen = new Set<string>();
   const statusMoved = new Set<string>();
+  // Haiku sometimes files a commitment row ({"ref":"c1","action":"update"})
+  // under "changes" — move it to where it belongs (eval, dump-priorities-v2).
+  const rawChanges = Array.isArray(parsed.changes) ? parsed.changes : [];
+  const isCommitmentRow = (item: unknown) =>
+    ["add", "update", "remove"].includes(str((item as Record<string, unknown> | null)?.action));
+  const rawCommitments = [
+    ...(Array.isArray(parsed.commitments) ? parsed.commitments : []),
+    ...rawChanges.filter(isCommitmentRow),
+  ];
 
-  for (const item of Array.isArray(parsed.changes) ? parsed.changes : []) {
+  for (const item of rawChanges.filter((row) => !isCommitmentRow(row))) {
     const row = (item ?? {}) as Record<string, unknown>;
     const node = byRef.get(str(row.ref));
     const action = str(row.action) as PriorityAction;
@@ -95,7 +186,8 @@ export function parseDumpPriorityResponse(text: string, nodes: RefNode[], today:
     if (STATUS_ACTIONS.has(action)) statusMoved.add(node.id);
     changes.push(change);
   }
-  return { changes, unclear: unclear.slice(0, MAX_UNCLEAR) };
+  const commitmentChanges = commitmentRows(rawCommitments, nodes, commitments, today, unclear);
+  return { changes, commitments: commitmentChanges, unclear: unclear.slice(0, MAX_UNCLEAR) };
 }
 
 /**
@@ -121,16 +213,22 @@ export async function readDumpPriorities(params: {
 }): Promise<DumpPriorityRead | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   const ids = [...new Set(params.nodeIds)].slice(0, MAX_NODES);
-  if (!apiKey || ids.length === 0 || !params.dump.trim()) return null;
+  const namesTime = mentionsWeeklyTime(params.dump);
+  if (!apiKey || !params.dump.trim() || (ids.length === 0 && !namesTime)) return null;
 
   try {
-    const { data } = await params.supabase
-      .from("nodes")
-      .select("id, title, node_type, status, target_date, stakes")
-      .eq("user_id", params.userId)
-      .eq("workspace_id", params.workspaceId)
-      .in("id", ids);
-    const rows = ((data ?? []) as Array<{
+    const [nodesResult, active] = await Promise.all([
+      ids.length > 0
+        ? params.supabase
+            .from("nodes")
+            .select("id, title, node_type, status, target_date, stakes")
+            .eq("user_id", params.userId)
+            .eq("workspace_id", params.workspaceId)
+            .in("id", ids)
+        : Promise.resolve({ data: [] }),
+      loadActiveCommitments(params.supabase, params.userId, params.today),
+    ]);
+    const rows = ((nodesResult.data ?? []) as Array<{
       id: string;
       title: string;
       node_type: string;
@@ -138,9 +236,10 @@ export async function readDumpPriorities(params: {
       target_date: string | null;
       stakes: number | null;
     }>).filter((n) => n.status !== "completed" && n.status !== "archived");
-    if (rows.length === 0) return null;
+    if (rows.length === 0 && !namesTime) return null;
 
     const nodes = rows.map((n, i) => ({ ...n, ref: `n${i + 1}` }));
+    const commitments = active.map((c, i) => ({ ...c, ref: `c${i + 1}` }));
     const client = new Anthropic({ apiKey });
     const startedAt = Date.now();
     const response = await client.messages.create({
@@ -155,6 +254,11 @@ export async function readDumpPriorities(params: {
             dump: params.dump.trim().slice(0, MAX_DUMP_CHARS),
             today: params.today,
             nodes,
+            commitments: commitments.map((c) => ({
+              ref: c.ref,
+              title: c.title,
+              when: describeCommitment(c, params.today),
+            })),
           }),
         },
       ],
@@ -173,7 +277,7 @@ export async function readDumpPriorities(params: {
       inputHash: hashText(params.dump),
     });
     if (cutOff) return null;
-    return parseDumpPriorityResponse(text, nodes, params.today);
+    return parseDumpPriorityResponse(text, nodes, params.today, commitments);
   } catch (err) {
     console.warn("[dump-priorities] read failed (non-fatal):", err instanceof Error ? err.message : err);
     return null;
