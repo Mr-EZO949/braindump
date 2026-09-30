@@ -1,3 +1,4 @@
+import { ALLOWED_CHILDREN } from "@/lib/graph/node-types";
 import type { NodeType, WorkspaceProfileAreaType } from "@/types/graph";
 
 type Domain =
@@ -256,6 +257,10 @@ export function pickExistingParentForNode(params: {
   const normalizedChildTitle = normalize(params.child.title);
 
   const ranked = params.existingNodes
+    // A guessed parent must be able to hold the child (node-types.ts). Without
+    // this a new class "Statistics Midterm" was put under the big task
+    // "Italian Crash Course" — the word "course" outscored everything.
+    .filter((candidate) => ALLOWED_CHILDREN[candidate.node_type]?.has(params.child.node_type))
     .map((candidate) => {
       const parentText = `${candidate.title}\n${candidate.summary ?? ""}`;
       const normalizedParentTitle = normalize(candidate.title);
