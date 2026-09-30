@@ -208,6 +208,8 @@ nothing on a 40-node workspace). ~$0.01 per 40 nodes.
 
 ## Not in v2 (next)
 
-- Fixed commitments (class every day at 2pm) as rows → free-time-aware Focus.
+- ~~Fixed commitments as rows → free-time-aware Focus~~ — built, `docs/commitments.md`.
+  Focus fits its head to a short free window before the next commitment
+  (`fitHeadToFreeTime`, applied before `diversifyHead`).
 - Timetable/PDF import into deadlines + commitments.
 - Stakes / hold controls in the edit sheet (chat and the Details rail cover it now).
