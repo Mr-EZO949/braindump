@@ -1,7 +1,7 @@
 # One turn — chat and building as a single pipeline
 
-**Status: approved 2026-09-30, order 1 → 2 → 3. Phase 1 is built (section 5); phases 2–5
-are not.** Written after the owner's note that the separation between "just answering" and
+**Status: approved 2026-09-30, order 1 → 2 → 3. Phases 1 and 2 are built (section 5);
+phases 3–5 are not.** Written after the owner's note that the separation between "just answering" and
 "planning / building the graph / extracting / connections" is the thing that feels wrong.
 Sections 1–2 describe the app as it was on 2026-09-30, before phase 1.
 
@@ -224,6 +224,19 @@ review modal for large sets. Planner models.
 If structural chat turns cost what a light extraction costs, the two-day sample drops from
 $0.437 to roughly $0.33 (≈$5 / 30 d). That is an estimate until a live run confirms it.
 
+**Measured after phase 2** (live eval 2026-09-30, synthetic workspace, 17 model calls):
+
+| Call | $ | Latency |
+|---|---|---|
+| Haiku chat turn that calls `build_graph` — warm cache | $0.0022–0.0026 | 0.9–2.5 s |
+| …same, first turn after the prompt changed (writes the 1h cache, shared app-wide) | $0.0285 | 2.0 s |
+| Builder, light prompt (`extract-light-v5`, ≤700 chars) | $0.0088–0.0112 | 3.0–6.0 s |
+| Builder, full prompt (`extract-v25`, a 783-char dump, 10 nodes) | $0.041–0.064 | 12.6–31 s |
+| Accept on the card | $0 (no model) | — |
+
+A structural edit through chat is now **≈$0.013 and 5–8 s** (one warm Haiku round + one light
+builder call) against ≈$0.052 and ~12 s before — better than the $0.025–0.03 estimated above.
+
 Not chosen — **one Sonnet agent for every turn**: at the measured $0.038 per Sonnet chat turn,
 20 turns a day is $0.76/day against a $0.16/day budget.
 
@@ -252,15 +265,59 @@ Each phase ships on its own and is testable from `testing-journal.md`.
      (the `<graph_edit>` tag left the prompt long ago), so it is deleted in phase 3 rather
      than rewired. A rejected chat card still writes no event; phase 2's `change_sets` row
      records that per op. Per-item accept on the chat card is phase 3.
-2. **Builder as a tool** (one migration: `change_sets`). Extraction output → change set;
-   builder gains move / update ops (`extract-v25`, `extract-light-v5`); orchestrator gets
-   `change` + `build_graph`, loses 8 tools and the Sonnet route (`assistant-v24`). One live
-   eval round, ≤5 cases per prompt: does Haiku call `build_graph` when it should, and does the
-   builder place / regroup correctly. *Owner notices:* restructures through chat are right the
-   first time, faster, about half the price; a dump can reorganize.
-3. **One thread, one card.** Brain Dump box posts a turn; change-set card in the thread; modal
-   becomes the expanded view; chooser, legacy tags and the synthetic turns are deleted; thread
-   history carries a compact note of each change set. *Owner notices:* the seam is gone —
+2. **Builder as a tool** — ✅ built 2026-09-30 (no migration; `extract-v25`,
+   `extract-light-v5`, `assistant-v24`).
+   - `lib/ai/extraction.ts` is split: **`runBuilder`** (retrieval → model → dedup → a checked
+     result; writes nothing but its `ai_run`) and `runExtraction` (a dump: `runBuilder` + the
+     `proposed_nodes` bookkeeping). The builder prompts gained `changes` — move / update /
+     link on EXISTING nodes — replacing "extraction only adds, ask a question" (bridge 6).
+     `lib/ai/builder-ops.ts` turns the output into change-set ops.
+   - **`build_graph`** (`tools/build.ts`): the chat model passes the turn to the builder; the
+     builder reads the user's message word for word (the model's `note` is only let in for a
+     bare "yes" or to resolve "it" on a short message — see the eval), the card shows the
+     builder's change set, Accept applies exactly that set through `applyChangeSet`.
+   - **Chat runs on Haiku.** `looksLikeStructuralEdit` no longer picks the model; the one
+     remaining Sonnet chat turn is a *generated* breakdown (`looksLikeBreakdownAsk`). The old
+     regexes survive only as a hint line in the message block (`buildHint`).
+   - **A dump can reorganize.** The builder's edits — plus the new nodes they depend on
+     (`splitRestructureSet`) — come back from `/api/entries` as ONE card in the dump's thread;
+     Accept goes through the ordinary resume endpoint, and no model continues that thread.
+   - `runTurnTools` (`tools/index.ts`) is the one place that decides what a turn's tool calls
+     come to — the chat and resume routes each carried a copy. Direct tools now run even when
+     a card is pending: "took the exam, waiting on the result, and add these three" used to
+     lose its first half to "only one action per turn".
+   - A reorganization the model leaves half-planned is never applied in part: every edit to
+     that node is dropped and the user is asked (`resolveBuilderChanges` → `broken`).
+   - **Live eval** (synthetic workspace, throwaway user, $0.32 over 4 rounds):
+     - Haiku picked the right tool 6/6: `build_graph` for a new parent over existing nodes, a
+       move that keeps a link, and a multi-item update (twice); `propose_node` for one add;
+       `complete_node` for one completion.
+     - Light builder 8/8 plans correct: project + rename + move + new sibling (4 runs), move +
+       `useful_for` link, completions + a dated task, a move next to a new task.
+     - Applied through the tool: "Applied 5 changes ✓", tree as asked.
+     - **Found and fixed:** Haiku's note paraphrased "finished the italian placement test" as
+       "finished Italian Crash Course" and the builder completed the course → long messages
+       now go to the builder without any note. A guessed parent could not hold the child (a
+       new class under the big task "Italian Crash Course") → `anchor-attachment.ts` now
+       respects `ALLOWED_CHILDREN`.
+     - **Known limit, full prompt:** on a long dump (783 chars, 10 new nodes) simple edits
+       landed 2/2 (move + link), but the new-parent restructure did not, 3 runs out of 3 —
+       twice the model moved nodes under a parent (`n11`) it never proposed. That case is now
+       dropped whole and asked about instead of half-applied; one line in chat then does it
+       through the light prompt. Fixing the prompt itself (write `changes` first) needs one
+       more ~$0.06 run and was not done.
+   - **Moved to phase 3**, where their readers are: the `change_sets` table (the card lives in
+     `pending_chat_runs` for now — nothing reads per-op status yet), folding the 8 node/edge
+     tools into `change`, breakdowns as a builder mode (which removes the last Sonnet chat
+     route), and deleting the chooser.
+   - **Not covered:** the HTTP routes and the browser (the local allowlist blocks the test
+     user) — the chat turns were assembled exactly as the route does and the tool calls run
+     through `runTurnTools`; `/api/entries/[id]/retry` ignores a dump's restructure.
+3. **One thread, one card.** Brain Dump box posts a turn; change-set card in the thread
+   (backed by a `change_sets` table: per-item accept / reject, the record of what was
+   proposed); modal becomes the expanded view; chooser, legacy tags and the synthetic turns
+   are deleted; thread history carries a compact note of each change set; the node/edge tools
+   fold into `change`; breakdowns become a builder mode. *Owner notices:* the seam is gone —
    type anything anywhere, follow up on a dump in plain words.
 4. **One policy.** Calibrated apply-with-Undo for chat ops; Undo on every applied card.
 5. **Server follow-ups + staged streaming.** Connections as a follow-up card; stage events.
