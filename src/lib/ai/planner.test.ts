@@ -5,6 +5,7 @@ import {
   computePlannerPriority,
   deadlineBonus,
   diversifyHead,
+  fitHeadToFreeTime,
   neglectBonus,
   rhythmFor,
   rotationDemoted,
@@ -304,5 +305,38 @@ describe("diversifyHead", () => {
       3,
     ).map((x) => x.id);
     expect(out).toEqual(["a1", "x", "b1", "a2", "a3", "y"]);
+  });
+});
+
+describe("fitHeadToFreeTime — Focus before a fixed commitment", () => {
+  // big_task ~60 min, task ~30, habit ~45 (DURATION_BY_TYPE)
+  const e = (id: string, node_type: string, check_back = false) => ({
+    id,
+    candidate: { node_type: node_type as "task", check_back },
+  });
+  const list = [e("thesis", "big_task"), e("email", "task"), e("gym", "habit"), e("call", "task")];
+
+  it("with 40 minutes free, what fits moves up, order kept", () => {
+    expect(fitHeadToFreeTime(list, 40).map((x) => x.id)).toEqual(["email", "call", "thesis", "gym"]);
+  });
+
+  it("a check-back always fits — it's one tap", () => {
+    const out = fitHeadToFreeTime([e("thesis", "big_task"), e("stats", "goal", true)], 20);
+    expect(out.map((x) => x.id)).toEqual(["stats", "thesis"]);
+  });
+
+  it("leaves the order alone with lots of time, too little time, no commitment, or nothing that fits", () => {
+    expect(fitHeadToFreeTime(list, 120)).toBe(list);
+    expect(fitHeadToFreeTime(list, 10)).toBe(list);
+    expect(fitHeadToFreeTime(list, null)).toBe(list);
+    expect(fitHeadToFreeTime([e("thesis", "big_task"), e("essay", "big_task")], 25).map((x) => x.id)).toEqual([
+      "thesis",
+      "essay",
+    ]);
+  });
+
+  it("only looks at the top 10 — a far-down quick task doesn't jump the queue", () => {
+    const long = [...Array.from({ length: 10 }, (_, i) => e(`big${i}`, "big_task")), e("quick", "task")];
+    expect(fitHeadToFreeTime(long, 40)[0].id).toBe("big0");
   });
 });

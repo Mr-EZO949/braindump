@@ -88,7 +88,9 @@ export async function POST(req: NextRequest) {
       supabase,
       clientToday: client_today,
       clientTzOffsetMinutes: client_tz_offset,
-    }).catch(() => ({ candidates: [] })),
+      // A short gap before a class → what fits it leads (docs/commitments.md).
+      fitToFreeTime: true,
+    }).catch(() => ({ candidates: [], busy_today: [] })),
 
     supabase
       .from("lifecycle_events")
@@ -208,5 +210,9 @@ export async function POST(req: NextRequest) {
     top,
     yesterday_wins,
     nudges: nudges.slice(0, MAX_NUDGES),
+    // Fixed commitments: today's busy time — Focus computes its "45 min free ·
+    // Stats at 14:00" line from it on the clock, and "Plan my day" skips it
+    // (docs/commitments.md).
+    busy_today: plannerResult.busy_today,
   });
 }

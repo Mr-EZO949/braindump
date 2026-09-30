@@ -11,6 +11,14 @@ import {
   relativeDue,
   type RankNode,
 } from "@/lib/graph/priority-signals";
+import { DURATION_BY_TYPE } from "@/lib/planner/auto-schedule";
+import {
+  busyOn,
+  freeTimeInBusy,
+  loadActiveCommitments,
+  type BusyInterval,
+  type Commitment,
+} from "@/lib/planner/commitments";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any;
@@ -190,6 +198,35 @@ export interface PlannerCandidateBundle {
   candidates: PlannerCandidate[];
   manual_items: PlannerManualItem[];
   preference_hints: string[];
+  /** The user's running fixed commitments (docs/commitments.md). */
+  commitments: Commitment[];
+  /** Today's busy intervals from them, earliest first. */
+  busy_today: BusyInterval[];
+}
+
+// Focus fits its head to a short free window: with 15–90 min before the next
+// commitment, the items among the top 10 that fit (by the same per-type
+// estimate "Schedule these" uses) move to the front, order kept. Shorter than
+// 15 min, nothing meaningful fits; 90+ min, anything does.
+export const FIT_WINDOW = { MIN_MINUTES: 15, MAX_MINUTES: 90, LOOKAHEAD: 10 } as const;
+
+export function estimateMinutes(nodeType: string): number {
+  return DURATION_BY_TYPE[nodeType] ?? 30;
+}
+
+export function fitHeadToFreeTime<T extends { candidate: Pick<PlannerCandidate, "node_type" | "check_back"> }>(
+  sorted: T[],
+  freeMinutes: number | null,
+): T[] {
+  if (freeMinutes === null || freeMinutes < FIT_WINDOW.MIN_MINUTES || freeMinutes >= FIT_WINDOW.MAX_MINUTES) {
+    return sorted;
+  }
+  const window = sorted.slice(0, FIT_WINDOW.LOOKAHEAD);
+  // A check-back is a one-tap decision — it always fits.
+  const fits = window.filter((e) => e.candidate.check_back || estimateMinutes(e.candidate.node_type) <= freeMinutes);
+  if (fits.length === 0 || fits.length === window.length) return sorted;
+  const fitting = new Set(fits);
+  return [...fits, ...window.filter((e) => !fitting.has(e)), ...sorted.slice(FIT_WINDOW.LOOKAHEAD)];
 }
 
 type NodeRow = {
@@ -504,6 +541,8 @@ export async function buildPlannerCandidates(params: {
   /** The user's Date.getTimezoneOffset() (minutes; UTC−local). Falls back to
    *  the server's offset. */
   clientTzOffsetMinutes?: number;
+  /** Focus only: pull what fits before the next fixed commitment to the top. */
+  fitToFreeTime?: boolean;
 }): Promise<PlannerCandidateBundle> {
   const unblockedAfter = new Date(
     Date.now() - RECENTLY_UNBLOCKED_WINDOW_HOURS * 60 * 60 * 1000,
@@ -562,6 +601,7 @@ export async function buildPlannerCandidates(params: {
     habitCompletionsThisWeekResult,
     chatSessionsSinceYesterdayResult,
     steerEventsResult,
+    commitments,
   ] = await Promise.all([
     // Active AND paused: paused nodes (and everything under them) are on hold,
     // and a paused node whose check-back date arrived comes back into Focus.
@@ -661,7 +701,15 @@ export async function buildPlannerCandidates(params: {
       .eq("entity_type", "node")
       .in("event_type", ["boost_node", "demote_node"])
       .gte("created_at", steerAfter),
+
+    // Fixed commitments → today's busy time (per user, fail-soft).
+    loadActiveCommitments(params.supabase, params.userId, todayDate),
   ]);
+
+  // The user's clock right now, minutes from their local midnight.
+  const nowMinute = Math.max(0, Math.min(24 * 60 - 1, Math.floor((Date.now() - todayStartMs) / 60_000)));
+  const busyToday = busyOn(commitments, todayDate);
+  const free = freeTimeInBusy(busyToday, nowMinute);
 
   const loadedNodes = (nodesResult.data ?? []) as NodeRow[];
   // Candidates come from active nodes; paused ones only feed holds/check-backs.
@@ -1074,12 +1122,17 @@ export async function buildPlannerCandidates(params: {
       return (b.candidate.current_importance_score ?? 0) - (a.candidate.current_importance_score ?? 0);
     });
 
+  // Focus: a short gap before the next commitment → what fits it leads.
+  const fitted = params.fitToFreeTime ? fitHeadToFreeTime(candidates, free.freeMinutes) : candidates;
+
   return {
-    candidates: diversifyHead(candidates, FOCUS_HEAD_SIZE)
+    candidates: diversifyHead(fitted, FOCUS_HEAD_SIZE)
       .slice(0, MAX_CANDIDATES)
       .map((entry) => entry.candidate),
     manual_items: manualItems,
     preference_hints: preferenceHints,
+    commitments,
+    busy_today: busyToday,
   };
 }
 

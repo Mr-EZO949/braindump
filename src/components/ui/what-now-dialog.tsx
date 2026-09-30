@@ -6,10 +6,12 @@ import { CloseIcon, TargetIcon } from "@/components/ui/icons";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   minutesToHHMM,
+  nowMinutesFloor,
   parseHHMM,
   planSchedule,
   todayIsoDate,
 } from "@/lib/planner/auto-schedule";
+import { describeFreeTime, freeTimeInBusy, type BusyInterval } from "@/lib/planner/commitments";
 import { clientDayHints } from "@/lib/habits/streak";
 import type { NodeType } from "@/types/graph";
 import type { Nudge } from "@/types/chat";
@@ -29,6 +31,8 @@ type LockInData = {
   headline: string | null;
   top: TopNode[];
   nudges: Nudge[];
+  // Today's fixed commitments (class, shift) as minutes from local midnight.
+  busy_today?: BusyInterval[];
 };
 
 // Focus is a $0 SQL brief, but pressing Focus still fired the endpoint on every
@@ -76,6 +80,15 @@ function isFocusCacheFresh(workspaceId: string | null, sig: string): boolean {
   const env = readFocusEnvelope(workspaceId);
   if (!env) return false;
   return env.sig === sig && Date.now() - env.cachedAt < FOCUS_CACHE_TTL_MS;
+}
+
+/** Drop the cached brief — e.g. busy time changed, which the graph signature can't see. */
+export function clearFocusCache(workspaceId: string) {
+  try {
+    window.sessionStorage.removeItem(focusCacheKey(workspaceId));
+  } catch {
+    // Storage unavailable — there was no cache either.
+  }
 }
 
 function writeFocusCache(workspaceId: string, data: LockInData, sig: string) {
@@ -248,7 +261,9 @@ export function WhatNowDialog({
           if (start === null || dur <= 0) return null;
           return { start, end: start + dur };
         })
-        .filter((x): x is { start: number; end: number } => x !== null);
+        .filter((x): x is { start: number; end: number } => x !== null)
+        // Fixed commitments (class, shift) are busy too.
+        .concat((data?.busy_today ?? []).map(({ start, end }) => ({ start, end })));
 
       // AI duration estimation — endpoint always returns a complete map.
       let durationByNodeId: Record<string, number> | undefined;
@@ -313,6 +328,9 @@ export function WhatNowDialog({
   const nudges = data?.nudges ?? [];
   const backups = top.slice(1, 3);
   const hero = top[0];
+  // "45 min free · Stats at 14:00" — from the clock at render, so a cached
+  // brief never shows a stale countdown.
+  const timeLine = describeFreeTime(freeTimeInBusy(data?.busy_today ?? [], nowMinutesFloor()));
 
   const settleCheckBack = async (decision: "done" | "still_waiting") => {
     if (!hero || !onCheckBack || checkBackBusy) return;
@@ -362,6 +380,12 @@ export function WhatNowDialog({
         </div>
       ) : (
         <>
+          {timeLine ? (
+            <motion.div className="lockin-time" variants={ITEM_VARIANTS}>
+              <span className="lockin-time-dot" aria-hidden="true" />
+              {timeLine}
+            </motion.div>
+          ) : null}
           {hero.check_back && onCheckBack ? (
             /* A waiting item whose day came — a decision, not a work block:
                two taps settle it, no chat needed. */
