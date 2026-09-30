@@ -397,12 +397,15 @@ export class ClaudeProvider {
             : input.planning_window === "custom"
               ? Math.max(15, Math.min(600, Math.round(input.custom_minutes ?? 60)))
               : 60;
+    // A class inside the session: plan (and pick the model for) the free time only.
+    const planMinutes = input.busy ? Math.max(15, input.busy.free_minutes) : totalMinutes;
 
     const prompt = buildPlanPrompt({
       planning_window: input.planning_window,
-      total_minutes: totalMinutes,
+      total_minutes: planMinutes,
       candidate_nodes: input.candidate_nodes,
       workspace_context: input.workspace_context,
+      busy_lines: input.busy?.lines,
     });
 
     // Short sessions (≤3h) plan on Haiku with the JSON schema ENFORCED — the
@@ -411,7 +414,7 @@ export class ClaudeProvider {
     // Full days stay on Sonnet: Haiku left ~2.5h of an 8h day empty and dropped
     // every habit. If the Haiku attempt still fails, the retry uses Sonnet.
     let plannerModel: string =
-      totalMinutes <= 180 ? AI_MODELS.CLAUDE_HAIKU : AI_MODELS.CLAUDE_SONNET;
+      planMinutes <= 180 ? AI_MODELS.CLAUDE_HAIKU : AI_MODELS.CLAUDE_SONNET;
     const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt, plannerModel);
     const start = Date.now();
 
@@ -443,7 +446,8 @@ export class ClaudeProvider {
       estimatedCost += claudeCostUSD(plannerModel, attemptUsage);
       try {
         const parsed = JSON.parse(extractJson(text));
-        output = validatePlanOutput(parsed, totalMinutes);
+        // Packed into the free minutes; the Planner lays them around the busy time on Accept.
+        output = validatePlanOutput(parsed, planMinutes);
         break;
       } catch (error) {
         lastError = error;

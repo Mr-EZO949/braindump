@@ -12,6 +12,7 @@ import { ChatRichText } from "@/components/ui/chat-rich-text";
 import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { AppliedActionCard } from "@/components/panel/applied-action-card";
 import { HabitStreak } from "@/components/panel/habit-streak";
+import { NodeSchedule } from "@/components/panel/node-schedule";
 import { useVoiceInput } from "@/components/voice/use-voice-input";
 import { classifyTaskSize } from "@/lib/ai/sizing";
 import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/types/chat";
@@ -773,6 +774,9 @@ export function ContextRail({
                       </div>
                     );
                   })() : null}
+
+                  {/* Fixed weekly times linked to this node (a class, a job). */}
+                  <NodeSchedule nodeId={selectedNode.id} />
 
                   {/* Score — compact inline + why */}
                   {(() => {

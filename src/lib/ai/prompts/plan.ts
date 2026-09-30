@@ -3,12 +3,12 @@
 // Gemini systemInstruction + Anthropic cache_control can fingerprint the
 // rubric across calls.
 
-export const PLAN_PROMPT_VERSION = "plan-v5";
+export const PLAN_PROMPT_VERSION = "plan-v6";
 
 const RUBRIC_BLOCK = `You are a personal planning assistant. Create a realistic time-blocked plan for the session described in the Session block below.
 
 Rules:
-- Fill the full session window. Don't leave gaps.
+- Fill the full session window — or, when the Session block lists busy time, exactly its free time. Don't leave gaps.
 - Include at least one break block if the session is 90+ minutes.
 - Add a 10-minute buffer block at the end of every session.
 - Size each focus block to the ACTUAL work — do not pad everything to one length, and do NOT under-size. Estimate from the item's title, summary, and type: a quick reply/small fix/admin chore ~10–15 min; a normal task ~30–45 min; focused learning, coding, problem-solving, writing, or studying is deep work ~60–120 min. If a title names a countable amount ("2 problems", "3 chapters", "5 emails"), size for that whole amount, not one unit (e.g. "2 medium LeetCode problems" is ~60–90 min, not 40). Break blocks 5–15 minutes.
@@ -67,6 +67,12 @@ export const PLAN_OUTPUT_SCHEMA = {
   },
 } as const;
 
+/** A planning window's length in minutes (custom clamped 15–600, as the providers do). */
+export function planWindowMinutes(window: string, customMinutes?: number | null): number {
+  if (window === "custom") return Math.max(15, Math.min(600, Math.round(customMinutes ?? 60)));
+  return window === "2h" ? 120 : window === "day" ? 480 : 60;
+}
+
 export interface PlanPromptParams {
   planning_window: string;
   total_minutes: number;
@@ -79,6 +85,8 @@ export interface PlanPromptParams {
     planning_signals?: string[];
   }>;
   workspace_context?: string;
+  /** Fixed commitments inside the session (sessionBusyNote in lib/planner/commitments). */
+  busy_lines?: string[];
 }
 
 function buildVariableBlock(params: PlanPromptParams): string {
@@ -99,9 +107,11 @@ function buildVariableBlock(params: PlanPromptParams): string {
     })
     .join("\n");
 
+  const busyBlock = params.busy_lines && params.busy_lines.length > 0 ? `${params.busy_lines.join("\n")}\n` : "";
+
   return `Session:
-Planning window: ${params.planning_window} (${params.total_minutes} minutes total)
-${contextBlock}
+Planning window: ${params.planning_window} (${params.total_minutes} minutes ${busyBlock ? "free" : "total"})
+${busyBlock}${contextBlock}
 Available work items:
 ${nodeList}`;
 }

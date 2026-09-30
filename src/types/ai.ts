@@ -446,6 +446,9 @@ export interface PlanInput {
     planning_signals?: string[];
   }>;
   workspace_context?: string;
+  // Fixed commitments inside the session (docs/commitments.md): only the free
+  // minutes get planned, and the Session block says where the gaps are.
+  busy?: { free_minutes: number; lines: string[] } | null;
 }
 
 export interface PlanOutput {

@@ -17,7 +17,9 @@ import { checkAIRunRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
 import { buildPlannerCandidates } from "@/lib/ai/planner";
 import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
 import { AI_MODELS, AI_RATE_LIMITS } from "@/lib/ai/config";
-import { PLAN_PROMPT_VERSION } from "@/lib/ai/prompts/plan";
+import { PLAN_PROMPT_VERSION, planWindowMinutes } from "@/lib/ai/prompts/plan";
+import { busyOn, sessionBusyNote, timeToMinutes } from "@/lib/planner/commitments";
+import { isISODate } from "@/lib/time/local-date";
 import {
   hashText,
   logFailedAIRun,
@@ -80,6 +82,8 @@ export async function POST(req: NextRequest) {
     custom_minutes = null,
     client_today,
     client_tz_offset,
+    session_date,
+    session_start,
   } = body as {
     workspace_id: string;
     planning_window?: string;
@@ -87,6 +91,10 @@ export async function POST(req: NextRequest) {
     custom_minutes?: number | null;
     client_today?: string;
     client_tz_offset?: number;
+    // Where the Planner will put the plan (YYYY-MM-DD + "HH:MM"), so fixed
+    // commitments inside it are planned around (docs/commitments.md).
+    session_date?: string;
+    session_start?: string;
   };
 
   if (!workspace_id || typeof workspace_id !== "string") {
@@ -152,7 +160,18 @@ export async function POST(req: NextRequest) {
     buildWorkspaceProfileContext({ workspaceId: workspace_id, userId: user.id, supabase }),
   ]);
 
-  const { candidates, manual_items, preference_hints } = candidateBundle;
+  const { candidates, manual_items, preference_hints, commitments } = candidateBundle;
+
+  // A class inside the session: the planner fills only the free stretches.
+  const sessionStartMinute = timeToMinutes(session_start);
+  const busy =
+    isISODate(session_date) && sessionStartMinute !== null
+      ? sessionBusyNote(
+          busyOn(commitments, session_date),
+          sessionStartMinute,
+          planWindowMinutes(resolvedWindow, custom_minutes),
+        )
+      : null;
 
   if (candidates.length === 0) {
     return NextResponse.json(
@@ -203,6 +222,7 @@ export async function POST(req: NextRequest) {
         planning_signals: c.planning_signals,
       })),
       workspace_context: workspaceContext || undefined,
+      busy,
     });
   } catch (err) {
     const normalized = normalizeAIError(err, "Planning failed");

@@ -8,6 +8,7 @@ import {
   PencilIcon,
   PlusIcon,
 } from "@/components/ui/icons";
+import { clearFocusCache } from "@/components/ui/what-now-dialog";
 import {
   PlannerPanel,
   INITIAL_PLANNER_STATE,
@@ -19,6 +20,14 @@ import type { GraphData, NodeStatus } from "@/types/graph";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { clientDayHints } from "@/lib/habits/streak";
 import { localDateISO } from "@/lib/time/local-date";
+import {
+  busyOn,
+  layoutAroundBusy,
+  loadActiveCommitments,
+  minutesToTime,
+  type BusyInterval,
+  type Commitment,
+} from "@/lib/planner/commitments";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -909,6 +918,55 @@ function TimelineEvent({
   );
 }
 
+// A fixed weekly commitment (class, shift): a quiet busy band behind the day's
+// tasks. Not draggable — it's the week's shape, changed by telling chat. The ×
+// removes the whole weekly commitment, after a confirm.
+function FixedBlock({
+  interval,
+  startHour,
+  onRemove,
+}: {
+  interval: BusyInterval;
+  startHour: number;
+  onRemove: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const top = (interval.start / 60 - startHour) * HOUR_HEIGHT;
+  const height = Math.max(((interval.end - interval.start) / 60) * HOUR_HEIGHT, 24);
+  return (
+    <div className="timeline-fixed" style={{ top, height }} title="Fixed every week — tell chat to change it">
+      {confirming ? (
+        <div className="timeline-fixed-confirm">
+          <span>Remove from every week?</span>
+          <button className="planner-task-confirm-cancel" onClick={() => setConfirming(false)} type="button">
+            Cancel
+          </button>
+          <button className="planner-task-confirm-ok" onClick={onRemove} type="button">
+            Remove
+          </button>
+        </div>
+      ) : (
+        <>
+          <span className="timeline-fixed-title">{interval.title}</span>
+          {height >= 40 ? (
+            <span className="timeline-fixed-time">
+              {minutesToTime(interval.start)}–{minutesToTime(interval.end)} · weekly
+            </span>
+          ) : null}
+          <button
+            aria-label={`Remove ${interval.title} from every week`}
+            className="timeline-fixed-del"
+            onClick={() => setConfirming(true)}
+            type="button"
+          >
+            <CloseIcon className="h-2.5 w-2.5" />
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 type TimelineInteractionMode = "move" | "resize";
 
 type TimelineDraftTiming = {
@@ -933,6 +991,9 @@ type TimelineAddRequest = {
 
 type DayTimelineProps = {
   tasks: PlanTask[];
+  /** Fixed commitments on this day — busy bands behind the tasks. */
+  fixed: BusyInterval[];
+  onRemoveFixed: (id: string) => void;
   onToggle: (id: string) => void;
   onEdit: (task: PlanTask) => void;
   onDelete: (id: string) => void;
@@ -943,6 +1004,8 @@ type DayTimelineProps = {
 
 function DayTimeline({
   tasks,
+  fixed,
+  onRemoveFixed,
   onToggle,
   onEdit,
   onDelete,
@@ -965,6 +1028,10 @@ function DayTimeline({
       startHour = Math.min(startHour, Math.floor(m / 60));
       endHour = Math.max(endHour, Math.ceil((m + (t.duration_minutes ?? 60)) / 60));
     }
+  }
+  for (const f of fixed) {
+    startHour = Math.min(startHour, Math.floor(f.start / 60));
+    endHour = Math.max(endHour, Math.ceil(f.end / 60));
   }
   startHour = Math.max(0, startHour - 1);
   endHour = Math.min(24, endHour + 1);
@@ -1109,7 +1176,7 @@ function DayTimeline({
 
   const handleGridClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (Date.now() < suppressClickUntilRef.current) return;
-    if ((e.target as Element).closest(".timeline-event")) return;
+    if ((e.target as Element).closest(".timeline-event, .timeline-fixed")) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const rawMinutes = ((e.clientY - rect.top) / HOUR_HEIGHT) * 60 + startHour * 60;
     const snapped = snapMinutes(rawMinutes);
@@ -1167,6 +1234,9 @@ function DayTimeline({
               <div className="timeline-line-hour" style={{ top: i * HOUR_HEIGHT }} />
               <div className="timeline-line-half" style={{ top: i * HOUR_HEIGHT + HOUR_HEIGHT / 2 }} />
             </div>
+          ))}
+          {fixed.map((f) => (
+            <FixedBlock key={f.id} interval={f} startHour={startHour} onRemove={() => onRemoveFixed(f.id)} />
           ))}
           {(() => {
             const lanes = computeTimelineLanes(timedTasks);
@@ -1321,6 +1391,37 @@ export function AssistantMode({
   const [contextDismissed, setContextDismissed] = useState(false);
 
   const plannerRef = useRef<HTMLDivElement>(null);
+
+  // Fixed weekly commitments (class, shift) — drawn on the timeline as busy
+  // time and planned around on Accept. Per user, across workspaces.
+  const [commitments, setCommitments] = useState<Commitment[]>([]);
+  useEffect(() => {
+    if (!supabase || !authUserId) {
+      setCommitments([]);
+      return;
+    }
+    let active = true;
+    void loadActiveCommitments(supabase, authUserId, today).then((rows) => {
+      if (active) setCommitments(rows);
+    });
+    return () => {
+      active = false;
+    };
+  }, [authUserId, supabase, today]);
+
+  const removeCommitment = useCallback(
+    async (id: string) => {
+      if (!supabase || !authUserId) return;
+      const { error } = await supabase.from("commitments").delete().eq("id", id).eq("user_id", authUserId);
+      if (error) {
+        setTaskError("Could not remove that fixed time.");
+        return;
+      }
+      setCommitments((current) => current.filter((c) => c.id !== id));
+      if (workspaceId) clearFocusCache(workspaceId);
+    },
+    [authUserId, supabase, workspaceId],
+  );
 
   useEffect(() => {
     if (!supabase) {
@@ -1808,6 +1909,14 @@ export function AssistantMode({
     planAbortRef.current = ac;
     planStartTimeRef.current = isValidTimeString(start_time ?? "") ? start_time : null;
     setPlannerState((prev) => ({ ...prev, loading: true, error: null }));
+    // Where Accept will put this plan — the server plans around the fixed
+    // commitments inside it (docs/commitments.md).
+    const sessionDate = selectedDate || today;
+    const windowMinutes =
+      window === "1h" ? 60 : window === "2h" ? 120 : window === "day" ? 480 : Math.max(15, custom_minutes ?? 60);
+    const sessionStart = formatMinutesToTaskTime(
+      getPlanTaskAnchorMinutes(window, sessionDate, windowMinutes, planStartTimeRef.current),
+    );
 
     try {
       const res = await fetch("/api/assistant/plan", {
@@ -1818,6 +1927,8 @@ export function AssistantMode({
           planning_window: window,
           ...(window === "custom" && custom_minutes ? { custom_minutes } : {}),
           ...clientDayHints(),
+          session_date: sessionDate,
+          session_start: sessionStart,
         }),
         signal: ac.signal,
       });
@@ -1951,15 +2062,17 @@ export function AssistantMode({
         planStartTimeRef.current,
       );
       const createdAt = new Date().toISOString();
-      let nextOffset = 0;
       const newTasks: PlanTask[] = [];
+      // Back to back from the anchor, but never over a fixed commitment: a
+      // block that would run into a class starts after it.
+      const starts = layoutAroundBusy(
+        keptBlocks.map((block) => block.duration_minutes),
+        anchorMinutes,
+        busyOn(commitments, targetDate),
+      );
 
-      for (const block of keptBlocks) {
-        const startMinutes = clampTaskStartMinutes(
-          anchorMinutes + nextOffset,
-          block.duration_minutes,
-        );
-        nextOffset += block.duration_minutes;
+      for (const [index, block] of keptBlocks.entries()) {
+        const startMinutes = clampTaskStartMinutes(starts[index], block.duration_minutes);
 
         if (block.block_type === "break" || block.block_type === "buffer") {
           continue;
@@ -2224,6 +2337,8 @@ export function AssistantMode({
                   </p>
                   <DayTimeline
                     tasks={viewTasks}
+                    fixed={busyOn(commitments, selectedDate)}
+                    onRemoveFixed={removeCommitment}
                     onToggle={toggleTask}
                     onEdit={openTaskEditor}
                     onDelete={deleteTask}

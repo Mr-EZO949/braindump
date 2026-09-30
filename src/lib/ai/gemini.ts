@@ -558,12 +558,15 @@ export class GeminiProvider implements AIProvider {
       input.planning_window === "custom"
         ? Math.max(15, Math.min(600, Math.round(input.custom_minutes ?? 60)))
         : windowMinutes[input.planning_window] ?? 60;
+    // A class inside the session: plan the free time only (see claude.ts).
+    const planMinutes = input.busy ? Math.max(15, input.busy.free_minutes) : totalMinutes;
 
     const { rubricBlock, variableBlock } = buildPlanPromptParts({
       planning_window: input.planning_window,
-      total_minutes: totalMinutes,
+      total_minutes: planMinutes,
       candidate_nodes: input.candidate_nodes,
       workspace_context: input.workspace_context,
+      busy_lines: input.busy?.lines,
     });
     const fullPrompt = `${rubricBlock}\n\n${variableBlock}`;
 
@@ -592,7 +595,7 @@ export class GeminiProvider implements AIProvider {
     let output: PlanOutput;
     try {
       const parsed = JSON.parse(text);
-      output = validatePlanOutput(parsed, totalMinutes);
+      output = validatePlanOutput(parsed, planMinutes);
     } catch (error) {
       throw malformedResponse({
         message: error instanceof Error ? error.message : "Plan output was malformed",

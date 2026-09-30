@@ -9,6 +9,9 @@ import { buildPlannerCandidates } from "../planner";
 import { aiProvider } from "../index";
 import { persistAIRun } from "../telemetry";
 import { PLAN_PROMPT_VERSION } from "../prompts/plan";
+import { DAY_START_MINUTE } from "@/lib/planner/auto-schedule";
+import { busyOn, sessionBusyNote } from "@/lib/planner/commitments";
+import { localDateISO } from "@/lib/time/local-date";
 
 // YYYY-MM-DD. Postgres `date` parses a broader set, but we want Claude to
 // emit ISO dates consistently so the UI formats them predictably.
@@ -326,10 +329,19 @@ const PLAN_DAY: ToolDefinition = {
       workspaceId: ctx.workspaceId,
       userId: ctx.userId,
       supabase: ctx.supabase,
+      clientToday: ctx.today,
     });
     if (!bundle.candidates.length) {
       return { accepted: false, error: "No active work items to plan — add a few tasks or goals first." };
     }
+
+    // A full day lands at 09:00 in the Planner (its day-plan default); plan
+    // around today's fixed commitments inside it. Short windows start "now",
+    // which this tool can't see — Accept still lays those around busy time.
+    const busy =
+      window === "day"
+        ? sessionBusyNote(busyOn(bundle.commitments, ctx.today ?? localDateISO(new Date(), null)), DAY_START_MINUTE, 480)
+        : null;
 
     let planResult;
     try {
@@ -344,6 +356,7 @@ const PLAN_DAY: ToolDefinition = {
           node_type: c.node_type,
           planning_signals: c.planning_signals,
         })),
+        busy,
       });
     } catch {
       return { accepted: false, error: "Couldn't build the plan right now — try again in a moment." };
