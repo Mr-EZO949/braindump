@@ -7,15 +7,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { getImportanceLabel } from "@/lib/graph/importance";
-import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
-import { generateAndStoreEmbedding } from "@/lib/ai/embeddings";
 import { runClusteringPass } from "@/lib/ai/clustering";
 import { ensureWorkspaceRoot } from "@/lib/graph/ensure-workspace-root";
-import { scoreNodesJudgment } from "@/lib/ai/judgment";
-import { computeWorkspaceScores } from "@/lib/ai/scoring";
-import type { NodeType, WorkspaceProfile } from "@/types/graph";
-import { KNOWLEDGE_TYPES, normalizeNodeType } from "@/lib/graph/node-types";
+import { embedNewNodes, judgeAndRescore, newNodeRow } from "@/lib/graph/node-intake";
+import type { NodeType } from "@/types/graph";
+import { normalizeNodeType } from "@/lib/graph/node-types";
 import type { ExtractionSoftLink } from "@/types/ai";
 
 interface ReviewAction {
@@ -183,8 +179,6 @@ export async function POST(req: NextRequest) {
       // Legacy "concept" (proposals made before node types v2) → note.
       const nodeType: NodeType = normalizeNodeType(rawType);
 
-      const importanceIndex = 50; // Neutral default — scoring engine will update in Phase 7
-
       // target_date carries through from the proposal to the canonical node
       // unchanged. Validation already ensured the field is YYYY-MM-DD or null,
       // and the user can edit it post-accept via update_node / the form.
@@ -197,26 +191,21 @@ export async function POST(req: NextRequest) {
       // source_span text is replaced with null so it doesn't pollute
       // the node's provenance.
       const autoComplete = proposal.source_span === "[[AUTO_COMPLETE]]";
-      const statusOnInsert: "active" | "completed" = autoComplete ? "completed" : "active";
 
       return [{
         edits: action.edits,
         proposal,
-        nodeRow: {
-          user_id: user.id,
-          workspace_id: proposal.workspace_id as string,
+        // The same row chat's tools write (lib/graph/node-intake.ts).
+        nodeRow: newNodeRow({
+          userId: user.id,
+          workspaceId: proposal.workspace_id as string,
           title,
+          nodeType,
           summary,
           body,
-          raw_text: null,
-          node_type: nodeType,
-          importance: getImportanceLabel(importanceIndex),
-          importance_index: importanceIndex,
-          color: NODE_COLOR_BY_TYPE[nodeType],
-          status: statusOnInsert,
-          completed_at: autoComplete ? new Date().toISOString() : null,
-          target_date: targetDate,
-        },
+          targetDate,
+          completed: autoComplete,
+        }),
       }];
     });
 
@@ -283,17 +272,11 @@ export async function POST(req: NextRequest) {
       // doesn't fail the accept; we just lose a single embedding to the
       // retry queue.
       await Promise.all(
-        acceptedPairs.map(({ created: node }) =>
-          generateAndStoreEmbedding({
-            nodeId: node.id,
-            title: node.title,
-            summary: node.summary,
-            workspaceId: node.workspace_id,
-            userId: user.id,
-            supabase,
-          }).catch(() => {
-            // Logged silently — node is accepted regardless
-          }),
+        Array.from(new Set(acceptedPairs.map((pair) => pair.created.workspace_id))).map((wsId) =>
+          embedNewNodes(
+            { supabase, userId: user.id, workspaceId: wsId },
+            acceptedPairs.filter((pair) => pair.created.workspace_id === wsId).map((pair) => pair.created),
+          ),
         ),
       );
 
@@ -794,52 +777,12 @@ export async function POST(req: NextRequest) {
   if (acceptedPairs.length > 0) {
     const workspaceId = acceptedPairs[0].created.workspace_id;
 
-    // Per-node AI judgment for newly accepted nodes. Best-effort: if Haiku
-    // fails or is unconfigured, the heuristic scorer will still run and just
-    // redistribute the judgment weight. Writes to ai_node_judgments BEFORE
-    // computeWorkspaceScores so the fresh judgment feeds into the rescore.
-    try {
-      const { data: workspaceRow } = await supabase
-        .from("workspaces")
-        .select("profile_payload")
-        .eq("id", workspaceId)
-        .eq("user_id", user.id)
-        .maybeSingle();
-      const workspaceProfile =
-        workspaceRow && typeof workspaceRow === "object"
-          ? ((workspaceRow as { profile_payload?: WorkspaceProfile | null }).profile_payload ?? null)
-          : null;
-
-      // Skip judgment on knowledge (ideas, notes) — they rarely drive the
-      // graph's focus ranking, and a Haiku call per extraction-accept adds up
-      // fast when a brain dump creates 10+ of them. They fall back to
-      // heuristic scoring only; work and structure types still get judged.
-      const judgmentCandidates = acceptedPairs.filter(
-        (pair) => !KNOWLEDGE_TYPES.has(pair.created.node_type as NodeType),
-      );
-      if (judgmentCandidates.length > 0) {
-        await scoreNodesJudgment({
-          nodes: judgmentCandidates.map((pair) => ({
-            id: pair.created.id,
-            title: pair.created.title,
-            summary: pair.created.summary,
-            node_type: pair.created.node_type,
-          })),
-          workspaceProfile,
-          runType: "node_judgment",
-          supabase,
-          userId: user.id,
-          workspaceId,
-        });
-      }
-    } catch (err) {
-      console.warn(
-        "[proposals/review] node judgment failed (non-fatal):",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-
-    await computeWorkspaceScores({ workspaceId, userId: user.id, supabase });
+    // Per-node AI judgment for the newly accepted nodes, written BEFORE the
+    // rescore so it feeds into it (shared with chat: lib/graph/node-intake.ts).
+    await judgeAndRescore(
+      { supabase, userId: user.id, workspaceId },
+      acceptedPairs.map((pair) => pair.created),
+    );
 
     const acceptedNodeIds = acceptedPairs.map((pair) => pair.created.id);
     const { data: refreshedNodes } = await supabase

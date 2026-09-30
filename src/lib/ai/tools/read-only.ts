@@ -31,6 +31,9 @@ export interface ToolContext {
   // The user's local calendar date (YYYY-MM-DD, from the bd_tz cookie). Tools
   // must use this for "today" — never new Date().toISOString(), which is UTC.
   today?: string;
+  // Runs work after the response has gone out (Next's `after`) — see
+  // ChangeContext in lib/graph/change-set.ts.
+  defer?: (work: () => Promise<void>) => void;
 }
 
 export interface ToolSchema {

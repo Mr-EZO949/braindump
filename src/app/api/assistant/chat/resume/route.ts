@@ -20,7 +20,7 @@ import type {
   ToolResultBlockParam,
   ToolUseBlock,
 } from "@anthropic-ai/sdk/resources/messages";
-import { NextRequest } from "next/server";
+import { after, NextRequest } from "next/server";
 import { getRequestToday } from "@/lib/time/request-date";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -170,6 +170,9 @@ export async function POST(req: NextRequest) {
     workspaceId,
     selectedNodeId,
     today: todayISO,
+    // A new node's judgment + rescore run once the reply is out, so Accept
+    // doesn't wait ~3 s on a model call (lib/graph/change-set.ts).
+    defer: (work: () => Promise<void>) => after(work),
   };
 
   // Match the initial turn's model tier: a structural-edit thread continues on

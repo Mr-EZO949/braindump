@@ -7,31 +7,32 @@
 // Each handler returns a JSON-serialisable payload that gets fed back to
 // Claude as a tool_result so the model knows what the user chose and can
 // continue the conversation coherently.
+//
+// The tools are the model-facing surface only. What they write goes through
+// lib/graph/change-set.ts — the one writer of AI graph changes — so a node is
+// the same object whichever tool created it.
 
-import { getWorkspaceRootId, setNodeParent } from "@/lib/graph/hierarchy";
+import {
+  CHANGE_KINDS,
+  VALID_EDGE_TYPES,
+  applyChangeSet,
+  changeNodeStatus,
+  createLateralEdge,
+  fetchWorkspaceNode,
+  hierarchyPair,
+  isHierarchyEdgeType,
+  isValidNodeType,
+  moveNode,
+  recomputeScores,
+  toolNodeType,
+  updateNodeFields,
+  type ChangeOp,
+} from "@/lib/graph/change-set";
 import { mergeNodes } from "@/lib/graph/merge";
-import { transitionNodeStatus } from "@/lib/graph/status-transition";
-import { computeWorkspaceScores } from "@/lib/ai/scoring";
-import { localDateISO } from "@/lib/time/local-date";
 import type { NodeStatus } from "@/types/graph";
 
 import type { ToolContext, ToolDefinition } from "./read-only";
 import { NODE_TYPES } from "@/lib/graph/node-types";
-
-// ---------------------------------------------------------------------------
-// Shared vocabularies
-// ---------------------------------------------------------------------------
-
-type ImportanceLabel = "low" | "medium" | "high" | "critical";
-
-function importanceFromIndex(idx: number): ImportanceLabel {
-  if (idx >= 80) return "critical";
-  if (idx >= 60) return "high";
-  if (idx >= 40) return "medium";
-  return "low";
-}
-
-const VALID_NODE_TYPES: ReadonlySet<string> = new Set(NODE_TYPES);
 
 // Tool-schema text for every node_type field — Haiku leans on the schema
 // more than the system prompt when it fills a tool call ("pass the stats
@@ -39,126 +40,15 @@ const VALID_NODE_TYPES: ReadonlySet<string> = new Set(NODE_TYPES);
 const NODE_TYPE_FIELD_DESCRIPTION =
   "task = one sitting (email the prof, solve 5 problems). big_task = one piece of work over several sittings (write the thesis, build a site). project = several different parts. goal = a result to reach, ideally dated (pass an exam, land a job, hit a number). habit = repeats on a cadence. area = an ongoing part of life (Health, Career). class = a course. idea = might do, not committed. note = something to remember (a person, advice, a fact).";
 
-// The model's node_type as a stored value: tolerate "Big task" / "big-task"
-// and the retired "concept" (→ note), so an old habit doesn't fail the tool.
-function toolNodeType(raw: unknown): string {
-  const t = typeof raw === "string" ? raw.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
-  return t === "concept" ? "note" : t;
-}
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-// Edge types Claude is allowed to propose. Keeps the surface small and
-// semantically meaningful — the inference pipeline uses a wider set, but
-// user-facing proposals should stay legible.
-const VALID_EDGE_TYPES = new Set([
-  "belongs_to", // child → parent: MOVES the source under the target
-  "contains", // parent → child: the same move, said from the parent's side
-  "required_for", // dependency: source is required for target
-  "supports", // source reinforces target
-  "related_to", // loose lateral connection
-  "useful_for", // source is useful for target
-  "inspired_by", // source was inspired by target
-]);
-
-// ---------------------------------------------------------------------------
-// Small shared helpers
-// ---------------------------------------------------------------------------
-
-async function fetchWorkspaceNode(
-  ctx: ToolContext,
-  nodeId: string,
-): Promise<{ id: string; status: string | null; node_type: string | null } | null> {
-  const { data } = await ctx.supabase
-    .from("nodes")
-    .select("id, status, node_type")
-    .eq("id", nodeId)
-    .eq("user_id", ctx.userId)
-    .eq("workspace_id", ctx.workspaceId)
-    .maybeSingle();
-  return (
-    (data as { id: string; status: string | null; node_type: string | null } | null) ?? null
-  );
-}
-
-// A node's parent is a belongs_to edge, child → parent (lib/graph/hierarchy.ts).
-// "contains" is only the model's way of saying it from the parent's side.
-const HIERARCHY_EDGE_TYPES: ReadonlySet<string> = new Set(["belongs_to", "contains"]);
-
-function hierarchyPair(
-  edgeType: string,
-  sourceId: string,
-  targetId: string,
-): { childId: string; parentId: string } {
-  return edgeType === "contains"
-    ? { childId: targetId, parentId: sourceId }
-    : { childId: sourceId, parentId: targetId };
-}
-
-// The workspace root, fetched at most once per tool call.
-function workspaceRootOnce(ctx: ToolContext): () => Promise<string | null> {
-  let cached: Promise<string | null> | null = null;
-  return () =>
-    (cached ??= getWorkspaceRootId({
-      supabase: ctx.supabase,
-      userId: ctx.userId,
-      workspaceId: ctx.workspaceId,
-    }));
-}
-
-// Parent link for a node chat just created. No parent named → the workspace
-// root, so a new node never floats until the connection engine guesses one.
-async function attachNewNode(
-  ctx: ToolContext,
-  nodeId: string,
-  parentId: string | null,
-  rootId: () => Promise<string | null>,
-): Promise<boolean> {
-  const explicit = parentId !== null;
-  const target = parentId ?? (await rootId());
-  if (!target || target === nodeId) return false;
-  const { error } = await ctx.supabase.from("edges").insert({
-    user_id: ctx.userId,
-    workspace_id: ctx.workspaceId,
-    source_node_id: nodeId,
-    target_node_id: target,
-    edge_type: "belongs_to",
-    status: "active",
-    user_confirmed: explicit,
-    explanation: explicit ? null : "Anchored to workspace.",
-  });
-  return !error;
-}
-
-async function recomputeScores(ctx: ToolContext): Promise<void> {
-  await computeWorkspaceScores({
-    workspaceId: ctx.workspaceId,
-    userId: ctx.userId,
-    supabase: ctx.supabase,
-    today: ctx.today,
-  }).catch((err: unknown) => {
-    console.warn("[mutations] score recompute failed:", err);
-  });
-}
-
-// Every chat-driven status change runs the SAME transition as the Details
-// button (src/lib/graph/status-transition.ts): cascades, planner sync, habit
-// semantics, lifecycle + feedback events. Returns a tool_result payload.
+// A chat-driven status change as a tool_result payload.
 async function toolStatusTransition(
   ctx: ToolContext,
   nodeId: string,
   newStatus: NodeStatus,
-  options?: { recomputeScores?: boolean },
 ): Promise<Record<string, unknown>> {
-  const result = await transitionNodeStatus({
-    supabase: ctx.supabase,
-    userId: ctx.userId,
-    workspaceId: ctx.workspaceId,
-    nodeId,
-    newStatus,
-    // The user's local day (bd_tz cookie → chat route). UTC only as a fallback.
-    today: ctx.today ?? localDateISO(new Date(), null),
-    habitSource: "chat",
-    recomputeScores: options?.recomputeScores,
-  });
+  const result = await changeNodeStatus(ctx, nodeId, newStatus);
   switch (result.kind) {
     case "error":
       return {
@@ -259,86 +149,51 @@ const PROPOSE_NODE: ToolDefinition = {
     }
 
     const nodeType = toolNodeType(args.node_type);
-    if (!VALID_NODE_TYPES.has(nodeType)) {
+    if (!isValidNodeType(nodeType)) {
       return {
         accepted: false,
-        error: `node_type must be one of ${Array.from(VALID_NODE_TYPES).join(", ")}`,
+        error: `node_type must be one of ${NODE_TYPES.join(", ")}`,
       };
     }
 
-    const importanceIndex =
-      typeof args.importance_index === "number"
-        ? Math.max(0, Math.min(100, Math.round(args.importance_index)))
-        : 50;
-    const importance = importanceFromIndex(importanceIndex);
-
-    const summary =
-      typeof args.summary === "string" && args.summary.trim().length > 0
-        ? args.summary.trim().slice(0, 2000)
+    const parentRef =
+      typeof args.parent_node_id === "string" && args.parent_node_id.length > 0
+        ? args.parent_node_id
         : null;
-
-    let parentId: string | null = null;
-    if (typeof args.parent_node_id === "string" && args.parent_node_id.length > 0) {
-      const parent = await fetchWorkspaceNode(ctx, args.parent_node_id);
-      if (!parent) {
-        return {
-          accepted: false,
-          error: "parent_node_id not found in this workspace",
-        };
-      }
-      parentId = parent.id;
+    if (parentRef && !(await fetchWorkspaceNode(ctx, parentRef))) {
+      return {
+        accepted: false,
+        error: "parent_node_id not found in this workspace",
+      };
     }
 
-    // Validate ISO date if provided. Empty string treated as "not set".
-    const targetDate =
-      typeof args.target_date === "string" &&
-      /^\d{4}-\d{2}-\d{2}$/.test(args.target_date)
-        ? args.target_date
-        : null;
-
-    // Trim body to the soft 400-char cap. null when empty / not supplied.
-    const body =
-      typeof args.body === "string" && args.body.trim().length > 0
-        ? args.body.trim().slice(0, 400)
-        : null;
-
-    const { data: node, error: nodeErr } = await ctx.supabase
-      .from("nodes")
-      .insert({
-        user_id: ctx.userId,
-        workspace_id: ctx.workspaceId,
+    const { results, created } = await applyChangeSet(ctx, [
+      {
+        kind: "create_node",
         title,
-        summary,
-        body,
         node_type: nodeType,
-        importance,
-        importance_index: importanceIndex,
-        status: "active",
-        target_date: targetDate,
-      })
-      .select("id, title, node_type")
-      .single();
-
-    if (nodeErr || !node) {
+        summary: args.summary,
+        body: args.body,
+        importance_index: args.importance_index,
+        target_date: args.target_date,
+        ...(parentRef ? { parent_node_id: parentRef } : {}),
+      },
+    ]);
+    const node = created[0];
+    if (!node) {
+      const failure = results[0];
       return {
         accepted: false,
-        error: `Failed to create node: ${nodeErr?.message ?? "unknown error"}`,
+        error: `Failed to create node: ${failure && !failure.ok ? failure.error : "unknown error"}`,
       };
     }
-
-    const edgeCreated = await attachNewNode(
-      ctx,
-      node.id as string,
-      parentId,
-      workspaceRootOnce(ctx),
-    );
 
     return {
       accepted: true,
       node_id: node.id,
       title: node.title,
       node_type: node.node_type,
-      parent_edge_created: edgeCreated,
+      parent_edge_created: node.parentAttached,
     };
   },
 };
@@ -424,18 +279,7 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
     }
 
     // Validate every item up front so we don't half-create the batch.
-    const normalised = [] as Array<{
-      local_ref: string | null;
-      title: string;
-      summary: string | null;
-      node_type: string;
-      importance: ImportanceLabel;
-      importance_index: number;
-      parent_node_id: string | null;
-      parent_local_ref: string | null;
-      target_date: string | null;
-    }>;
-
+    const ops: ChangeOp[] = [];
     for (let i = 0; i < args.nodes.length; i++) {
       const n = args.nodes[i] ?? {};
       const title = typeof n.title === "string" ? n.title.trim() : "";
@@ -444,50 +288,43 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
         return { accepted: false, error: `nodes[${i}].title must be ≤120 chars` };
       }
       const nodeType = toolNodeType(n.node_type);
-      if (!VALID_NODE_TYPES.has(nodeType)) {
+      if (!isValidNodeType(nodeType)) {
         return {
           accepted: false,
-          error: `nodes[${i}].node_type must be one of ${Array.from(VALID_NODE_TYPES).join(", ")}`,
+          error: `nodes[${i}].node_type must be one of ${NODE_TYPES.join(", ")}`,
         };
       }
-      const importanceIndex =
-        typeof n.importance_index === "number"
-          ? Math.max(0, Math.min(100, Math.round(n.importance_index)))
-          : 50;
-      const summary =
-        typeof n.summary === "string" && n.summary.trim().length > 0
-          ? n.summary.trim().slice(0, 2000)
-          : null;
-      const targetDate =
-        typeof n.target_date === "string" &&
-        /^\d{4}-\d{2}-\d{2}$/.test(n.target_date)
-          ? n.target_date
-          : null;
-      normalised.push({
-        local_ref: typeof n.local_ref === "string" ? n.local_ref : null,
+      ops.push({
+        kind: "create_node",
         title,
-        summary,
         node_type: nodeType,
-        importance: importanceFromIndex(importanceIndex),
-        importance_index: importanceIndex,
-        parent_node_id:
-          typeof n.parent_node_id === "string" && n.parent_node_id.length > 0
-            ? n.parent_node_id
-            : null,
-        parent_local_ref:
-          typeof n.parent_local_ref === "string" && n.parent_local_ref.length > 0
-            ? n.parent_local_ref
-            : null,
-        target_date: targetDate,
+        summary: n.summary,
+        importance_index: n.importance_index,
+        ...(typeof n.local_ref === "string" && n.local_ref ? { local_ref: n.local_ref } : {}),
+        ...(typeof n.parent_node_id === "string" && n.parent_node_id.length > 0
+          ? { parent_node_id: n.parent_node_id }
+          : {}),
+        // Resolved after every node exists, so a parent listed later works.
+        ...(typeof n.parent_local_ref === "string" && n.parent_local_ref.length > 0
+          ? { parent_local_ref: n.parent_local_ref }
+          : {}),
+        ...(typeof n.target_date === "string" && ISO_DATE.test(n.target_date)
+          ? { target_date: n.target_date }
+          : {}),
       });
     }
 
     // Verify every external parent_node_id belongs to this workspace.
+    const localRefs = new Set(
+      ops.flatMap((op) => (op.kind === "create_node" && op.local_ref ? [op.local_ref] : [])),
+    );
     const externalParents = Array.from(
       new Set(
-        normalised
-          .map((n) => n.parent_node_id)
-          .filter((id): id is string => id !== null),
+        ops.flatMap((op) =>
+          op.kind === "create_node" && op.parent_node_id && !localRefs.has(op.parent_node_id)
+            ? [op.parent_node_id]
+            : [],
+        ),
       ),
     );
     if (externalParents.length > 0) {
@@ -509,153 +346,27 @@ const PROPOSE_NODES_BATCH: ToolDefinition = {
       }
     }
 
-    // Insert nodes one-by-one so we can map local_ref → real UUID for edges.
-    // Brief enough for batches up to 30.
-    const localRefToId = new Map<string, string>();
-    const createdIds: string[] = [];
-    const created: Array<{
-      id: string;
-      title: string;
-      node_type: string;
-      parent_edge_created: boolean;
-    }> = [];
-    const rootId = workspaceRootOnce(ctx);
-    const deferred: Array<{ index: number; ref: string }> = [];
-
-    for (const spec of normalised) {
-      const { data: node, error: nodeErr } = await ctx.supabase
-        .from("nodes")
-        .insert({
-          user_id: ctx.userId,
-          workspace_id: ctx.workspaceId,
-          title: spec.title,
-          summary: spec.summary,
-          node_type: spec.node_type,
-          importance: spec.importance,
-          importance_index: spec.importance_index,
-          status: "active",
-          target_date: spec.target_date,
-        })
-        .select("id, title, node_type")
-        .single();
-      if (nodeErr || !node) {
-        return {
-          accepted: false,
-          error: `Failed to create "${spec.title}": ${nodeErr?.message ?? "unknown error"}`,
-          created_so_far: createdIds,
-        };
-      }
-      createdIds.push(node.id as string);
-      if (spec.local_ref) localRefToId.set(spec.local_ref, node.id as string);
-
-      const parentId =
-        spec.parent_node_id ??
-        (spec.parent_local_ref ? localRefToId.get(spec.parent_local_ref) ?? null : null);
-      // A parent_local_ref that points at a LATER item resolves after the loop.
-      const waitsForLaterParent = !parentId && spec.parent_local_ref !== null;
-      const edgeCreated = waitsForLaterParent
-        ? false
-        : await attachNewNode(ctx, node.id as string, parentId, rootId);
-      created.push({
-        id: node.id as string,
-        title: node.title as string,
-        node_type: node.node_type as string,
-        parent_edge_created: edgeCreated,
-      });
-      if (waitsForLaterParent) deferred.push({ index: created.length - 1, ref: spec.parent_local_ref! });
-    }
-
-    for (const { index, ref } of deferred) {
-      const row = created[index];
-      const parentId = localRefToId.get(ref) ?? null;
-      row.parent_edge_created = await attachNewNode(
-        ctx,
-        row.id,
-        parentId === row.id ? null : parentId,
-        rootId,
-      );
+    const outcome = await applyChangeSet(ctx, ops);
+    const created = outcome.created.map((node) => ({
+      id: node.id,
+      title: node.title,
+      node_type: node.node_type,
+      parent_edge_created: node.parentAttached,
+    }));
+    const failed = outcome.results.flatMap((result, i) =>
+      result.ok ? [] : [`"${(ops[i] as { title: string }).title}": ${result.error}`],
+    );
+    if (failed.length > 0) {
+      return {
+        accepted: created.length > 0,
+        created,
+        error: `Failed to create ${failed.join("; ")}`,
+      };
     }
 
     return { accepted: true, created };
   },
 };
-
-// ---------------------------------------------------------------------------
-// Shared edge writers (propose_edge + propose_changes_batch)
-// ---------------------------------------------------------------------------
-
-// Moves a node under a new parent. The tool_result says where it came from so
-// the model (or the no-model confirmation) can tell the user plainly.
-async function moveNode(
-  ctx: ToolContext,
-  nodeId: string,
-  parentId: string,
-  explanation: string | null,
-): Promise<Record<string, unknown> & { accepted: boolean; moved?: boolean }> {
-  const result = await setNodeParent({
-    supabase: ctx.supabase,
-    userId: ctx.userId,
-    workspaceId: ctx.workspaceId,
-    nodeId,
-    parentId,
-    explanation,
-  });
-  if (!result.ok) return { accepted: false, error: result.error };
-  if (!result.changed) {
-    return {
-      accepted: true,
-      moved: false,
-      node_id: nodeId,
-      parent_node_id: parentId,
-      message: `"${result.nodeTitle}" is already under "${result.parentTitle}".`,
-    };
-  }
-  return {
-    accepted: true,
-    moved: true,
-    node_id: nodeId,
-    parent_node_id: parentId,
-    previous_parent_title: result.previousParentTitle,
-    message: `Moved "${result.nodeTitle}" under "${result.parentTitle}" ✓`,
-  };
-}
-
-// A non-hierarchy link. An identical active edge counts as success.
-async function createLateralEdge(
-  ctx: ToolContext,
-  sourceId: string,
-  targetId: string,
-  edgeType: string,
-  explanation: string | null,
-): Promise<{ ok: true; edgeId: string; alreadyExisted: boolean } | { ok: false; error: string }> {
-  const { data: existing } = await ctx.supabase
-    .from("edges")
-    .select("id")
-    .eq("user_id", ctx.userId)
-    .eq("source_node_id", sourceId)
-    .eq("target_node_id", targetId)
-    .eq("edge_type", edgeType)
-    .eq("status", "active")
-    .maybeSingle();
-  if (existing) return { ok: true, edgeId: existing.id as string, alreadyExisted: true };
-
-  const { data: edge, error } = await ctx.supabase
-    .from("edges")
-    .insert({
-      user_id: ctx.userId,
-      workspace_id: ctx.workspaceId,
-      source_node_id: sourceId,
-      target_node_id: targetId,
-      edge_type: edgeType,
-      status: "active",
-      explanation,
-      user_confirmed: true,
-    })
-    .select("id")
-    .single();
-  if (error || !edge) return { ok: false, error: error?.message ?? "unknown error" };
-  return { ok: true, edgeId: edge.id as string, alreadyExisted: false };
-}
 
 // ---------------------------------------------------------------------------
 // propose_edge
@@ -740,7 +451,7 @@ const PROPOSE_EDGE: ToolDefinition = {
         : null;
 
     // Hierarchy = a move: the node's old parent link is replaced, not added to.
-    if (HIERARCHY_EDGE_TYPES.has(edgeType)) {
+    if (isHierarchyEdgeType(edgeType)) {
       const { childId, parentId } = hierarchyPair(edgeType, sourceId, targetId);
       const moved = await moveNode(ctx, childId, parentId, explanation);
       if (moved.accepted && moved.moved) await recomputeScores(ctx);
@@ -765,142 +476,6 @@ const PROPOSE_EDGE: ToolDefinition = {
 // Patches title / summary / node_type / importance_index on an existing node.
 // At least one field must be provided.
 // ---------------------------------------------------------------------------
-
-// Does this node hold steps or phases (the children that make a task a big task)?
-async function hasWorkChildren(ctx: ToolContext, nodeId: string): Promise<boolean> {
-  const { data: childEdges } = await ctx.supabase
-    .from("edges")
-    .select("source_node_id")
-    .eq("user_id", ctx.userId)
-    .eq("target_node_id", nodeId)
-    .eq("edge_type", "belongs_to")
-    .eq("status", "active");
-  const childIds = (childEdges ?? []).map((e: { source_node_id: string }) => e.source_node_id);
-  if (childIds.length === 0) return false;
-  const { data: children } = await ctx.supabase
-    .from("nodes")
-    .select("id")
-    .eq("user_id", ctx.userId)
-    .in("id", childIds)
-    .in("node_type", ["task", "big_task", "habit", "project"])
-    .limit(1);
-  return (children ?? []).length > 0;
-}
-
-// Shared by update_node and propose_changes_batch's "update" op (which
-// recomputes scores once for the whole batch).
-async function updateNodeFields(
-  input: unknown,
-  ctx: ToolContext,
-  options?: { recompute?: boolean },
-): Promise<Record<string, unknown>> {
-  const args = (input ?? {}) as {
-    node_id?: string;
-    title?: string;
-    summary?: string;
-    node_type?: string;
-    importance_index?: number;
-    target_date?: string;
-    body?: string;
-  };
-  const nodeId = typeof args.node_id === "string" ? args.node_id : "";
-  if (!nodeId) return { accepted: false, error: "node_id is required" };
-
-  const target = await fetchWorkspaceNode(ctx, nodeId);
-  if (!target) {
-    return { accepted: false, error: "node_id not found in this workspace" };
-  }
-
-  const patch: Record<string, unknown> = {};
-  if (typeof args.title === "string") {
-    const title = args.title.trim();
-    if (!title) return { accepted: false, error: "title cannot be empty" };
-    if (title.length > 120) {
-      return { accepted: false, error: "title must be ≤120 chars" };
-    }
-    patch.title = title;
-  }
-  if (typeof args.summary === "string") {
-    const summary = args.summary.trim();
-    patch.summary = summary.length > 0 ? summary.slice(0, 2000) : null;
-  }
-  if (typeof args.node_type === "string") {
-    const nt = toolNodeType(args.node_type);
-    if (!VALID_NODE_TYPES.has(nt)) {
-      return {
-        accepted: false,
-        error: `node_type must be one of ${Array.from(VALID_NODE_TYPES).join(", ")}`,
-      };
-    }
-    // A node with steps under it can't be a plain task — same rule as the DB
-    // trigger promote_task_with_children, which only fires when a child is
-    // ADDED, not when the parent is retyped afterwards.
-    patch.node_type = nt === "task" && (await hasWorkChildren(ctx, nodeId)) ? "big_task" : nt;
-  }
-  if (typeof args.importance_index === "number") {
-    // importance_index alone is overwritten by the next score recompute, so
-    // a chat-set importance pins manual_weight — the scorer's hard override.
-    const idx = Math.max(0, Math.min(100, Math.round(args.importance_index)));
-    patch.importance_index = idx;
-    patch.importance = importanceFromIndex(idx);
-    patch.manual_weight = idx;
-    patch.manual_weight_set_at = new Date().toISOString();
-  }
-  if (typeof args.target_date === "string") {
-    const td = args.target_date.trim();
-    if (td === "") {
-      patch.target_date = null;
-    } else if (/^\d{4}-\d{2}-\d{2}$/.test(td)) {
-      patch.target_date = td;
-    } else {
-      return {
-        accepted: false,
-        error: "target_date must be YYYY-MM-DD or empty string to clear",
-      };
-    }
-  }
-  if (typeof args.body === "string") {
-    const trimmedBody = args.body.trim();
-    patch.body = trimmedBody.length > 0 ? trimmedBody.slice(0, 400) : null;
-  }
-
-  if (Object.keys(patch).length === 0) {
-    return { accepted: false, error: "no fields provided to update" };
-  }
-  patch.updated_at = new Date().toISOString();
-
-  const { data: updated, error: updateErr } = await ctx.supabase
-    .from("nodes")
-    .update(patch)
-    .eq("id", nodeId)
-    .eq("user_id", ctx.userId)
-    .eq("workspace_id", ctx.workspaceId)
-    .select("id, title, node_type, importance_index")
-    .single();
-
-  if (updateErr || !updated) {
-    return {
-      accepted: false,
-      error: `Failed to update node: ${updateErr?.message ?? "unknown error"}`,
-    };
-  }
-  // Deadline, type and importance all move the score — resize now, not at
-  // the next unrelated event.
-  if (
-    options?.recompute !== false &&
-    ("target_date" in patch || "manual_weight" in patch || "node_type" in patch)
-  ) {
-    await recomputeScores(ctx);
-  }
-  return {
-    accepted: true,
-    node_id: updated.id,
-    title: updated.title,
-    node_type: updated.node_type,
-    importance_index: updated.importance_index,
-    updated_fields: Object.keys(patch).filter((k) => k !== "updated_at"),
-  };
-}
 
 const UPDATE_NODE: ToolDefinition = {
   schema: {
@@ -1066,48 +641,10 @@ const PROPOSE_MERGE: ToolDefinition = {
 // propose_changes_batch
 // One Accept for a list of mixed changes — including a whole restructure:
 // "make BrainDump its own project and put testing and marketing under it" is
-// create_node + move + update + create_node in ONE card. The handler creates
-// the new nodes first (so later ops can point at them by local_ref), then
-// runs the rest in order and reports a per-op outcome.
+// create_node + move + update + create_node in ONE card. The input IS a change
+// set: applyChangeSet creates the new nodes first (so later ops can point at
+// them by local_ref), then runs the rest in order and reports a per-op outcome.
 // ---------------------------------------------------------------------------
-
-type BatchChange =
-  | {
-      kind: "create_node";
-      local_ref?: string;
-      title: string;
-      node_type: string;
-      summary?: string;
-      parent_node_id?: string;
-      parent_local_ref?: string;
-      target_date?: string;
-      importance_index?: number;
-      body?: string;
-    }
-  | {
-      kind: "move";
-      node_id: string;
-      new_parent_node_id?: string;
-      new_parent_local_ref?: string;
-    }
-  | {
-      kind: "update";
-      node_id: string;
-      title?: string;
-      node_type?: string;
-      summary?: string;
-    }
-  | {
-      kind: "create_edge";
-      source_node_id: string;
-      target_node_id: string;
-      edge_type: string;
-      explanation?: string;
-    }
-  | { kind: "complete"; node_id: string }
-  | { kind: "archive"; node_id: string };
-
-const BATCH_KINDS = ["create_node", "move", "update", "create_edge", "complete", "archive"] as const;
 
 const NODE_REF_DESCRIPTION =
   "UUID of an existing node, or the local_ref of a node created by a create_node in this batch.";
@@ -1129,7 +666,7 @@ const PROPOSE_CHANGES_BATCH: ToolDefinition = {
             properties: {
               kind: {
                 type: "string",
-                enum: [...BATCH_KINDS],
+                enum: [...CHANGE_KINDS],
                 description:
                   "create_node = new node (give it a parent and, if later ops refer to it, a local_ref). move = put an EXISTING node under a new parent (its old parent link is replaced). update = rename / retype / re-summarise an existing node. create_edge = lateral or dependency link between two nodes (belongs_to / contains here also mean move). complete = mark done. archive = soft-remove.",
               },
@@ -1182,253 +719,12 @@ const PROPOSE_CHANGES_BATCH: ToolDefinition = {
     },
   },
   handler: async (input, ctx: ToolContext) => {
-    const args = (input ?? {}) as { changes?: BatchChange[] };
+    const args = (input ?? {}) as { changes?: ChangeOp[] };
     if (!Array.isArray(args.changes) || args.changes.length === 0) {
       return { accepted: false, error: "changes must be a non-empty array" };
     }
-    const changes = args.changes;
 
-    type OpResult =
-      | { kind: string; ok: true; id?: string; detail?: string }
-      | { kind: string; ok: false; error: string };
-    const results: OpResult[] = new Array<OpResult>(changes.length);
-    const localRefToId = new Map<string, string>();
-    // A node id as the model gave it: a local_ref from this batch, or a UUID.
-    const resolveRef = (value: unknown): string =>
-      typeof value === "string" && value.length > 0 ? (localRefToId.get(value) ?? value) : "";
-    const rootId = workspaceRootOnce(ctx);
-    let scoresStale = false;
-
-    // Pass 1 — create every new node, so any op can refer to it by local_ref
-    // no matter where the model listed it.
-    const createdAt = new Map<number, string>();
-    for (let i = 0; i < changes.length; i++) {
-      const change = changes[i];
-      if (change?.kind !== "create_node") continue;
-      const title = typeof change.title === "string" ? change.title.trim().slice(0, 120) : "";
-      if (!title) {
-        results[i] = { kind: "create_node", ok: false, error: "title required" };
-        continue;
-      }
-      const nodeType = toolNodeType(change.node_type);
-      if (!VALID_NODE_TYPES.has(nodeType)) {
-        results[i] = {
-          kind: "create_node",
-          ok: false,
-          error: `invalid node_type "${change.node_type}"`,
-        };
-        continue;
-      }
-      const importanceIndex =
-        typeof change.importance_index === "number"
-          ? Math.max(0, Math.min(100, Math.round(change.importance_index)))
-          : 50;
-      const targetDate =
-        typeof change.target_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(change.target_date)
-          ? change.target_date
-          : null;
-      const summary =
-        typeof change.summary === "string" && change.summary.trim()
-          ? change.summary.trim().slice(0, 2000)
-          : null;
-      const body =
-        typeof change.body === "string" && change.body.trim()
-          ? change.body.trim().slice(0, 400)
-          : null;
-      const { data: node, error: nodeErr } = await ctx.supabase
-        .from("nodes")
-        .insert({
-          user_id: ctx.userId,
-          workspace_id: ctx.workspaceId,
-          title,
-          summary,
-          body,
-          node_type: nodeType,
-          importance: importanceFromIndex(importanceIndex),
-          importance_index: importanceIndex,
-          status: "active",
-          target_date: targetDate,
-        })
-        .select("id")
-        .single();
-      if (nodeErr || !node) {
-        results[i] = { kind: "create_node", ok: false, error: nodeErr?.message ?? "insert failed" };
-        continue;
-      }
-      createdAt.set(i, node.id as string);
-      if (typeof change.local_ref === "string" && change.local_ref) {
-        localRefToId.set(change.local_ref, node.id as string);
-      }
-      if (targetDate) scoresStale = true;
-    }
-
-    // Pass 2 — parent links for the new nodes (root when none was given).
-    for (const [i, nodeId] of createdAt) {
-      const change = changes[i] as Extract<BatchChange, { kind: "create_node" }>;
-      const parentRef = resolveRef(change.parent_node_id) || resolveRef(change.parent_local_ref);
-      let parentId: string | null = null;
-      if (parentRef && parentRef !== nodeId) {
-        const parent = await fetchWorkspaceNode(ctx, parentRef);
-        parentId = parent?.id ?? null;
-      }
-      const attached = await attachNewNode(ctx, nodeId, parentId, rootId);
-      results[i] = {
-        kind: "create_node",
-        ok: true,
-        id: nodeId,
-        ...(parentRef && !parentId
-          ? { detail: "parent not found — placed under the workspace root" }
-          : !attached
-            ? { detail: "created without a parent" }
-            : {}),
-      };
-    }
-
-    // Pass 3 — everything else, in the order given.
-    for (let i = 0; i < changes.length; i++) {
-      const change = changes[i];
-      if (results[i]) continue;
-      switch (change?.kind) {
-        case "move": {
-          const nodeId = resolveRef(change.node_id);
-          const parentId =
-            resolveRef(change.new_parent_node_id) || resolveRef(change.new_parent_local_ref);
-          if (!nodeId || !parentId) {
-            results[i] = { kind: "move", ok: false, error: "node_id and new_parent_node_id required" };
-            break;
-          }
-          const moved = await moveNode(ctx, nodeId, parentId, null);
-          if (!moved.accepted) {
-            results[i] = { kind: "move", ok: false, error: String(moved.error ?? "move failed") };
-            break;
-          }
-          if (moved.moved) scoresStale = true;
-          results[i] = { kind: "move", ok: true, id: nodeId, detail: String(moved.message ?? "") };
-          break;
-        }
-
-        case "update": {
-          const nodeId = resolveRef(change.node_id);
-          const updated = await updateNodeFields(
-            {
-              node_id: nodeId,
-              ...(typeof change.title === "string" ? { title: change.title } : {}),
-              ...(typeof change.node_type === "string" ? { node_type: change.node_type } : {}),
-              ...(typeof change.summary === "string" ? { summary: change.summary } : {}),
-            },
-            ctx,
-            { recompute: false },
-          );
-          if (updated.accepted !== true) {
-            results[i] = { kind: "update", ok: false, error: String(updated.error ?? "update failed") };
-            break;
-          }
-          if (typeof change.node_type === "string") scoresStale = true;
-          results[i] = { kind: "update", ok: true, id: nodeId };
-          break;
-        }
-
-        case "create_edge": {
-          const sourceId = resolveRef(change.source_node_id);
-          const targetId = resolveRef(change.target_node_id);
-          const edgeType = typeof change.edge_type === "string" ? change.edge_type.toLowerCase() : "";
-          if (!sourceId || !targetId || !VALID_EDGE_TYPES.has(edgeType)) {
-            results[i] = {
-              kind: "create_edge",
-              ok: false,
-              error: "source, target, and valid edge_type required",
-            };
-            break;
-          }
-          if (sourceId === targetId) {
-            results[i] = { kind: "create_edge", ok: false, error: "source and target must differ" };
-            break;
-          }
-          const explanation =
-            typeof change.explanation === "string" && change.explanation.trim()
-              ? change.explanation.trim().slice(0, 1000)
-              : null;
-          if (HIERARCHY_EDGE_TYPES.has(edgeType)) {
-            const { childId, parentId } = hierarchyPair(edgeType, sourceId, targetId);
-            const moved = await moveNode(ctx, childId, parentId, explanation);
-            if (!moved.accepted) {
-              results[i] = { kind: "create_edge", ok: false, error: String(moved.error ?? "move failed") };
-              break;
-            }
-            if (moved.moved) scoresStale = true;
-            results[i] = { kind: "create_edge", ok: true, detail: String(moved.message ?? "") };
-            break;
-          }
-          // Both nodes must belong to this user + workspace.
-          const { data: pair } = await ctx.supabase
-            .from("nodes")
-            .select("id")
-            .in("id", [sourceId, targetId])
-            .eq("user_id", ctx.userId)
-            .eq("workspace_id", ctx.workspaceId);
-          if (!pair || pair.length < 2) {
-            results[i] = {
-              kind: "create_edge",
-              ok: false,
-              error: "one or both nodes not in this workspace",
-            };
-            break;
-          }
-          const linked = await createLateralEdge(ctx, sourceId, targetId, edgeType, explanation);
-          results[i] = linked.ok
-            ? { kind: "create_edge", ok: true, id: linked.edgeId }
-            : { kind: "create_edge", ok: false, error: linked.error };
-          break;
-        }
-
-        case "complete":
-        case "archive": {
-          const nodeId = resolveRef(change.node_id);
-          if (!nodeId) {
-            results[i] = { kind: change.kind, ok: false, error: "node_id required" };
-            break;
-          }
-          // The same transition the Details button runs (cascades, planner
-          // sync, habit semantics). Scores are recomputed ONCE after the loop.
-          const outcome = await transitionNodeStatus({
-            supabase: ctx.supabase,
-            userId: ctx.userId,
-            workspaceId: ctx.workspaceId,
-            nodeId,
-            newStatus: change.kind === "complete" ? "completed" : "archived",
-            today: ctx.today ?? localDateISO(new Date(), null),
-            habitSource: "chat",
-            recomputeScores: false,
-          });
-          if (outcome.kind === "error") {
-            results[i] = {
-              kind: change.kind,
-              ok: false,
-              error: outcome.httpStatus === 404 ? "node not in this workspace" : outcome.error,
-            };
-            break;
-          }
-          if (outcome.kind === "changed") scoresStale = true;
-          results[i] = {
-            kind: change.kind,
-            ok: true,
-            id: nodeId,
-            ...(outcome.kind === "habit_logged" ? { detail: "habit_logged" } : {}),
-          };
-          break;
-        }
-
-        default:
-          results[i] = {
-            kind: String((change as { kind?: unknown } | null)?.kind ?? "unknown"),
-            ok: false,
-            error: "unknown change kind",
-          };
-      }
-    }
-
-    // One score recompute for the whole batch (each op skipped its own).
-    if (scoresStale) await recomputeScores(ctx);
+    const { results } = await applyChangeSet(ctx, args.changes);
 
     const okCount = results.filter((r) => r.ok).length;
     const failedCount = results.length - okCount;
