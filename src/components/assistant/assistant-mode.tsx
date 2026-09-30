@@ -950,7 +950,7 @@ function FixedBlock({
           <span className="timeline-fixed-title">{interval.title}</span>
           {height >= 40 ? (
             <span className="timeline-fixed-time">
-              {minutesToTime(interval.start)}–{minutesToTime(interval.end)} · weekly
+              {minutesToTime(interval.start)}–{minutesToTime(interval.end)}
             </span>
           ) : null}
           <button

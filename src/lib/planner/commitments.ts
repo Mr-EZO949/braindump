@@ -227,10 +227,15 @@ export function describeDays(days: number[]): string {
   return names.length === 2 ? `${names[0]} & ${names[1]}` : names.join(", ");
 }
 
-/** "Mon–Fri 14:00–15:00 · until Dec 20" — the card line and the snapshot line. */
+/**
+ * "Mon–Fri 14:00–15:00 · until Dec 20" — the card line and the snapshot line.
+ * An open-ended one says "no end date" there (it invites the user to give
+ * one); `openEnd: false` leaves that out where it would only be noise.
+ */
 export function describeCommitment(
   commitment: Pick<Commitment, "days" | "start_time" | "end_time" | "starts_on" | "ends_on">,
   today?: string,
+  options: { openEnd?: boolean } = {},
 ): string {
   const start = timeToMinutes(commitment.start_time);
   const end = timeToMinutes(commitment.end_time);
@@ -239,7 +244,11 @@ export function describeCommitment(
     commitment.starts_on && (!today || commitment.starts_on > today)
       ? `from ${formatShortDate(commitment.starts_on)}`
       : null,
-    commitment.ends_on ? `until ${formatShortDate(commitment.ends_on)}` : "no end date",
+    commitment.ends_on
+      ? `until ${formatShortDate(commitment.ends_on)}`
+      : options.openEnd === false
+        ? null
+        : "no end date",
   ].filter(Boolean);
   return [`${describeDays(commitment.days)} ${time}`.trim(), ...bounds].join(" · ");
 }

@@ -2667,7 +2667,7 @@ export function AppShell({ initialUser }: AppShellProps) {
             {
               id: `chat-commit-${Math.random().toString(36).slice(2, 10)}`,
               role: "assistant" as const,
-              body: "Saved your fixed times — Focus and the planner will work around them:",
+              body: "And your week:",
               createdAt: nowIso,
               status: "ready" as const,
               appliedAction: { ...commitmentAction, status: "applied" as const },

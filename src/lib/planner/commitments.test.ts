@@ -117,6 +117,7 @@ describe("words", () => {
     expect(describeCommitment({ ...stats, ends_on: null, starts_on: "2026-10-12" }, WED)).toBe(
       "Mon–Fri 14:00–15:00 · from Oct 12 · no end date",
     );
+    expect(describeCommitment({ ...stats, ends_on: null }, WED, { openEnd: false })).toBe("Mon–Fri 14:00–15:00");
   });
 
   it("normalizes Postgres rows", () => {

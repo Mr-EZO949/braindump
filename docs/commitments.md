@@ -5,6 +5,9 @@ Status: built 2026-09-29 (after ranking v2). Migration
 **Verified so far: unit tests and prompt-only checks — not end to end.** The table
 doesn't exist yet, so nothing has run chat/dump → route → DB → UI; without it the
 feature is inert (reads return nothing, saves fail with a message).
+The four surfaces were looked at in a real browser in both themes with **mocked**
+commitment rows (`.claude/skills/verifier-webapp/verify-commitments-ui.mjs`, $0) — that
+checks how they look, not that the data path works.
 Pure logic: `src/lib/planner/commitments.ts` (schedule math, words, loading) and
 `src/lib/planner/commitment-changes.ts` (tool/dump validation, Undo), both unit-tested.
 
@@ -56,8 +59,8 @@ lecture) in the eval. Same-activity updates and bare renames pass through.
 | **Focus** (`daily-brief` → `buildPlannerCandidates({ fitToFreeTime: true })`) | A line above the hero, computed on the client's clock: "45 min free · Stats at 14:00", "In Stats until 15:00 · then 1h 30m free before Lab", "Stats at 14:00 — in 8 min". With **15–90 min** free, the items among the top 10 that fit (per-type estimate: task 30, habit 45, big task 60) move to the front, order kept (`fitHeadToFreeTime`); check-backs always fit. Under 15 min or 90+ min: order unchanged. Still no model call. |
 | **Focus → "Plan my day"** | `planSchedule` treats today's commitments as busy, like timed planner tasks. |
 | **AI planner** (`/api/assistant/plan`, `plan-v6`) | The client sends where the plan will land (`session_date`, `session_start`). Commitments inside that window become Session-block lines (busy time + free stretches); the model plans only the free minutes (and the Haiku/Sonnet split uses free minutes). On **Accept**, blocks are laid back to back from the start and any block that would run into a commitment starts after it (`layoutAroundBusy`). Chat's `plan_day` does the same for full days (09:00 start). |
-| **Planner timeline** | Commitments draw as hatched "weekly" bands behind the day's tasks. |
-| **Details** | A node with linked commitments shows "Mon–Fri 14:00–15:00 · until Dec 20". |
+| **Planner timeline** | Commitments draw as softly hatched bands behind the day's tasks (title + time; × on hover removes it from every week). |
+| **Details** | A node with linked commitments shows one quiet line under its tags: "◷ Mon–Fri 14:00–15:00 · until Dec 20". |
 | **Chat snapshot** | `[FIXED COMMITMENTS]` block (priority 92, byte-stable order). |
 
 ## Cost

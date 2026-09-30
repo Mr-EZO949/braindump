@@ -1,9 +1,9 @@
 "use client";
 
-// Details: the fixed weekly times linked to this node ("Stats lecture ·
-// Mon–Fri 14:00–15:00 · until Dec 20") — docs/commitments.md. Reads its own
-// rows (one indexed query, off the critical path); nothing renders until
-// there is something to show.
+// Details: the fixed weekly times linked to this node, one quiet line each
+// ("◷ Mon–Fri 14:00–15:00 · until Dec 20") — docs/commitments.md. Reads its
+// own rows (one indexed query, off the critical path); nothing renders until
+// there is something to show, and then it fades in.
 
 import { useEffect, useState } from "react";
 
@@ -47,18 +47,17 @@ export function NodeSchedule({ nodeId }: { nodeId: string }) {
   const today = todayIsoDate();
 
   return (
-    <div className="detail-waiting detail-schedule">
-      <span className="detail-waiting-icon" aria-hidden="true">
-        ◷
-      </span>
-      <div className="detail-waiting-text">
-        {items.map((c) => (
-          <span className="detail-waiting-title" key={c.id}>
-            {describeCommitment(c, today)}
+    <div className="detail-schedule">
+      {items.map((c) => (
+        <span className="detail-schedule-line" key={c.id}>
+          <span className="detail-schedule-icon" aria-hidden="true">
+            ◷
           </span>
-        ))}
-        <span className="detail-waiting-sub">Fixed every week — Focus and the planner work around it</span>
-      </div>
+          {/* Several times on one node (lecture + lab) need their names. */}
+          {items.length > 1 ? `${c.title} · ` : ""}
+          {describeCommitment(c, today, { openEnd: false })}
+        </span>
+      ))}
     </div>
   );
 }
