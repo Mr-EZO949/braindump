@@ -7,7 +7,16 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Extraction (`extract.ts`)
 
-### extract-v17 (current)
+### extract-v24 (current) · extract-light-v4
+- The intent-framed example named a fused "Test & market BrainDump" node, contradicting the project-with-parts rule two sections above it. The model copied the example: a real dump got one big task and no "BrainDump" project. The example now shows the project with its two children, and fusing two kinds of work into one "A & B" node is called out.
+- A grouping typed project ("Money Projects", created by the setup wizard) still holds projects. Without this line the parts of BrainDump were attached straight to it and the project node was skipped. (The wizard now creates every branch as an area.)
+- Lists of named items: one node per item. One eval run folded seven named exams into a single "clear the backlog" goal.
+- soft_links: the old text ("a SMALL NUMBER", "most nodes should have zero") got zero links on a 25-node dump. A relation the dump STATES between two nodes that aren't parent/child ("X for Y", "X so that Y", "X is marketing for Y") is now always captured as supports / useful_for; prerequisite_for only for a real order.
+- Restructure requests (both prompts): extraction only adds, so "X should be its own project with A and B in it" becomes ONE clarifying question that restates the edit so "yes" is enough — no empty stand-in parent. The answer goes to chat, which applies it.
+- Eval (2026-09-30, the owner's own 2,414-char dump, replayed into a throwaway workspace): BrainDump project with Test / Market / fixes / faceless content under it, six exam goals, 3 links (faceless content supports Market BrainDump, sleep supports the exam backlog, build required_for market). Light prompt on the follow-up dump: 0 nodes, Daily Gym completed, the one question. $0.245 for three full runs (one per prompt revision), $0.011 light.
+- v18–v23 are described in the header of `extract.ts`.
+
+### extract-v17
 - Added the **Depth rule**: prefer real area→project→task chains over a flat fan, with an explicit "don't overdo it" guardrail (no filler/invented middle levels, no wrapping a lone child, ≤~4 levels per dump, attach one level up when unsure).
 - Why: user wants deep graphs, not linear ones. Verified on a multi-domain dump → 21 nodes, max depth 3 ("Make Money Fast → BrainDump → Market/Test", "UniMi CS Degree → exams", "Get in Shape → gym/cardio/creatine"). Depth comes from extraction's own structure rules (Depth + v16 project-with-parts + semantic clustering) — NOT from injecting areas, which was tried and reverted because it made extraction emit empty duplicate area shells.
 - Companion (not a prompt change): a normal dump also runs `suggestAreas` (lib/ai/areas.ts) in parallel — an LLM area *inducer* (TnT-LLM-style label induction, not embedding clustering) that infers latent life-domains the user never named — surfaced as optional review chips for domains the dump didn't already structure.
@@ -59,7 +68,18 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Edge inference (`infer-edge.ts`)
 
-### infer-edge-v3 (current)
+### infer-edge-v5 (current)
+- Direction is its own field (`from`: source | candidate), decided after the type. v4 had one direction per type, so "Linear Algebra helps ML", asked from the ML node, came out as ML → prerequisite_for → Linear Algebra: 5 of 10 links on a real dump were backwards.
+- One dependency type, `required_for`, for hard blockers only. Dependency edges block the target in Focus, the planner and the ranking, and v4's "prefer prerequisite_for" turned every "this helps that" into a blocker (10 of 10 links were dependencies, none lateral). Helping is `supports` / `useful_for`.
+- The model sees node types and whether the source already has a parent, plus the nesting rules.
+- Code (`edge-selection.ts`): up to 2 lateral links per node (was 1), a dependency needs ≥0.75 (an unsure one is kept as `supports`), a proposed parent must be able to hold the node (no project under a big task).
+- Eval (2026-09-30, 5 nodes of a copy of the owner's graph, real pipeline into a throwaway workspace): 8 links — useful_for ×4, supports ×3, related_to ×1 — all in the right direction, no dependency. $0.0218 for 5 calls ($0.0044/call).
+- infer_edge runs are logged again: the old `void supabase.from("ai_runs").insert(...)` never executed (a supabase-js query only runs when awaited), so none had been logged since 2026-04-08.
+
+### infer-edge-v4 / v4.1 / v4.2
+- Batched: one call per source node over its top candidates; rules + workspace context as a cacheable prefix.
+
+### infer-edge-v3
 - Added workspace context block for richer inference
 - Why: edge inference without workspace context was missing obvious connections
 
@@ -80,7 +100,13 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 > source of truth, now mirrored by the derived `PROMPT_VERSIONS` map). The
 > intermediate v5–v9 changes predate this entry and weren't logged here.
 
-### assistant-v22 (current)
+### assistant-v23 (current)
+- "Restructuring" block: a move is `propose_edge` belongs_to (the old parent link is replaced by the tool); a regroup is ONE `propose_changes_batch` — create the new parent (local_ref), rename the fused node, move it, create its sibling; a node that still helps its old parent keeps a useful_for / supports link in the same Accept. Never "I can't re-parent", never "in stages".
+- Every new node gets a parent_node_id.
+- Why (2026-09-30): re-parenting failed on the single-parent index and chat said it had no tool for it; a regroup was split across turns, created the project as a `contains` orphan, and the connection engine then nested it under its own task.
+- Eval (prompt + tools + real handlers, throwaway workspace, not the HTTP route): the Italian message → one card [move under Personal Development, useful_for the internship], $0.084 (first Sonnet turn of a thread, cache write); "yeah" to the dump's restructure question → one card, 5 changes, BrainDump project with Test / Market under it, $0.016.
+
+### assistant-v22
 - New direct tool `set_commitments` + a "Fixed commitments" block: recurring busy times (class, shift, practice) are saved at once with an Undo; "every day" for a class/job = Mon–Fri; dates are the user's words (`until` / `from`), resolved in code; change/remove by the id in the snapshot's new `[FIXED COMMITMENTS]` list. One-offs stay `add_task_to_calendar`.
 - Why: "stats every day at 2pm" lived only as free text; Focus and the planner couldn't see busy time (docs/commitments.md).
 - v11–v21 are logged in STATUS.md's journal and docs/ranking.md, not here.
