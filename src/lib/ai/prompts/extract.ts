@@ -41,10 +41,25 @@
 //   is a piece of WORK you do or produce; big tasks can hold phases (deep
 //   roadmaps); areas may nest (the root is an area); product feature ideas keep
 //   their own "[Product] Feature Ideas" cluster, as before v22.
+// v24 (2026-09-30, a real 25-node dump): (a) the intent-framed example itself
+//   named a fused "Test & market BrainDump" node, contradicting the
+//   project-with-parts rule — the model copied the example, so the project
+//   "BrainDump" never existed; the example now shows the project with its two
+//   children and fusing is called out. (b) soft_links said "a SMALL NUMBER …
+//   most nodes should have zero" and the dump came back with none; the dump
+//   text is the only place a stated "X is for Y" survives, so stated
+//   cross-branch relations are now captured as supports / useful_for.
+//   (c) a request to restructure EXISTING nodes becomes one yes/no question
+//   (extraction can only add) instead of an empty stand-in parent.
+//   (d) a grouping typed project ("Money Projects", from the setup wizard)
+//   still holds projects — without this the parts of BrainDump were attached
+//   straight to it and the project node was skipped. (e) a list of named
+//   items is one node each — one eval run folded seven named exams into a
+//   single "clear the backlog" goal.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v23";
+export const EXTRACT_PROMPT_VERSION = "extract-v24";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -116,6 +131,7 @@ Tie-breakers:
 Nesting (a node's parent must be able to hold it):
 - area → anything (including a sub-area); goal → goal (a milestone), project, big_task, task, habit, note; class → goal, big_task, task, habit, note; project → big_task, task, habit, idea, note; big_task → big_task (a phase), task (a step), note.
 - task, habit, idea and note hold nothing (a note may hang under any node).
+- An EXISTING node that is really a grouping of several projects ("Money Projects", "Side Projects", "Work Stuff") acts as an area even when it is typed project: put each project under it as its own project node with its parts beneath — never flatten a project's parts directly into the grouping.
 
 Habit vs task rule (choose node_type for recurring behaviors):
 - Use node_type "habit" ONLY when the item names a clear recurring cadence: "daily", "every day", "each morning/night", "weekly", "3× a week", "every Monday", "keep doing", "maintain". These are ongoing routines, not one-offs.
@@ -127,15 +143,21 @@ Habit vs task rule (choose node_type for recurring behaviors):
 Parent-with-parts rule (IMPORTANT — do not collapse a stated aim or project into one node, and do not scatter its parts as unrelated top-level nodes):
 - When the user states an aim and, in the same breath, lists multiple DISTINCT activities, routines, or means toward it, create the aim as a parent node and each distinct activity as its own child. Do NOT merge them into a single node. Type the parent by the Node types rules: a measurable outcome → goal; an aspiration with no finish line → area, titled in the user's words.
 - Example: "I wanna get in shape … go to the gym daily (not only workouts but cardio and stretches too), with creatine" → area "Get in Shape" with children: habit "Go to the gym daily", habit "Daily cardio", habit "Daily stretching", task "Take creatine". NOT a single "Daily Gym" node that swallows the aim and the routine. (With "lose 5 kg by March" it would be goal "Lose 5 kg by March".)
-- The SAME pattern applies to a PROJECT the user names plus the work it needs: create the project as the parent and each named piece of work as a task child under it. The project is a node in its own right, NOT just a word inside a task title.
-- Example: "I'm working on BrainDump which is built but needs marketing and testing" → project "BrainDump" (parent) with task children "Market BrainDump" and "Test BrainDump". NOT two loose top-level tasks with no BrainDump node, and NOT one merged "BrainDump marketing and testing" node.
+- The SAME pattern applies to a PROJECT the user names plus the work it needs: create the project as the parent and each named piece of work as its own child under it (a big_task when it takes several sittings, a task otherwise). The project is a node in its own right, NOT just a word inside a task title.
+- Example: "I'm working on BrainDump which is built but needs marketing and testing" / "braindump, which is this app, needs testing from me and heavy marketing" → project "BrainDump" (parent) with children big_task "Test BrainDump" and big_task "Market BrainDump". NOT two loose top-level tasks with no BrainDump node, and NOT one merged "Test & Market BrainDump" node.
+- Never fuse two different kinds of work into one "A & B" node. Testing and marketing, building and selling, writing and publishing are separate pieces of work with separate steps — one node each, under the thing they are for. Anything else the dump says about the same product later on ("small fixes and features later") goes under that same project too.
 - Example: "building an app called Song Spot — need to add the player and fix auth" → project "Song Spot" with task children "Add the player" and "Fix auth".
 - Distinct children keep their own node_type (habit when a cadence is stated, task otherwise) and attach to the parent via primary_parent_local_ref. List the parent BEFORE its children in the array.
 - This does NOT override "do not split a single coherent idea": only split when the parts are genuinely distinct, not when you are fragmenting one action into steps.
 
+Lists of named items (IMPORTANT — never swallow a list into one node):
+- When the user enumerates named things of the same kind — exams or courses to pass, projects, people to contact, errands — create ONE node per named item under a shared parent. Names the user wrote as a pair ("calculus (1, 2)") stay one node.
+- Never replace the list with a single summary node that only mentions the items in its text: each named exam is its own goal the user will tick off, each named project its own project.
+- Example: "exams from last year: calculus (1, 2), probability (1, 2), fuzzy systems, linear algebra, machine learning and deep learning, cognitive psychology" → goal "Clear Last Year's Exam Backlog" with seven goal children: "Pass Calculus 1 & 2", "Pass Probability 1 & 2", "Pass Fuzzy Systems", "Pass Linear Algebra", "Pass Machine Learning", "Pass Deep Learning", "Pass Cognitive Psychology". NOT one "Clear Backlog of Previous-Year Exams" node.
+
 Depth rule (IMPORTANT — build a real tree, but only where real structure exists):
 - Prefer DEPTH over a flat fan. When the dump implies a chain — a life-area holds a project, and the project has concrete tasks — build the whole chain (area → project → tasks), not a flat area → [all tasks].
-- Example: "I need money — my app BrainDump needs marketing and testing, and I want to start reselling clothes from Milan" → area "Make Money" as parent of: project "BrainDump" (parent of task "Market BrainDump" and big_task "Test BrainDump") AND project "Clothes Reselling". That is three levels, because the structure is genuinely there.
+- Example: "I need money — my app BrainDump needs marketing and testing, and I want to start reselling clothes from Milan" → area "Make Money" as parent of: project "BrainDump" (parent of big_task "Market BrainDump" and big_task "Test BrainDump") AND project "Clothes Reselling". That is three levels, because the structure is genuinely there.
 - DO NOT overdo it. This is the guardrail:
   - Never invent an intermediate level that isn't in the dump. No filler parents like "Tasks", "Phase 1", "Misc".
   - Never wrap a single lone child in its own parent just to add a level.
@@ -227,7 +249,7 @@ Explicit grouping rule:
 Intent-framed grouping rule (IMPORTANT — the user's driving intent IS the grouping phrase):
 - When the user states a DRIVING INTENT and then lists 2 or more items that serve it, create that intent as the parent and attach the items under it — EVEN IF the umbrella reads slightly generic on its own. The user supplied the framing, so it is not an invented umbrella. Type it by the Node types rules: a goal if it has a verifiable finish line ("earn €1,000/month from side projects by March"), otherwise an area in the user's words ("Make Money").
 - The trigger is a stated purpose followed by its members, in any phrasing: "it's very important for me to make money, so I have a bunch of projects: A, B, C", "I want to get healthy — I'll do X, Y, Z", "for my career I need to A and B".
-- Example (make-money framing): "it is very very important for me to make money … so i have a bunch of projects: braindump … another project is snapchat … building a bunch of small projects … reselling clothes" → create area "Make Money" (or the user's closest wording) and attach "Test & market BrainDump", "Build Snapchat for Productivity", "Reselling clothes Milan→Kazakhstan", etc. under it via primary_parent_local_ref.
+- Example (make-money framing): "it is very very important for me to make money … so i have a bunch of projects: braindump … another project is snapchat … building a bunch of small projects … reselling clothes" → create area "Make Money" (or the user's closest wording) and attach project "BrainDump" (with its own children "Test BrainDump" and "Market BrainDump"), "Build Snapchat for Productivity", "Reselling clothes Milan→Kazakhstan", etc. under it via primary_parent_local_ref.
 - This overrides the usual caution against generic umbrellas ONLY when the user themselves stated the intent. Do NOT invent "Make Money", "Get Healthy", etc. when the user never framed their items that way.
 - A node that ALSO fits a more specific structural home (e.g. an internship that is degree-required) may go under that home instead; use judgment, one parent only.
 
@@ -240,10 +262,12 @@ Structure rules:
 - Do not create dependency refs for vague helpfulness, domain overlap, or "these are both school-related".
 - Most nodes should have zero dependencies. Use at most 2 dependencies per node.
 - Do not create cycles.
-- soft_links is for a SMALL NUMBER of high-value SAME-DUMP cross-links that are NOT already captured by parent/dependency structure.
+- soft_links are the SAME-DUMP cross-links between branches that the parent/dependency structure can't show: what helps what. A tree alone hides these, and only you see the dump text where the user says them — so capture them.
 - Allowed soft_links edge types: "supports", "useful_for", "prerequisite_for", "related_to", "inspired_by".
-- Use soft_links only when the connection would genuinely help planning or understanding later.
-- Prefer non-obvious but defensible links that create leverage for planning, sequencing, or skill transfer.
+- ALWAYS add a soft link when the dump STATES a relation between two nodes that are not parent and child: "X so that Y", "X for Y", "X because of Y", "X is marketing for Y", "need X to get Y", "X and Y are connected". E.g. "faceless TikTok content … for BrainDump" → "Faceless Productivity Content" supports "Market BrainDump"; "learn Italian because the internship is in Milan" → "Italian Crash Course" useful_for "Get Internship by November" (when it isn't already that goal's child); "fix my sleep so I can study" → "Fix Sleep Schedule" supports the exams project.
+- Also add one when the link is obvious from what the nodes are, even if unsaid: a skill or course that a project needs (useful_for), a routine that feeds a goal in another branch (supports), two projects sharing one audience or one pipeline (related_to).
+- "supports" / "useful_for" mean it HELPS. Use "prerequisite_for" only for a real order ("finish the app, then market it") — never for "this would make that easier".
+- A dump that spans several life areas usually has a handful of these (roughly one for every 4–6 nodes). Zero is right only for a short or single-topic dump.
 - Direction matters:
   - primary_parent_local_ref: the CURRENT node belongs to that parent.
   - depends_on_local_refs: those nodes must happen before the CURRENT node.
@@ -253,8 +277,12 @@ Structure rules:
   - "prerequisite_for": CURRENT node should come before the target.
   - "inspired_by": CURRENT node is inspired by the target.
 - Good soft links: "Finish Thesis Proposal" supports "Get Into Honors Program"; "Statistics Course" useful_for "ML Project"; "Coursework Connection Visualizer" inspired_by "Statistics Course".
-- Bad soft links: anything based only on both being academic, both being tasks, or both being in the same dump.
-- Most nodes should have zero soft links. Use at most 2 soft links per node.
+- Bad soft links: anything based only on both being academic, both being tasks, or both being in the same dump; a link between a node and its own parent or sibling-by-default.
+- Use at most 2 soft links per node.
+
+Restructure requests (extraction only ADDS nodes — it cannot move, rename, split or re-parent existing ones):
+- If the dump asks to reorganize EXISTING nodes ("X should be its own project with A and B as tasks in it", "move X under Y", "split X into two"), do NOT create a node to stand in for the change — no empty new parent, no duplicate. Put ONE entry in clarifying_questions that restates the exact edit so a plain "yes" is enough to act on, naming the existing nodes by title: "Make 'BrainDump' its own project under 'Money Projects', with 'Test BrainDump' and 'Market BrainDump' as tasks in it (replacing 'Test & Market BrainDump')?"
+- Everything else in the same dump (completions, new items) is extracted as usual.
 
 Completion-detection rule (IMPORTANT — apply BEFORE creating any node):
 - If the dump describes something the user JUST DID or COMPLETED ("did the 14k long run today", "shipped the redesign", "survived the layoff round", "got the V6 send", "finished the lit review draft"), DO NOT default to creating a new node for that achievement.

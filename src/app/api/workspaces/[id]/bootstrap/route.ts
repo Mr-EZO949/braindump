@@ -42,9 +42,13 @@ interface BootstrapBody {
 
 // Life domains are areas (node types v2); the "project" category names one
 // specific venture ("BrainDump"), so it stays a project.
+// A top-level branch is where things LIVE, so it is always an area — also for
+// the "project" flavour. Typed as a project, a branch like "Money Projects"
+// could not hold the projects inside it (a project holds work, not projects),
+// and extraction flattened their parts straight into it (2026-09-30).
 const AREA_TYPE_TO_NODE_TYPE: Record<WorkspaceProfileAreaType, NodeType> = {
   academic: "area",
-  project: "project",
+  project: "area",
   career: "area",
   health: "area",
   life_admin: "area",

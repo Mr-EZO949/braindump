@@ -3069,6 +3069,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (questionsToAsk.length > 0) {
       openClarifyingQuestionsInChat(questionsToAsk, dumpToAsk);
     }
+    // The accepted nodes are in the graph now, so the answers given inline can
+    // be acted on without duplicating anything still under review.
+    sendInlineAnswersToChat();
 
     // First-dump shortcut: if these proposals came from the bootstrap
     // wizard, skip the suggest-steps modal — a first dump already produces
@@ -3301,6 +3304,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (questionsToAsk.length > 0) {
       openClarifyingQuestionsInChat(questionsToAsk, dumpToAsk);
     }
+    sendInlineAnswersToChat();
   };
 
   const requestCloseProposedNodesReview = () => {
@@ -3325,6 +3329,9 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [answeredInlineQuestions, setAnsweredInlineQuestions] = useState<Set<string>>(
     () => new Set(),
   );
+  // The inline answers themselves, in order — sent to the assistant as one
+  // turn when the review closes (sendInlineAnswersToChat).
+  const inlineAnswersRef = useRef<Array<{ question: string; answer: string }>>([]);
 
   useEffect(() => {
     if (proposedReviewOpen) {
@@ -3333,6 +3340,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       // when it didn't), so resetting it here would clobber that and let the
       // clarifying flow re-echo the dump (#11).
       setAnsweredInlineQuestions(new Set());
+      inlineAnswersRef.current = [];
     }
   }, [proposedReviewOpen]);
 
@@ -3432,6 +3440,24 @@ export function AppShell({ initialUser }: AppShellProps) {
       next.add(question);
       return next;
     });
+    inlineAnswersRef.current.push({ question, answer });
+  };
+
+  // Answers typed inline in the review used to be shown in the chat rail and
+  // go nowhere: no model ever read them, so "yeah" to "want me to restructure
+  // this?" changed nothing (2026-09-30). When the review closes they go to the
+  // assistant as ONE turn — after the accepted nodes are in the graph — and it
+  // acts on them with the usual Accept cards. The Q → A bubbles are already in
+  // the thread, so the turn itself adds no user bubble.
+  const sendInlineAnswersToChat = () => {
+    const answers = inlineAnswersRef.current;
+    inlineAnswersRef.current = [];
+    if (answers.length === 0) return;
+    const lines = answers.map(({ question, answer }) => `- "${question}" → ${answer}`);
+    void submitMessage(
+      `My answers to your questions about my last brain dump — act on them now:\n${lines.join("\n")}`,
+      false,
+    );
   };
 
   const closeProposedEdgesReview = () => {

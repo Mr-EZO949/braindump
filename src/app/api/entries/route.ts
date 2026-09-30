@@ -13,10 +13,31 @@ import { readDumpPriorities, statusTouchedIds, type DumpPriorityRead } from "@/l
 import { applyPriorityChanges } from "@/lib/ai/tools/priority-mutations";
 import { applyCommitmentChanges } from "@/lib/ai/tools/commitment-mutations";
 import { suggestAreas } from "@/lib/ai/areas";
+import { getWorkspaceRootId } from "@/lib/graph/hierarchy";
 import { classifyDumpSize } from "@/lib/ai/dump-size";
 import { AI_INGESTION, AI_FLAGS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { checkEntryRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
 import type { RawEntrySourceType } from "@/types/ai";
+
+// How many branches hang directly off the workspace root. 0 when there is no
+// root yet (a bare workspace), so area suggestions stay on.
+async function countTopLevelBranches(
+  supabase: NonNullable<Awaited<ReturnType<typeof getSupabaseServerClient>>>,
+  userId: string,
+  workspaceId: string,
+): Promise<number> {
+  const rootId = await getWorkspaceRootId({ supabase, userId, workspaceId });
+  if (!rootId) return 0;
+  const { count } = await supabase
+    .from("edges")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("workspace_id", workspaceId)
+    .eq("target_node_id", rootId)
+    .eq("edge_type", "belongs_to")
+    .eq("status", "active");
+  return count ?? 0;
+}
 
 const VALID_SOURCE_TYPES: RawEntrySourceType[] = [
   "brain_dump",
@@ -223,8 +244,14 @@ export async function POST(req: NextRequest) {
   // the same domain, leaving empty area shells. Instead we infer areas in
   // PARALLEL (cheap Haiku, no added latency) purely to offer as optional review
   // chips for domains the dump didn't structure. Skipped for suggest-steps
-  // roadmaps (default_parent_node_id set) — those already have a home.
-  const wantAreaSuggestions = !default_parent_node_id;
+  // roadmaps (default_parent_node_id set) — those already have a home — and
+  // for a workspace that already has its branches: there the chips only
+  // offered duplicates or strays (a short update saying "braindump should be
+  // its own project" got a root-level "Braindump Project" chip next to the
+  // existing Money Projects branch, 2026-09-30).
+  const wantAreaSuggestions =
+    !default_parent_node_id &&
+    (await countTopLevelBranches(supabase, user.id, workspace_id)) < AI_INGESTION.AREA_CHIPS_MAX_BRANCHES;
   const today = await getRequestToday();
   // Dump → priorities (lib/ai/dump-priorities.ts): once retrieval knows which
   // existing nodes this dump is about, a small Haiku read pulls out "waiting

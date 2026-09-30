@@ -11,6 +11,8 @@
 // v2: node types v2 (docs/node-types.md) — big_task / area / note, goal only
 // for verifiable outcomes; old types in the existing list are still the same item.
 // v3: passing an exam/course is a goal (a result); big_task = a piece of work.
+// v4: a request to restructure EXISTING nodes becomes one yes/no clarifying
+// question that restates the edit (extraction only adds) — chat applies it.
 //
 // Same output schema and the same Session block as extract.ts, so the rest of
 // the pipeline (resolution, auto-apply, completions) is unchanged. Longer
@@ -18,7 +20,7 @@
 
 import { buildExtractionVariableBlock, type ExtractionPromptParams } from "./extract";
 
-export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v3";
+export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v4";
 
 const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to the user's existing knowledge graph. Most of these updates report things the user just did, plus a few new things to do. Keep the graph sparse: propose only what the dump clearly states.
 
@@ -53,7 +55,10 @@ const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to t
 - If the dump itself names a project plus its parts, create the project with the parts as children via primary_parent_local_ref (list the parent first). Never set both parent fields on one node.
 - If the user writes a heading over 2+ items ("Life admin: rent, parking pass, …") and no matching node exists, create that heading as the parent — an area for a part of life ("Life Admin"), a project for a body of work — and put the items under it. If a matching node exists, attach the items to it.
 
-4. Deadlines.
+4. Restructure requests.
+- You can only ADD nodes and mark completions — not move, rename, split or re-parent existing ones. If the dump asks to reorganize EXISTING nodes ("X should be its own project with A and B as tasks in it", "move X under Y", "split X into two"), do NOT create a node to stand in for the change — no empty new parent, no duplicate. Put ONE entry in clarifying_questions that restates the exact edit so a plain "yes" is enough, naming the existing nodes by title: "Make 'BrainDump' its own project under 'Money Projects', with 'Test BrainDump' and 'Market BrainDump' as tasks in it (replacing 'Test & Market BrainDump')?" Extract the rest of the dump as usual.
+
+5. Deadlines.
 - Only an explicit date or weekday ("by Friday", "due Oct 3", "end of the month") → target_date YYYY-MM-DD, resolved against today in the Session block ("Friday" = next Friday on/after today). Put it on the item the deadline is about. Anything else ("soon", "this week", "before the launch") → leave it out; never invent a date.
 
 Confidence: 0.9+ when clearly stated, 0.6–0.8 when inferred.
