@@ -151,4 +151,31 @@ describe("validateExtractionOutput (compact v20+ output)", () => {
     expect(out.proposed_nodes.map((n) => n.proposed_node_type)).toEqual(["big_task", "area", "note"]);
     expect(() => validateExtractionOutput({ proposed_nodes: [node("n1", "journal")] }, session)).toThrow();
   });
+
+  it("drops a dependency or soft link that points at the node's own parent", () => {
+    const out = validateExtractionOutput(
+      {
+        proposed_nodes: [
+          { local_ref: "p", proposed_title: "Build the app", proposed_node_type: "project", extraction_confidence: 0.9 },
+          { local_ref: "x", proposed_title: "Write the landing page", proposed_node_type: "big_task", extraction_confidence: 0.9 },
+          {
+            local_ref: "m",
+            proposed_title: "Market the app",
+            proposed_node_type: "big_task",
+            primary_parent_local_ref: "p",
+            depends_on_local_refs: ["p", "x"],
+            soft_links: [
+              { target_local_ref: "p", edge_type: "supports" },
+              { target_local_ref: "x", edge_type: "useful_for" },
+            ],
+            extraction_confidence: 0.9,
+          },
+        ],
+      },
+      session,
+    );
+    const market = out.proposed_nodes[2];
+    expect(market.depends_on_local_refs).toEqual(["x"]);
+    expect(market.soft_links.map((l) => l.target_local_ref)).toEqual(["x"]);
+  });
 });

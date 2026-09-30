@@ -259,6 +259,8 @@ export class ClaudeProvider {
     const { stablePrefix, variableBlock } = buildEdgeInferencePromptParts({
       source_title: input.source_node.title,
       source_summary: input.source_node.summary,
+      source_node_type: input.source_node.node_type,
+      source_has_parent: input.source_node.has_parent,
       candidates: input.candidates,
       workspace_context: input.workspace_context,
     });

@@ -99,6 +99,15 @@ export const AI_CONFIDENCE = {
   // Low on purpose — proposals are reviewed by the user, so false positives
   // are fine. Missing real connections is the worse outcome.
   EDGE_INFERENCE_MIN: 0.3,
+  // Per-kind floors for what edge inference actually proposes (connection.ts).
+  // A dependency blocks its target in Focus / the planner, so it has to be
+  // clear; a lateral link is just a line on the graph the user can reject.
+  EDGE_DEPENDENCY_MIN: 0.75,
+  EDGE_LATERAL_MIN: 0.6,
+  // "related_to" is the weakest claim, so it needs a bit more than the rest.
+  // (0.8 cut "faceless content ↔ personal brand" at 0.75 in the 2026-09-30
+  // eval — a link the owner had called out himself.)
+  EDGE_RELATED_MIN: 0.7,
   // Minimum confidence to surface a merge suggestion (0–1)
   MERGE_DETECTION_MIN: 0.75,
 } as const;
@@ -118,6 +127,10 @@ export const AI_CANDIDATES = {
   // input tokens + an output verdict each. Sharpens LLM judgment and cuts
   // ~30% of per-call tokens.
   INFERENCE_MAX: 5,
+  // Max lateral links (supports / useful_for / related_to / inspired_by)
+  // proposed per analysed node. Was 1, which with the old dependency-first
+  // prompt meant a 25-node dump got none at all.
+  LATERAL_PER_NODE: 2,
   // Max duplicate candidates surfaced per node
   MERGE_MAX: 3,
 } as const;
@@ -231,6 +244,9 @@ export const AI_INGESTION = {
   LIGHT_DUMP_MAX_CHARS: 700,
   // Number of retry attempts for embedding before queuing for later
   EMBEDDING_MAX_RETRIES: 3,
+  // A dump offers "add this area" chips only while the workspace root has
+  // fewer branches than this; past it the tree already has its domains.
+  AREA_CHIPS_MAX_BRANCHES: 3,
 } as const;
 
 // ---------------------------------------------------------------------------

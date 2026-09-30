@@ -401,8 +401,15 @@ export interface RerankOutput {
 }
 
 export interface EdgeInferenceInput {
-  source_node: { id: string; title: string; summary: string | null };
-  candidates: { id: string; title: string; summary: string | null }[];
+  source_node: {
+    id: string;
+    title: string;
+    summary: string | null;
+    node_type?: string | null;
+    // Whether it already sits under a parent (belongs_to is then off the table).
+    has_parent?: boolean;
+  };
+  candidates: { id: string; title: string; summary: string | null; node_type?: string | null }[];
   workspace_context?: string;
 }
 
@@ -410,6 +417,8 @@ export interface EdgeInferenceResult {
   candidate_id: string;
   related: boolean;
   edge_type: EdgeType | null;
+  // Which end the link starts at: "source" = source → candidate.
+  from: "source" | "candidate";
   confidence: number;
   explanation: string;
 }

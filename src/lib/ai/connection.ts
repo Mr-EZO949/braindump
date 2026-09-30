@@ -6,9 +6,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aiProvider, aiRerankProvider } from "@/lib/ai/index";
 import { matchNodes, generateAndStoreEmbedding } from "@/lib/ai/embeddings";
-import { AI_CANDIDATES, AI_CONFIDENCE, AI_FLAGS } from "@/lib/ai/config";
+import { AI_CANDIDATES, AI_FLAGS } from "@/lib/ai/config";
 // MAX_INFERENCE_PAIRS is derived from AI_CANDIDATES.INFERENCE_MAX below
 import { INFER_EDGE_PROMPT_VERSION } from "@/lib/ai/prompts/infer-edge";
+import { selectEdgeProposals, type EdgeProposal } from "@/lib/ai/edge-selection";
+import { persistAIRun } from "@/lib/ai/telemetry";
 import { buildWorkspaceProfileContext } from "./workspace-profile";
 
 // Max candidates sent to edge inference per node — keep in sync with AI_CANDIDATES.INFERENCE_MAX.
@@ -67,6 +69,7 @@ export async function runConnectionAnalysis(params: {
 
   const sourceTitle = sourceNode.title as string;
   const sourceSummary = sourceNode.summary as string | null;
+  const sourceType = (sourceNode.node_type as string | null) ?? null;
   let workspaceContext: string | undefined = params.workspaceContext;
   if (workspaceContext === undefined) {
     try {
@@ -132,22 +135,7 @@ export async function runConnectionAnalysis(params: {
   topIds = topIds.slice(0, MAX_INFERENCE_PAIRS);
   const candidateMap = new Map(candidates.map((c) => [c.node_id, c]));
 
-  // 5. Store candidate set as ai_artifact (best-effort)
-  void supabase.from("ai_artifacts").insert({
-    artifact_type: "connection_candidates",
-    user_id: userId,
-    payload: {
-      source_node_id: nodeId,
-      workspace_id: workspaceId,
-      candidates: topIds.map((id) => ({
-        node_id: id,
-        title: candidateMap.get(id)?.title,
-        similarity: candidateMap.get(id)?.similarity ?? 0,
-      })),
-    },
-  });
-
-  // 6. Load existing proposals for this node to avoid duplicates
+  // 5. Load existing proposals for this node to avoid duplicates
   const { data: existing } = await supabase
     .from("proposed_edges")
     .select("source_node_id, target_node_id, proposal_status")
@@ -186,21 +174,17 @@ export async function runConnectionAnalysis(params: {
       (edge.status as string | null) !== "orphaned"
   );
 
-  type InferredEdgeCandidate = {
-    candidateId: string;
-    confidence: number;
-    edge_type: string;
-    explanation: string;
-  };
-
-  const inferredCandidates: InferredEdgeCandidate[] = [];
-
   let proposed = 0;
   let skipped = 0;
   let failed = 0;
 
-  // 7. Build the eligible candidate set — skip pairs already decided on
-  const eligibleCandidates: { id: string; title: string; summary: string | null }[] = [];
+  // 6. Build the eligible candidate set — skip pairs already decided on
+  const eligibleCandidates: {
+    id: string;
+    title: string;
+    summary: string | null;
+    node_type: string | null;
+  }[] = [];
   for (const candidateId of topIds) {
     const candidate = candidateMap.get(candidateId);
     if (!candidate) { skipped++; continue; }
@@ -216,127 +200,98 @@ export async function runConnectionAnalysis(params: {
       id: candidateId,
       title: candidate.title,
       summary: candidate.summary,
+      node_type: candidate.node_type ?? null,
     });
   }
 
-  // 8. Single batched inference call — evaluates all eligible candidates at once
-  if (eligibleCandidates.length > 0) {
-    try {
-      const result = await aiProvider().inferEdge({
-        source_node: { id: nodeId, title: sourceTitle, summary: sourceSummary },
-        candidates: eligibleCandidates,
-        workspace_context: workspaceContext,
-      });
+  if (eligibleCandidates.length === 0) {
+    return { proposed, skipped, failed };
+  }
 
-      void supabase.from("ai_runs").insert({
+  // 7. Single batched inference call — evaluates all eligible candidates at once
+  let selected: EdgeProposal[] = [];
+  try {
+    const result = await aiProvider().inferEdge({
+      source_node: {
+        id: nodeId,
+        title: sourceTitle,
+        summary: sourceSummary,
+        node_type: sourceType,
+        has_parent: alreadyHasParent,
+      },
+      candidates: eligibleCandidates,
+      workspace_context: workspaceContext,
+    });
+
+    // Awaited: a supabase-js query only runs once it is awaited. The old
+    // `void supabase.from("ai_runs").insert(...)` never sent anything, so no
+    // infer_edge run was logged (or priced) from April to September 2026.
+    const runId = await persistAIRun({
+      supabase,
+      userId,
+      workspaceId,
+      source: "connection",
+      run: {
         ...result.run,
         run_type: "infer_edge",
         prompt_version: INFER_EDGE_PROMPT_VERSION,
         status: "success",
-        user_id: userId,
-        workspace_id: workspaceId,
-      });
-
-      for (const entry of result.output.results) {
-        if (!eligibleCandidates.some((c) => c.id === entry.candidate_id)) {
-          // Model returned an id we didn't ask about — ignore
-          continue;
-        }
-
-        if (
-          entry.related &&
-          entry.edge_type &&
-          entry.confidence >= AI_CONFIDENCE.EDGE_INFERENCE_MIN
-        ) {
-          if (entry.edge_type === "belongs_to" && alreadyHasParent) {
-            skipped++;
-            continue;
-          }
-          inferredCandidates.push({
-            candidateId: entry.candidate_id,
-            confidence: entry.confidence,
-            edge_type: entry.edge_type,
-            explanation: entry.explanation,
-          });
-        } else {
-          skipped++;
-        }
-      }
-
-      // Account for any candidates the model failed to return a verdict for
-      const returnedIds = new Set(result.output.results.map((r) => r.candidate_id));
-      for (const c of eligibleCandidates) {
-        if (!returnedIds.has(c.id)) failed++;
-      }
-    } catch (err) {
-      console.error("[connection] inferEdge failed:", err instanceof Error ? err.message : err);
-      failed += eligibleCandidates.length;
-    }
-  }
-
-  if (inferredCandidates.length === 0) {
-    return { proposed, skipped, failed };
-  }
-
-  const structuralTypePriority: Record<string, number> = {
-    belongs_to: 4,
-    prerequisite_for: 3,
-    required_for: 3,
-    depends_on: 2,
-  };
-
-  const selected: InferredEdgeCandidate[] = [];
-
-  const bestStructural = [...inferredCandidates]
-    .filter((candidate) => candidate.edge_type in structuralTypePriority)
-    .sort((a, b) => {
-      const priorityDelta =
-        structuralTypePriority[b.edge_type] - structuralTypePriority[a.edge_type];
-      if (priorityDelta !== 0) return priorityDelta;
-      return b.confidence - a.confidence;
-    })[0];
-
-  if (bestStructural) {
-    selected.push(bestStructural);
-  }
-
-  const bestSemantic = [...inferredCandidates]
-    .filter((candidate) => {
-      if (bestStructural && candidate.candidateId === bestStructural.candidateId) return false;
-      if (candidate.edge_type in structuralTypePriority) return false;
-      if (candidate.edge_type === "related_to") return candidate.confidence >= 0.82;
-      return candidate.confidence >= 0.7;
-    })
-    .sort((a, b) => b.confidence - a.confidence)[0];
-
-  if (bestSemantic) {
-    selected.push(bestSemantic);
-  }
-
-  skipped += Math.max(inferredCandidates.length - selected.length, 0);
-
-  for (const candidate of selected) {
-    const normalized =
-      candidate.edge_type === "depends_on"
-        ? {
-            edge_type: "required_for",
-            source_node_id: candidate.candidateId,
-            target_node_id: nodeId,
-          }
-        : {
-            edge_type: candidate.edge_type,
+      },
+    });
+    // What the model was shown for this node — for "why didn't it link X?".
+    if (runId) {
+      await supabase
+        .from("ai_artifacts")
+        .insert({
+          ai_run_id: runId,
+          user_id: userId,
+          artifact_type: "connection_candidates",
+          linked_entity_ids: [nodeId],
+          payload: {
             source_node_id: nodeId,
-            target_node_id: candidate.candidateId,
-          };
+            workspace_id: workspaceId,
+            candidates: topIds.map((id) => ({
+              node_id: id,
+              title: candidateMap.get(id)?.title,
+              similarity: candidateMap.get(id)?.similarity ?? 0,
+            })),
+            verdicts: result.output.results,
+          },
+        })
+        .then(
+          () => undefined,
+          () => undefined,
+        );
+    }
 
+    selected = selectEdgeProposals({
+      sourceId: nodeId,
+      sourceType,
+      sourceHasParent: alreadyHasParent,
+      results: result.output.results,
+      candidateTypeById: new Map(eligibleCandidates.map((c) => [c.id, c.node_type])),
+    });
+
+    // Account for any candidates the model failed to return a verdict for
+    const returnedIds = new Set(result.output.results.map((r) => r.candidate_id));
+    for (const c of eligibleCandidates) {
+      if (!returnedIds.has(c.id)) failed++;
+    }
+    skipped += Math.max(eligibleCandidates.length - failed - selected.length, 0);
+  } catch (err) {
+    console.error("[connection] inferEdge failed:", err instanceof Error ? err.message : err);
+    failed += eligibleCandidates.length;
+  }
+
+  for (const edge of selected) {
     const { error } = await supabase.from("proposed_edges").insert({
       workspace_id: workspaceId,
       user_id: userId,
-      source_node_id: normalized.source_node_id,
-      target_node_id: normalized.target_node_id,
-      edge_type: normalized.edge_type,
-      confidence: candidate.confidence,
-      explanation: candidate.explanation,
+      source_node_id: edge.source_node_id,
+      target_node_id: edge.target_node_id,
+      edge_type: edge.edge_type,
+      confidence: edge.confidence,
+      explanation: edge.explanation,
       proposal_status: "pending_review",
     });
     if (error) failed++;

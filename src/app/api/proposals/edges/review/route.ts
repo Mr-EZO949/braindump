@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const ids = actions.map((a) => a.id);
   const { data: proposals, error: fetchError } = await supabase
     .from("proposed_edges")
-    .select("id, workspace_id, source_node_id, target_node_id, edge_type")
+    .select("id, workspace_id, source_node_id, target_node_id, edge_type, confidence, explanation")
     .in("id", ids)
     .eq("user_id", user.id)
     .eq("proposal_status", "pending_review");
@@ -118,6 +118,10 @@ export async function POST(req: NextRequest) {
         source_node_id: sourceId,
         target_node_id: proposal.target_node_id as string,
         edge_type: proposal.edge_type as string,
+        // Keep the "why" on the edge the user accepted.
+        confidence: (proposal.confidence as number | null) ?? null,
+        explanation: (proposal.explanation as string | null) ?? null,
+        user_confirmed: true,
       }];
     });
 

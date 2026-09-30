@@ -201,8 +201,16 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
       proposed_node_type: n.proposed_node_type as ExtractionOutput["proposed_nodes"][number]["proposed_node_type"],
       primary_parent_local_ref: primaryParentLocalRef,
       existing_parent_node_id: existingParentNodeId,
-      depends_on_local_refs: Array.from(new Set(dependsOnLocalRefs)).slice(0, 2),
-      soft_links: dedupedSoftLinks,
+      // A step can't wait on the very node it sits under: the dependency would
+      // block it until its own parent is finished ("market it after the build"
+      // came back as the build project required_for its own child). The tree
+      // already says they belong together, so the link is dropped.
+      depends_on_local_refs: Array.from(new Set(dependsOnLocalRefs))
+        .filter((ref) => ref !== primaryParentLocalRef)
+        .slice(0, 2),
+      soft_links: dedupedSoftLinks.filter(
+        (link) => link.target_local_ref !== primaryParentLocalRef,
+      ),
       accepted_node_id: null,
       proposed_target_date: proposedTargetDate,
       extraction_confidence: isNumber(n.extraction_confidence)
@@ -346,6 +354,9 @@ export function validateEdgeInferenceOutput(
       candidate_id: entry.candidate_id.trim(),
       related: entry.related,
       edge_type,
+      // Anything but an explicit "candidate" reads source → candidate, which
+      // is also what prompts before v5 (no "from" field) meant.
+      from: entry.from === "candidate" ? "candidate" : "source",
       confidence,
       explanation: entry.explanation.trim(),
     });

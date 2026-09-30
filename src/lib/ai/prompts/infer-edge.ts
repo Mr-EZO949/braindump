@@ -1,4 +1,4 @@
-// Edge inference prompt — batched (v4)
+// Edge inference prompt — batched
 // v4 evaluates the source node against ALL its top-N candidates in a single call
 // to eliminate the per-pair prompt overhead that dominated cost (≥60% of Claude spend).
 // The model sees all candidates side-by-side, which also tends to improve ranking.
@@ -8,42 +8,45 @@
 // workspace_context to be built once per batch, the full prefix is stable bytes
 // across every inferEdge call in that batch — pushing the cached portion past
 // Anthropic's 1024-token floor and enabling cache hits on calls 2…N.
+// v5 (2026-09-30, a real 25-node dump produced 10 links: all dependencies, none
+// lateral, half of them backwards):
+//   - direction is its own field ("from"), decided after the type. v4 had one
+//     direction per type, so "Linear Algebra helps ML" asked about from the ML
+//     node came out as ML → prerequisite_for → Linear Algebra.
+//   - one dependency type, required_for, for HARD blockers only. Dependency
+//     edges block the target in Focus, the planner and the ranking, and v4's
+//     "prefer prerequisite_for" turned every "this helps that" into a blocker.
+//     Helping is supports / useful_for.
+//   - the model sees node types and whether the source already has a parent,
+//     with the nesting rules, so it stops proposing a project under a big task.
 
-export const INFER_EDGE_PROMPT_VERSION = "infer-edge-v4.2";
+export const INFER_EDGE_PROMPT_VERSION = "infer-edge-v5";
 
 // Stable rules/framework — caches across every edge inference call in a window.
-const RULES_BLOCK = `You are a knowledge graph assistant. Your job is to keep the graph SPARSE, USEFUL, and STRUCTURALLY READABLE.
+const RULES_BLOCK = `You link nodes in a personal planning graph. For one SOURCE node and a few CANDIDATE nodes, decide which pairs deserve a link the user would find useful when planning. Every link you return is shown to the user to accept or reject.
 
-For each candidate below, decide whether it has a genuinely high-value relationship to the source node. The default answer should be related: false unless the connection would clearly help the user.
+The tree (what is part of what) already exists — don't rebuild it. Your job is the links ACROSS branches: what helps what, and what truly blocks what.
 
-Edge types (source → candidate direction):
-- useful_for: source is a skill, concept, or resource that helps with candidate
-- prerequisite_for: understanding or completing source makes candidate easier or possible
-- belongs_to: source is a task, subtopic, or component that lives under candidate
-- supports: source provides evidence, motivation, or backing for candidate
-- depends_on: source cannot proceed without candidate
-- related_to: source and candidate share context, domain, or audience — worth keeping near each other
+Link types — each reads "A → B":
+- supports: doing A advances B. A is work or a routine whose result feeds B. ("Faceless productivity content" supports "Market BrainDump"; "Fix sleep schedule" supports "Retake exams".)
+- useful_for: A is a skill, resource or piece of knowledge that B benefits from. ("Italian crash course" useful_for "Internship in Milan"; "Linear Algebra" useful_for "Machine Learning".)
+- required_for: B CANNOT start or finish until A is done — a hard blocker, not "it would help". ("Get the visa" required_for "Move to Berlin".) If B could go ahead without A, it is supports or useful_for. Knowledge that makes another course easier is useful_for.
+- related_to: neither helps the other, but they overlap enough that the user should see them together (same audience, same material, two takes on one idea). Use sparingly.
+- belongs_to: A is a part or step of B. ONLY when the source has no parent yet (the Source line says so), always with from = "source", and only when B can hold A: an area holds anything; a goal or project holds big tasks, tasks and habits; a big task holds only its steps; tasks, habits, ideas and notes hold nothing. A project or goal never belongs to a big task or task.
 
-For each candidate, reason briefly (to yourself) before answering:
-1. What does the source actually represent?
-2. What does this candidate represent?
-3. Is there a direct structural or execution relationship?
-4. If not, is there a genuinely useful relationship, or would this just create graph noise?
+Direction — decide it AFTER the type, as its own step:
+- "from": "source" means the link reads source → candidate. "from": "candidate" means candidate → source.
+- The node that GIVES the help, or has to happen first, is "from". If the source is the one being helped or waiting, from = "candidate".
+- Check it by reading the sentence back with the titles: "<from title> <type> <other title>" must be true as written.
 
-Confidence scale:
-- 0.8–1.0: Clear relationship, would obviously be useful to the user
-- 0.5–0.79: Plausible non-obvious connection worth reviewing
-- 0.3–0.49: Speculative but interesting — surface it, user can reject
-- below 0.3: Too weak or too generic — return related: false
+What deserves a link:
+- You can say in one concrete sentence why A helps or blocks B, and the user would agree. The same life area or the same broad topic alone is not enough → related: false.
+- Titles that are near-duplicates of each other are not a link → related: false.
+- Usually 1–3 of the candidates deserve a link. Returning none is fine.
 
-Rules:
-- Prefer "belongs_to", "prerequisite_for", or "depends_on" when there is a clear structural/task relationship.
-- Use "supports" or "useful_for" only when the connection would materially improve planning or understanding.
-- Use "related_to" rarely. Shared topic alone is NOT enough.
-- If a pair only shares a broad domain, return related: false for that candidate.
-- Most candidates should return related: false.
-- Explanation must say WHY this connection is useful, not just restate the titles.
-- You MUST return exactly one result per candidate, with candidate_id matching the provided id.
+Confidence: 0.8–1.0 clearly true and useful · 0.6–0.79 plausible, worth a look · below 0.6 → related: false.
+
+You MUST return exactly one result per candidate, with candidate_id matching the provided id. Explanation: one sentence saying why the link is useful (or why there is none) — not a restatement of the titles.
 
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
@@ -51,31 +54,48 @@ Respond with ONLY valid JSON (no markdown, no explanation):
     {
       "candidate_id": "the id from above",
       "related": true | false,
-      "edge_type": "edge_type_string or null if related is false",
+      "edge_type": "supports | useful_for | required_for | related_to | belongs_to, or null if related is false",
+      "from": "source | candidate",
       "confidence": 0.0,
-      "explanation": "one sentence: why this connection is useful (or why not)"
+      "explanation": "one sentence"
     }
   ],
   "prompt_version": "${INFER_EDGE_PROMPT_VERSION}"
 }`;
+
+export interface EdgeInferencePromptParams {
+  source_title: string;
+  source_summary: string | null;
+  source_node_type?: string | null;
+  // undefined = unknown (the line is left out).
+  source_has_parent?: boolean;
+  candidates: { id: string; title: string; summary: string | null; node_type?: string | null }[];
+  workspace_context?: string;
+}
 
 function buildStablePrefix(workspace_context: string | undefined): string {
   if (!workspace_context) return RULES_BLOCK;
   return `${RULES_BLOCK}\n\nWorkspace context:\n${workspace_context}`;
 }
 
-function buildVariableBlock(params: {
-  source_title: string;
-  source_summary: string | null;
-  candidates: { id: string; title: string; summary: string | null }[];
-}): string {
-  const sourceBlock = `Source node:
-Title: "${params.source_title}"${params.source_summary ? `\nSummary: ${params.source_summary}` : ""}`;
+function typeTag(nodeType: string | null | undefined): string {
+  return nodeType ? ` [${nodeType.replace(/_/g, " ")}]` : "";
+}
+
+function buildVariableBlock(params: EdgeInferencePromptParams): string {
+  const parentLine =
+    params.source_has_parent === undefined
+      ? ""
+      : params.source_has_parent
+        ? "\nParent: already has one — do not use belongs_to."
+        : "\nParent: none yet — belongs_to is allowed if a candidate is clearly what it is part of.";
+  const sourceBlock = `Source node${typeTag(params.source_node_type)}:
+Title: "${params.source_title}"${params.source_summary ? `\nSummary: ${params.source_summary}` : ""}${parentLine}`;
 
   const candidateBlock = params.candidates
     .map((c, idx) => {
       const summary = c.summary ? `\n  Summary: ${c.summary}` : "";
-      return `[${idx + 1}] id="${c.id}"
+      return `[${idx + 1}] id="${c.id}"${typeTag(c.node_type)}
   Title: "${c.title}"${summary}`;
     })
     .join("\n\n");
@@ -88,12 +108,7 @@ ${candidateBlock}`;
 }
 
 // Single-string form retained for non-caching providers and dev tools.
-export function buildEdgeInferencePrompt(params: {
-  source_title: string;
-  source_summary: string | null;
-  candidates: { id: string; title: string; summary: string | null }[];
-  workspace_context?: string;
-}): string {
+export function buildEdgeInferencePrompt(params: EdgeInferencePromptParams): string {
   const prefix = buildStablePrefix(params.workspace_context);
   const variable = buildVariableBlock(params);
   return `${prefix}\n\n${variable}`;
@@ -102,12 +117,10 @@ export function buildEdgeInferencePrompt(params: {
 // Split form for providers that cache by prefix boundary.
 // stablePrefix = rules + workspace_context (stable when workspace_context is
 // hoisted once per batch). variableBlock = source + candidates (per-call).
-export function buildEdgeInferencePromptParts(params: {
-  source_title: string;
-  source_summary: string | null;
-  candidates: { id: string; title: string; summary: string | null }[];
-  workspace_context?: string;
-}): { stablePrefix: string; variableBlock: string } {
+export function buildEdgeInferencePromptParts(params: EdgeInferencePromptParams): {
+  stablePrefix: string;
+  variableBlock: string;
+} {
   return {
     stablePrefix: buildStablePrefix(params.workspace_context),
     variableBlock: buildVariableBlock(params),
