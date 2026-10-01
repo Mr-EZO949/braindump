@@ -52,11 +52,6 @@ type MainStageProps = {
   workProgressByNode?: ReadonlyMap<string, WorkProgress>;
   /** Nodes whose priority just changed — they pulse once (ranking v2). */
   pulseNodeIds?: ReadonlySet<string> | null;
-  graphImportanceFilter: string;
-  graphImportanceFilterOptions: Array<{
-    label: string;
-    value: string;
-  }>;
   graphLoading: boolean;
   graphSearchValue: string;
   graphTypeFilter: string;
@@ -71,7 +66,6 @@ type MainStageProps = {
     field: Field,
     value: CreateNodeInput[Field],
   ) => void;
-  onChangeGraphImportanceFilter: (value: string) => void;
   onChangeGraphTypeFilter: (value: string) => void;
   onChangeNewEdgeConnectionRelation: (relationId: EdgeRelationOptionId) => void;
   onChangeNewEdgeConnectionTarget: (nodeId: string) => void;
@@ -132,8 +126,6 @@ export function MainStage({
   edgeConnections,
   graphData,
   historyGraphData,
-  graphImportanceFilter,
-  graphImportanceFilterOptions,
   graphLoading,
   graphSearchValue,
   graphTypeFilter,
@@ -148,7 +140,6 @@ export function MainStage({
   onCameraViewChange,
   onChangeCreateNodeField,
   onChangeEditNodeField,
-  onChangeGraphImportanceFilter,
   onChangeGraphTypeFilter,
   onChangeNewEdgeConnectionRelation,
   onChangeNewEdgeConnectionTarget,
@@ -176,8 +167,7 @@ export function MainStage({
   focusRequestKey,
   suppressInitialFocusAnimation,
 }: MainStageProps) {
-  const filtersActive =
-    graphTypeFilter !== "all" || graphImportanceFilter !== "all" || hideCompleted;
+  const filtersActive = graphTypeFilter !== "all";
   const isGraphEmpty = !graphLoading && graphData.nodes.length === 0;
   const visibleSelectedNodeId = graphData.nodes.some((node) => node.id === selectedNodeId)
     ? selectedNodeId
@@ -378,43 +368,27 @@ export function MainStage({
           />
 
           <div className="graph-filter-row">
-            <label className="graph-filter-shell">
-              <span className="sr-only">Filter by importance</span>
-              <select
-                className="graph-filter-select"
-                onChange={(event) => onChangeGraphImportanceFilter(event.target.value)}
-                value={graphImportanceFilter}
-              >
-                {graphImportanceFilterOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="graph-visibility" aria-label="Nodes on canvas" role="group">
-              <span className="graph-visibility-label">On canvas</span>
-              <button
-                aria-label="Show recently completed nodes"
-                aria-pressed={!hideCompleted}
-                className="graph-visibility-option"
-                onClick={onToggleHideCompleted}
-                title="Show or hide recently completed nodes"
-                type="button"
-              >
-                Done
-              </button>
-            </div>
-
             <button
-              className="graph-filter-reset"
-              disabled={!filtersActive}
-              onClick={onResetGraphFilters}
+              aria-label={hideCompleted ? "Show completed nodes on the graph" : "Hide completed nodes from the graph"}
+              aria-pressed={!hideCompleted}
+              className="graph-done-toggle"
+              onClick={onToggleHideCompleted}
+              title={hideCompleted ? "Show recent completed nodes" : "Hide recent completed nodes"}
               type="button"
             >
-              Reset
+              <span aria-hidden="true" className="graph-done-toggle-mark">✓</span>
+              {hideCompleted ? "Show done" : "Done"}
             </button>
+
+            {filtersActive ? (
+              <button
+                className="graph-filter-reset"
+                onClick={onResetGraphFilters}
+                type="button"
+              >
+                Reset
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

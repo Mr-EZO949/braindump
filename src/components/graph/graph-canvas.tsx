@@ -452,7 +452,9 @@ function createNodeLayout(node: Node, importanceScore: number) {
   const maxCharsPerLine = clamp(
     Math.floor((width - padX * 2) / (fontSize * 0.56)),
     8,
-    sizeScale >= 0.84 ? 14 : sizeScale >= 0.7 ? 12 : sizeScale >= 0.48 ? 10 : 9,
+    node.node_type === "task"
+      ? sizeScale >= 0.7 ? 18 : sizeScale >= 0.48 ? 15 : 13
+      : sizeScale >= 0.84 ? 14 : sizeScale >= 0.7 ? 12 : sizeScale >= 0.48 ? 10 : 9,
   );
   const lines = wrapTitle(node.title, maxCharsPerLine);
   const hash = hashString(node.id);
@@ -1611,6 +1613,24 @@ function countDescendants(nodeId: string, childrenByParent: Map<string, string[]
   return count;
 }
 
+const COLLAPSE_ANIMATION_MS = 240;
+
+function getHiddenDescendants(
+  collapsedNodeIds: ReadonlySet<string>,
+  childrenByParent: Map<string, string[]>,
+): Set<string> {
+  const hidden = new Set<string>();
+  function collect(nodeId: string) {
+    for (const child of childrenByParent.get(nodeId) ?? []) {
+      if (hidden.has(child)) continue;
+      hidden.add(child);
+      collect(child);
+    }
+  }
+  collapsedNodeIds.forEach(collect);
+  return hidden;
+}
+
 function updateAmbientGlow(
   element: HTMLDivElement | null,
   clientX: number,
@@ -1654,6 +1674,7 @@ export function GraphCanvas({
   const viewAnimationRef = useRef<number | null>(null);
   const wheelAnimationRef = useRef<number | null>(null);
   const wheelTargetRef = useRef<ViewState | null>(null);
+  const collapseTimeoutRef = useRef<number | null>(null);
   const focusFollowUpTimeoutRef = useRef<number | null>(null);
   const pendingFocusRequestRef = useRef<number | null>(null);
   const focusNodeIdRef = useRef(focusNodeId);
@@ -1679,6 +1700,8 @@ export function GraphCanvas({
   const [view, setView] = useState<ViewState>(defaultView);
   const [, setFrameVersion] = useState(0);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState(() => new Set<string>());
+  const [exitingNodeIds, setExitingNodeIds] = useState(() => new Set<string>());
+  const [enteringNodeIds, setEnteringNodeIds] = useState(() => new Set<string>());
 
   // Track theme so node SVG fills can adapt. CSS custom-property reads on
   // every render would be expensive; cheaper to subscribe to the data-theme
@@ -1725,20 +1748,14 @@ export function GraphCanvas({
   const habitWeekDone = useHabitWeekProgress(graphData.nodes);
 
   // Set of all node IDs that are hidden because an ancestor is collapsed.
-  const hiddenNodeIds = useMemo(() => {
-    if (collapsedNodeIds.size === 0) return new Set<string>();
-    const hidden = new Set<string>();
-    function collect(nodeId: string) {
-      for (const child of childrenByParent.get(nodeId) ?? []) {
-        if (!hidden.has(child)) {
-          hidden.add(child);
-          collect(child);
-        }
-      }
-    }
-    collapsedNodeIds.forEach(collect);
-    return hidden;
-  }, [collapsedNodeIds, childrenByParent]);
+  const hiddenNodeIds = useMemo(
+    () => getHiddenDescendants(collapsedNodeIds, childrenByParent),
+    [collapsedNodeIds, childrenByParent],
+  );
+
+  useEffect(() => () => {
+    if (collapseTimeoutRef.current !== null) window.clearTimeout(collapseTimeoutRef.current);
+  }, []);
   const requestRender = useCallback(() => {
     if (animationRef.current !== null) {
       return;
@@ -2645,21 +2662,26 @@ export function GraphCanvas({
     onSelectNode(null);
   };
 
-  const handleCollapseToggle = useCallback(
-    (event: React.MouseEvent, nodeId: string) => {
-      event.stopPropagation();
-      setCollapsedNodeIds((prev) => {
-        const next = new Set(prev);
-        if (next.has(nodeId)) {
-          next.delete(nodeId);
-        } else {
-          next.add(nodeId);
-        }
-        return next;
-      });
-    },
-    [],
-  );
+  const handleCollapseToggle = useCallback((nodeId: string) => {
+    const nextCollapsed = new Set(collapsedNodeIds);
+    if (nextCollapsed.has(nodeId)) nextCollapsed.delete(nodeId);
+    else nextCollapsed.add(nodeId);
+
+    const nextHidden = getHiddenDescendants(nextCollapsed, childrenByParent);
+    const leaving = new Set([...nextHidden].filter((id) => !hiddenNodeIds.has(id)));
+    const arriving = new Set([...hiddenNodeIds].filter((id) => !nextHidden.has(id)));
+    setExitingNodeIds(leaving);
+    setEnteringNodeIds(arriving);
+    setCollapsedNodeIds(nextCollapsed);
+    if (focusNodeId && nextHidden.has(focusNodeId)) onSelectNode(null);
+
+    if (collapseTimeoutRef.current !== null) window.clearTimeout(collapseTimeoutRef.current);
+    collapseTimeoutRef.current = window.setTimeout(() => {
+      setExitingNodeIds(new Set());
+      setEnteringNodeIds(new Set());
+      collapseTimeoutRef.current = null;
+    }, COLLAPSE_ANIMATION_MS);
+  }, [childrenByParent, collapsedNodeIds, focusNodeId, hiddenNodeIds, onSelectNode]);
 
   const handleNodePointerDown = (event: ReactPointerEvent<SVGGElement>, nodeId: string) => {
     event.stopPropagation();
@@ -2797,6 +2819,19 @@ export function GraphCanvas({
               </>
             )}
           </linearGradient>
+          <linearGradient id="node-task-surface" x1="0" x2="0" y1="0" y2="1">
+            {theme === "light" ? (
+              <>
+                <stop offset="0%" stopColor="#fff8f5" />
+                <stop offset="100%" stopColor="#f8dfda" />
+              </>
+            ) : (
+              <>
+                <stop offset="0%" stopColor="#532f38" />
+                <stop offset="100%" stopColor="#321e26" />
+              </>
+            )}
+          </linearGradient>
           <linearGradient id="node-completed-surface" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="#f5faf3" />
             <stop offset="100%" stopColor="#e9f3e7" />
@@ -2853,8 +2888,8 @@ export function GraphCanvas({
         <g transform={worldTransform}>
           {scene.links.filter(
             (link) =>
-              !hiddenNodeIds.has(link.source_node_id) &&
-              !hiddenNodeIds.has(link.target_node_id),
+              (!hiddenNodeIds.has(link.source_node_id) || exitingNodeIds.has(link.source_node_id)) &&
+              (!hiddenNodeIds.has(link.target_node_id) || exitingNodeIds.has(link.target_node_id)),
           ).map((link) => {
             const emphasized =
               selectedInteraction.connectedEdges.has(link.id) ||
@@ -2865,26 +2900,36 @@ export function GraphCanvas({
             style.opacity *= decay;
 
             return (
-              <path
-                d={getLinkPath(link, draggingNodeId)}
-                fill="none"
+              <g
+                className={
+                  exitingNodeIds.has(link.source_node_id) || exitingNodeIds.has(link.target_node_id)
+                    ? "graph-collapse-exit"
+                    : enteringNodeIds.has(link.source_node_id) || enteringNodeIds.has(link.target_node_id)
+                      ? "graph-collapse-enter"
+                      : undefined
+                }
                 key={link.id}
-                markerEnd={style.markerEnd}
-                opacity={style.opacity}
-                ref={(element) => {
-                  if (element) {
-                    linkElementRefs.current.set(link.id, element);
-                  } else {
-                    linkElementRefs.current.delete(link.id);
-                  }
-                }}
-                stroke={style.stroke}
-                strokeDasharray={style.dashArray}
-                strokeLinecap={style.dashArray ? "round" : "butt"}
-                strokeLinejoin="round"
-                strokeWidth={style.strokeWidth}
-                vectorEffect="non-scaling-stroke"
-              />
+              >
+                <path
+                  d={getLinkPath(link, draggingNodeId)}
+                  fill="none"
+                  markerEnd={style.markerEnd}
+                  opacity={style.opacity}
+                  ref={(element) => {
+                    if (element) {
+                      linkElementRefs.current.set(link.id, element);
+                    } else {
+                      linkElementRefs.current.delete(link.id);
+                    }
+                  }}
+                  stroke={style.stroke}
+                  strokeDasharray={style.dashArray}
+                  strokeLinecap={style.dashArray ? "round" : "butt"}
+                  strokeLinejoin="round"
+                  strokeWidth={style.strokeWidth}
+                  vectorEffect="non-scaling-stroke"
+                />
+              </g>
             );
           })}
 
@@ -2897,7 +2942,7 @@ export function GraphCanvas({
             const isMobileRender = viewport.width <= 768;
             const dropFiltersAtThisZoom = isMobileRender && view.zoom < 0.55;
             const dropLabelsAtThisZoom = isMobileRender && view.zoom < 0.32;
-            return scene.nodes.filter((node) => !hiddenNodeIds.has(node.id)).map((node) => {
+            return scene.nodes.filter((node) => !hiddenNodeIds.has(node.id) || exitingNodeIds.has(node.id)).map((node) => {
             const position = getRenderedNodePosition(node, draggingNodeId);
             const selected = focusNodeId === node.id;
             const hovered = hoveredNodeId === node.id;
@@ -2931,13 +2976,20 @@ export function GraphCanvas({
                 : "url(#node-shadow)";
             const lineHeight = node.lines.length === 1 ? 0 : node.fontSize * 1.04;
             const initialY = node.lines.length === 1 ? 2 : -lineHeight / 2 + 1;
-            const nodeRadius = Math.min(node.width, node.height) * 0.44;
+            const isBig = BREAKDOWN_TYPES.has(node.node_type);
+            const isTask = node.node_type === "task";
+            const isActiveTask = isTask && node.status === "active";
+            const nodeRadius = isBig
+              ? clamp(node.height * 0.24, 12, 22)
+              : Math.min(node.width, node.height) * 0.44;
+            const collapseControlScale = viewport.width <= 768
+              ? clamp(0.9 / view.zoom, 1, 2)
+              : 1;
             const topBandId = `node-top-band-${node.id}`;
             const actionWashId = `node-action-wash-${node.id}`;
-            // Big tasks have their own surface and badge. The red perimeter
-            // remains reserved for selection and search.
+            // Big tasks are stacked containers; individual tasks are bright
+            // action pills. The red perimeter remains reserved for focus/search.
             const actionable = CHECKABLE_TYPES.has(node.node_type);
-            const isBig = BREAKDOWN_TYPES.has(node.node_type);
             const isCompleted = node.status === "completed";
             const isObjective = OBJECTIVE_TYPES.has(node.node_type);
             const isArea = node.node_type === "area";
@@ -2964,7 +3016,7 @@ export function GraphCanvas({
                     ? 0.2
                     : 0.16
               : visual.surfaceTintOpacity * 1.25;
-            const actionWashOpacity = actionable
+            const actionWashOpacity = isActiveTask
               ? selected
                 ? 0.28
                 : hovered
@@ -3021,6 +3073,16 @@ export function GraphCanvas({
                 style={{ cursor: draggingNodeId === node.id ? "grabbing" : nodeChildCount > 0 ? "grab" : "grab" }}
                 transform={`translate(${position.x}, ${position.y})`}
               >
+                <g
+                  className={
+                    exitingNodeIds.has(node.id)
+                      ? "graph-collapse-node graph-collapse-exit"
+                      : enteringNodeIds.has(node.id)
+                        ? "graph-collapse-node graph-collapse-enter"
+                        : "graph-collapse-node"
+                  }
+                  style={exitingNodeIds.has(node.id) ? { pointerEvents: "none" } : undefined}
+                >
                 <defs>
                   <linearGradient id={topBandId} x1="0" x2="1" y1="0" y2="0">
                     <stop
@@ -3041,7 +3103,7 @@ export function GraphCanvas({
                     />
                     <stop offset="100%" stopColor={rgba(categoryColor, 0)} />
                   </linearGradient>
-                  {actionable && !isCompleted ? (
+                  {isActiveTask ? (
                     <linearGradient id={actionWashId} x1="0" x2="1" y1="0" y2="1">
                       <stop offset="0%" stopColor={rgba(theme === "light" ? "#e8acaa" : "#c44150", actionWashOpacity * 1.12)} />
                       <stop offset="38%" stopColor={rgba(theme === "light" ? "#e9c1b7" : "#92293a", actionWashOpacity * 0.8)} />
@@ -3067,6 +3129,19 @@ export function GraphCanvas({
                   />
                 ) : null}
                 <g filter={nodeFilter}>
+                  {isBig && !isCompleted ? (
+                    <rect
+                      fill={theme === "light" ? "#ead5d0" : "#4a2a34"}
+                      height={node.height}
+                      opacity={0.9}
+                      rx={nodeRadius}
+                      stroke={theme === "light" ? "#d9b7b2" : "#73414e"}
+                      strokeWidth={0.8}
+                      width={node.width}
+                      x={-node.width / 2 + 3}
+                      y={-node.height / 2 + 6}
+                    />
+                  ) : null}
                   <rect
                     fill={theme === "light" ? "#766558" : "rgba(4,4,6,0.92)"}
                     height={node.height + 6}
@@ -3082,6 +3157,8 @@ export function GraphCanvas({
                         ? "url(#node-completed-surface)"
                         : isBig
                           ? "url(#node-big-task-surface)"
+                          : isActiveTask
+                            ? "url(#node-task-surface)"
                           : isArea && theme === "light"
                             ? "url(#node-area-surface)"
                             : "url(#node-base-surface)"
@@ -3089,9 +3166,15 @@ export function GraphCanvas({
                     fillOpacity={isArea && theme === "dark" ? 0.35 : 1}
                     height={node.height}
                     rx={nodeRadius}
-                    stroke={isArea && !selected && !hovered && !searchHit ? rgba(categoryColor, theme === "light" ? 0.5 : 0.7) : visual.border}
+                    stroke={
+                      isActiveTask && !selected && !hovered && !searchHit
+                        ? theme === "light" ? "#d59e9e" : "#9c5867"
+                        : isArea && !selected && !hovered && !searchHit
+                          ? rgba(categoryColor, theme === "light" ? 0.5 : 0.7)
+                          : visual.border
+                    }
                     strokeDasharray={isIdea ? "5 4" : undefined}
-                    strokeWidth={selected ? 1.55 : hovered ? 1.2 : isArea ? 1.2 : 1}
+                    strokeWidth={selected ? 1.55 : hovered ? 1.2 : isArea || isActiveTask ? 1.2 : 1}
                     width={node.width}
                     x={-node.width / 2}
                     y={-node.height / 2}
@@ -3105,7 +3188,7 @@ export function GraphCanvas({
                     x={-(node.width - 12) / 2}
                     y={-node.height / 2 + 3}
                   />
-                  {actionable && !isCompleted ? (
+                  {isActiveTask ? (
                     <rect
                       fill={`url(#${actionWashId})`}
                       height={node.height - 2}
@@ -3170,6 +3253,20 @@ export function GraphCanvas({
                       >
                         DONE ✓
                       </text>
+                    </g>
+                  ) : null}
+                  {isActiveTask && !skipLabel ? (
+                    <g
+                      style={{ pointerEvents: "none" }}
+                      transform={`translate(${-node.width / 2 + 13}, ${-node.height / 2 + 3})`}
+                    >
+                      <circle
+                        fill={theme === "light" ? "#bc5364" : "#d66d7c"}
+                        r={6.5}
+                        stroke={theme === "light" ? "#fff8f5" : "#3d222b"}
+                        strokeWidth={1.2}
+                      />
+                      <path d="M -1.6 -2.3 L 2 0 L -1.6 2.3" fill="none" stroke="#fff7f5" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.25} />
                     </g>
                   ) : null}
                   {isBig && !isCompleted && !skipLabel ? (
@@ -3314,7 +3411,7 @@ export function GraphCanvas({
                       fontSize={isArea ? node.fontSize * 0.82 : node.fontSize}
                       // Objectives carry a heavier title than task pills — the
                       // "weight" half of the size-&-weight distinction (#3).
-                      fontWeight={isCompleted && theme === "light" ? 610 : isObjective ? 680 : isArea ? 500 : 540}
+                      fontWeight={isCompleted && theme === "light" ? 610 : isObjective ? 680 : isActiveTask ? 660 : isBig ? 640 : isArea ? 500 : 540}
                       letterSpacing={isArea ? "0.08em" : "-0.02em"}
                       textAnchor="middle"
                       textDecoration={isCompleted && theme === "dark" ? "line-through" : undefined}
@@ -3333,61 +3430,66 @@ export function GraphCanvas({
                   )}
                 </g>
 
-                {/* Collapsed-children badge — shown when node has hidden subtree */}
-                {isCollapsed && hiddenDescendantCount > 0 && (
-                  <g
-                    style={{ pointerEvents: "none" }}
-                    transform={`translate(0, ${node.height / 2 + 11})`}
-                  >
-                    <rect
-                      fill="rgba(196,65,80,0.86)"
-                      height={14}
-                      rx={7}
-                      stroke="rgba(255,255,255,0.12)"
-                      strokeWidth={0.8}
-                      width={hiddenDescendantCount > 9 ? 28 : 24}
-                      x={hiddenDescendantCount > 9 ? -14 : -12}
-                      y={-7}
-                    />
-                    <text
-                      fill="rgba(255,255,255,0.92)"
-                      fontSize={8}
-                      fontWeight={700}
-                      letterSpacing="-0.01em"
-                      textAnchor="middle"
-                      y={3}
-                    >
-                      +{hiddenDescendantCount}
-                    </text>
-                  </g>
-                )}
-
-                {/* Collapse/expand toggle — clickable on nodes with children */}
+                {/* One clear control shows that the branch can open or close. */}
                 {nodeChildCount > 0 && (
                   <g
+                    aria-expanded={!isCollapsed}
+                    aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${node.title}, ${isCollapsed ? hiddenDescendantCount : nodeChildCount} ${isCollapsed ? "hidden" : "direct"} nodes`}
                     className="graph-collapse-toggle"
-                    onClick={(e) => handleCollapseToggle(e, node.id)}
-                    style={{ cursor: "pointer" }}
+                    data-collapsed={isCollapsed}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleCollapseToggle(node.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleCollapseToggle(node.id);
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    role="button"
+                    tabIndex={0}
+                    transform={`translate(${node.width / 2 - 13}, ${node.height / 2 + 6}) scale(${collapseControlScale})`}
                   >
-                    <circle
-                      cx={0}
-                      cy={node.height / 2 + 10}
-                      fill="rgba(255,255,255,0.06)"
-                      r={9}
+                    <rect fill="transparent" height={38} width={62} x={-31} y={-19} />
+                    <rect
+                      className="graph-collapse-button"
+                      fill={theme === "light" ? (isCollapsed ? "#f8e4df" : "#fffdfa") : (isCollapsed ? "#51303a" : "#292529")}
+                      height={22}
+                      rx={11}
+                      stroke={theme === "light" ? (isCollapsed ? "#d9a49e" : "#d4c3b7") : (isCollapsed ? "#9c5969" : "#625159")}
+                      strokeWidth={1}
+                      width={42}
+                      x={-21}
+                      y={-11}
                     />
                     <text
-                      x={0}
-                      y={node.height / 2 + 13.5}
+                      fill={theme === "light" ? "#784c4c" : "#f0cdd0"}
+                      fontFamily="var(--font-geist-mono), ui-monospace, monospace"
+                      fontSize={9}
+                      fontWeight={700}
                       textAnchor="middle"
-                      fill="rgba(255,255,255,0.45)"
-                      fontSize="10"
-                      fontFamily="ui-sans-serif, system-ui, sans-serif"
-                      fontWeight="600"
+                      x={-7}
+                      y={3}
                     >
-                      {isCollapsed ? "▸" : "▾"}
+                      {isCollapsed ? `+${hiddenDescendantCount}` : nodeChildCount}
                     </text>
+                    <g transform="translate(9, 0)">
+                      <path
+                        className="graph-collapse-caret"
+                        d="M -3 -1.5 L 0 1.5 L 3 -1.5"
+                        data-collapsed={isCollapsed}
+                        fill="none"
+                        stroke={theme === "light" ? "#925562" : "#f2b5be"}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.6}
+                      />
+                    </g>
                   </g>
                 )}
+                </g>
               </g>
             );
           });

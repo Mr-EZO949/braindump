@@ -161,13 +161,6 @@ const nodeColorByType = NODE_COLOR_BY_TYPE;
 // old "concept" row) opens as its v2 equivalent.
 const baseEditableNodeTypes = new Set<CreateNodeInput["node_type"]>(NODE_TYPES);
 
-const importanceFilterOptions = [
-  { label: "All importance", value: "all" },
-  { label: "70 and above", value: "70" },
-  { label: "55 and above", value: "55" },
-  { label: "40 and above", value: "40" },
-] as const;
-
 // How long a completed node stays on the graph board before moving to the
 // completed shelf (#17: keep the win visible, without months of clutter).
 const RECENT_COMPLETION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -512,8 +505,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [nodeTypeFilter, setNodeTypeFilter] = useState("all");
-  const [importanceFilter, setImportanceFilter] =
-    useState<(typeof importanceFilterOptions)[number]["value"]>("all");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   // Focus timer — one persistent Pomodoro per workspace, backed by localStorage
@@ -697,9 +688,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   const workProgressByNode = useMemo(() => computeWorkProgress(graphData), [graphData]);
 
   const filteredGraphData = useMemo(() => {
-    const minimumImportance =
-      importanceFilter === "all" ? null : Number.parseInt(importanceFilter, 10);
-
     const nodes = graphData.nodes.filter((node) => {
       // Archived nodes have orphaned edges, so they live in the grouped
       // History shelf rather than floating loose on the canvas.
@@ -720,10 +708,6 @@ export function AppShell({ initialUser }: AppShellProps) {
         return false;
       }
 
-      if (minimumImportance !== null && getImportanceIndex(node) < minimumImportance) {
-        return false;
-      }
-
       return true;
     });
     const visibleNodeIds = new Set(nodes.map((node) => node.id));
@@ -741,7 +725,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   }, [
     graphData,
     hideCompleted,
-    importanceFilter,
     nodeTypeFilter,
     recentCompletionCutoffMs,
   ]);
@@ -1041,7 +1024,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     setDeleteNodeConfirmOpen(false);
     setEditMode(false);
     setNodeTypeFilter("all");
-    setImportanceFilter("all");
     setCameraView(null);
     setEdgeRelationId("contains");
     setEdgeTargetId("");
@@ -2167,7 +2149,6 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   const handleResetFilters = () => {
     setNodeTypeFilter("all");
-    setImportanceFilter("all");
     setHideCompleted(false);
   };
 
@@ -4332,15 +4313,10 @@ export function AppShell({ initialUser }: AppShellProps) {
                 workProgressByNode={workProgressByNode}
                 pulseNodeIds={priorityPulseIds}
                 graphLoading={graphLoading}
-                graphImportanceFilter={importanceFilter}
                 graphSearchValue={graphSearchValue}
                 graphTypeFilter={nodeTypeFilter}
                 graphTypeCounts={nodeTypeCounts}
                 graphTypeTotalCount={nodeTypeTotalCount}
-                graphImportanceFilterOptions={importanceFilterOptions.map((option) => ({
-                  label: option.label,
-                  value: option.value,
-                }))}
                 onCameraViewChange={setCameraView}
                 onCancelDeleteNode={() => setDeleteNodeConfirmOpen(false)}
                 onChangeCreateNodeField={handleChangeCreateNodeField}
@@ -4359,11 +4335,6 @@ export function AppShell({ initialUser }: AppShellProps) {
                 onDeleteEdgeConnection={(edgeId) => {
                   void handleDeleteEdge(edgeId);
                 }}
-                onChangeGraphImportanceFilter={(value) =>
-                  setImportanceFilter(
-                    value as (typeof importanceFilterOptions)[number]["value"],
-                  )
-                }
                 onGraphSearchChange={setGraphSearchValue}
                 onGraphSearchSubmit={handleGraphSearchSubmit}
                 onChangeGraphTypeFilter={setNodeTypeFilter}

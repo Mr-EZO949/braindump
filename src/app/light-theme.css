@@ -177,21 +177,29 @@
   color: #922838;
 }
 
-:root[data-theme="light"] .graph-visibility {
-  background: #efe8e0;
-  border-color: #dfd3c6;
-  box-shadow: inset 0 1px 2px rgba(67, 44, 32, 0.055);
-}
-
-:root[data-theme="light"] .graph-visibility-option[aria-pressed="true"] {
+:root[data-theme="light"] .graph-done-toggle {
   background: #fffdfa;
-  border-color: #e5d6ca;
-  color: #852c3d;
-  box-shadow: 0 1px 4px rgba(67, 44, 32, 0.08);
+  border-color: #ded3c7;
+  color: #82776c;
 }
 
-:root[data-theme="light"] .graph-visibility-option:hover {
-  color: var(--light-ink);
+:root[data-theme="light"] .graph-done-toggle[aria-pressed="true"] {
+  background: #edf5eb;
+  border-color: #cde1cb;
+  color: #3f7651;
+}
+
+:root[data-theme="light"] .graph-done-toggle-mark {
+  background: #eee9e1;
+}
+
+:root[data-theme="light"] .graph-done-toggle[aria-pressed="true"] .graph-done-toggle-mark {
+  background: #d7e9d8;
+}
+
+:root[data-theme="light"] .graph-done-toggle:hover {
+  border-color: #b9cdb8;
+  color: #355f43;
 }
 
 :root[data-theme="light"] .type-explorer-chip,
