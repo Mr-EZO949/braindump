@@ -108,7 +108,7 @@ export const OBJECTIVE_TYPES: ReadonlySet<NodeType> = new Set(["goal", "project"
 // Checked off in Todos: tasks, and big tasks (with step progress).
 export const CHECKABLE_TYPES: ReadonlySet<NodeType> = new Set(["task", "big_task"]);
 
-// Work you'd break into steps before starting — the gradient-red outline.
+// Work you'd break into steps before starting — a distinct surface and badge.
 export const BREAKDOWN_TYPES: ReadonlySet<NodeType> = new Set(["big_task"]);
 
 // Things you do (vs. where things live, or what you know).

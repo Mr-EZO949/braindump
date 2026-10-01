@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
+import "./light-theme.css";
 import { InstallBanner } from "@/components/pwa/install-banner";
 import { ServiceWorkerRegister } from "@/components/pwa/service-worker-register";
 import { SITE_URL, absoluteUrl } from "@/lib/site";

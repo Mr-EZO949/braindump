@@ -7,7 +7,7 @@ import {
   getSuggestedPrompts,
 } from "@/lib/graph/chat";
 import { getLinkedNodePerspectives, type LinkedNodePerspective } from "@/lib/graph/insights";
-import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, MicIcon, NetworkIcon } from "@/components/ui/icons";
+import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, ListIcon, MicIcon, NetworkIcon, RoadmapIcon } from "@/components/ui/icons";
 import { ChatRichText } from "@/components/ui/chat-rich-text";
 import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { AppliedActionCard } from "@/components/panel/applied-action-card";
@@ -677,28 +677,26 @@ export function ContextRail({
                     <p className="line-clamp-2 rounded-md border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.025)] px-3 py-2 text-[12px] italic text-(--color-text-muted)">
                       {pendingSizeBreakdown.title}
                     </p>
-                    <div className="flex gap-2">
+                    <div className="detail-assist-grid">
                       <button
                         type="button"
                         onClick={() => onResolveSizeBreakdown?.("light")}
-                        className="flex-1 rounded-full border border-[rgba(242,239,233,0.18)] bg-transparent px-3 py-2 text-[12px] font-semibold text-(--color-text-secondary) hover:border-[rgba(242,239,233,0.3)]"
+                        className="da-suggest-card"
                         title="Just the 1–3 immediate next tasks to get unstuck — quick, cheap"
                       >
-                        Quick tasks
+                        <ListIcon className="da-suggest-icon" />
+                        <span><strong>Quick steps</strong><small>Next 1–3 actions</small></span>
                       </button>
                       <button
                         type="button"
                         onClick={() => onResolveSizeBreakdown?.("full")}
-                        className="flex-1 rounded-full border border-[rgba(213,58,71,0.55)] bg-[rgba(213,58,71,0.95)] px-3 py-2 text-[12px] font-semibold text-white"
+                        className="da-suggest-card da-suggest-card--roadmap"
                         title="AI builds a full roadmap: phases with concrete steps under each. Uses more tokens."
                       >
-                        AI roadmap
+                        <RoadmapIcon className="da-suggest-icon" />
+                        <span><strong>AI roadmap</strong><small>Phases + steps</small></span>
                       </button>
                     </div>
-                    <p className="text-[11px] leading-snug text-(--color-text-muted)">
-                      Quick tasks = the next 1–3 actions. AI roadmap = phases with steps
-                      under each — more thorough, uses more tokens.
-                    </p>
                     <button
                       type="button"
                       onClick={() => onResolveSizeBreakdown?.("keep")}
@@ -1042,67 +1040,53 @@ export function ContextRail({
                           )}
                         </div>
 
-                        {/* Tools — find links (icon) + breakdown (plain text). */}
-                        <div className="detail-tools-row">
-                          <button
-                            className="da-icon"
-                            onClick={() => onFindConnections(selectedNode.id)}
-                            type="button"
-                            aria-label="Find links"
-                            title="Find hidden links to other nodes"
-                          >
-                            <NetworkIcon className="h-[15px] w-[15px]" />
-                          </button>
-                          {onSuggestSteps &&
+                        {onSuggestSteps &&
                           (selectedNode.node_type === "project" ||
                             selectedNode.node_type === "goal" ||
                             selectedNode.node_type === "big_task" ||
                             classifyTaskSize(selectedNode.title) !== "task") ? (
-                            <>
+                            <div className="detail-assist-grid">
                               <button
-                                className="da-text"
+                                className="da-suggest-card"
                                 onClick={() => setPendingMode("light")}
                                 type="button"
                                 disabled={suggestStepsBusy}
                                 title="Just the 1–3 immediate next tasks to get unstuck — quick, cheap"
                               >
-                                Quick tasks
+                                <ListIcon className="da-suggest-icon" />
+                                <span><strong>Quick steps</strong><small>Next 1–3 actions</small></span>
                               </button>
                               <button
-                                className="da-text da-text--ai"
+                                className="da-suggest-card da-suggest-card--roadmap"
                                 onClick={() => setPendingMode("full")}
                                 type="button"
                                 disabled={suggestStepsBusy}
                                 title="AI generates a full multi-phase roadmap (a deep tree of sub-tasks). Uses more tokens."
                               >
-                                AI roadmap
+                                <RoadmapIcon className="da-suggest-icon" />
+                                <span><strong>AI roadmap</strong><small>Phases + steps</small></span>
                               </button>
-                            </>
+                            </div>
                           ) : null}
-                        </div>
 
-                        {/* Bottom — archive (quiet, left) + read (distinct, right). */}
-                        <div className="detail-bottom-row">
-                          {selectedNode.status !== "archived" ? (
-                            <button
-                              className="da-archive"
-                              onClick={() => onStatusChange(selectedNode.id, "archived")}
-                              type="button"
-                            >
-                              Archive
-                            </button>
-                          ) : (
-                            <span />
-                          )}
+                        <div className="detail-utility-row">
+                          <button
+                            className="da-utility"
+                            onClick={() => onFindConnections(selectedNode.id)}
+                            type="button"
+                            title="Find hidden links to other nodes"
+                          >
+                            <NetworkIcon className="h-[14px] w-[14px]" />
+                            <span>Find links</span>
+                          </button>
                           <Link
-                            className="da-icon da-read-icon"
+                            className="da-utility"
                             href={`/n/${selectedNode.id}`}
-                            aria-label="Read full view"
                             title="Read full view"
                           >
                             <svg
-                              width="16"
-                              height="16"
+                              width="15"
+                              height="15"
                               viewBox="0 0 24 24"
                               fill="none"
                               stroke="currentColor"
@@ -1114,7 +1098,18 @@ export function ContextRail({
                               <path d="M2 5.5A2.5 2.5 0 0 1 4.5 3H10a2 2 0 0 1 2 2v14a1.5 1.5 0 0 0-1.5-1.5H4.5A2.5 2.5 0 0 1 2 15V5.5Z" />
                               <path d="M22 5.5A2.5 2.5 0 0 0 19.5 3H14a2 2 0 0 0-2 2v14a1.5 1.5 0 0 1 1.5-1.5h6A2.5 2.5 0 0 0 22 15V5.5Z" />
                             </svg>
+                            <span>Read</span>
                           </Link>
+                          <span className="detail-utility-spacer" />
+                          {selectedNode.status !== "archived" ? (
+                            <button
+                              className="da-utility da-utility--archive"
+                              onClick={() => onStatusChange(selectedNode.id, "archived")}
+                              type="button"
+                            >
+                              Archive
+                            </button>
+                          ) : null}
                         </div>
                       </>
                     )}

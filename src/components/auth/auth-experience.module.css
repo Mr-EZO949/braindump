@@ -811,3 +811,129 @@
     opacity: 0.5;
   }
 }
+
+/* Daylight version of the same cinematic split-screen auth experience. */
+:global(html[data-theme="light"]) .page {
+  background: #f2efe9;
+}
+
+:global(html[data-theme="light"]) .authColumn {
+  background: linear-gradient(90deg, rgba(255, 253, 250, 0.98), rgba(255, 253, 250, 0.94) 82%, rgba(255, 253, 250, 0.72));
+  box-shadow: 12px 0 34px rgba(67, 44, 32, 0.035);
+}
+
+:global(html[data-theme="light"]) .authColumn::after {
+  background: linear-gradient(90deg, rgba(255, 253, 250, 0.28), transparent);
+}
+
+:global(html[data-theme="light"]) .heading {
+  color: var(--color-text-primary);
+}
+
+:global(html[data-theme="light"]) .brandLogoImg {
+  filter: brightness(0) saturate(100%) invert(20%) sepia(6%) saturate(966%) hue-rotate(335deg);
+}
+
+:global(html[data-theme="light"]) .modeToggle {
+  background: #f1eae1;
+  border-color: #ded2c5;
+}
+
+:global(html[data-theme="light"]) .modeButtonActive {
+  background: #fffdfa;
+  box-shadow: 0 2px 6px rgba(67, 44, 32, 0.08);
+}
+
+:global(html[data-theme="light"]) .oauthButton,
+:global(html[data-theme="light"]) .inputWrap {
+  background: #fffdfa;
+  border-color: var(--color-border-subtle);
+  box-shadow: 0 2px 6px rgba(67, 44, 32, 0.04);
+}
+
+:global(html[data-theme="light"]) .oauthButton:hover,
+:global(html[data-theme="light"]) .inputWrap:hover {
+  background: #fffefd;
+  border-color: #bfae9e;
+}
+
+:global(html[data-theme="light"]) .orDivider::before,
+:global(html[data-theme="light"]) .orDivider::after {
+  background: var(--color-border-subtle);
+}
+
+:global(html[data-theme="light"]) .submitButton {
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 5px 14px rgba(184, 45, 62, 0.17);
+}
+
+:global(html[data-theme="light"]) .submitButton:hover {
+  background: var(--color-accent-primary-hover);
+  border-color: var(--color-accent-primary-hover);
+}
+
+:global(html[data-theme="light"]) .status {
+  background: #f8f2eb;
+  border-color: var(--color-border-subtle);
+}
+
+:global(html[data-theme="light"]) .sceneSurface {
+  background:
+    radial-gradient(ellipse at 60% 38%, #faf7f1, transparent 58%),
+    linear-gradient(145deg, #e7ded3, #f1ece4 55%, #ded3c6);
+}
+
+:global(html[data-theme="light"]) .sceneGrid {
+  background-image:
+    linear-gradient(rgba(100, 77, 65, 0.11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(100, 77, 65, 0.11) 1px, transparent 1px);
+  opacity: 0.18;
+}
+
+:global(html[data-theme="light"]) .sceneBeamPrimary,
+:global(html[data-theme="light"]) .sceneBeamSecondary {
+  opacity: 0.18;
+}
+
+:global(html[data-theme="light"]) .sceneHazeFar,
+:global(html[data-theme="light"]) .sceneHazeNear {
+  opacity: 0.12;
+}
+
+:global(html[data-theme="light"]) .sceneVignette {
+  background: radial-gradient(ellipse at 56% 42%, transparent 28%, rgba(102, 78, 63, 0.12) 100%);
+}
+
+:global(html[data-theme="light"]) .sceneEdge {
+  stroke: rgba(87, 68, 59, 0.48);
+}
+
+:global(html[data-theme="light"]) .sceneNode,
+:global(html[data-theme="light"]) .sceneNodeAnchor,
+:global(html[data-theme="light"]) .sceneNodeActive {
+  background: linear-gradient(180deg, #fffefb, #f6f0e8);
+  border-color: rgba(103, 80, 67, 0.3) !important;
+  box-shadow: 0 15px 32px rgba(67, 44, 32, 0.17), inset 0 1px 0 #fff;
+}
+
+:global(html[data-theme="light"]) .sceneNodeHovered {
+  border-color: rgba(184, 45, 62, 0.46) !important;
+  box-shadow: 0 18px 38px rgba(67, 44, 32, 0.2), 0 0 0 3px rgba(184, 45, 62, 0.08);
+}
+
+:global(html[data-theme="light"]) .sceneNodeLabel,
+:global(html[data-theme="light"]) .sceneNodeLabelAnchor {
+  color: var(--color-text-primary);
+  text-shadow: none;
+}
+
+:global(html[data-theme="light"]) .sceneNodeWash {
+  background: linear-gradient(135deg, rgba(184, 45, 62, 0.08), transparent 70%);
+}
+
+@media (max-width: 1024px) {
+  :global(html[data-theme="light"]) .authColumn {
+    background: rgba(255, 253, 250, 0.9);
+  }
+}

@@ -174,7 +174,8 @@ export function MainStage({
   showArchived,
   suppressInitialFocusAnimation,
 }: MainStageProps) {
-  const filtersActive = graphTypeFilter !== "all" || graphImportanceFilter !== "all";
+  const filtersActive =
+    graphTypeFilter !== "all" || graphImportanceFilter !== "all" || hideCompleted || showArchived;
   const isGraphEmpty = !graphLoading && graphData.nodes.length === 0;
   const [layoutKey, setLayoutKey] = useState(0);
   const resetLayout = useCallback(() => setLayoutKey((k) => k + 1), []);
@@ -381,25 +382,32 @@ export function MainStage({
               </select>
             </label>
 
-            <button
-              className={`graph-filter-reset ${!hideCompleted ? "graph-filter-reset-active" : ""}`}
-              onClick={onToggleHideCompleted}
-              title={hideCompleted ? "Show completed nodes" : "Hide completed nodes"}
-              type="button"
-            >
-              {hideCompleted ? "Completed" : "Hide done"}
-            </button>
+            <div className="graph-visibility" aria-label="Nodes on canvas" role="group">
+              <span className="graph-visibility-label">Show</span>
+              <button
+                aria-label="Show recently completed nodes"
+                aria-pressed={!hideCompleted}
+                className="graph-visibility-option"
+                onClick={onToggleHideCompleted}
+                title="Show or hide recently completed nodes"
+                type="button"
+              >
+                Done
+              </button>
+              <button
+                aria-label="Show archived nodes"
+                aria-pressed={showArchived}
+                className="graph-visibility-option"
+                onClick={onToggleShowArchived}
+                title="Show or hide archived nodes"
+                type="button"
+              >
+                Archived
+              </button>
+            </div>
 
             <button
-              className={`graph-filter-reset ${showArchived ? "graph-filter-reset-active" : ""}`}
-              onClick={onToggleShowArchived}
-              type="button"
-            >
-              {showArchived ? "Hide archived" : "Archived"}
-            </button>
-
-            <button
-              className={`graph-filter-reset ${filtersActive ? "graph-filter-reset-active" : ""}`}
+              className="graph-filter-reset"
               disabled={!filtersActive}
               onClick={onResetGraphFilters}
               type="button"

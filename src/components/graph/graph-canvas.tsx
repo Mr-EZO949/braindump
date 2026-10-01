@@ -26,7 +26,7 @@ import {
   findStructuralCycleBreaks,
   getStructuralParentCandidate,
 } from "@/lib/graph/structure";
-import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
+import { LIGHT_NODE_COLOR_BY_TYPE, NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { useHabitWeekProgress } from "@/lib/habits/week-progress";
 import type { WorkProgress } from "@/lib/graph/work-progress";
 
@@ -1460,14 +1460,10 @@ function getNodeVisualState(options: {
   } = options;
   const isLight = theme === "light";
 
-  // Light-mode color tokens. Borders/text invert (white→dark) so nodes read
-  // as light cards with dark ink instead of dark cards floating on a cream
-  // background. Selection red and search red stay since the brand red works
-  // on both backgrounds. Topsheen is dialed back since the gradient is
-  // already a white-to-cream wash.
+  // Light cards use warm ink and a quieter edge; interaction red is shared.
   const borderToken = (alpha: number) =>
-    isLight ? `rgba(20,20,24,${alpha * 1.6})` : `rgba(255,255,255,${alpha})`;
-  const TEXT_PRIMARY = isLight ? "#1a1a1c" : "#f1ece6";
+    isLight ? `rgba(70,49,39,${alpha * 1.5})` : `rgba(255,255,255,${alpha})`;
+  const TEXT_PRIMARY = isLight ? "#2d2520" : "#f1ece6";
   const TEXT_DIM = isLight ? "rgba(60,58,55,0.55)" : "rgba(242,239,233,0.46)";
   const TEXT_COMPLETED = isLight ? "rgba(80,90,80,0.55)" : "rgba(210,220,210,0.5)";
   const TEXT_ARCHIVED = isLight ? "rgba(110,108,104,0.45)" : "rgba(200,195,190,0.35)";
@@ -1495,7 +1491,7 @@ function getNodeVisualState(options: {
       heatOpacity: 0.54,
       opacity: 1,
       shadowOpacity: 0.34,
-      text: isLight ? "#1a1a1c" : "#f6f2ed",
+      text: isLight ? "#2d2520" : "#f6f2ed",
       topSheenOpacity: sheen(0.66),
     };
   }
@@ -2727,6 +2723,24 @@ export function GraphCanvas({
               </>
             )}
           </linearGradient>
+          <linearGradient id="node-area-surface" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#f8f3eb" />
+            <stop offset="100%" stopColor="#efe8dd" />
+          </linearGradient>
+          <linearGradient id="node-big-task-surface" x1="0" x2="0" y1="0" y2="1">
+            {theme === "light" ? (
+              <>
+                <stop offset="0%" stopColor="#fff9f5" />
+                <stop offset="100%" stopColor="#f8eae5" />
+              </>
+            ) : (
+              <>
+                <stop offset="0%" stopColor="#35252a" />
+                <stop offset="55%" stopColor="#251b20" />
+                <stop offset="100%" stopColor="#171518" />
+              </>
+            )}
+          </linearGradient>
           <linearGradient id="node-top-sheen" x1="0" x2="0" y1="0" y2="1">
             {theme === "light" ? (
               <>
@@ -2860,19 +2874,19 @@ export function GraphCanvas({
             const nodeRadius = Math.min(node.width, node.height) * 0.44;
             const topBandId = `node-top-band-${node.id}`;
             const actionWashId = `node-action-wash-${node.id}`;
-            const bigOutlineId = `node-big-outline-${node.id}`;
-            // Node types v2 (docs/node-types.md): tasks and big tasks share the
-            // red action wash; the gradient-red OUTLINE marks only work that
-            // needs breaking down — big tasks (journal #3) — while goals and
-            // projects carry size & weight instead. Areas are hollow hubs,
-            // ideas get a dashed outline.
+            // Big tasks have their own surface and badge. The red perimeter
+            // remains reserved for selection and search.
             const actionable = CHECKABLE_TYPES.has(node.node_type);
             const isBig = BREAKDOWN_TYPES.has(node.node_type);
             const isObjective = OBJECTIVE_TYPES.has(node.node_type);
             const isArea = node.node_type === "area";
             const isIdea = node.node_type === "idea";
+            const categoryColor =
+              theme === "light"
+                ? LIGHT_NODE_COLOR_BY_TYPE[normalizeNodeType(node.node_type)]
+                : node.categoryColor;
             const workProgress = workProgressByNode.get(node.id) ?? null;
-            const markerSurface = theme === "light" ? "#fbf9f4" : "rgba(16,16,19,0.96)";
+            const markerSurface = theme === "light" ? "#fffcf8" : "rgba(16,16,19,0.96)";
             const habitTarget =
               node.node_type === "habit" && node.habit_target_per_week
                 ? clamp(Math.round(node.habit_target_per_week), 1, 7)
@@ -2948,35 +2962,28 @@ export function GraphCanvas({
                   <linearGradient id={topBandId} x1="0" x2="1" y1="0" y2="0">
                     <stop
                       offset="0%"
-                      stopColor={rgba(node.categoryColor, 0)}
+                      stopColor={rgba(categoryColor, 0)}
                     />
                     <stop
                       offset="18%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.5)}
+                      stopColor={rgba(categoryColor, topBandOpacity * 0.5)}
                     />
                     <stop
                       offset="50%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 1.05)}
+                      stopColor={rgba(categoryColor, topBandOpacity * 1.05)}
                     />
                     <stop
                       offset="82%"
-                      stopColor={rgba(node.categoryColor, topBandOpacity * 0.5)}
+                      stopColor={rgba(categoryColor, topBandOpacity * 0.5)}
                     />
-                    <stop offset="100%" stopColor={rgba(node.categoryColor, 0)} />
+                    <stop offset="100%" stopColor={rgba(categoryColor, 0)} />
                   </linearGradient>
                   {actionable ? (
                     <linearGradient id={actionWashId} x1="0" x2="1" y1="0" y2="1">
-                      <stop offset="0%" stopColor={rgba("#c44150", actionWashOpacity * 1.12)} />
-                      <stop offset="38%" stopColor={rgba("#92293a", actionWashOpacity * 0.8)} />
-                      <stop offset="76%" stopColor={rgba("#60131f", actionWashOpacity * 0.34)} />
-                      <stop offset="100%" stopColor={rgba("#60131f", 0)} />
-                    </linearGradient>
-                  ) : null}
-                  {isBig ? (
-                    <linearGradient id={bigOutlineId} x1="0" x2="1" y1="0" y2="1">
-                      <stop offset="0%" stopColor="rgba(228,96,110,0.95)" />
-                      <stop offset="50%" stopColor="rgba(197,65,80,0.82)" />
-                      <stop offset="100%" stopColor="rgba(146,41,58,0.78)" />
+                      <stop offset="0%" stopColor={rgba(theme === "light" ? "#e8acaa" : "#c44150", actionWashOpacity * 1.12)} />
+                      <stop offset="38%" stopColor={rgba(theme === "light" ? "#e9c1b7" : "#92293a", actionWashOpacity * 0.8)} />
+                      <stop offset="76%" stopColor={rgba(theme === "light" ? "#f5d9ca" : "#60131f", actionWashOpacity * 0.34)} />
+                      <stop offset="100%" stopColor={rgba(theme === "light" ? "#f5d9ca" : "#60131f", 0)} />
                     </linearGradient>
                   ) : null}
                 </defs>
@@ -2998,20 +3005,20 @@ export function GraphCanvas({
                 ) : null}
                 <g filter={nodeFilter}>
                   <rect
-                    fill="rgba(4,4,6,0.92)"
+                    fill={theme === "light" ? "#766558" : "rgba(4,4,6,0.92)"}
                     height={node.height + 6}
-                    opacity={visual.shadowOpacity}
+                    opacity={theme === "light" ? visual.shadowOpacity * 0.22 : visual.shadowOpacity}
                     rx={Math.min(node.width + 6, node.height + 6) * 0.44}
                     width={node.width + 6}
                     x={-(node.width + 6) / 2}
-                    y={-(node.height + 6) / 2 + 7}
+                    y={-(node.height + 6) / 2 + (theme === "light" ? 4 : 7)}
                   />
                   <rect
-                    fill="url(#node-base-surface)"
-                    fillOpacity={isArea ? 0.35 : 1}
+                    fill={isBig ? "url(#node-big-task-surface)" : isArea && theme === "light" ? "url(#node-area-surface)" : "url(#node-base-surface)"}
+                    fillOpacity={isArea && theme === "dark" ? 0.35 : 1}
                     height={node.height}
                     rx={nodeRadius}
-                    stroke={isArea ? rgba(node.categoryColor, 0.7) : visual.border}
+                    stroke={isArea && !selected && !hovered && !searchHit ? rgba(categoryColor, theme === "light" ? 0.5 : 0.7) : visual.border}
                     strokeDasharray={isIdea ? "5 4" : undefined}
                     strokeWidth={selected ? 1.55 : hovered ? 1.2 : isArea ? 1.2 : 1}
                     width={node.width}
@@ -3078,18 +3085,28 @@ export function GraphCanvas({
                     x={-(node.width - 2) / 2}
                     y={-(node.height - 2) / 2}
                   />
-                  {isBig ? (
-                    <rect
-                      fill="none"
-                      height={node.height - 1}
-                      opacity={selected ? 1 : hovered ? 0.96 : 0.86}
-                      rx={Math.max(nodeRadius - 0.5, 12)}
-                      stroke={`url(#${bigOutlineId})`}
-                      strokeWidth={selected ? 2.6 : hovered ? 2.3 : 2}
-                      width={node.width - 1}
-                      x={-(node.width - 1) / 2}
-                      y={-(node.height - 1) / 2}
-                    />
+                  {isBig && !skipLabel ? (
+                    <g style={{ pointerEvents: "none" }} transform={`translate(0, ${-node.height / 2})`}>
+                      <rect
+                        fill={theme === "light" ? "#f5ddd8" : "#653844"}
+                        height={15}
+                        rx={7.5}
+                        width={59}
+                        x={-29.5}
+                        y={-7.5}
+                      />
+                      <text
+                        fill={theme === "light" ? "#8e3041" : "#ffe1e2"}
+                        fontFamily="var(--font-geist-mono), ui-monospace, monospace"
+                        fontSize={7.5}
+                        fontWeight={700}
+                        letterSpacing="0.08em"
+                        textAnchor="middle"
+                        y={2.7}
+                      >
+                        BIG TASK
+                      </text>
+                    </g>
                   ) : null}
                   {workProgress ? (
                     isBig ? (
@@ -3130,7 +3147,7 @@ export function GraphCanvas({
                           y={node.height / 2 - 7}
                         />
                         <rect
-                          fill={rgba(node.categoryColor, 0.9)}
+                          fill={rgba(categoryColor, 0.9)}
                           height={2.4}
                           rx={1.2}
                           width={(node.width - nodeRadius * 2) * (workProgress.done / workProgress.total)}
@@ -3150,12 +3167,12 @@ export function GraphCanvas({
                           cy={node.height / 2 - 6.5}
                           fill={
                             index < Math.min(habitWeekDone.get(node.id) ?? 0, habitTarget)
-                              ? node.categoryColor
+                              ? categoryColor
                               : "none"
                           }
                           key={index}
                           r={2.3}
-                          stroke={rgba(node.categoryColor, 0.85)}
+                          stroke={rgba(categoryColor, 0.85)}
                           strokeWidth={0.9}
                         />
                       ))}
@@ -3167,9 +3184,9 @@ export function GraphCanvas({
                       style={{ pointerEvents: "none" }}
                       transform={`translate(${Math.min(-node.width / 2 + nodeRadius + 6, -8)}, ${-node.height / 2})`}
                     >
-                      <circle fill={markerSurface} r={7} stroke={node.categoryColor} strokeWidth={1.4} />
-                      <circle fill="none" r={3.9} stroke={node.categoryColor} strokeWidth={1} />
-                      <circle fill={node.categoryColor} r={1.6} />
+                      <circle fill={markerSurface} r={7} stroke={categoryColor} strokeWidth={1.4} />
+                      <circle fill="none" r={3.9} stroke={categoryColor} strokeWidth={1} />
+                      <circle fill={categoryColor} r={1.6} />
                     </g>
                   ) : null}
                   {classTerm && !skipLabel ? (
@@ -3179,14 +3196,14 @@ export function GraphCanvas({
                         fill={markerSurface}
                         height={13}
                         rx={6.5}
-                        stroke={rgba(node.categoryColor, 0.7)}
+                        stroke={rgba(categoryColor, 0.7)}
                         strokeWidth={0.9}
                         width={classTerm.length * 5.4 + 12}
                         x={-(classTerm.length * 5.4 + 12) / 2}
                         y={-6.5}
                       />
                       <text
-                        fill={node.categoryColor}
+                        fill={categoryColor}
                         fontFamily="var(--font-geist-mono), ui-monospace, monospace"
                         fontSize={8}
                         letterSpacing="0.06em"

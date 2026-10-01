@@ -2169,6 +2169,8 @@ export function AppShell({ initialUser }: AppShellProps) {
   const handleResetFilters = () => {
     setNodeTypeFilter("all");
     setImportanceFilter("all");
+    setHideCompleted(false);
+    setShowArchived(false);
   };
 
   const handleSubmitCreateNode = async () => {

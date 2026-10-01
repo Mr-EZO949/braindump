@@ -1,0 +1,781 @@
+/* BrainDump daylight: a warm editorial surface system. Kept after globals.css so
+   dark mode and the interaction/layout rules retain their existing behavior. */
+
+:root[data-theme="light"] {
+  --light-ink: #28231f;
+  --light-paper: #fffdfa;
+  --light-canvas: #f2efe9;
+  --light-line: #d8cfc3;
+  --light-shadow: 0 18px 48px rgba(67, 44, 32, 0.1), 0 3px 9px rgba(67, 44, 32, 0.04);
+}
+
+:root[data-theme="light"] body {
+  background: var(--light-canvas);
+}
+
+:root[data-theme="light"] :is(input, textarea, select) {
+  caret-color: var(--color-accent-primary);
+}
+
+:root[data-theme="light"] :is(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid rgba(184, 45, 62, 0.65);
+  outline-offset: 2px;
+}
+
+/* Chrome and navigation */
+:root[data-theme="light"] .app-topbar {
+  background: rgba(255, 253, 250, 0.96);
+  border-bottom: 1px solid var(--light-line);
+  box-shadow: 0 2px 12px rgba(67, 44, 32, 0.035);
+}
+
+:root[data-theme="light"] .logo-trigger,
+:root[data-theme="light"] .workspace-trigger,
+:root[data-theme="light"] .mobile-panel-toggle {
+  background: var(--light-paper);
+  border-color: var(--color-border-faint);
+  box-shadow: 0 1px 3px rgba(67, 44, 32, 0.04);
+  color: var(--color-text-primary);
+}
+
+:root[data-theme="light"] .workspace-trigger:hover,
+:root[data-theme="light"] .workspace-trigger[data-open="true"],
+:root[data-theme="light"] .logo-trigger:hover,
+:root[data-theme="light"] .logo-trigger[data-open="true"] {
+  background: #f5efe7;
+  border-color: #cbbeb0;
+  box-shadow: 0 2px 7px rgba(67, 44, 32, 0.08);
+}
+
+:root[data-theme="light"] .workspace-menu {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow: var(--light-shadow);
+}
+
+:root[data-theme="light"] .workspace-menu-entry + .workspace-menu-entry,
+:root[data-theme="light"] .workspace-menu-divider {
+  border-color: var(--color-border-faint);
+}
+
+:root[data-theme="light"] .workspace-menu-item:hover,
+:root[data-theme="light"] .workspace-menu-item-active,
+:root[data-theme="light"] .workspace-menu-item-confirming,
+:root[data-theme="light"] .workspace-delete-trigger:hover {
+  background: #f5efe7;
+}
+
+:root[data-theme="light"] .mode-dock {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow:
+    0 12px 30px rgba(67, 44, 32, 0.12),
+    0 2px 6px rgba(67, 44, 32, 0.06);
+}
+
+:root[data-theme="light"] .mode-dock-btn[data-active="true"] {
+  color: var(--light-ink);
+  background: #f0e9df;
+  box-shadow: inset 0 0 0 1px #e4d8ca;
+}
+
+:root[data-theme="light"] .mode-dock-action.mode-dock-call {
+  color: #fff;
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 4px 12px rgba(184, 45, 62, 0.2);
+}
+
+:root[data-theme="light"] .mode-dock-action.mode-dock-call:hover {
+  background: var(--color-accent-primary-hover);
+  border-color: var(--color-accent-primary-hover);
+}
+
+:root[data-theme="light"] .mode-dock-notice {
+  background: var(--light-ink);
+  color: var(--light-paper);
+  border-color: var(--light-ink);
+  box-shadow: 0 8px 22px rgba(67, 44, 32, 0.2);
+}
+
+:root[data-theme="light"] .system-panel {
+  background: #fffdfa;
+  border-right-color: var(--light-line);
+  box-shadow: 12px 0 38px rgba(67, 44, 32, 0.07);
+}
+
+:root[data-theme="light"] .sp-theme-toggle {
+  background: #f0eae1;
+  border-color: var(--light-line);
+}
+
+:root[data-theme="light"] .sp-theme-option[data-active="true"] {
+  background: var(--light-paper);
+  box-shadow: 0 2px 6px rgba(67, 44, 32, 0.09);
+}
+
+/* Canvas: generous paper space lets the graph carry the color. */
+:root[data-theme="light"] .main-stage-material {
+  background:
+    radial-gradient(
+      ellipse 52% 64% at 51% 42%,
+      #fbf9f5 0%,
+      rgba(251, 249, 245, 0.2) 74%,
+      transparent 100%
+    ),
+    linear-gradient(145deg, #eee9e1, #f5f2ed 52%, #ebe5dc);
+}
+
+:root[data-theme="light"] .main-stage-material::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.32;
+  background-image: radial-gradient(#b9aa9a 0.55px, transparent 0.75px);
+  background-size: 22px 22px;
+  mask-image: radial-gradient(ellipse at center, transparent 18%, black 100%);
+}
+
+:root[data-theme="light"] .graph-canvas-ambient {
+  background: radial-gradient(
+    290px circle at var(--graph-cursor-x) var(--graph-cursor-y),
+    rgba(184, 45, 62, 0.075),
+    transparent 75%
+  );
+}
+
+:root[data-theme="light"] .graph-search-control,
+:root[data-theme="light"] .graph-filter-shell,
+:root[data-theme="light"] .graph-create-trigger,
+:root[data-theme="light"] .graph-edit-toggle,
+:root[data-theme="light"] .type-explorer-toggle,
+:root[data-theme="light"] .graph-filter-reset,
+:root[data-theme="light"] .panel-edge-handle {
+  background: rgba(255, 253, 250, 0.96);
+  border-color: var(--light-line);
+  box-shadow: 0 4px 14px rgba(67, 44, 32, 0.08);
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"]
+  :is(
+    .graph-search-control,
+    .graph-filter-shell,
+    .graph-create-trigger,
+    .graph-edit-toggle,
+    .type-explorer-toggle
+  ):hover {
+  border-color: #c6b6a6;
+  background: var(--light-paper);
+}
+
+:root[data-theme="light"] .graph-edit-toggle-active,
+:root[data-theme="light"] .graph-filter-reset-active {
+  background: #f6e7e4;
+  border-color: rgba(184, 45, 62, 0.38);
+  color: #922838;
+}
+
+:root[data-theme="light"] .graph-visibility {
+  background: #efe8e0;
+  border-color: #dfd3c6;
+  box-shadow: inset 0 1px 2px rgba(67, 44, 32, 0.055);
+}
+
+:root[data-theme="light"] .graph-visibility-option[aria-pressed="true"] {
+  background: #fffdfa;
+  border-color: #e5d6ca;
+  color: #852c3d;
+  box-shadow: 0 1px 4px rgba(67, 44, 32, 0.08);
+}
+
+:root[data-theme="light"] .graph-visibility-option:hover {
+  color: var(--light-ink);
+}
+
+:root[data-theme="light"] .type-explorer-chip,
+:root[data-theme="light"] .graph-status-chip {
+  background: rgba(255, 253, 250, 0.9);
+  border-color: var(--light-line);
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"] .type-explorer-chip[data-active="true"] {
+  background: #f3e5e2;
+  border-color: rgba(184, 45, 62, 0.32);
+  color: #922838;
+}
+
+:root[data-theme="light"] .stage-composer {
+  background: rgba(255, 253, 250, 0.98);
+  border-color: #cfc2b3;
+  box-shadow:
+    0 18px 45px rgba(67, 44, 32, 0.14),
+    0 2px 6px rgba(67, 44, 32, 0.05);
+}
+
+:root[data-theme="light"] .composer-utility-button {
+  background: #f6f1ea;
+  border-color: var(--color-border-faint);
+  color: var(--color-text-secondary);
+  box-shadow: none;
+}
+
+:root[data-theme="light"] .composer-utility-button:hover {
+  background: #eee5da;
+  border-color: var(--light-line);
+  box-shadow: none;
+}
+
+:root[data-theme="light"] .composer-send-button,
+:root[data-theme="light"] .shell-button-primary {
+  background: var(--color-accent-primary);
+  color: #fff;
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 4px 12px rgba(184, 45, 62, 0.2);
+}
+
+:root[data-theme="light"] .shell-button.shell-button-primary {
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  color: #fff;
+}
+
+/* Inspector, chat and editable fields */
+:root[data-theme="light"] .context-rail-responsive,
+:root[data-theme="light"] .context-rail-responsive aside {
+  background: #fffcf8;
+  border-color: var(--light-line);
+}
+
+:root[data-theme="light"] .rail-tab-strip {
+  background: #f2ece4;
+  border-color: #e2d7ca;
+  box-shadow: none;
+}
+
+:root[data-theme="light"] .rail-tab-button[data-active="true"] {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow: 0 2px 6px rgba(67, 44, 32, 0.07);
+}
+
+:root[data-theme="light"]
+  :is(
+    .rail-scope-action,
+    .detail-action-pill,
+    .chat-prompt-chip,
+    .chat-answer-action-btn,
+    .shell-button
+  ) {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow: 0 1px 3px rgba(67, 44, 32, 0.04);
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"]
+  :is(
+    .rail-scope-action,
+    .detail-action-pill,
+    .chat-prompt-chip,
+    .chat-answer-action-btn,
+    .shell-button
+  ):hover {
+  background: #f5efe7;
+  border-color: #c8b8a8;
+  color: var(--light-ink);
+}
+
+:root[data-theme="light"] :is(.detail-action-pill--complete, .detail-action-pill--reopen) {
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  color: #fff;
+}
+
+:root[data-theme="light"] .detail-action-pill--danger {
+  background: #fff7f5;
+  border-color: #e4c5c2;
+  color: #a52134;
+}
+
+:root[data-theme="light"] .da-suggest-card {
+  background: #fffdfa;
+  border-color: #e3d8cd;
+  box-shadow: 0 2px 6px rgba(67, 44, 32, 0.045);
+}
+
+:root[data-theme="light"] .da-suggest-card:hover {
+  background: #f9f2eb;
+  border-color: #cbb7a8;
+}
+
+:root[data-theme="light"] .da-suggest-card--roadmap {
+  background: #fff5f2;
+  border-color: #e8c9c5;
+}
+
+:root[data-theme="light"] .da-suggest-card--roadmap:hover {
+  background: #fcebe7;
+  border-color: #d8a7a4;
+}
+
+:root[data-theme="light"]
+  :is(
+    .rail-chat-input,
+    .chat-composer-input,
+    .list-view-search,
+    .list-view-sort-select,
+    .graph-create-input,
+    .graph-create-textarea
+  ) {
+  background: #fffdfa;
+  border-color: var(--light-line);
+  color: var(--light-ink);
+}
+
+:root[data-theme="light"]
+  :is(
+    .rail-chat-input,
+    .chat-composer-input,
+    .list-view-search,
+    .list-view-sort-select,
+    .graph-create-input,
+    .graph-create-textarea
+  ):focus {
+  border-color: #bb6870;
+  box-shadow: var(--shadow-focus);
+}
+
+:root[data-theme="light"] .chat-starter-prompt,
+:root[data-theme="light"] .chat-history-row,
+:root[data-theme="light"] .chat-history-bar-btn,
+:root[data-theme="light"] .assistant-context-chip {
+  background: #faf6f0;
+  border-color: var(--color-border-faint);
+}
+
+:root[data-theme="light"] .chat-starter-prompt:hover,
+:root[data-theme="light"] .chat-history-row:hover,
+:root[data-theme="light"] .chat-history-bar-btn:hover {
+  background: #f2e9e0;
+  border-color: #d8c4b5;
+}
+
+:root[data-theme="light"] .chat-msg-user {
+  background: #f7e8e4;
+  border-color: #e9cbc7;
+  color: #51252b;
+}
+
+:root[data-theme="light"]
+  :is(.chat-msg-assistant-card, .pending-action-card, .turn-card, .applied-card) {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow: 0 5px 16px rgba(67, 44, 32, 0.055);
+}
+
+:root[data-theme="light"] .chat-thread-line {
+  background: linear-gradient(90deg, var(--light-line), transparent);
+}
+
+:root[data-theme="light"] .assistant-chat-col {
+  background: #fffcf8;
+  border-left-color: var(--light-line);
+}
+
+:root[data-theme="light"] .assistant-mode-strip,
+:root[data-theme="light"] .chat-col-header,
+:root[data-theme="light"] .chat-col-composer {
+  background: #faf6f0;
+  border-color: var(--color-border-faint);
+}
+
+:root[data-theme="light"] .assistant-mode-btn:hover,
+:root[data-theme="light"] .conv-switcher:hover,
+:root[data-theme="light"] :is(.conv-history-new, .conv-history-item, .chat-col-new-btn):hover {
+  background: #f0e8df;
+}
+
+:root[data-theme="light"] .assistant-mode-btn-active {
+  background: #f7e6e3;
+  border-color: #dfb7b6;
+  color: #9e2638;
+}
+
+:root[data-theme="light"] .conv-history-popover {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow: var(--light-shadow);
+}
+
+:root[data-theme="light"] .assistant-quick-chip,
+:root[data-theme="light"] .week-nav-btn {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"] .week-day-btn:hover {
+  background: #efe7de;
+}
+
+:root[data-theme="light"] .timeline-line-hour {
+  background: #d9cfc4;
+}
+:root[data-theme="light"] .timeline-line-half {
+  background: #e9e1d7;
+}
+:root[data-theme="light"] .timeline-event-done {
+  background: #f2eee8;
+  border-color: var(--light-line);
+  border-left-color: #b9aa9a;
+}
+
+:root[data-theme="light"] .timeline-event-del {
+  color: var(--color-text-muted);
+}
+:root[data-theme="light"] .timeline-event-resize-grip {
+  background: #a99b8c;
+}
+
+/* Edit sheet and connection management */
+:root[data-theme="light"] .graph-create-preview-frame {
+  background: radial-gradient(circle at center, #fffdfa, #f0e9e0);
+  border-color: var(--color-border-faint);
+}
+
+:root[data-theme="light"] .graph-create-preview-node {
+  background: linear-gradient(180deg, #fffefb, #f5eee5);
+  border-color: #c8b8a7;
+  box-shadow:
+    0 16px 32px rgba(67, 44, 32, 0.13),
+    inset 0 1px 0 #fff;
+}
+
+:root[data-theme="light"] .graph-create-preview-content {
+  gap: 3px;
+  padding: 7px 16px;
+}
+
+:root[data-theme="light"] .graph-create-preview-title {
+  font-size: clamp(16px, 1.7vw, 22px);
+  line-height: 1.1;
+}
+
+:root[data-theme="light"] .graph-create-preview-wash {
+  background: linear-gradient(135deg, rgba(184, 45, 62, 0.08), transparent 70%);
+}
+
+:root[data-theme="light"]
+  :is(
+    .graph-type-trigger,
+    .graph-type-menu,
+    .graph-connection-select-shell,
+    .context-connection-select-shell
+  ) {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow: 0 2px 7px rgba(67, 44, 32, 0.04);
+}
+
+:root[data-theme="light"] .graph-type-option {
+  background: #faf6f0;
+  border-color: transparent;
+}
+
+:root[data-theme="light"] .graph-type-option:hover,
+:root[data-theme="light"] .graph-type-option-active {
+  background: #f2e7dd;
+  border-color: var(--light-line);
+}
+
+:root[data-theme="light"]
+  :is(.graph-connection-row, .graph-connection-composer, .graph-importance-pill) {
+  background: #faf6f0;
+  border-color: var(--light-line);
+  box-shadow: none;
+}
+
+:root[data-theme="light"]
+  :is(
+    .graph-connection-action,
+    .graph-create-secondary,
+    .context-connection-delete,
+    .graph-create-close
+  ) {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"]
+  :is(
+    .graph-connection-action,
+    .graph-create-secondary,
+    .context-connection-delete,
+    .graph-create-close
+  ):hover {
+  background: #f2e9e0;
+  border-color: #c9b9a9;
+  color: var(--light-ink);
+}
+
+:root[data-theme="light"] .graph-connection-action-danger,
+:root[data-theme="light"] .graph-create-danger-trigger {
+  color: #a52134;
+}
+
+:root[data-theme="light"] .graph-create-danger-panel {
+  background: #fff5f3;
+  border-color: #e7c6c3;
+  box-shadow: none;
+}
+
+:root[data-theme="light"] .graph-create-danger-confirm {
+  background: var(--color-accent-primary);
+  color: #fff;
+  border-color: var(--color-accent-primary);
+}
+
+:root[data-theme="light"] .graph-create-primary {
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(184, 45, 62, 0.2);
+}
+
+:root[data-theme="light"] .graph-create-primary:hover,
+:root[data-theme="light"] .graph-create-danger-confirm:hover {
+  background: var(--color-accent-primary-hover);
+  border-color: var(--color-accent-primary-hover);
+  box-shadow: 0 6px 16px rgba(184, 45, 62, 0.23);
+}
+
+:root[data-theme="light"] .graph-create-actions {
+  border-color: var(--color-border-faint);
+}
+:root[data-theme="light"] .graph-importance-slider-wrap::before {
+  background: #e8ddd2;
+}
+
+/* Lists and planning share the same paper card hierarchy. */
+:root[data-theme="light"] .lists-bg::before {
+  background:
+    radial-gradient(55vw 55vh at -10% 110%, rgba(184, 45, 62, 0.055), transparent 70%),
+    radial-gradient(46vw 46vh at 110% -10%, rgba(176, 127, 89, 0.07), transparent 68%);
+}
+
+:root[data-theme="light"] .section-backdrop-glyph,
+:root[data-theme="light"] .section-backdrop[data-kind="pomodoro"] .section-backdrop-glyph {
+  stroke: rgba(114, 78, 65, 0.075);
+}
+
+:root[data-theme="light"] :is(.list-view-title, .habits-title) {
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+:root[data-theme="light"] .roadmap-bucket-label {
+  color: var(--light-ink);
+}
+
+:root[data-theme="light"]
+  :is(.list-view-row, .roadmap-item, .habit-card, .planner-task-card, .pomodoro-card) {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow: 0 2px 8px rgba(67, 44, 32, 0.035);
+}
+
+:root[data-theme="light"] :is(.list-view-row, .roadmap-item, .planner-task-card):hover {
+  background: #fffefd;
+  border-color: #bea998;
+  box-shadow: 0 9px 24px rgba(67, 44, 32, 0.1);
+}
+
+:root[data-theme="light"] .habit-card[data-at-risk="true"] {
+  background: linear-gradient(90deg, #fff7f4, #fffdfa 35%);
+  border-color: #e2b8b5;
+}
+
+:root[data-theme="light"] .roadmap-deadline {
+  border-right-color: var(--light-line);
+  background: color-mix(in srgb, var(--dl) 10%, #fffdfa);
+}
+
+:root[data-theme="light"] .roadmap-deadline[data-risk="overdue"] {
+  --dl: #af3040;
+}
+:root[data-theme="light"] .roadmap-deadline[data-risk="soon"] {
+  --dl: #9b691d;
+}
+:root[data-theme="light"] .roadmap-deadline[data-risk="ontrack"] {
+  --dl: #247757;
+}
+
+:root[data-theme="light"] .list-view-chip[data-active="true"],
+:root[data-theme="light"] .pomodoro-preset[data-active="true"] {
+  background: #f7e8e4;
+  border-color: #dbaeb0;
+  color: #8e2637;
+}
+
+:root[data-theme="light"] .habit-strip-day[data-today="true"],
+:root[data-theme="light"] .habit-month-day[data-today="true"] {
+  box-shadow: 0 0 0 2px var(--color-accent-primary);
+}
+
+/* Floating capture, editing, focus, reflection and onboarding. */
+:root[data-theme="light"]
+  :is(.graph-create-overlay-open .graph-create-overlay-backdrop, .weekly-backdrop) {
+  background: rgba(46, 34, 29, 0.36);
+  backdrop-filter: blur(5px);
+}
+
+:root[data-theme="light"]
+  :is(
+    .graph-create-sheet,
+    .brain-dump-card,
+    .lockin-card,
+    .weekly-modal,
+    .per-modal,
+    .replan-modal,
+    .dump-history-modal,
+    .merge-modal
+  ) {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow:
+    0 30px 80px rgba(45, 30, 23, 0.19),
+    0 5px 18px rgba(45, 30, 23, 0.08);
+}
+
+:root[data-theme="light"] .graph-create-sheet-header,
+:root[data-theme="light"] .weekly-step-nav,
+:root[data-theme="light"] .lockin-footer {
+  border-color: var(--color-border-faint);
+}
+
+:root[data-theme="light"] :is(.weekly-chart-cell, .weekly-mood, .weekly-chart-solo) {
+  background: #faf6f0;
+  border-color: var(--light-line);
+}
+
+:root[data-theme="light"] .weekly-step-caption {
+  color: var(--color-text-muted);
+}
+
+:root[data-theme="light"] .weekly-step-indicator {
+  border-color: var(--color-border-faint);
+}
+
+:root[data-theme="light"] .weekly-step-dot,
+:root[data-theme="light"] .weekly-mood-chip {
+  background: #faf6f0;
+  border-color: var(--light-line);
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"] .weekly-step-dot:hover:not(:disabled),
+:root[data-theme="light"] .weekly-mood-chip:hover {
+  background: #f0e8df;
+  color: var(--light-ink);
+}
+
+:root[data-theme="light"] .weekly-step-dot[data-active="true"],
+:root[data-theme="light"] .weekly-mood-chip[data-active="true"] {
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  color: #fff;
+}
+
+:root[data-theme="light"] .weekly-step-dot[data-complete="true"]:not([data-active="true"]) {
+  border-color: #c9b9a9;
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"] .weekly-mood-save {
+  background: #f6e5e2;
+  border-color: #ddaeb1;
+  color: #982739;
+}
+
+:root[data-theme="light"] .weekly-slider input[type="range"]::-webkit-slider-runnable-track {
+  background: #d6c8ba;
+}
+:root[data-theme="light"] .weekly-slider input[type="range"]::-moz-range-track {
+  background: #d6c8ba;
+}
+:root[data-theme="light"] .weekly-commentary-label {
+  color: #247757;
+}
+
+:root[data-theme="light"] .graph-create-close,
+:root[data-theme="light"] .weekly-close,
+:root[data-theme="light"] .lockin-backup,
+:root[data-theme="light"] .weekly-step-back,
+:root[data-theme="light"] .weekly-kpi {
+  background: #f8f3ed;
+  border-color: var(--light-line);
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"] .lockin-hero {
+  background: linear-gradient(135deg, #fbeae7, #fff7f3 63%, #fffdfa);
+  border-color: #e6bdbb;
+  box-shadow: 0 10px 25px rgba(184, 45, 62, 0.08);
+}
+
+:root[data-theme="light"] .lockin-hero:hover {
+  background: linear-gradient(135deg, #f8e0dc, #fff3ef 70%);
+  border-color: #ce8e92;
+  box-shadow: 0 14px 28px rgba(184, 45, 62, 0.12);
+}
+
+:root[data-theme="light"] .lockin-backup:hover,
+:root[data-theme="light"] .weekly-step-back:hover:not(:disabled) {
+  background: #f1e8dd;
+  border-color: #cbb9a8;
+  color: var(--light-ink);
+}
+
+:root[data-theme="light"] .lockin-close:hover,
+:root[data-theme="light"] .brain-dump-dismiss:hover,
+:root[data-theme="light"] .weekly-close:hover {
+  background: #f2e9e0;
+}
+
+:root[data-theme="light"] .bootstrap-overlay,
+:root[data-theme="light"] .welcome-overlay {
+  background: radial-gradient(ellipse at 50% 20%, #fcfaf6, #eae2d8 80%);
+}
+
+:root[data-theme="light"] :is(.bootstrap-modal, .welcome-card) {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow: var(--light-shadow);
+}
+
+:root[data-theme="light"] .bootstrap-root-field,
+:root[data-theme="light"] .bootstrap-field,
+:root[data-theme="light"] .bootstrap-suggestion-list,
+:root[data-theme="light"] .bootstrap-area-list,
+:root[data-theme="light"] .bootstrap-tool-row {
+  background: #fffdfa;
+  border-color: var(--light-line);
+}
+
+@media (max-width: 640px) {
+  :root[data-theme="light"] .main-stage-material::before {
+    opacity: 0.2;
+  }
+  :root[data-theme="light"] .list-view-title,
+  :root[data-theme="light"] .habits-title {
+    font-size: 20px;
+  }
+  :root[data-theme="light"] .mode-dock {
+    box-shadow: 0 7px 22px rgba(67, 44, 32, 0.12);
+  }
+}
