@@ -86,6 +86,7 @@ import {
   isCommitmentAction,
   type AppliedMarkerPayload,
 } from "@/lib/chat/applied-marker";
+import { turnNote } from "@/lib/chat/turn-note";
 import { classifyTaskSize } from "@/lib/ai/sizing";
 import { needsNextAction } from "@/lib/graph/next-action";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
@@ -98,6 +99,7 @@ import type {
   ChatScope,
   Nudge,
   PendingAction,
+  TurnCardData,
 } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, NodeType, Workspace } from "@/types/graph";
 import { addDaysISO, localDateISO } from "@/lib/time/local-date";
@@ -109,7 +111,7 @@ import {
   undoAutoApplied,
 } from "@/lib/graph/auto-apply-client";
 import { AutoApplyNotice } from "@/components/ui/auto-apply-notice";
-import type { ProposedNode } from "@/types/ai";
+import type { DumpTurn, ProposedNode } from "@/types/ai";
 
 type AuthUserState = {
   email: string | null;
@@ -1319,18 +1321,25 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   // Undo on an applied priority card: the server restores exactly the fields
   // the change touched (lib/ai/tools/priority-mutations undoPriorityChanges).
-  const undoAppliedAction = async (messageId: string) => {
-    const action = chatMessages.find((m) => m.id === messageId)?.appliedAction;
+  const undoAppliedAction = async (messageId: string, slot?: "commitments") => {
+    // A brain-dump turn card holds two applied changes: the priority changes
+    // (the message's own) and the weekly commitments (slot "commitments").
+    const message = chatMessages.find((m) => m.id === messageId);
+    const action = slot === "commitments" ? message?.turn?.commitments : message?.appliedAction;
     const workspaceId = selectedWorkspaceId;
     if (!action || (action.status !== "applied" && action.status !== "error") || !workspaceId) return;
 
     const setStatus = (status: AppliedAction["status"], errorMessage?: string) =>
       setChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === messageId && m.appliedAction
-            ? { ...m, appliedAction: { ...m.appliedAction, status, errorMessage } }
-            : m,
-        ),
+        prev.map((m) => {
+          if (m.id !== messageId) return m;
+          if (slot === "commitments") {
+            return m.turn?.commitments
+              ? { ...m, turn: { ...m.turn, commitments: { ...m.turn.commitments, status, errorMessage } } }
+              : m;
+          }
+          return m.appliedAction ? { ...m, appliedAction: { ...m.appliedAction, status, errorMessage } } : m;
+        }),
       );
 
     setStatus("undoing");
@@ -1350,6 +1359,59 @@ export function AppShell({ initialUser }: AppShellProps) {
       workspaceId,
       action.items.map((item) => item.nodeId),
     );
+  };
+
+  // Undo on a brain-dump turn card's "Added": removes the nodes that dump
+  // created (and teaches the auto-apply calibration, as the old toast did).
+  const undoTurnAdded = async (messageId: string) => {
+    const turn = chatMessages.find((m) => m.id === messageId)?.turn;
+    if (!turn || (turn.addedStatus !== "applied" && turn.addedStatus !== "error")) return;
+    const proposalIds = turn.added.flatMap((n) => (n.proposalId ? [n.proposalId] : []));
+    if (proposalIds.length === 0) return;
+    const setStatus = (addedStatus: TurnCardData["addedStatus"]) =>
+      setChatMessages((prev) =>
+        prev.map((m) => (m.id === messageId && m.turn ? { ...m, turn: { ...m.turn, addedStatus } } : m)),
+      );
+    setStatus("undoing");
+    const removedIds = new Set(await undoAutoApplied(proposalIds));
+    if (removedIds.size === 0) {
+      setStatus("error");
+      return;
+    }
+    setStatus("undone");
+    setGraphData((prev) => ({
+      ...prev,
+      nodes: prev.nodes.filter((n) => !removedIds.has(n.id)),
+      edges: prev.edges.filter(
+        (e) => !removedIds.has(e.source_node_id) && !removedIds.has(e.target_node_id),
+      ),
+    }));
+  };
+
+  // A question on a brain-dump turn card, answered: the answer is an ordinary
+  // chat message — the thread's note of the dump (turn-note.ts) tells the
+  // model what was asked, so nothing synthetic is sent.
+  const answerTurnQuestion = (messageId: string, questionIndex: number, answer: string) => {
+    const turn = chatMessages.find((m) => m.id === messageId)?.turn;
+    const question = turn?.questions[questionIndex];
+    const text = answer.trim();
+    if (!turn || !question || question.answer || !text || chatLoading || chatSendingRef.current) return;
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId && m.turn
+          ? {
+              ...m,
+              turn: {
+                ...m.turn,
+                questions: m.turn.questions.map((q, i) => (i === questionIndex ? { ...q, answer: text } : q)),
+              },
+            }
+          : m,
+      ),
+    );
+    // With several questions open, say which one this answers.
+    const open = turn.questions.filter((q) => !q.answer).length;
+    void submitMessage(open > 1 ? `About "${question.text}" — ${text}` : text);
   };
 
   // Focus's check-back card: "It's done" completes the waiting item; "Still
@@ -1566,13 +1628,18 @@ export function AppShell({ initialUser }: AppShellProps) {
       // can compress old ones if the history gets long.
       // An applied priority card has no text of its own — its note tells the
       // model what already changed (or that the user undid it).
+      const historyNodeTitles = new Map(graphData.nodes.map((n) => [n.id, n.title]));
       const history = chatMessages
         .filter((m) => m.status !== "error")
         .map((m) => ({
           role: m.role,
-          body: m.appliedAction
-            ? `${m.body ?? ""}\n\n${appliedActionNote(m.appliedAction)}`.trim()
-            : (m.body ?? ""),
+          // A brain dump's card has no text either: its note lists what was
+          // added, finished, linked, asked and what still waits (turn-note.ts).
+          body: m.turn
+            ? `${m.body ?? ""}\n\n${turnNote(m, historyNodeTitles)}`.trim()
+            : m.appliedAction
+              ? `${m.body ?? ""}\n\n${appliedActionNote(m.appliedAction)}`.trim()
+              : (m.body ?? ""),
         }))
         .filter((m) => m.body.trim().length > 0);
 
@@ -1624,6 +1691,8 @@ export function AppShell({ initialUser }: AppShellProps) {
     messageId: string,
     decision: "accept" | "reject" | "choice",
     choice?: string,
+    // A change-set card accepted in part: the rows the user kept.
+    acceptedIndexes?: number[],
   ) => {
     // pendingActionBusy is async state; chatSendingRef is the synchronous lock
     // so a rapid double-click can't fire two resume POSTs (#11 credit-burn).
@@ -1651,6 +1720,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 pendingAction: {
                   ...m.pendingAction,
                   status: decision === "reject" ? "rejected" : "accepted",
+                  ...(decision === "accept" && acceptedIndexes ? { acceptedIndexes } : {}),
                 },
               }
             : m,
@@ -1662,7 +1732,12 @@ export function AppShell({ initialUser }: AppShellProps) {
       const res = await fetch("/api/assistant/chat/resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ run_id: action.runId, decision, choice }),
+        body: JSON.stringify({
+          run_id: action.runId,
+          decision,
+          choice,
+          ...(decision === "accept" && acceptedIndexes ? { accepted_indexes: acceptedIndexes } : {}),
+        }),
         signal: abortCtrl.signal,
       });
 
@@ -2568,6 +2643,120 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
+  // A brain dump handled as ONE turn: the dump, then ONE assistant message —
+  // the reply to its human part, and one card with everything it changed.
+  // No review modal, no toast, no separate cards (docs/unified-turn.md).
+  const applyDumpTurn = async (
+    rawText: string,
+    turn: DumpTurn,
+    data: {
+      priority_update?: (Omit<AppliedMarkerPayload, "tool_name"> & { unclear?: string[] }) | null;
+      commitment_update?: Omit<AppliedMarkerPayload, "tool_name"> | null;
+      pending_action?: {
+        run_id: string;
+        tool_use_id: string;
+        tool_name: string;
+        tool_input: Record<string, unknown>;
+      } | null;
+    },
+    workspaceId: string | null,
+  ) => {
+    const priorityAction = data.priority_update
+      ? appliedActionFromPayload({ ...data.priority_update, tool_name: "update_priorities" })
+      : null;
+    const commitmentAction = data.commitment_update
+      ? appliedActionFromPayload({ ...data.commitment_update, tool_name: "set_commitments" })
+      : null;
+    if (commitmentAction && workspaceId) clearFocusCache(workspaceId);
+    const waiting = data.pending_action ?? null;
+
+    const card: TurnCardData = {
+      added: turn.added.map((n) => ({
+        id: n.id,
+        proposalId: n.proposal_id,
+        title: n.title,
+        nodeType: n.node_type,
+        parentTitle: n.parent_title,
+      })),
+      addedStatus: "applied",
+      done: turn.done,
+      links: turn.links.map((l) => ({
+        sourceTitle: l.source_title,
+        targetTitle: l.target_title,
+        edgeType: l.edge_type,
+      })),
+      ...(commitmentAction ? { commitments: { ...commitmentAction, status: "applied" as const } } : {}),
+      questions: turn.questions.map((text) => ({ text })),
+    };
+    const changedGraph = card.added.length > 0 || card.done.length > 0 || card.links.length > 0;
+    const nothing =
+      !changedGraph && card.questions.length === 0 && !priorityAction && !commitmentAction && !waiting;
+
+    // #18: a dump starts a FRESH chat thread (the previous one is auto-saved).
+    const nowIso = new Date().toISOString();
+    flushPendingChatSave();
+    setChatSessionId(null);
+    chatSessionIdRef.current = null;
+    setChatScope(createWorkspaceScope(workspaceName));
+    setChatMessages([
+      {
+        id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
+        role: "user" as const,
+        body: rawText,
+        createdAt: nowIso,
+        status: "ready" as const,
+      },
+      {
+        id: `chat-turn-${Math.random().toString(36).slice(2, 10)}`,
+        role: "assistant" as const,
+        body: turn.reply ?? (nothing ? "I went through that and found nothing to add or change." : ""),
+        createdAt: nowIso,
+        status: "ready" as const,
+        turn: card,
+        ...(priorityAction ? { appliedAction: { ...priorityAction, status: "applied" as const } } : {}),
+        ...(waiting
+          ? {
+              pendingAction: {
+                runId: waiting.run_id,
+                toolUseId: waiting.tool_use_id,
+                toolName: waiting.tool_name,
+                toolInput: waiting.tool_input,
+                status: "awaiting" as const,
+              },
+            }
+          : {}),
+      },
+    ]);
+    dumpInChatRef.current = true;
+    setRightPanelOpen(true);
+    setActiveRailTab("chat");
+
+    // The graph already changed on the server — show it.
+    if (workspaceId && (changedGraph || priorityAction)) {
+      if (priorityAction) {
+        await refreshAfterPriorityChange(
+          workspaceId,
+          priorityAction.items.map((item) => item.nodeId),
+        );
+      } else if (authUser?.id) {
+        try {
+          setGraphData(
+            await loadWorkspaceGraphData(authUser.id, workspaceId, selectedWorkspace?.name ?? null),
+          );
+        } catch {
+          // The card still shows the change; the next load draws the nodes.
+        }
+      }
+      if (card.added.length > 0) {
+        setClusterRefreshKey((k) => k + 1);
+        void analyzeNodes(
+          card.added.map((n) => n.id),
+          workspaceId,
+        );
+      }
+    }
+  };
+
   // Shared tail for every dump (button, chat, bootstrap): mirror the dump +
   // a conversational summary into chat, then open the proposed-nodes review
   // modal. One implementation so all entry points behave identically.
@@ -2583,6 +2772,9 @@ export function AppShell({ initialUser }: AppShellProps) {
       priority_update?: (Omit<AppliedMarkerPayload, "tool_name"> & { unclear?: string[] }) | null;
       // Fixed weekly commitments the dump named (already saved).
       commitment_update?: Omit<AppliedMarkerPayload, "tool_name"> | null;
+      // The dump handled as ONE turn (docs/unified-turn.md): what it added,
+      // finished and linked, the reply to its human part, open questions.
+      turn?: DumpTurn;
       // Edits to existing nodes the dump asked for — one card to Accept
       // (same payload as chat's pause marker).
       pending_action?: {
@@ -2594,6 +2786,10 @@ export function AppShell({ initialUser }: AppShellProps) {
     },
     workspaceId: string | null,
   ) => {
+    if (data.turn) {
+      await applyDumpTurn(rawText, data.turn, data, workspaceId);
+      return;
+    }
     const nodes = data.proposed_nodes ?? [];
     const questions = data.clarifying_questions ?? [];
     const completedTitles = data.completed_existing_node_titles ?? [];
@@ -4186,13 +4382,17 @@ export function AppShell({ initialUser }: AppShellProps) {
           onChatInputChange={setRailChatInput}
           onClearChatScope={() => setChatScope(createWorkspaceScope(workspaceName))}
           onRetryChat={retryLastMessage}
-          onResolvePendingAction={(messageId, decision, choice) => {
-            void resolvePendingAction(messageId, decision, choice);
+          onResolvePendingAction={(messageId, decision, choice, acceptedIndexes) => {
+            void resolvePendingAction(messageId, decision, choice, acceptedIndexes);
           }}
           onCancelChat={cancelChat}
-          onUndoAppliedAction={(messageId) => {
-            void undoAppliedAction(messageId);
+          onUndoAppliedAction={(messageId, slot) => {
+            void undoAppliedAction(messageId, slot);
           }}
+          onUndoTurnAdded={(messageId) => {
+            void undoTurnAdded(messageId);
+          }}
+          onAnswerTurnQuestion={answerTurnQuestion}
           pendingActionBusy={pendingActionBusy}
           nudges={nudges}
           onSelectNudge={(nudge) => {

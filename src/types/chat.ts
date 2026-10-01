@@ -54,6 +54,8 @@ export interface PendingAction {
   toolInput: Record<string, unknown>;
   status: PendingActionStatus;
   errorMessage?: string;
+  // A change-set card accepted in part: the rows the user kept.
+  acceptedIndexes?: number[];
 }
 
 // A change chat already applied (update_priorities) — shown as a card with an
@@ -79,6 +81,31 @@ export interface AppliedAction {
   errorMessage?: string;
 }
 
+// What one brain dump came to, shown as ONE card under the assistant's reply
+// (docs/unified-turn.md). The priority changes ride in the message's
+// `appliedAction`, the changes that wait for the user in its `pendingAction`;
+// everything else the card shows is here.
+export type TurnAddedStatus = "applied" | "undoing" | "undone" | "error";
+
+export interface TurnAddedNode {
+  id: string;
+  // The ledger row (proposed_nodes) — what Undo sends back.
+  proposalId: string | null;
+  title: string;
+  nodeType: string;
+  parentTitle: string | null;
+}
+
+export interface TurnCardData {
+  added: TurnAddedNode[];
+  addedStatus: TurnAddedStatus;
+  done: string[];
+  links: Array<{ sourceTitle: string; targetTitle: string; edgeType: string }>;
+  // Fixed weekly times the dump named (saved already, with its own Undo).
+  commitments?: AppliedAction;
+  questions: Array<{ text: string; answer?: string }>;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatMessageRole;
@@ -88,6 +115,7 @@ export interface ChatMessage {
   status?: ChatMessageStatus;
   pendingAction?: PendingAction;
   appliedAction?: AppliedAction;
+  turn?: TurnCardData;
 }
 
 // M4.1 — Proactive nudge surfaced in the empty-chat state. Produced by

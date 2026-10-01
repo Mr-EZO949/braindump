@@ -47,7 +47,10 @@ import {
   runTurnTools,
   type DeferredToolUse,
 } from "@/lib/ai/tools";
-import { BUILD_GRAPH_TOOL } from "@/lib/ai/tools/build";
+import { applyBuildPlan, BUILD_GRAPH_TOOL, type BuildPlanInput } from "@/lib/ai/tools/build";
+import { settleCardLedger } from "@/lib/ai/dump-turn";
+import { selectOps } from "@/lib/ai/turn-policy";
+import type { ChangeOp } from "@/lib/graph/change-set";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
 import { resolveChoice } from "@/lib/ai/tools/interactive";
 import { actionSucceeded, confirmationFor, looksMultiStep } from "@/lib/ai/tools/confirmations";
@@ -56,6 +59,8 @@ import type { AssistantMode } from "@/types/ai";
 
 const MAX_TOOL_ROUNDS = 6;
 const TOOL_RESULT_MAX_CHARS = 2000;
+// Tools whose card is a list of change-set ops the user can accept row by row.
+const CHANGE_SET_TOOLS = new Set([BUILD_GRAPH_TOOL, "propose_changes_batch"]);
 
 function truncateToolContent(
   content: string | Array<{ type: "text"; text: string }>,
@@ -118,11 +123,17 @@ export async function POST(req: NextRequest) {
     return new Response("Invalid JSON body", { status: 400 });
   }
 
-  const { run_id, decision, choice } = body as {
+  const { run_id, decision, choice, accepted_indexes } = body as {
     run_id?: string;
     decision?: string;
     choice?: string;
+    // A change-set card accepted in part: the positions of the rows the user
+    // kept. Absent → all of them.
+    accepted_indexes?: unknown;
   };
+  const keptIndexes = Array.isArray(accepted_indexes)
+    ? accepted_indexes.filter((i): i is number => typeof i === "number")
+    : null;
   if (!run_id || typeof run_id !== "string") {
     return new Response("run_id is required", { status: 400 });
   }
@@ -187,18 +198,26 @@ export async function POST(req: NextRequest) {
     (run.pending_tool_input as { origin?: unknown } | null)?.origin === "dump"
   ) {
     await supabase.from("pending_chat_runs").delete().eq("id", run.id);
+    const plan = (run.pending_tool_input ?? {}) as Partial<BuildPlanInput>;
+    const offered: ChangeOp[] = Array.isArray(plan.changes) ? plan.changes : [];
+    // Each row is the user's own call: what they kept is applied, what
+    // depended on a row they skipped is re-homed or dropped (turn-policy.ts).
+    const chosen =
+      decision !== "accept" ? [] : keptIndexes ? selectOps(offered, keptIndexes) : offered;
     let reply = "OK — left as it is.";
-    if (decision === "accept") {
-      const result = await dispatchTool({
-        name: BUILD_GRAPH_TOOL,
-        input: run.pending_tool_input,
-        tool_use_id: run.pending_tool_use_id as string,
-        ctx: toolCtx,
-      });
-      reply = actionSucceeded(result.content, result.is_error)
-        ? confirmationFor(BUILD_GRAPH_TOOL, result.content)
+    let applied: Array<{ ok: boolean; id?: string }> = [];
+    if (chosen.length > 0) {
+      const result = await applyBuildPlan({ ...plan, changes: chosen, origin: "dump" }, toolCtx);
+      applied = Array.isArray(result.results) ? (result.results as typeof applied) : [];
+      const content = JSON.stringify(result);
+      reply = actionSucceeded(content, false)
+        ? confirmationFor(BUILD_GRAPH_TOOL, content)
         : "Some of that didn't apply — tell me here what you want changed and I'll redo it.";
     }
+    await settleCardLedger(
+      { supabase, userId: user.id, workspaceId },
+      { offered, applied: chosen, results: applied },
+    );
     return new Response(reply, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
@@ -242,9 +261,15 @@ export async function POST(req: NextRequest) {
       is_error: false,
     });
   } else if (decision === "accept") {
+    // A change-set card accepted in part (build_graph, propose_changes_batch).
+    const pendingInput = run.pending_tool_input as { changes?: unknown } | null;
+    const partial =
+      keptIndexes && CHANGE_SET_TOOLS.has(run.pending_tool_name as string) && Array.isArray(pendingInput?.changes)
+        ? { ...pendingInput, changes: selectOps(pendingInput.changes as ChangeOp[], keptIndexes) }
+        : null;
     const result = await dispatchTool({
       name: run.pending_tool_name as string,
-      input: run.pending_tool_input,
+      input: partial ?? run.pending_tool_input,
       tool_use_id: run.pending_tool_use_id as string,
       ctx: toolCtx,
     });

@@ -2,10 +2,14 @@
 // Saves the raw text, runs extraction, returns proposed nodes.
 // All AI work happens server-side. Keys are never exposed to the client.
 
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { getRequestToday } from "@/lib/time/request-date";
-import { runExtraction } from "@/lib/ai/extraction";
+import { markFailed, runBuilder, runExtraction } from "@/lib/ai/extraction";
+import { applyDumpChanges } from "@/lib/ai/dump-turn";
+import { readDumpReply } from "@/lib/ai/dump-reply";
+import { looksLikeRestructure } from "@/lib/graph/dump-heuristic";
 import { loadCalibrationStats, selectAutoApply } from "@/lib/ai/auto-apply";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
@@ -18,7 +22,7 @@ import { classifyDumpSize } from "@/lib/ai/dump-size";
 import { BUILD_GRAPH_TOOL, type BuildPlanInput } from "@/lib/ai/tools/build";
 import { AI_INGESTION, AI_FLAGS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { checkEntryRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
-import type { RawEntrySourceType } from "@/types/ai";
+import type { DumpTurn, RawEntrySourceType } from "@/types/ai";
 
 // How many branches hang directly off the workspace root. 0 when there is no
 // root yet (a bare workspace), so area suggestions stay on.
@@ -235,6 +239,21 @@ export async function POST(req: NextRequest) {
       status: "pending",
       message: "AI extraction is disabled. Enable AI_EXTRACTION_ENABLED to process.",
       proposed_nodes: [],
+    });
+  }
+
+  // The user's own dump (typed or spoken) is ONE turn: one change set, one
+  // reply, one card (docs/unified-turn.md). Generated steps (suggest-steps sets
+  // default_parent_node_id) and the legacy chat save keep the review flow below.
+  if (!default_parent_node_id && (source_type === "brain_dump" || source_type === "voice")) {
+    return dumpTurn({
+      req,
+      supabase,
+      userId: user.id,
+      workspaceId: workspace_id,
+      rawEntryId: rawEntry.id as string,
+      text: trimmed,
+      autoApply: auto_apply !== false,
     });
   }
 
@@ -580,5 +599,178 @@ export async function POST(req: NextRequest) {
       tier: classifyDumpSize(result.proposedNodes.length),
       node_count: result.proposedNodes.length,
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// A brain dump as one turn: the builder's whole output becomes one change set;
+// what this user reliably accepts is applied at once (with Undo), the rest
+// waits on one card; the priority read and the reply run next to the builder.
+// ---------------------------------------------------------------------------
+
+const MAX_QUESTIONS = 3;
+
+async function dumpTurn(params: {
+  req: NextRequest;
+  supabase: SupabaseClient;
+  userId: string;
+  workspaceId: string;
+  rawEntryId: string;
+  text: string;
+  autoApply: boolean;
+}) {
+  const { req, supabase, userId, workspaceId, rawEntryId, text } = params;
+  const today = await getRequestToday();
+
+  // The human half of the dump — needs nothing from retrieval, so it starts now.
+  const replyRead = readDumpReply({ dump: text, today, supabase, userId, workspaceId, signal: req.signal });
+  let priorityRead: Promise<DumpPriorityRead | null> = Promise.resolve(null);
+  const built = await runBuilder({
+    rawText: text,
+    workspaceId,
+    userId,
+    supabase,
+    today,
+    signal: req.signal,
+    source: "extraction",
+    linkedEntityIds: [rawEntryId],
+    // A dump that asks to reorganize needs to see inside the nodes it names.
+    expandChildren: looksLikeRestructure(text),
+    alongside: supabase.from("raw_entries").update({ status: "processing" }).eq("id", rawEntryId),
+    onRetrieved: (nodes) => {
+      priorityRead = readDumpPriorities({
+        dump: text,
+        nodeIds: nodes.map((n) => n.id),
+        today,
+        supabase,
+        userId,
+        workspaceId,
+      });
+    },
+  });
+  const [priorities, reply] = await Promise.all([priorityRead, replyRead]);
+
+  const toolCtx = { supabase, userId, workspaceId, selectedNodeId: null, today };
+  // Fixed weekly times and priority facts don't depend on the builder, so
+  // they save even when it fails.
+  const commitmentUpdate = await (async () => {
+    if (!priorities || priorities.commitments.length === 0) return null;
+    const applied = await applyCommitmentChanges(toolCtx, { changes: priorities.commitments }, "dump");
+    return applied.accepted && "undo" in applied
+      ? { applied: applied.applied, failed: applied.failed, undo: applied.undo }
+      : null;
+  })();
+  const applyPriorities = async () => {
+    const unclear = priorities?.unclear ?? [];
+    const applied =
+      priorities && priorities.changes.length > 0
+        ? await applyPriorityChanges(toolCtx, { changes: priorities.changes })
+        : null;
+    if (applied && applied.accepted && "undo" in applied) {
+      return { applied: applied.applied, failed: applied.failed, undo: applied.undo, unclear };
+    }
+    return unclear.length > 0 ? { applied: [], failed: [], undo: null, unclear } : null;
+  };
+
+  if (!built.ok) {
+    await markFailed(supabase, rawEntryId, built.error);
+    return NextResponse.json(
+      {
+        raw_entry_id: rawEntryId,
+        status: "failed",
+        error: built.userMessage,
+        message: "Extraction failed. You can retry via POST /api/entries/:id/retry",
+        priority_update: await applyPriorities(),
+        commitment_update: commitmentUpdate,
+      },
+      { status: 207 },
+    );
+  }
+
+  // "did the exam, now waiting for the result" — the priority read's wait
+  // beats the builder's "did" (the result isn't in).
+  const statusTouched = statusTouchedIds(priorities);
+  const [changes] = await Promise.all([
+    applyDumpChanges({
+      ctx: { supabase, userId, workspaceId, today, defer: (work) => after(work) },
+      rawEntryId,
+      built,
+      completeExistingNodeIds: built.completeExistingNodeIds.filter((id) => !statusTouched.has(id)),
+      autoApply: params.autoApply,
+    }),
+    supabase.from("raw_entries").update({ status: "completed" }).eq("id", rawEntryId),
+  ]);
+  // After the change set: its one score recompute then sees the new nodes too.
+  const priorityUpdate = await applyPriorities();
+
+  // What waits for the user — parked as a pending run so the usual resume
+  // endpoint applies it (whole or in part); no model ever continues it.
+  let pendingAction: {
+    run_id: string;
+    tool_use_id: string;
+    tool_name: string;
+    tool_input: BuildPlanInput;
+  } | null = null;
+  if (changes.waiting.length > 0) {
+    const toolUseId = `dump_${rawEntryId}`;
+    const toolInput: BuildPlanInput = {
+      changes: changes.waiting,
+      origin: "dump",
+      ...(changes.notes.length > 0 ? { notes: changes.notes } : {}),
+    };
+    const { data: runRow, error: runError } = await supabase
+      .from("pending_chat_runs")
+      .insert({
+        user_id: userId,
+        workspace_id: workspaceId,
+        selected_node_id: null,
+        mode: "explain",
+        messages: [
+          { role: "user", content: [{ type: "text", text: `User question: ${text}` }] },
+          {
+            role: "assistant",
+            content: [{ type: "tool_use", id: toolUseId, name: BUILD_GRAPH_TOOL, input: {} }],
+          },
+        ],
+        pending_tool_use_id: toolUseId,
+        pending_tool_name: BUILD_GRAPH_TOOL,
+        pending_tool_input: toolInput,
+        // The card sits in the thread; a chat card's 15 minutes is too short.
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      })
+      .select("id")
+      .single();
+    if (runError || !runRow) {
+      console.warn("[entries] could not park the dump's waiting changes:", runError?.message);
+    } else {
+      pendingAction = {
+        run_id: runRow.id as string,
+        tool_use_id: toolUseId,
+        tool_name: BUILD_GRAPH_TOOL,
+        tool_input: toolInput,
+      };
+    }
+  }
+
+  const turn: DumpTurn = {
+    reply,
+    added: changes.added,
+    done: changes.done,
+    links: changes.links,
+    questions: [...new Set([...built.clarifyingQuestions, ...(priorities?.unclear ?? [])])].slice(0, MAX_QUESTIONS),
+  };
+
+  return NextResponse.json({
+    raw_entry_id: rawEntryId,
+    ai_run_id: built.aiRunId,
+    status: "completed",
+    turn,
+    priority_update: priorityUpdate,
+    commitment_update: commitmentUpdate,
+    pending_action: pendingAction,
+    // The review-modal fields, empty: nothing from a turn goes through it.
+    proposed_nodes: [],
+    clarifying_questions: [],
+    completed_existing_node_titles: changes.done,
   });
 }

@@ -1,0 +1,72 @@
+// What a brain dump changed, in plain words, for the chat model.
+//
+// A dump's result is a card, and history goes to the model as text — without
+// this the next turn would see only the reply sentence and could not follow
+// "no, put the second one under Thesis" or "yes, make that a task". The note
+// lists what was added, finished, linked, what still waits for the user and
+// what was asked (docs/unified-turn.md, "the thread remembers").
+
+import type { ChatMessage } from "@/types/chat";
+
+import { appliedActionNote } from "./applied-marker";
+import { describeChange, edgeLabel, isChangeList, namerFor, typeLabel } from "./change-describe";
+
+const MAX_LISTED = 14;
+
+function listed(items: string[]): string {
+  const shown = items.slice(0, MAX_LISTED).join("; ");
+  return items.length > MAX_LISTED ? `${shown}; and ${items.length - MAX_LISTED} more` : shown;
+}
+
+export function turnNote(
+  message: Pick<ChatMessage, "turn" | "appliedAction" | "pendingAction">,
+  nodeTitles?: ReadonlyMap<string, string>,
+): string {
+  const turn = message.turn;
+  if (!turn) return "";
+  const lines: string[] = [];
+
+  if (turn.added.length > 0) {
+    const items = turn.added.map(
+      (n) => `"${n.title}" (${typeLabel(n.nodeType)}${n.parentTitle ? `, under ${n.parentTitle}` : ""})`,
+    );
+    lines.push(
+      turn.addedStatus === "undone"
+        ? `Added, then UNDONE by the user — these no longer exist: ${listed(items)}`
+        : `Added to the graph: ${listed(items)}`,
+    );
+  }
+  if (turn.done.length > 0) lines.push(`Marked done: ${listed(turn.done)}`);
+  if (turn.links.length > 0) {
+    lines.push(
+      `Linked: ${listed(turn.links.map((l) => `${l.sourceTitle} ${edgeLabel(l.edgeType)} ${l.targetTitle}`))}`,
+    );
+  }
+  if (message.appliedAction) lines.push(appliedActionNote(message.appliedAction).replace(/^\[|\]$/g, ""));
+  if (turn.commitments) lines.push(appliedActionNote(turn.commitments).replace(/^\[|\]$/g, ""));
+
+  const pending = message.pendingAction;
+  const ops = pending && isChangeList(pending.toolInput.changes) ? pending.toolInput.changes : [];
+  if (pending && ops.length > 0) {
+    const nameOf = namerFor(ops, nodeTitles);
+    const words = ops.map((op) => describeChange(op, nameOf));
+    if (pending.status === "awaiting") {
+      lines.push(`Proposed, still waiting for the user's OK on the card (NOT applied yet): ${listed(words)}`);
+    } else if (pending.status === "rejected") {
+      lines.push(`Proposed and DECLINED by the user: ${listed(words)}`);
+    } else if (pending.status === "accepted") {
+      const kept = pending.acceptedIndexes ? new Set(pending.acceptedIndexes) : null;
+      const accepted = words.filter((_, i) => !kept || kept.has(i));
+      const skipped = kept ? words.filter((_, i) => !kept.has(i)) : [];
+      if (accepted.length > 0) lines.push(`Accepted by the user and applied: ${listed(accepted)}`);
+      if (skipped.length > 0) lines.push(`Skipped by the user: ${listed(skipped)}`);
+    }
+  }
+
+  for (const q of turn.questions) {
+    lines.push(q.answer ? `Asked: "${q.text}" — the user answered: "${q.answer}"` : `Asked the user: "${q.text}"`);
+  }
+
+  if (lines.length === 0) return "";
+  return `[What this brain dump changed — the user saw it as a card under this reply.\n${lines.map((l) => `- ${l}`).join("\n")}]`;
+}

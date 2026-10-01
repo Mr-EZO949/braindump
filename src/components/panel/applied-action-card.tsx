@@ -12,6 +12,10 @@ import type { AppliedAction, AppliedActionItem } from "@/types/chat";
 interface AppliedActionCardProps {
   action: AppliedAction;
   onUndo: () => void;
+  // Inside the brain-dump turn card: a section of that card, not a card of
+  // its own, under the heading the turn card uses for it.
+  embedded?: boolean;
+  heading?: string;
 }
 
 // Actions that push a node up get the brand accent; the rest stay quiet.
@@ -34,17 +38,17 @@ function Delta({ item }: { item: AppliedActionItem }) {
   );
 }
 
-export function AppliedActionCard({ action, onUndo }: AppliedActionCardProps) {
+export function AppliedActionCard({ action, onUndo, embedded, heading: headingOverride }: AppliedActionCardProps) {
   const { status } = action;
   const undone = status === "undone";
   const canUndo = status === "applied" || status === "error";
   // set_commitments: a schedule change — same card, its own words and glyphs.
   const schedule = isCommitmentAction(action);
-  const heading = schedule ? "Schedule saved" : "Priorities updated";
+  const heading = headingOverride ?? (schedule ? "Schedule saved" : "Priorities updated");
 
   return (
     <div
-      className={`applied-card${undone ? " applied-card--undone" : ""}`}
+      className={`applied-card${embedded ? " applied-card--embedded" : ""}${undone ? " applied-card--undone" : ""}`}
       role="group"
       aria-label={undone ? "Change undone" : heading}
     >

@@ -4,12 +4,24 @@
 // to /api/assistant/chat/resume; the streaming response from that endpoint
 // is threaded back into the same assistant message by the caller.
 
+import { useMemo } from "react";
+
+import { ChangeChecklist, useChangeSelection } from "@/components/panel/change-checklist";
+import {
+  edgeLabel,
+  hierarchyEnds,
+  HIERARCHY_EDGE_TYPES,
+  isChangeList,
+  namerFor,
+  type ChangeOpView,
+} from "@/lib/chat/change-describe";
 import type { PendingAction } from "@/types/chat";
 
 interface PendingActionCardProps {
   action: PendingAction;
   disabled: boolean;
-  onResolve: (decision: "accept" | "reject" | "choice", choice?: string) => void;
+  // acceptedIndexes: a change-set card accepted in part — the rows kept.
+  onResolve: (decision: "accept" | "reject" | "choice", choice?: string, acceptedIndexes?: number[]) => void;
   // Node id → title, so the card names nodes instead of showing UUIDs.
   nodeTitles?: ReadonlyMap<string, string>;
 }
@@ -30,91 +42,8 @@ const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
   mark_task_done: { verb: "Mark done", noun: "task" },
 };
 
-// propose_changes_batch carries a `changes` array of heterogeneous ops.
-type ChangeOp = {
-  kind?: unknown;
-  local_ref?: unknown;
-  title?: unknown;
-  node_type?: unknown;
-  node_id?: unknown;
-  parent_node_id?: unknown;
-  parent_local_ref?: unknown;
-  new_parent_node_id?: unknown;
-  new_parent_local_ref?: unknown;
-  source_node_id?: unknown;
-  target_node_id?: unknown;
-  edge_type?: unknown;
-};
-
-type NameOf = (ref: unknown) => string;
-
-function isChangeList(value: unknown): value is ChangeOp[] {
-  return Array.isArray(value) && value.every((v) => typeof v === "object" && v !== null);
-}
-
-const CHANGE_KIND_GLYPH: Record<string, string> = {
-  create_node: "+",
-  move: "↳",
-  update: "✎",
-  create_edge: "⇄",
-  complete: "✓",
-  archive: "⌫",
-};
-
-const HIERARCHY_EDGE_TYPES = new Set(["belongs_to", "contains"]);
-
-function edgeLabel(edgeType: unknown): string {
-  return typeof edgeType === "string" ? edgeType.replace(/_/g, " ") : "linked to";
-}
-
-function typeLabel(nodeType: unknown): string {
-  return typeof nodeType === "string" ? nodeType.replace(/_/g, " ") : "";
-}
-
-// belongs_to / contains are a MOVE: who goes under whom.
-function hierarchyEnds(op: {
-  edge_type?: unknown;
-  source_node_id?: unknown;
-  target_node_id?: unknown;
-}): { child: unknown; parent: unknown } {
-  return op.edge_type === "contains"
-    ? { child: op.target_node_id, parent: op.source_node_id }
-    : { child: op.source_node_id, parent: op.target_node_id };
-}
-
-function describeChange(op: ChangeOp, nameOf: NameOf): string {
-  const kind = typeof op.kind === "string" ? op.kind : "";
-  switch (kind) {
-    case "create_node": {
-      const title = typeof op.title === "string" ? op.title : "(untitled)";
-      const type = typeLabel(op.node_type);
-      const parent = op.parent_node_id ?? op.parent_local_ref;
-      return `${title}${type ? ` · ${type}` : ""}${parent ? ` — under ${nameOf(parent)}` : ""}`;
-    }
-    case "move":
-      return `Move ${nameOf(op.node_id)} under ${nameOf(op.new_parent_node_id ?? op.new_parent_local_ref)}`;
-    case "update": {
-      const parts = [
-        typeof op.title === "string" ? `rename to "${op.title}"` : null,
-        typeof op.node_type === "string" ? `make it a ${typeLabel(op.node_type)}` : null,
-      ].filter(Boolean);
-      return `${nameOf(op.node_id)}: ${parts.length > 0 ? parts.join(", ") : "edit"}`;
-    }
-    case "create_edge": {
-      if (typeof op.edge_type === "string" && HIERARCHY_EDGE_TYPES.has(op.edge_type)) {
-        const { child, parent } = hierarchyEnds(op);
-        return `Move ${nameOf(child)} under ${nameOf(parent)}`;
-      }
-      return `${nameOf(op.source_node_id)} ${edgeLabel(op.edge_type)} ${nameOf(op.target_node_id)}`;
-    }
-    case "complete":
-      return `Complete ${nameOf(op.node_id)}`;
-    case "archive":
-      return `Archive ${nameOf(op.node_id)}`;
-    default:
-      return kind || "(unknown)";
-  }
-}
+const CHANGE_SET_TOOLS = new Set(["propose_changes_batch", "build_graph"]);
+const EMPTY_OPS: ChangeOpView[] = [];
 
 function labelFor(name: string): { verb: string; noun: string } {
   return TOOL_LABELS[name] ?? { verb: "Run", noun: name };
@@ -142,6 +71,17 @@ function isBatchNodeList(value: unknown): value is BatchNode[] {
 }
 
 export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: PendingActionCardProps) {
+  // Change-set cards (build_graph, propose_changes_batch): every row is the
+  // user's own call. Declared before any early return — hooks can't be conditional.
+  const changeOps = useMemo(
+    () =>
+      CHANGE_SET_TOOLS.has(action.toolName) && isChangeList(action.toolInput.changes)
+        ? (action.toolInput.changes as ChangeOpView[])
+        : EMPTY_OPS,
+    [action.toolName, action.toolInput],
+  );
+  const selection = useChangeSelection(changeOps);
+
   // ask_choice renders as a forced-choice question rather than an Accept/Reject
   // mutation card. The picked option resumes the loop as the tool result.
   if (action.toolName === "ask_choice") {
@@ -193,11 +133,7 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
   }
 
   const isBatch = action.toolName === "propose_nodes_batch";
-  const isChangesBatch =
-    action.toolName === "propose_changes_batch" || action.toolName === "build_graph";
-  // The list scrolls; a builder plan is shown whole — nobody should accept
-  // changes they can't read.
-  const changeLimit = action.toolName === "build_graph" ? 40 : 12;
+  const isChangesBatch = CHANGE_SET_TOOLS.has(action.toolName);
   // What the builder wants the user to know before accepting (a new item
   // that looks like an existing one).
   const notes =
@@ -207,22 +143,9 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
   const batchNodes = isBatch && isBatchNodeList(action.toolInput.nodes)
     ? (action.toolInput.nodes as BatchNode[])
     : null;
-  const changes = isChangesBatch && isChangeList(action.toolInput.changes)
-    ? (action.toolInput.changes as ChangeOp[])
-    : null;
+  const changes = isChangesBatch && changeOps.length > 0 ? changeOps : null;
 
-  // A node as the user knows it: its title, or — for a node this same batch
-  // creates — the title the batch gives it.
-  const localTitles = new Map<string, string>();
-  for (const op of changes ?? []) {
-    if (op.kind === "create_node" && typeof op.local_ref === "string" && typeof op.title === "string") {
-      localTitles.set(op.local_ref, op.title);
-    }
-  }
-  const nameOf: NameOf = (ref) =>
-    typeof ref === "string" && ref.length > 0
-      ? (localTitles.get(ref) ?? nodeTitles?.get(ref) ?? "a node")
-      : "a node";
+  const nameOf = namerFor(changes ?? [], nodeTitles);
 
   // propose_edge with belongs_to / contains moves a node — say so.
   const isEdge = action.toolName === "propose_edge";
@@ -297,23 +220,14 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
       ) : null}
 
       {isChangesBatch && changes ? (
-        <ul className="pending-action-batch-list">
-          {changes.slice(0, changeLimit).map((op, idx) => {
-            const kind = typeof op.kind === "string" ? op.kind : "";
-            const glyph = CHANGE_KIND_GLYPH[kind] ?? "•";
-            return (
-              <li className="pending-action-batch-item" key={idx}>
-                <span className="pending-action-batch-type">{glyph}</span>
-                <span className="pending-action-batch-title">{describeChange(op, nameOf)}</span>
-              </li>
-            );
-          })}
-          {changes.length > changeLimit ? (
-            <li className="pending-action-batch-more">
-              +{changes.length - changeLimit} more
-            </li>
-          ) : null}
-        </ul>
+        <ChangeChecklist
+          disabled={disabled}
+          keptIndexes={action.acceptedIndexes}
+          mode={action.status === "awaiting" ? "choose" : action.status === "rejected" ? "rejected" : "accepted"}
+          nameOf={nameOf}
+          ops={changes}
+          selection={selection}
+        />
       ) : null}
 
       {notes.length > 0 ? (
@@ -351,14 +265,35 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
 
       {awaiting ? (
         <div className="pending-action-actions">
-          <button
-            className="pending-action-btn pending-action-btn-accept"
-            onClick={() => onResolve("accept")}
-            disabled={disabled}
-            type="button"
-          >
-            Accept
-          </button>
+          {changes ? (
+            <button
+              className="pending-action-btn pending-action-btn-accept"
+              onClick={() =>
+                onResolve(
+                  "accept",
+                  undefined,
+                  selection.accepted.length === changes.length ? undefined : selection.accepted,
+                )
+              }
+              disabled={disabled || selection.accepted.length === 0}
+              type="button"
+            >
+              {selection.accepted.length === changes.length
+                ? changes.length === 1
+                  ? "Accept"
+                  : `Accept all ${changes.length}`
+                : `Accept ${selection.accepted.length} of ${changes.length}`}
+            </button>
+          ) : (
+            <button
+              className="pending-action-btn pending-action-btn-accept"
+              onClick={() => onResolve("accept")}
+              disabled={disabled}
+              type="button"
+            >
+              Accept
+            </button>
+          )}
           <button
             className="pending-action-btn pending-action-btn-reject"
             onClick={() => onResolve("reject")}

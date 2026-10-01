@@ -11,6 +11,7 @@ import { ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, MicIcon, NetworkIcon } 
 import { ChatRichText } from "@/components/ui/chat-rich-text";
 import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { AppliedActionCard } from "@/components/panel/applied-action-card";
+import { TurnCard, turnHasCard } from "@/components/panel/turn-card";
 import { HabitStreak } from "@/components/panel/habit-streak";
 import { NodeSchedule } from "@/components/panel/node-schedule";
 import { useVoiceInput } from "@/components/voice/use-voice-input";
@@ -87,9 +88,16 @@ type ContextRailProps = {
     messageId: string,
     decision: "accept" | "reject" | "choice",
     choice?: string,
+    // A change-set card accepted in part: the rows the user kept.
+    acceptedIndexes?: number[],
   ) => void;
   onCancelChat: () => void;
-  onUndoAppliedAction: (messageId: string) => void;
+  // slot: which applied change of the message — its own, or (brain-dump turn
+  // card) the weekly commitments.
+  onUndoAppliedAction: (messageId: string, slot?: "commitments") => void;
+  // Brain-dump turn card: undo what was added; answer a question it asked.
+  onUndoTurnAdded: (messageId: string) => void;
+  onAnswerTurnQuestion: (messageId: string, questionIndex: number, answer: string) => void;
   pendingActionBusy: boolean;
   nudges: Nudge[];
   onSelectNudge: (nudge: Nudge) => void;
@@ -169,6 +177,8 @@ export function ContextRail({
   onResolvePendingAction,
   onCancelChat,
   onUndoAppliedAction,
+  onUndoTurnAdded,
+  onAnswerTurnQuestion,
   pendingActionBusy,
   nudges,
   onSelectNudge,
@@ -507,28 +517,51 @@ export function ContextRail({
                       ) : message.body.trim().length === 0 &&
                         message.status !== "error" &&
                         !message.pendingAction &&
-                        !message.appliedAction ? null : (
+                        !message.appliedAction &&
+                        !message.turn ? null : (
                         <div className="chat-msg-assistant" key={message.id}>
                           <div className="chat-msg-assistant-card">
                             {message.body.length > 0 ? <ChatRichText body={message.body} /> : null}
 
-                            {message.appliedAction ? (
-                              <AppliedActionCard
-                                action={message.appliedAction}
-                                onUndo={() => onUndoAppliedAction(message.id)}
-                              />
-                            ) : null}
+                            {message.turn ? (
+                              // A brain dump: everything it changed on ONE card.
+                              turnHasCard(message.turn, message.appliedAction, message.pendingAction) ? (
+                                <TurnCard
+                                  disabled={pendingActionBusy || chatLoading}
+                                  nodeTitles={nodeTitles}
+                                  onAnswer={(index, answer) => onAnswerTurnQuestion(message.id, index, answer)}
+                                  onResolve={(decision, acceptedIndexes) =>
+                                    onResolvePendingAction(message.id, decision, undefined, acceptedIndexes)
+                                  }
+                                  onUndoAdded={() => onUndoTurnAdded(message.id)}
+                                  onUndoCommitments={() => onUndoAppliedAction(message.id, "commitments")}
+                                  onUndoPriorities={() => onUndoAppliedAction(message.id)}
+                                  pending={message.pendingAction}
+                                  priorities={message.appliedAction}
+                                  turn={message.turn}
+                                />
+                              ) : null
+                            ) : (
+                              <>
+                                {message.appliedAction ? (
+                                  <AppliedActionCard
+                                    action={message.appliedAction}
+                                    onUndo={() => onUndoAppliedAction(message.id)}
+                                  />
+                                ) : null}
 
-                            {message.pendingAction ? (
-                              <PendingActionCard
-                                action={message.pendingAction}
-                                nodeTitles={nodeTitles}
-                                disabled={pendingActionBusy}
-                                onResolve={(decision, choice) =>
-                                  onResolvePendingAction(message.id, decision, choice)
-                                }
-                              />
-                            ) : null}
+                                {message.pendingAction ? (
+                                  <PendingActionCard
+                                    action={message.pendingAction}
+                                    nodeTitles={nodeTitles}
+                                    disabled={pendingActionBusy}
+                                    onResolve={(decision, choice, acceptedIndexes) =>
+                                      onResolvePendingAction(message.id, decision, choice, acceptedIndexes)
+                                    }
+                                  />
+                                ) : null}
+                              </>
+                            )}
 
                             {message.sections && message.sections.length > 0 ? (
                               <div className="chat-section-list">

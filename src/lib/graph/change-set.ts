@@ -51,6 +51,9 @@ export type ChangeOp =
       target_date?: string;
       importance_index?: number;
       body?: string;
+      // The proposed_nodes row that records this proposal (a brain dump's
+      // ledger: calibration, Undo, dump history). Not read here.
+      ledger_id?: string;
     }
   | {
       kind: "move";
@@ -427,7 +430,7 @@ export function changeNodeStatus(
   ctx: ChangeContext,
   nodeId: string,
   newStatus: NodeStatus,
-  options?: { recomputeScores?: boolean },
+  options?: { recomputeScores?: boolean; habitSource?: "chat" | "dump" },
 ) {
   return transitionNodeStatus({
     supabase: ctx.supabase,
@@ -437,7 +440,7 @@ export function changeNodeStatus(
     newStatus,
     // The user's local day (bd_tz cookie → chat route). UTC only as a fallback.
     today: ctx.today ?? localDateISO(new Date(), null),
-    habitSource: "chat",
+    habitSource: options?.habitSource ?? "chat",
     recomputeScores: options?.recomputeScores,
   });
 }
@@ -639,7 +642,7 @@ export async function applyChangeSet(
           ctx,
           nodeId,
           op.kind === "complete" ? "completed" : "archived",
-          { recomputeScores: false },
+          { recomputeScores: false, habitSource: source },
         );
         if (outcome.kind === "error") {
           results[i] = {
