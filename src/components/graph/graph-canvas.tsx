@@ -9,10 +9,7 @@ import {
   forceY,
 } from "d3-force";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  PointerEvent as ReactPointerEvent,
-  WheelEvent as ReactWheelEvent,
-} from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type {
   ForceLink,
   Simulation,
@@ -1655,6 +1652,8 @@ export function GraphCanvas({
   const returnAnimationRef = useRef<number | null>(null);
   const returningNodeRef = useRef<GraphNode | null>(null);
   const viewAnimationRef = useRef<number | null>(null);
+  const wheelAnimationRef = useRef<number | null>(null);
+  const wheelTargetRef = useRef<ViewState | null>(null);
   const focusFollowUpTimeoutRef = useRef<number | null>(null);
   const pendingFocusRequestRef = useRef<number | null>(null);
   const focusNodeIdRef = useRef(focusNodeId);
@@ -1884,7 +1883,16 @@ export function GraphCanvas({
     };
   }, []);
 
+  const stopWheelZoom = useCallback(() => {
+    if (wheelAnimationRef.current !== null) {
+      window.cancelAnimationFrame(wheelAnimationRef.current);
+      wheelAnimationRef.current = null;
+    }
+    wheelTargetRef.current = null;
+  }, []);
+
   const animateToView = useCallback((nextView: ViewTarget, immediate: boolean) => {
+    stopWheelZoom();
     if (viewAnimationRef.current !== null) {
       window.cancelAnimationFrame(viewAnimationRef.current);
       viewAnimationRef.current = null;
@@ -1917,7 +1925,7 @@ export function GraphCanvas({
     };
 
     viewAnimationRef.current = window.requestAnimationFrame(animate);
-  }, []);
+  }, [stopWheelZoom]);
 
   const focusNodeInView = useCallback(
     (
@@ -1959,6 +1967,78 @@ export function GraphCanvas({
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || loading) return;
+
+    const animateWheel = () => {
+      const target = wheelTargetRef.current;
+      if (!target) {
+        wheelAnimationRef.current = null;
+        return;
+      }
+
+      const current = viewRef.current;
+      const next = {
+        panX: lerp(current.panX, target.panX, 0.34),
+        panY: lerp(current.panY, target.panY, 0.34),
+        zoom: lerp(current.zoom, target.zoom, 0.34),
+      };
+      const settled =
+        Math.abs(next.panX - target.panX) < 0.15 &&
+        Math.abs(next.panY - target.panY) < 0.15 &&
+        Math.abs(next.zoom - target.zoom) < 0.0005;
+      const updated = settled ? target : next;
+      viewRef.current = updated;
+      setView(updated);
+
+      if (settled) {
+        wheelTargetRef.current = null;
+        wheelAnimationRef.current = null;
+      } else {
+        wheelAnimationRef.current = window.requestAnimationFrame(animateWheel);
+      }
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      // React's delegated wheel listener is passive in modern browsers, so
+      // preventDefault there can still scroll the page behind the canvas.
+      event.preventDefault();
+      if (viewAnimationRef.current !== null) {
+        window.cancelAnimationFrame(viewAnimationRef.current);
+        viewAnimationRef.current = null;
+      }
+
+      const currentViewport = viewportRef.current;
+      const rect = container.getBoundingClientRect();
+      const pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      const currentTarget = wheelTargetRef.current ?? viewRef.current;
+      const worldBeforeZoom = getWorldPoint(pointer, currentViewport, currentTarget);
+      const deltaScale = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? currentViewport.height
+          : 1;
+      const delta = clamp(event.deltaY * deltaScale, -120, 120);
+      const nextZoom = clamp(currentTarget.zoom * Math.exp(-delta * 0.00112), 0.25, 2.2);
+
+      wheelTargetRef.current = {
+        panX: pointer.x - currentViewport.width / 2 - worldBeforeZoom.x * nextZoom,
+        panY: pointer.y - currentViewport.height / 2 - worldBeforeZoom.y * nextZoom,
+        zoom: nextZoom,
+      };
+      if (wheelAnimationRef.current === null) {
+        wheelAnimationRef.current = window.requestAnimationFrame(animateWheel);
+      }
+    };
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", handleWheel);
+      stopWheelZoom();
+    };
+  }, [loading, stopWheelZoom]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -2236,6 +2316,7 @@ export function GraphCanvas({
 
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
+        stopWheelZoom();
         e.preventDefault();
         const rect = container.getBoundingClientRect();
         const mid = getTouchMidpoint(e.touches[0], e.touches[1], rect);
@@ -2287,7 +2368,7 @@ export function GraphCanvas({
       container.removeEventListener("touchend", handleTouchEnd);
       container.removeEventListener("touchcancel", handleTouchEnd);
     };
-  }, []);
+  }, [stopWheelZoom]);
 
   useEffect(() => {
     if (didFitInitialViewRef.current) return;
@@ -2546,6 +2627,7 @@ export function GraphCanvas({
     }
 
     updateAmbientGlow(containerRef.current, event.clientX, event.clientY, 0.92);
+    stopWheelZoom();
     panStateRef.current = {
       originPanX: viewRef.current.panX,
       originPanY: viewRef.current.panY,
@@ -2582,6 +2664,7 @@ export function GraphCanvas({
   const handleNodePointerDown = (event: ReactPointerEvent<SVGGElement>, nodeId: string) => {
     event.stopPropagation();
     updateAmbientGlow(containerRef.current, event.clientX, event.clientY, 1);
+    stopWheelZoom();
 
     const targetNode = nodesRef.current.find((node) => node.id === nodeId);
 
@@ -2635,32 +2718,6 @@ export function GraphCanvas({
     requestRender();
   };
 
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-
-    const container = containerRef.current;
-
-    if (!container) {
-      return;
-    }
-
-    const currentView = viewRef.current;
-    const currentViewport = viewportRef.current;
-    const rect = container.getBoundingClientRect();
-    const pointer = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
-    const worldBeforeZoom = getWorldPoint(pointer, currentViewport, currentView);
-    const nextZoom = clamp(currentView.zoom * Math.exp(-event.deltaY * 0.00112), 0.25, 2.2);
-
-    setView({
-      panX: pointer.x - currentViewport.width / 2 - worldBeforeZoom.x * nextZoom,
-      panY: pointer.y - currentViewport.height / 2 - worldBeforeZoom.y * nextZoom,
-      zoom: nextZoom,
-    });
-  };
-
   if (loading) {
     return (
       <div className="graph-loading" role="status" aria-label="Loading your graph">
@@ -2680,7 +2737,6 @@ export function GraphCanvas({
       onPointerDown={handleBackgroundPointerDown}
       onPointerLeave={handleCanvasPointerLeave}
       onPointerMove={handleCanvasPointerMove}
-      onWheel={handleWheel}
       ref={containerRef}
     >
       <div className="graph-canvas-ambient" />

@@ -13258,6 +13258,19 @@ input[type="search"]::-webkit-search-results-decoration {
 
 /* ─── App main area (dvh-aware) ─────────────────────────── */
 
+/* The graph is a fixed viewport. Keep its wheel gestures off the document,
+   while other app modes retain their own scrolling behavior. */
+html:has(.app-shell[data-app-mode="graph"]),
+body:has(.app-shell[data-app-mode="graph"]) {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.app-shell[data-app-mode="graph"] {
+  height: 100dvh;
+  min-height: 0;
+}
+
 .app-main-area {
   /* Header is 64px tall PLUS the top safe-area inset (see .app-topbar), so the
      main area must subtract both or the bottom gets pushed off-screen on iOS. */

@@ -4217,7 +4217,8 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   return (
     <div
-      className="flex min-h-screen flex-col overflow-hidden bg-(--color-bg-base) text-(--color-text-primary)"
+      className="app-shell flex min-h-screen flex-col overflow-hidden bg-(--color-bg-base) text-(--color-text-primary)"
+      data-app-mode={appMode}
       data-system-panel-open={systemPanelOpen ? "true" : undefined}
     >
       <TopCommandBar
