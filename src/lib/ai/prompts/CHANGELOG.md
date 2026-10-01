@@ -7,7 +7,13 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Extraction (`extract.ts`)
 
-### extract-v25 (current) · extract-light-v5 — the graph builder (2026-09-30)
+### extract-v26 (current) — the long prompt quotes edit requests; the short prompt carries them out (2026-10-01)
+- The long prompt no longer plans edits. A sentence that asks to change EXISTING nodes is copied word for word into `edit_requests`, and the long prompt creates nothing for it. `runBuilder` (extraction.ts) then runs those sentences through `extract-light-v5` with child-expanded retrieval — the same call that does a one-line restructure from chat — and merges the result (refs prefixed `e_`, its nodes first so dedup keeps them). The `changes` schema left the long prompt; the "Edits to existing nodes" section became a short "quote it" section.
+- Why: on long dumps the long prompt planned a new-parent reorganization badly in 4 runs of 5 (moved nodes under a local_ref it never proposed; or created the project and forgot the move), while the short prompt got the same request right 8 of 8. The difference is how much else is on the page.
+- From the first end-to-end runs of a long MIXED dump (venting + a question + completions + new work with dates + two reorganizations + two stated links + a weekly class time): read the dump to its last line ("also need to call the bank" was dropped); a habit done today is a completion (the full prompt lacked the rule); steps the user names are children with the date on the step (a "pick a dataset by friday, then write the proposal" became one big task); a weekly fixed time is a commitment, never a habit node; a soft link may target an existing node's id (the model had invented a copy of an existing goal to link to and lost the link with it); venting and questions to the assistant produce no clarifying question (`dump-reply-v1` answers them).
+- Eval (synthetic 16-node workspace, throwaway user, the 1,136-char mixed dump, end to end in the browser): 3 runs while the prompt moved from "changes first" to "quote and hand off". Final run: every item captured (10 new nodes incl. the bank call and the named ML steps), gym logged + CV done, both reorganizations exactly as asked (BrainDump project with Test/Market and the old fixes moved along; Italian under Personal Development keeping `useful_for` the internship), both stated links, the class as a commitment and no habit node. $0.0425 (13.4k in / 1.6k out, 13.8 s) + edit pass $0.0129 (6.4 s).
+
+### extract-v25 · extract-light-v5 (current) — the graph builder (2026-09-30)
 - Both prompts now EDIT existing nodes. New output field `changes`: `move` (node → new parent, an existing id or the local_ref of a node created in the same output), `update` (rename / retype), `link` (lateral edge). The v24 rule "extraction only adds → ask one yes/no question for chat to act on" is gone. Rules carried over from the assistant prompt's restructuring section: a new parent goes where its future children sit now; never a second copy of an existing node; keep a `useful_for` link when a node leaves a parent it still helps; the parent must be able to hold the child; every part the user names must exist afterwards (with the two wrong outcomes spelled out).
 - The existing-node list says its ids are for attaching, completing **or editing**. Retrieval also shows the children of the top hits when the text reads like a restructure (or the call comes from chat), so "make X its own project" can move X's steps with it.
 - Why: `docs/unified-turn.md` phase 2 — the same model that places a dump's nodes now does chat's restructures (through `build_graph`), instead of a whole chat turn on Sonnet.
@@ -153,6 +159,17 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 - Basic graph-grounded assistant with context injection
 
 ---
+
+## Brain-dump side reads (`dump-priorities.ts`, `dump-reply.ts`)
+
+### dump-reply-v1 (current) — the human half of a dump (2026-10-01)
+- New. A small Haiku read, run next to the graph builder only when the dump has a human part (`looksConversational`: a "?", venting or feeling words), answers it in 1–3 sentences above the dump's card: acknowledge what they said with their own specifics; answer a direct question ("what would you drop?") from what is on their plate (top-ranked work items with dates and holds); never describe the graph changes (the card does). `NONE` → no reply.
+- Why: `docs/unified-turn.md` phase 3. Until now a dump's question came back as a "clarifying question" in a modal and nobody answered it.
+- Eval (the mixed dump, 2 runs): both acknowledged the 4 hours of sleep and answered with a concrete drop (Italian crash course — no deadline; Clothes Reselling — no deadline, no steps). $0.0012–0.0013, ~2 s, in parallel with the builder. Replies ran ~70 words against the 55 asked.
+
+### dump-priorities-v3 (current) (2026-10-01)
+- A date or to-do for a step or new piece of work inside a listed class/project is a new item, not a deadline or focus for the class ("for ML I have to pick a dataset by friday" dated the class Machine Learning). One fact changes one item — the most specific ("stats midterm is oct 20" dated the midterm goal AND the class). Reorganizing requests are another step's job — no change and no "unclear" question. Questions name items by title; the parser also replaces refs (`n12`) the model writes anyway.
+- Eval: the mixed dump, before → after: the class no longer gets the step's date; the midterm-and-class double deadline did not recur in the last run.
 
 ## Planner (`plan.ts`)
 
