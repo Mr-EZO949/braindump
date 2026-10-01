@@ -16983,6 +16983,18 @@ button.change-row:disabled {
   overflow-wrap: anywhere;
 }
 
+.change-row-relation {
+  color: var(--color-text-muted);
+}
+
+.change-row-why {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--color-text-muted);
+}
+
 .change-row--off .change-row-text {
   color: var(--color-text-muted);
   text-decoration: line-through;

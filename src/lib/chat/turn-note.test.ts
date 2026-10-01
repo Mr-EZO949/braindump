@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ChatMessage, PendingAction, TurnCardData } from "@/types/chat";
 
-import { turnNote } from "./turn-note";
+import { connectionsNote, turnNote } from "./turn-note";
 
 const turn = (extra: Partial<TurnCardData> = {}): TurnCardData => ({
   added: [],
@@ -74,5 +74,19 @@ describe("turnNote — what the chat model is told a dump changed", () => {
     const partial = turnNote({ ...base, pendingAction: pending("accepted", [1]) }, titles);
     expect(partial).toContain('Accepted by the user and applied: Test & Market BrainDump: rename to "Test BrainDump"');
     expect(partial).toContain("Skipped by the user: BrainDump · project; Move Test & Market BrainDump under BrainDump");
+  });
+});
+
+describe("connectionsNote", () => {
+  const edges = [
+    { id: "e1", sourceTitle: "Test BrainDump", targetTitle: "Market BrainDump", edgeType: "supports", explanation: null },
+    { id: "e2", sourceTitle: "Fixes", targetTitle: "BrainDump", edgeType: "supports", explanation: null },
+  ];
+  it("says which links the user kept, dismissed or has not answered", () => {
+    expect(connectionsNote({ edges, status: "added", acceptedIds: ["e1"] })).toBe(
+      "[Links suggested after the dump — the user added: Test BrainDump supports Market BrainDump]",
+    );
+    expect(connectionsNote({ edges, status: "dismissed" })).toContain("dismissed by the user");
+    expect(connectionsNote({ edges, status: "awaiting" })).toContain("not answered yet");
   });
 });

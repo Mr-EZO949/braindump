@@ -106,6 +106,21 @@ export interface TurnCardData {
   questions: Array<{ text: string; answer?: string }>;
 }
 
+// Links the connection engine noticed after a turn added nodes — a card in
+// the same thread (replaces the "Suggested connections" modal there).
+export interface ConnectionsCardData {
+  edges: Array<{
+    id: string;
+    sourceTitle: string;
+    targetTitle: string;
+    edgeType: string;
+    explanation: string | null;
+  }>;
+  status: "awaiting" | "saving" | "added" | "dismissed" | "error";
+  // The links the user kept (status "added").
+  acceptedIds?: string[];
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatMessageRole;
@@ -116,6 +131,7 @@ export interface ChatMessage {
   pendingAction?: PendingAction;
   appliedAction?: AppliedAction;
   turn?: TurnCardData;
+  connections?: ConnectionsCardData;
 }
 
 // M4.1 — Proactive nudge surfaced in the empty-chat state. Produced by

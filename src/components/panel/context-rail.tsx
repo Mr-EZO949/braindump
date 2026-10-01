@@ -12,6 +12,7 @@ import { ChatRichText } from "@/components/ui/chat-rich-text";
 import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { AppliedActionCard } from "@/components/panel/applied-action-card";
 import { TurnCard, turnHasCard } from "@/components/panel/turn-card";
+import { ConnectionsCard } from "@/components/panel/connections-card";
 import { HabitStreak } from "@/components/panel/habit-streak";
 import { NodeSchedule } from "@/components/panel/node-schedule";
 import { useVoiceInput } from "@/components/voice/use-voice-input";
@@ -98,6 +99,8 @@ type ContextRailProps = {
   // Brain-dump turn card: undo what was added; answer a question it asked.
   onUndoTurnAdded: (messageId: string) => void;
   onAnswerTurnQuestion: (messageId: string, questionIndex: number, answer: string) => void;
+  // A links card: the links kept (null → dismiss all).
+  onResolveConnections: (messageId: string, acceptedIds: string[] | null) => void;
   pendingActionBusy: boolean;
   nudges: Nudge[];
   onSelectNudge: (nudge: Nudge) => void;
@@ -179,6 +182,7 @@ export function ContextRail({
   onUndoAppliedAction,
   onUndoTurnAdded,
   onAnswerTurnQuestion,
+  onResolveConnections,
   pendingActionBusy,
   nudges,
   onSelectNudge,
@@ -518,10 +522,19 @@ export function ContextRail({
                         message.status !== "error" &&
                         !message.pendingAction &&
                         !message.appliedAction &&
-                        !message.turn ? null : (
+                        !message.turn &&
+                        !message.connections ? null : (
                         <div className="chat-msg-assistant" key={message.id}>
                           <div className="chat-msg-assistant-card">
                             {message.body.length > 0 ? <ChatRichText body={message.body} /> : null}
+
+                            {message.connections ? (
+                              <ConnectionsCard
+                                connections={message.connections}
+                                disabled={pendingActionBusy}
+                                onResolve={(acceptedIds) => onResolveConnections(message.id, acceptedIds)}
+                              />
+                            ) : null}
 
                             {message.turn ? (
                               // A brain dump: everything it changed on ONE card.

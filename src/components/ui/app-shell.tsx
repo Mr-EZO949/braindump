@@ -86,7 +86,7 @@ import {
   isCommitmentAction,
   type AppliedMarkerPayload,
 } from "@/lib/chat/applied-marker";
-import { turnNote } from "@/lib/chat/turn-note";
+import { connectionsNote, turnNote } from "@/lib/chat/turn-note";
 import { classifyTaskSize } from "@/lib/ai/sizing";
 import { needsNextAction } from "@/lib/graph/next-action";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
@@ -464,6 +464,12 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  // The thread as of the last render — for async work that finishes later
+  // (connection analysis) and must know whether its message is still shown.
+  const chatMessagesRef = useRef<ChatMessage[]>([]);
+  useEffect(() => {
+    chatMessagesRef.current = chatMessages;
+  }, [chatMessages]);
   const [chatScope, setChatScope] = useState<ChatScope>(createWorkspaceScope("General"));
   const [chatLoading, setChatLoading] = useState(false);
   const [pendingActionBusy, setPendingActionBusy] = useState(false);
@@ -1635,7 +1641,9 @@ export function AppShell({ initialUser }: AppShellProps) {
           role: m.role,
           // A brain dump's card has no text either: its note lists what was
           // added, finished, linked, asked and what still waits (turn-note.ts).
-          body: m.turn
+          body: m.connections
+            ? connectionsNote(m.connections)
+            : m.turn
             ? `${m.body ?? ""}\n\n${turnNote(m, historyNodeTitles)}`.trim()
             : m.appliedAction
               ? `${m.body ?? ""}\n\n${appliedActionNote(m.appliedAction)}`.trim()
@@ -1762,7 +1770,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           .filter((n) => !prevNodeIds.has(n.id))
           .map((n) => n.id);
         if (newNodeIds.length > 0) {
-          void analyzeNodes(newNodeIds, targetWorkspaceId);
+          void analyzeNodes(newNodeIds, targetWorkspaceId, messageId);
         }
 
         // If the accepted tool mutated calendar tasks, the planner's persisted
@@ -2694,6 +2702,7 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     // #18: a dump starts a FRESH chat thread (the previous one is auto-saved).
     const nowIso = new Date().toISOString();
+    const turnMessageId = `chat-turn-${Math.random().toString(36).slice(2, 10)}`;
     flushPendingChatSave();
     setChatSessionId(null);
     chatSessionIdRef.current = null;
@@ -2707,7 +2716,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         status: "ready" as const,
       },
       {
-        id: `chat-turn-${Math.random().toString(36).slice(2, 10)}`,
+        id: turnMessageId,
         role: "assistant" as const,
         body: turn.reply ?? (nothing ? "I went through that and found nothing to add or change." : ""),
         createdAt: nowIso,
@@ -2749,9 +2758,11 @@ export function AppShell({ initialUser }: AppShellProps) {
       }
       if (card.added.length > 0) {
         setClusterRefreshKey((k) => k + 1);
+        // Links it notices land in this thread, not in a modal.
         void analyzeNodes(
           card.added.map((n) => n.id),
           workspaceId,
+          turnMessageId,
         );
       }
     }
@@ -3729,12 +3740,38 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
-  const applyAnalysisResult = (result: AnalysisResponse) => {
+  // threadMessageId: the chat message whose turn added these nodes — the links
+  // go into that thread as a card instead of a modal (docs/unified-turn.md).
+  const applyAnalysisResult = (result: AnalysisResponse, threadMessageId?: string) => {
     if (result.merge_candidates && result.merge_candidates.length > 0) {
       setMergeCandidates(result.merge_candidates);
     }
-    if (result.proposed_edges && result.proposed_edges.length > 0) {
-      setProposedEdges(result.proposed_edges);
+    const edges = result.proposed_edges ?? [];
+    const inThread =
+      !!threadMessageId && chatMessagesRef.current.some((m) => m.id === threadMessageId);
+    if (edges.length > 0 && inThread) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `chat-links-${Math.random().toString(36).slice(2, 10)}`,
+          role: "assistant" as const,
+          body: "",
+          createdAt: new Date().toISOString(),
+          status: "ready" as const,
+          connections: {
+            status: "awaiting" as const,
+            edges: edges.map((edge) => ({
+              id: edge.id,
+              sourceTitle: edge.source_title,
+              targetTitle: edge.target_title,
+              edgeType: edge.edge_type,
+              explanation: edge.explanation || null,
+            })),
+          },
+        },
+      ]);
+    } else if (edges.length > 0) {
+      setProposedEdges(edges);
       setEdgeReviewOpen(true);
     }
 
@@ -3747,7 +3784,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     setAiNotice(buildAnalysisNotice(result));
   };
 
-  const analyzeNodes = async (nodeIds: string[], workspaceIdOverride?: string) => {
+  const analyzeNodes = async (nodeIds: string[], workspaceIdOverride?: string, threadMessageId?: string) => {
     const workspaceId = workspaceIdOverride ?? selectedWorkspaceId;
     const normalizedNodeIds = Array.from(
       new Set(nodeIds.filter((nodeId): nodeId is string => typeof nodeId === "string" && nodeId.length > 0)),
@@ -3775,7 +3812,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         throw new Error(data.error ?? "Connection analysis failed.");
       }
 
-      applyAnalysisResult(data);
+      applyAnalysisResult(data, threadMessageId);
     } catch (error) {
       setAiNotice({
         tone: "error",
@@ -3855,6 +3892,27 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     setEdgeReviewOpen(false);
     setProposedEdges([]);
+  };
+
+  // A links card in the thread: the kept links are added, the rest rejected —
+  // through the same review endpoint the modal uses.
+  const resolveConnections = async (messageId: string, acceptedIds: string[] | null) => {
+    const card = chatMessages.find((m) => m.id === messageId)?.connections;
+    if (!card || (card.status !== "awaiting" && card.status !== "error")) return;
+    const kept = new Set(acceptedIds ?? []);
+    const setCard = (patch: Partial<NonNullable<ChatMessage["connections"]>>) =>
+      setChatMessages((prev) =>
+        prev.map((m) => (m.id === messageId && m.connections ? { ...m, connections: { ...m.connections, ...patch } } : m)),
+      );
+    setCard({ status: "saving" });
+    try {
+      await handleEdgeReview(
+        card.edges.map((edge) => ({ id: edge.id, action: kept.has(edge.id) ? ("accept" as const) : ("reject" as const) })),
+      );
+      setCard(acceptedIds ? { status: "added", acceptedIds: [...kept] } : { status: "dismissed" });
+    } catch {
+      setCard({ status: "error" });
+    }
   };
 
   const handleStatusChange = async (nodeId: string, status: Node["status"]) => {
@@ -4393,6 +4451,9 @@ export function AppShell({ initialUser }: AppShellProps) {
             void undoTurnAdded(messageId);
           }}
           onAnswerTurnQuestion={answerTurnQuestion}
+          onResolveConnections={(messageId, acceptedIds) => {
+            void resolveConnections(messageId, acceptedIds);
+          }}
           pendingActionBusy={pendingActionBusy}
           nudges={nudges}
           onSelectNudge={(nudge) => {

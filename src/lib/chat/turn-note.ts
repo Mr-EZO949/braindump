@@ -6,7 +6,7 @@
 // lists what was added, finished, linked, what still waits for the user and
 // what was asked (docs/unified-turn.md, "the thread remembers").
 
-import type { ChatMessage } from "@/types/chat";
+import type { ChatMessage, ConnectionsCardData } from "@/types/chat";
 
 import { appliedActionNote } from "./applied-marker";
 import { describeChange, edgeLabel, isChangeList, namerFor, typeLabel } from "./change-describe";
@@ -69,4 +69,17 @@ export function turnNote(
 
   if (lines.length === 0) return "";
   return `[What this brain dump changed — the user saw it as a card under this reply.\n${lines.map((l) => `- ${l}`).join("\n")}]`;
+}
+
+// The links card, for the chat model: what was suggested and what the user did.
+export function connectionsNote(card: ConnectionsCardData): string {
+  const words = (ids?: Set<string>) =>
+    card.edges
+      .filter((e) => !ids || ids.has(e.id))
+      .map((e) => `${e.sourceTitle} ${edgeLabel(e.edgeType)} ${e.targetTitle}`);
+  if (card.status === "added") {
+    return `[Links suggested after the dump — the user added: ${listed(words(new Set(card.acceptedIds ?? [])))}]`;
+  }
+  if (card.status === "dismissed") return `[Links suggested after the dump, dismissed by the user: ${listed(words())}]`;
+  return `[Links suggested after the dump, not answered yet: ${listed(words())}]`;
 }
