@@ -207,6 +207,95 @@
   color: #922838;
 }
 
+/* Finished work stays legible on the canvas; the archive lives in History. */
+:root[data-theme="light"] .history-shelf-trigger {
+  background: #fffdfa;
+  border-color: #ded3c7;
+  box-shadow: 0 7px 18px rgba(67, 44, 32, 0.13);
+  color: #453b34;
+}
+
+:root[data-theme="light"] .history-shelf-trigger:hover,
+:root[data-theme="light"] .history-shelf-trigger[aria-expanded="true"] {
+  background: #f7f0e8;
+  border-color: #cdbdae;
+}
+
+:root[data-theme="light"] .history-shelf-trigger--done .history-shelf-trigger-icon {
+  background: #e1efe2;
+  color: #3b7750;
+}
+
+:root[data-theme="light"] .history-shelf-trigger--archive .history-shelf-trigger-icon {
+  background: #eee5da;
+  color: #806c58;
+}
+
+:root[data-theme="light"] .history-shelf-panel {
+  background: #fffcf8;
+  border-color: #d9ccbe;
+  box-shadow: 0 22px 54px rgba(67, 44, 32, 0.18), 0 3px 9px rgba(67, 44, 32, 0.07);
+}
+
+:root[data-theme="light"] .history-shelf-search input {
+  background: #f9f5ef;
+  border-color: #dfd3c8;
+}
+
+:root[data-theme="light"] .history-shelf-item--done {
+  background: #f1f7ef;
+  border-color: #d9e8d7;
+}
+
+:root[data-theme="light"] .history-shelf-item--archived {
+  background: linear-gradient(145deg, #f8f2e9, #f1e8dc);
+  border-color: #d7c7b5;
+  box-shadow: inset 0 1px 0 #fffaf3, 0 5px 12px rgba(88, 65, 43, 0.08);
+}
+
+:root[data-theme="light"] .history-shelf-item--archived::before {
+  background: #a48668;
+}
+
+:root[data-theme="light"] .history-shelf-archive-type {
+  color: #8a6d51;
+}
+
+:root[data-theme="light"] .history-shelf-item:hover,
+:root[data-theme="light"] .history-shelf-item[data-selected="true"] {
+  background: #fff9f3;
+  border-color: #cdafa2;
+}
+
+:root[data-theme="light"] .history-shelf-item--archived:hover,
+:root[data-theme="light"] .history-shelf-item--archived[data-selected="true"] {
+  background: linear-gradient(145deg, #faf4ec, #f3eadd);
+  border-color: #ad9075;
+}
+
+:root[data-theme="light"] .history-shelf-item--done .history-shelf-item-title {
+  color: #315f3f;
+}
+
+:root[data-theme="light"] .history-shelf-item--archived .history-shelf-item-title {
+  color: #675648;
+}
+
+:root[data-theme="light"] .history-shelf-restore {
+  border-color: #d8c7b7;
+  color: #6f5d4b;
+}
+
+:root[data-theme="light"] .node-status-badge--completed {
+  background: #e1efe2;
+  color: #326f45;
+}
+
+:root[data-theme="light"] .node-status-badge--archived {
+  background: #eee5da;
+  color: #6c5847;
+}
+
 :root[data-theme="light"] .stage-composer {
   background: rgba(255, 253, 250, 0.98);
   border-color: #cfc2b3;

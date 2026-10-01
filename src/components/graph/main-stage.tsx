@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { CreateNodeSheet, EditNodeSheet } from "@/components/graph/create-node-sheet";
-import { CompletedShelf } from "@/components/graph/completed-shelf";
+import { HistoryShelf } from "@/components/graph/history-shelf";
 import { TypeExplorer } from "@/components/graph/type-explorer";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import { NetworkIcon, PencilIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
@@ -48,6 +48,7 @@ type MainStageProps = {
     title: string;
   }>;
   graphData: GraphData;
+  historyGraphData: GraphData;
   workProgressByNode?: ReadonlyMap<string, WorkProgress>;
   /** Nodes whose priority just changed — they pulse once (ranking v2). */
   pulseNodeIds?: ReadonlySet<string> | null;
@@ -86,14 +87,14 @@ type MainStageProps = {
   hideCompleted: boolean;
   completedNodes: import("@/types/graph").Node[];
   onSelectCompletedNode: (nodeId: string) => void;
+  onSelectArchivedNode: (nodeId: string) => void;
+  onRestoreArchivedNode: (nodeId: string) => void;
   onResetEditManualWeight: () => void;
   onResetGraphFilters: () => void;
   onToggleHideCompleted: () => void;
-  onToggleShowArchived: () => void;
   onToggleEditMode: () => void;
   onFindAllConnections: () => void;
   findingConnections: boolean;
-  showArchived: boolean;
   onRequestDeleteNode: () => void;
   onCancelDeleteNode: () => void;
   onSelectNode: (nodeId: string | null) => void;
@@ -130,6 +131,7 @@ export function MainStage({
   edgeConnectionUpdateSubmittingId,
   edgeConnections,
   graphData,
+  historyGraphData,
   graphImportanceFilter,
   graphImportanceFilterOptions,
   graphLoading,
@@ -140,6 +142,8 @@ export function MainStage({
   hideCompleted,
   completedNodes,
   onSelectCompletedNode,
+  onSelectArchivedNode,
+  onRestoreArchivedNode,
   onCancelDeleteNode,
   onCameraViewChange,
   onChangeCreateNodeField,
@@ -160,7 +164,6 @@ export function MainStage({
   onResetEditManualWeight,
   onResetGraphFilters,
   onToggleHideCompleted,
-  onToggleShowArchived,
   onToggleEditMode,
   onFindAllConnections,
   findingConnections,
@@ -171,12 +174,14 @@ export function MainStage({
   onUpdateEdgeConnection,
   selectedNodeId,
   focusRequestKey,
-  showArchived,
   suppressInitialFocusAnimation,
 }: MainStageProps) {
   const filtersActive =
-    graphTypeFilter !== "all" || graphImportanceFilter !== "all" || hideCompleted || showArchived;
+    graphTypeFilter !== "all" || graphImportanceFilter !== "all" || hideCompleted;
   const isGraphEmpty = !graphLoading && graphData.nodes.length === 0;
+  const visibleSelectedNodeId = graphData.nodes.some((node) => node.id === selectedNodeId)
+    ? selectedNodeId
+    : null;
   const [layoutKey, setLayoutKey] = useState(0);
   const resetLayout = useCallback(() => setLayoutKey((k) => k + 1), []);
 
@@ -202,7 +207,7 @@ export function MainStage({
       </div>
       <GraphCanvas
         workProgressByNode={workProgressByNode}
-        focusNodeId={selectedNodeId}
+        focusNodeId={visibleSelectedNodeId}
         focusRequestKey={focusRequestKey}
         graphData={graphData}
         editMode={editMode}
@@ -225,13 +230,19 @@ export function MainStage({
         </div>
       ) : null}
 
-      {/* The shelf lists completed nodes that are NOT on the board — all of
-          them when "Hide done" is on, otherwise the ones older than the recency
-          window. CompletedShelf renders nothing when that list is empty. */}
-      {completedNodes.length > 0 ? (
-        <div className="pointer-events-none absolute bottom-6 left-6 z-20">
+      {/* Finished work stays connected on the board while recent. Archived
+          work lives in History, grouped by its former parent. */}
+      {completedNodes.length > 0 || historyGraphData.nodes.some((node) => node.status === "archived") ? (
+        <div className="history-shelf-anchor pointer-events-none absolute z-20">
           <div className="pointer-events-auto">
-            <CompletedShelf nodes={completedNodes} onSelect={onSelectCompletedNode} />
+            <HistoryShelf
+              completedNodes={completedNodes}
+              graphData={historyGraphData}
+              onRestoreArchived={onRestoreArchivedNode}
+              onSelectArchived={onSelectArchivedNode}
+              onSelectCompleted={onSelectCompletedNode}
+              selectedNodeId={selectedNodeId}
+            />
           </div>
         </div>
       ) : null}
@@ -383,7 +394,7 @@ export function MainStage({
             </label>
 
             <div className="graph-visibility" aria-label="Nodes on canvas" role="group">
-              <span className="graph-visibility-label">Show</span>
+              <span className="graph-visibility-label">On canvas</span>
               <button
                 aria-label="Show recently completed nodes"
                 aria-pressed={!hideCompleted}
@@ -393,16 +404,6 @@ export function MainStage({
                 type="button"
               >
                 Done
-              </button>
-              <button
-                aria-label="Show archived nodes"
-                aria-pressed={showArchived}
-                className="graph-visibility-option"
-                onClick={onToggleShowArchived}
-                title="Show or hide archived nodes"
-                type="button"
-              >
-                Archived
               </button>
             </div>
 

@@ -1462,18 +1462,18 @@ function getNodeVisualState(options: {
     isLight ? `rgba(70,49,39,${alpha * 1.5})` : `rgba(255,255,255,${alpha})`;
   const TEXT_PRIMARY = isLight ? "#2d2520" : "#f1ece6";
   const TEXT_DIM = isLight ? "rgba(60,58,55,0.55)" : "rgba(242,239,233,0.46)";
-  const TEXT_COMPLETED = isLight ? "rgba(80,90,80,0.55)" : "rgba(210,220,210,0.5)";
-  const TEXT_ARCHIVED = isLight ? "rgba(110,108,104,0.45)" : "rgba(200,195,190,0.35)";
+  const TEXT_COMPLETED = isLight ? "#315f40" : "rgba(210,220,210,0.5)";
+  const TEXT_ARCHIVED = isLight ? "#6d6053" : "rgba(200,195,190,0.35)";
   const sheen = (dark: number) => (isLight ? Math.min(dark * 0.6 + 0.05, 0.6) : dark);
 
-  // Archived nodes are shown only when the filter is toggled — always highly muted
+  // Archived nodes live in History; keep this fallback legible for direct canvas previews.
   if (archived && !selected) {
     return {
-      border: borderToken(0.028),
+      border: isLight ? "#d9ccbe" : borderToken(0.028),
       surfaceTintOpacity: 0.04,
       glowOpacity: 0,
       heatOpacity: 0,
-      opacity: 0.22,
+      opacity: isLight ? 0.88 : 0.22,
       shadowOpacity: 0.06,
       text: TEXT_ARCHIVED,
       topSheenOpacity: sheen(0.08),
@@ -1565,12 +1565,12 @@ function getNodeVisualState(options: {
     // instead of fading almost to nothing. Older completions still recede via
     // edge-decay over weeks, so this doesn't clutter a mature graph.
     return {
-      border: isLight ? "rgba(90,170,95,0.40)" : "rgba(120,200,120,0.36)",
+      border: isLight ? "#bdd8c2" : "rgba(120,200,120,0.36)",
       surfaceTintOpacity: 0.08,
       glowOpacity: 0,
       heatOpacity: 0,
-      opacity: 0.66,
-      shadowOpacity: 0.16,
+      opacity: isLight ? 1 : 0.66,
+      shadowOpacity: isLight ? 0.19 : 0.16,
       text: TEXT_COMPLETED,
       topSheenOpacity: sheen(0.18),
     };
@@ -2797,6 +2797,10 @@ export function GraphCanvas({
               </>
             )}
           </linearGradient>
+          <linearGradient id="node-completed-surface" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#f5faf3" />
+            <stop offset="100%" stopColor="#e9f3e7" />
+          </linearGradient>
           <linearGradient id="node-top-sheen" x1="0" x2="0" y1="0" y2="1">
             {theme === "light" ? (
               <>
@@ -2934,11 +2938,14 @@ export function GraphCanvas({
             // remains reserved for selection and search.
             const actionable = CHECKABLE_TYPES.has(node.node_type);
             const isBig = BREAKDOWN_TYPES.has(node.node_type);
+            const isCompleted = node.status === "completed";
             const isObjective = OBJECTIVE_TYPES.has(node.node_type);
             const isArea = node.node_type === "area";
             const isIdea = node.node_type === "idea";
             const categoryColor =
-              theme === "light"
+              theme === "light" && isCompleted
+                ? "#6a9a75"
+                : theme === "light"
                 ? LIGHT_NODE_COLOR_BY_TYPE[normalizeNodeType(node.node_type)]
                 : node.categoryColor;
             const workProgress = workProgressByNode.get(node.id) ?? null;
@@ -3034,7 +3041,7 @@ export function GraphCanvas({
                     />
                     <stop offset="100%" stopColor={rgba(categoryColor, 0)} />
                   </linearGradient>
-                  {actionable ? (
+                  {actionable && !isCompleted ? (
                     <linearGradient id={actionWashId} x1="0" x2="1" y1="0" y2="1">
                       <stop offset="0%" stopColor={rgba(theme === "light" ? "#e8acaa" : "#c44150", actionWashOpacity * 1.12)} />
                       <stop offset="38%" stopColor={rgba(theme === "light" ? "#e9c1b7" : "#92293a", actionWashOpacity * 0.8)} />
@@ -3070,7 +3077,15 @@ export function GraphCanvas({
                     y={-(node.height + 6) / 2 + (theme === "light" ? 4 : 7)}
                   />
                   <rect
-                    fill={isBig ? "url(#node-big-task-surface)" : isArea && theme === "light" ? "url(#node-area-surface)" : "url(#node-base-surface)"}
+                    fill={
+                      isCompleted && theme === "light"
+                        ? "url(#node-completed-surface)"
+                        : isBig
+                          ? "url(#node-big-task-surface)"
+                          : isArea && theme === "light"
+                            ? "url(#node-area-surface)"
+                            : "url(#node-base-surface)"
+                    }
                     fillOpacity={isArea && theme === "dark" ? 0.35 : 1}
                     height={node.height}
                     rx={nodeRadius}
@@ -3090,7 +3105,7 @@ export function GraphCanvas({
                     x={-(node.width - 12) / 2}
                     y={-node.height / 2 + 3}
                   />
-                  {actionable ? (
+                  {actionable && !isCompleted ? (
                     <rect
                       fill={`url(#${actionWashId})`}
                       height={node.height - 2}
@@ -3141,7 +3156,23 @@ export function GraphCanvas({
                     x={-(node.width - 2) / 2}
                     y={-(node.height - 2) / 2}
                   />
-                  {isBig && !skipLabel ? (
+                  {isCompleted && theme === "light" && !skipLabel ? (
+                    <g style={{ pointerEvents: "none" }} transform={`translate(0, ${-node.height / 2})`}>
+                      <rect fill="#d8ead9" height={15} rx={7.5} width={46} x={-23} y={-7.5} />
+                      <text
+                        fill="#347348"
+                        fontFamily="var(--font-geist-mono), ui-monospace, monospace"
+                        fontSize={7.5}
+                        fontWeight={700}
+                        letterSpacing="0.07em"
+                        textAnchor="middle"
+                        y={2.7}
+                      >
+                        DONE ✓
+                      </text>
+                    </g>
+                  ) : null}
+                  {isBig && !isCompleted && !skipLabel ? (
                     <g style={{ pointerEvents: "none" }} transform={`translate(0, ${-node.height / 2})`}>
                       <rect
                         fill={theme === "light" ? "#f5ddd8" : "#653844"}
@@ -3176,7 +3207,9 @@ export function GraphCanvas({
                             <rect
                               fill={
                                 index < Math.round((workProgress.done / workProgress.total) * count)
-                                  ? "rgba(228,96,110,0.95)"
+                                  ? isCompleted && theme === "light"
+                                    ? "#5f9a6d"
+                                    : "rgba(228,96,110,0.95)"
                                   : theme === "light"
                                     ? "rgba(0,0,0,0.14)"
                                     : "rgba(255,255,255,0.16)"
@@ -3281,10 +3314,10 @@ export function GraphCanvas({
                       fontSize={isArea ? node.fontSize * 0.82 : node.fontSize}
                       // Objectives carry a heavier title than task pills — the
                       // "weight" half of the size-&-weight distinction (#3).
-                      fontWeight={isObjective ? 680 : isArea ? 500 : 540}
+                      fontWeight={isCompleted && theme === "light" ? 610 : isObjective ? 680 : isArea ? 500 : 540}
                       letterSpacing={isArea ? "0.08em" : "-0.02em"}
                       textAnchor="middle"
-                      textDecoration={node.status === "completed" ? "line-through" : undefined}
+                      textDecoration={isCompleted && theme === "dark" ? "line-through" : undefined}
                       y={initialY}
                     >
                       {node.lines.map((line, index) => (

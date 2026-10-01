@@ -52,6 +52,7 @@ export interface Node {
   // AI Phase 1A columns — optional so existing queries don't break before migration
   status?: NodeStatus | null;
   completed_at?: string | null;
+  archived_at?: string | null;
   current_importance_score?: number | null;
   // Explainability for the importance score — populated by computeWorkspaceScores
   // on every recompute. `importance_reason` is the AI judgment's one-line

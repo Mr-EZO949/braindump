@@ -544,7 +544,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [editNodeSubmitting, setEditNodeSubmitting] = useState(false);
   const [deleteNodeConfirmOpen, setDeleteNodeConfirmOpen] = useState(false);
   const [deleteNodeSubmitting, setDeleteNodeSubmitting] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
   const [edgeRelationId, setEdgeRelationId] = useState<EdgeRelationOptionId>("contains");
   const [edgeTargetId, setEdgeTargetId] = useState("");
   const [edgeError, setEdgeError] = useState<string | null>(null);
@@ -702,13 +701,14 @@ export function AppShell({ initialUser }: AppShellProps) {
       importanceFilter === "all" ? null : Number.parseInt(importanceFilter, 10);
 
     const nodes = graphData.nodes.filter((node) => {
-      // Archived nodes are hidden unless the user toggled the archive view
-      if (node.status === "archived" && !showArchived) {
+      // Archived nodes have orphaned edges, so they live in the grouped
+      // History shelf rather than floating loose on the canvas.
+      if (node.status === "archived") {
         return false;
       }
 
       // Completed nodes: on the board only while recent (and "Hide done" is off);
-      // everything else lives in the completed shelf.
+      // everything else lives in the Done section of History.
       if (
         node.status === "completed" &&
         (hideCompleted || !isRecentCompletion(node, recentCompletionCutoffMs))
@@ -744,7 +744,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     importanceFilter,
     nodeTypeFilter,
     recentCompletionCutoffMs,
-    showArchived,
   ]);
 
   const selectedNodeRecord = useMemo(
@@ -2170,7 +2169,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     setNodeTypeFilter("all");
     setImportanceFilter("all");
     setHideCompleted(false);
-    setShowArchived(false);
   };
 
   const handleSubmitCreateNode = async () => {
@@ -4330,6 +4328,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 edgeConnectionUpdateSubmittingId={edgeUpdateSubmittingId}
                 edgeConnections={selectedNodeConnections}
                 graphData={filteredGraphData}
+                historyGraphData={graphData}
                 workProgressByNode={workProgressByNode}
                 pulseNodeIds={priorityPulseIds}
                 graphLoading={graphLoading}
@@ -4371,13 +4370,15 @@ export function AppShell({ initialUser }: AppShellProps) {
                 onOpenCreateNode={handleOpenCreateNode}
                 onResetEditManualWeight={handleResetManualWeight}
                 onResetGraphFilters={handleResetFilters}
-                onToggleShowArchived={() => setShowArchived((v) => !v)}
-                showArchived={showArchived}
                 hideCompleted={hideCompleted}
                 completedNodes={completedNodes}
                 onSelectCompletedNode={(nodeId) => {
                   setHideCompleted(false);
                   handleSelectNode(nodeId);
+                }}
+                onSelectArchivedNode={handleSelectNode}
+                onRestoreArchivedNode={(nodeId) => {
+                  void handleStatusChange(nodeId, "active");
                 }}
                 onToggleHideCompleted={() => setHideCompleted((v) => !v)}
                 onFindAllConnections={() => {
