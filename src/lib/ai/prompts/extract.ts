@@ -59,10 +59,26 @@
 // v25 (docs/unified-turn.md, phase 2): the prompt is now the graph BUILDER —
 //   it edits existing nodes itself through "changes" (move / update / link)
 //   instead of turning a restructure request into a question for chat.
+// v26 (2026-09-30): this prompt no longer EDITS. On a long dump it planned a
+//   reorganization badly in four runs of five (moved nodes under a parent it
+//   never created; or created the new project and forgot the move into it),
+//   while the short prompt gets the same request right 8 times in 8 — the
+//   difference is how much else is on the page. So the long prompt now only
+//   QUOTES the sentences that ask to change existing nodes ("edit_requests")
+//   and the builder runs those through the short prompt (extraction.ts).
+//   From the first end-to-end runs of a long MIXED dump (venting + a question
+//   + completions + new work + edits + stated links + a weekly class time):
+//   (a) read to the last line — "also need to call the bank" was dropped;
+//   (b) a habit done today is a completion; (c) steps the user names are
+//   children, with the date on the step; (d) a weekly fixed time is a
+//   commitment, never a node; (e) a soft link may point at an EXISTING node's
+//   id — the model had invented a copy of an existing goal to link to, and
+//   both were dropped; (f) venting and questions to the assistant get a reply
+//   from another step, so they are no longer clarifying questions.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v25";
+export const EXTRACT_PROMPT_VERSION = "extract-v26";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -72,6 +88,7 @@ const RUBRIC_BLOCK = `You are a knowledge graph extraction assistant. Extract a 
 The brain dump is a two-way conversation, not a capture funnel. If the input is vague, meta, or unanswerable as-written, it is correct to produce ZERO nodes and ask the user a clarifying question instead. Do not force low-value nodes just to have something in the array.
 
 Rules:
+- Read the dump sentence by sentence, to the LAST line. Every concrete to-do, errand, deadline or item the user names ends up as a node, a completion or an edit — a one-line aside at the very end ("also need to call the bank about the card fee at some point") counts as much as the first paragraph. Long dumps mix venting, questions, updates and new work: drop the talk, keep every item.
 - Each node must represent ONE clear thing (see Node types).
 - Do not merge unrelated ideas into one node.
 - Do not split a single coherent idea into multiple nodes.
@@ -109,6 +126,7 @@ Actionability rule (IMPORTANT — apply before extracting any task):
   - "review the Stats 302 problem set before Thursday" → task with that exact scope
   - "fix the three flaky tests in the checkout flow" → task (count + scope both provided)
 - If a fragment is BOTH vague AND repeated/emphatic (user clearly cares but can't articulate it), prefer raising a clarifying_question over inventing a fake task.
+- Feelings, venting and questions the user asks the ASSISTANT ("slept 4 hours, I feel behind on everything", "am I spreading myself too thin?", "what would you drop if you were me?") are answered by the assistant in another step. They produce NOTHING here: no node and no clarifying question.
 
 Node types (IMPORTANT — each type answers ONE question; pick the first that fits):
 - goal — a RESULT the user will know they reached: pass it, land it, hit the number — ideally with a date. "Pass Machine Learning", "Pass the calculus exam", "Get a 1450+ on the SAT", "Land an internship in Milan by November", "Run a half-marathon under 1:50", "Fix my sleep schedule". A goal is achieved, not worked on — the work under it is projects, big tasks, tasks and habits.
@@ -129,6 +147,7 @@ Tie-breakers:
 - goal vs area: could the user say "done"? No → area. If they gave a measurable target, it's a goal ("earn €1,000/month from side projects by March").
 - note vs idea: knowledge → note; a possible thing to do → idea.
 - Do NOT invent child steps for a big_task here — creating it with the right type is the whole job; breakdown happens later, on demand.
+- Steps the user NAMES are not invented — capture them: "for ML we got a course project, I have to pick a dataset by Friday and then write the proposal" → big_task "ML Course Project" with task children "Pick a Dataset" (target_date = that Friday) and "Write the Proposal" (depends on the first). A date goes on the step it was said about, never on the parent or the class.
 - Progress / findings on an existing big task or project attach UNDER it as task children: existing big task "Test BrainDump" + dump "tested it and found 10 bugs" → task "Fix the 10 bugs found in BrainDump" with existing_parent_node_id = that node — not a new top-level task, not a duplicate of the parent.
 
 Nesting (a node's parent must be able to hold it):
@@ -142,6 +161,7 @@ Habit vs task rule (choose node_type for recurring behaviors):
 - Use node_type "task" for one-off completable work — even if it sounds routine — when there's no explicit recurring cadence, or there's a deadline/count that ends it.
   - "Solve 3 LeetCode problems before Thursday" → task (deadline + count → it ends). "Review chapter 5" → task.
 - When unsure, prefer "task". Only the explicit recurring cues above promote a node to habit.
+- A FIXED time in the week set by someone else — a lecture, a lab, a work shift, a standing meeting ("stats lecture every Tuesday and Thursday 2–4pm", "I work Mon–Fri 9 to 5") — is the user's SCHEDULE, saved by another step. Do NOT create a habit, task or note for it.
 
 Parent-with-parts rule (IMPORTANT — do not collapse a stated aim or project into one node, and do not scatter its parts as unrelated top-level nodes):
 - When the user states an aim and, in the same breath, lists multiple DISTINCT activities, routines, or means toward it, create the aim as a parent node and each distinct activity as its own child. Do NOT merge them into a single node. Type the parent by the Node types rules: a measurable outcome → goal; an aspiration with no finish line → area, titled in the user's words.
@@ -170,10 +190,9 @@ Depth rule (IMPORTANT — build a real tree, but only where real structure exist
 - ONE parent per domain, and NO empty parents. Do not create two parents for the same life-domain — e.g. do NOT emit both a "Health & Fitness" area AND a "Get in Shape" area, or both an "Income & Career" area AND a "Make Money Fast" area. Pick the SINGLE best parent (prefer the user's own words — "Get in Shape", "Make Money Fast") and nest everything under it. Every cluster/area/parent node MUST end up with at least 2 children; if it would have fewer, don't create it and attach its would-be children to the next real parent up. A childless grouping node is always wrong.
 
 Clarifying questions (IMPORTANT — use this channel instead of forcing bad nodes):
-- Populate clarifying_questions with up to 3 short, specific questions that, if answered, would let you extract real nodes.
+- Populate clarifying_questions with up to 3 short, specific questions that, if answered, would let you extract real nodes. Ask only about a THING you could not capture or place — never about how the user feels or what they want from the assistant.
 - Questions should be grounded in the user's text — reference the exact phrase or fragment you are asking about.
 - Good: "You said 'fix bugs' — which bugs, or which project are they in?"
-- Good: "When you say 'idk what to focus on', do you want me to suggest something from your existing graph, or are you trying to narrow down a specific area?"
 - Good: "You mentioned 'the report' — which report, and what's the next step you want captured?"
 - Bad: vague questions like "Can you clarify?", "What do you mean?", "Tell me more."
 - A single dump MAY yield BOTH nodes (for the parts that were specific) AND clarifying_questions (for the parts that were vague). This is the common case.
@@ -265,7 +284,8 @@ Structure rules:
 - Do not create dependency refs for vague helpfulness, domain overlap, or "these are both school-related".
 - Most nodes should have zero dependencies. Use at most 2 dependencies per node.
 - Do not create cycles.
-- soft_links are the SAME-DUMP cross-links between branches that the parent/dependency structure can't show: what helps what. A tree alone hides these, and only you see the dump text where the user says them — so capture them.
+- soft_links are the cross-links between branches that the parent/dependency structure can't show: what helps what. A tree alone hides these, and only you see the dump text where the user says them — so capture them.
+- A soft link's target is another node from this dump (its local_ref) OR a node that already exists (its id from the existing-node list): "the ML project could double as a portfolio piece for the internship" → on the new ML project node, useful_for → the existing internship goal's id. NEVER propose a copy of an existing node just to have something to link to. (A link between two EXISTING nodes is an edit request — see below.)
 - Allowed soft_links edge types: "supports", "useful_for", "prerequisite_for", "related_to", "inspired_by".
 - ALWAYS add a soft link when the dump STATES a relation between two nodes that are not parent and child: "X so that Y", "X for Y", "X because of Y", "X is marketing for Y", "need X to get Y", "X and Y are connected". E.g. "faceless TikTok content … for BrainDump" → "Faceless Productivity Content" supports "Market BrainDump"; "learn Italian because the internship is in Milan" → "Italian Crash Course" useful_for "Get Internship by November" (when it isn't already that goal's child); "fix my sleep so I can study" → "Fix Sleep Schedule" supports the exams project.
 - Also add one when the link is obvious from what the nodes are, even if unsaid: a skill or course that a project needs (useful_for), a routine that feeds a goal in another branch (supports), two projects sharing one audience or one pipeline (related_to).
@@ -283,18 +303,11 @@ Structure rules:
 - Bad soft links: anything based only on both being academic, both being tasks, or both being in the same dump; a link between a node and its own parent or sibling-by-default.
 - Use at most 2 soft links per node.
 
-Edits to existing nodes (IMPORTANT — reorganizing what is already in the graph):
-- proposed_nodes only ADDS. When the dump asks to reorganize nodes that already EXIST — "move X under Y", "X should be its own project with A and B in it", "X isn't really a Y thing, it's more of a Z thing", "rename X to Y", "X is really a project" — put the edit in "changes", using ids from the existing-node list:
-  - {"kind":"move","node_id":"<existing id>","new_parent":"<existing id, or the local_ref of a node you create in this dump>"} — replaces the node's current parent; whatever sits under the node moves with it.
-  - {"kind":"update","node_id":"<existing id>","title":"New title","node_type":"big_task"} — rename and/or retype; give only the fields that change.
-  - {"kind":"link","source":"<id or local_ref>","target":"<id or local_ref>","edge_type":"supports | useful_for | required_for | related_to"} — a lateral link that leaves the tree alone.
-- A new parent over existing nodes: create the parent in proposed_nodes, placed where the things going into it sit NOW (existing_parent_node_id = their current parent — not the root unless that is where they are), then move the existing nodes under its local_ref. Example — existing "Test & Market BrainDump" [big_task] (under: Money Projects), dump "BrainDump should be its own project with testing and marketing as tasks in it" → proposed_nodes: project "BrainDump" n1 with existing_parent_node_id = Money Projects' id, big_task "Market BrainDump" n2 with primary_parent_local_ref n1; changes: update the existing node's title to "Test BrainDump", move it under n1. Existing nodes listed "(under: <the node being split or regrouped>)" move too, to whichever new home fits them.
-- Every part the user names must exist under the new parent afterwards. "X with A and B in it" / "A and B as two separate things" → A and B are each a node: rename the existing node into the ONE part it already is, create the others. WRONG: only renaming or retyping the existing node into the parent (update "Test & Market BrainDump" → project "BrainDump") and stopping — the project would then have no testing and no marketing in it. WRONG too: renaming it to "Test BrainDump" and creating neither the project nor "Market BrainDump".
-- NEVER create a second copy of a node that exists to stand in for a move or a rename — move or rename the one that is there. And never create an empty new parent without moving anything into it.
-- A node that leaves a parent it still HELPS keeps that as a link: "Italian is personal development really, but it helps the internship" → move "Italian Crash Course" under "Personal Development" + link it useful_for the internship goal.
-- The new parent must be able to hold the node (a project never goes under a task or big task; tasks, habits, ideas and notes hold nothing). When the wording implies the opposite nesting from what exists, the bigger thing is the parent.
-- Only edit nodes the dump actually names. If it is unclear WHICH node is meant or WHERE it should go, ask in clarifying_questions instead of guessing. Deleting and marking done are not edits: done → complete_existing_node_ids; "drop X" → leave it.
-- Everything else in the same dump (completions, new items) is extracted as usual.
+Requests to change nodes that already EXIST (IMPORTANT — you only ADD):
+- When the dump asks to reorganize what is already in the graph — "move X under Y", "X should be its own project with A and B in it", "X isn't really a Y thing, it's more of a Z thing", "rename X to Y", "X is really a project", "split X into two", "group these under one thing", "X and Y are connected — link them" (both existing) — do NOT act on it. Copy that sentence, word for word, into "edit_requests". Another step carries it out, INCLUDING any new node the reorganization needs (the new project, a part that doesn't exist yet). So for that sentence you create NOTHING: no node, no parent, no clarifying question.
+- Copy the whole sentence — or both sentences when the request runs over two ("X isn't really a Y thing, it's more Z. but it still helps Y so keep that connection"). Never summarize, shorten or rephrase: the next step reads exactly what you copy.
+- One entry per request. Such a sentence is often buried in the middle of a long dump, between venting and new tasks — look for it.
+- NOT an edit request: something the user did (→ complete_existing_node_ids); a new item that belongs under an existing node (→ existing_parent_node_id); what a NEW node helps or needs (→ soft_links, which may point at an existing node's id).
 
 Completion-detection rule (IMPORTANT — apply BEFORE creating any node):
 - If the dump describes something the user JUST DID or COMPLETED ("did the 14k long run today", "shipped the redesign", "survived the layoff round", "got the V6 send", "finished the lit review draft"), DO NOT default to creating a new node for that achievement.
@@ -303,6 +316,7 @@ Completion-detection rule (IMPORTANT — apply BEFORE creating any node):
   - "Survived the layoff round" + existing "Layoff round at work" or a similar node → mark complete. If no related anchor exists, skip — this is a status update, not actionable.
   - "Booked the Hakone ryokan" + existing "Book Hakone Ryokan for Tokyo Trip" task → complete that.
   - "Marina's promo packet draft done" + existing "Draft Marina's Q3 Promo Packet" → complete that.
+  - A habit the user did today counts: "did the gym this morning at least" + existing habit "Go to the gym" → list its id (it is logged for today, not finished forever). Easy to miss when it is half a sentence inside venting.
 - For BRAND-NEW milestones the user just hit that have no matching anchor and ARE worth keeping as a historical record (e.g. "Got the V6 send today" when no V6 task existed): create the node and put its local_ref in auto_complete_local_refs so it's created already-completed. Use this sparingly.
 - For status updates with no actionable next step ("survived the layoff round", "kid's appointment went fine", "feeling better"), skip them entirely — don't create a node and don't complete one.
 - Net effect: dumps that describe completed work should mostly update existing nodes via complete_existing_node_ids, occasionally create-and-auto-complete a milestone, and almost never create plain "this happened" event notes.
@@ -318,6 +332,7 @@ Deadline rule (target_date):
 Respond with ONLY valid JSON matching this schema (no markdown, no explanation).
 Write it compact: no indentation or line breaks. Leave out any field whose value would be null or an empty array — only local_ref, proposed_title, proposed_node_type and extraction_confidence are required on each node.
 {
+  "edit_requests": ["the user's sentence asking to change existing nodes, copied word for word"],
   "proposed_nodes": [
     {
       "local_ref": "n1",
@@ -330,7 +345,7 @@ Write it compact: no indentation or line breaks. Leave out any field whose value
       "depends_on_local_refs": ["n3"],
       "soft_links": [
         {
-          "target_local_ref": "n4",
+          "target_local_ref": "n4, or an existing node id",
           "edge_type": "supports | useful_for | prerequisite_for | related_to | inspired_by",
           "rationale": "string or null"
         }
@@ -338,11 +353,6 @@ Write it compact: no indentation or line breaks. Leave out any field whose value
       "target_date": "YYYY-MM-DD or null",
       "extraction_confidence": 0.0
     }
-  ],
-  "changes": [
-    { "kind": "move", "node_id": "existing node id", "new_parent": "existing node id or n1" },
-    { "kind": "update", "node_id": "existing node id", "title": "string", "node_type": "big_task" },
-    { "kind": "link", "source": "existing node id or n1", "target": "existing node id or n2", "edge_type": "supports | useful_for | required_for | related_to" }
   ],
   "clarifying_questions": ["string"],
   "complete_existing_node_ids": ["uuid of existing workspace node user just completed"],
@@ -373,7 +383,7 @@ export function buildExtractionVariableBlock(params: ExtractionPromptParams): st
 
   const existingNodesBlock =
     params.existing_nodes && params.existing_nodes.length > 0
-      ? `\nExisting workspace nodes RELEVANT TO THIS DUMP (retrieved by meaning + wording; "under:" is each node's parent). Use these IDs exactly to attach new children, list completions or edit a node — never re-create one of these:\n${params.existing_nodes
+      ? `\nExisting workspace nodes RELEVANT TO THIS DUMP (retrieved by meaning + wording; "under:" is each node's parent). Use these IDs exactly to attach new children, list completions, edit a node or point a link at one — never re-create one of these:\n${params.existing_nodes
           .map((node) => {
             const summary =
               node.summary && node.summary.length > 140

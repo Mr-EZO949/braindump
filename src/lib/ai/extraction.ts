@@ -16,7 +16,7 @@ import { aiProvider } from "./index";
 import { AI_CONFIDENCE, AI_INGESTION, AI_MODELS } from "./config";
 import type { BuilderChange, ExtractionOutput, ProposedNode } from "@/types/ai";
 import type { ChangeOp } from "@/lib/graph/change-set";
-import { builderToOps, resolveBuilderChanges, splitRestructureSet } from "./builder-ops";
+import { builderToOps, mergeEditPass, resolveBuilderChanges, splitRestructureSet } from "./builder-ops";
 import { buildWorkspaceProfileContext } from "./workspace-profile";
 import { retrieveRelevantNodes, type ContextNodeForPrompt } from "./retrieval";
 import { resolveProposalsAgainstGraph, type ResolutionMatch } from "./resolution";
@@ -289,11 +289,13 @@ export async function runBuilder(params: {
     activeNodes: Array<{ id: string; title: string }>;
     parentOf: Map<string, string>;
   } = { workspaceContext: undefined, promptNodes: [], activeNodes: [], parentOf: new Map() };
+  // Kept for the edit pass, which retrieves again for the sentences it reads.
+  let profile: Awaited<ReturnType<typeof buildWorkspaceProfileContext>> | null = null;
 
   let providerResult;
   try {
     const rubricCacheTtl = chooseRubricCacheTtl().catch(() => null);
-    const [, profile, parentOf] = await Promise.all([
+    const [, loadedProfile, parentOf] = await Promise.all([
       params.alongside,
       buildWorkspaceProfileContext({
         workspaceId,
@@ -303,22 +305,23 @@ export async function runBuilder(params: {
       }),
       loadParentMap(supabase, workspaceId, userId),
     ]);
+    profile = loadedProfile;
     const retrieval = await retrieveRelevantNodes({
       supabase,
       userId,
       workspaceId,
       rawText,
-      nodes: profile.activeNodes,
+      nodes: loadedProfile.activeNodes,
       parentOf,
-      rootNodeId: profile.rootNodeId,
+      rootNodeId: loadedProfile.rootNodeId,
       expandChildren: params.expandChildren,
     });
     console.log("[extraction] retrieval", retrieval.stats);
     params.onRetrieved?.(retrieval.contextNodes);
     context = {
-      workspaceContext: profile.workspaceContext,
+      workspaceContext: loadedProfile.workspaceContext,
       promptNodes: retrieval.contextNodes,
-      activeNodes: profile.activeNodes,
+      activeNodes: loadedProfile.activeNodes,
       parentOf,
     };
     // Short texts take the light path (slim prompt). If its output is
@@ -410,7 +413,8 @@ export async function runBuilder(params: {
     return { ok: false, error: errorText, userMessage: normalized.userMessage };
   }
 
-  const { output, run } = providerResult;
+  const { run } = providerResult;
+  let output = providerResult.output;
 
   // Dedup + parent-reference validation run against ALL active workspace nodes
   // (already loaded with the profile — no second query), not just the nodes the
@@ -430,6 +434,66 @@ export async function runBuilder(params: {
   if (!aiRunId) {
     const errorText = "Failed to save ai_run";
     return { ok: false, error: errorText, userMessage: errorText };
+  }
+
+  // The edit pass. The long prompt does not reorganize existing nodes — it
+  // quotes the sentences that ask for it (extract-v26), and those go through
+  // the short prompt here: the same call that gets a one-line restructure from
+  // chat right. Planned inside one long dump it went wrong in four runs of
+  // five (a move under a parent never created; a new project nothing was
+  // moved into). Its result joins the rest before deduplication.
+  let editPassFailed = false;
+  if (output.edit_requests.length > 0 && profile && !signal?.aborted) {
+    const editText = output.edit_requests.join("\n");
+    try {
+      // Retrieved again, for these sentences only — and with what sits
+      // inside the nodes they name, since a regroup moves a node's steps too.
+      const editRetrieval = await retrieveRelevantNodes({
+        supabase,
+        userId,
+        workspaceId,
+        rawText: editText,
+        nodes: profile.activeNodes,
+        parentOf: context.parentOf,
+        rootNodeId: profile.rootNodeId,
+        expandChildren: true,
+      });
+      const edit = await aiProvider().extractNodes({
+        raw_text: editText,
+        workspace_id: workspaceId,
+        user_id: userId,
+        workspace_context: context.workspaceContext,
+        existing_nodes: editRetrieval.contextNodes,
+        today,
+        signal,
+        rubric_cache_ttl: null,
+        variant: "light",
+      });
+      await persistAIRun({ supabase, userId, workspaceId, source: params.source ?? "extraction", run: edit.run });
+      console.log(
+        `[extraction] edit pass: ${output.edit_requests.length} request(s) → ${edit.output.changes.length} edit(s), ${edit.output.proposed_nodes.length} new node(s)`,
+      );
+      output = mergeEditPass(output, edit.output);
+    } catch (err) {
+      editPassFailed = true;
+      const paid = isMalformedAIResponseError(err) ? err : null;
+      await logFailedAIRun({
+        supabase,
+        userId,
+        workspaceId,
+        runType: "extract",
+        provider: "claude",
+        modelName: paid?.modelName ?? AI_MODELS.CLAUDE_SONNET,
+        promptVersion: paid?.promptVersion ?? EXTRACT_PROMPT_VERSION,
+        inputHash: hashText(editText),
+        inputTokens: paid?.inputTokens,
+        outputTokens: paid?.outputTokens,
+        latencyMs: paid?.latencyMs,
+        estimatedCost: paid?.estimatedCost,
+        status: "failed",
+        error: `Edit pass failed: ${normalizeAIError(err).message}`,
+      });
+    }
   }
 
   // Title-normalization helper for dedupe — strips case, punctuation, and
@@ -622,6 +686,11 @@ export async function runBuilder(params: {
   // A reorganization the model left half-planned is not applied in part — the
   // user is asked, and a line in chat redoes it (tools/build.ts).
   const clarifyingQuestions = [...(output.clarifying_questions ?? [])];
+  if (editPassFailed) {
+    clarifyingQuestions.unshift(
+      "I couldn't carry out the reorganization you asked for — say it in one line here and I'll do it.",
+    );
+  }
   if (broken.length > 0) {
     const names = broken.flatMap((id) => (activeTitleById.has(id) ? [`"${activeTitleById.get(id)}"`] : []));
     clarifyingQuestions.unshift(
@@ -656,6 +725,79 @@ export async function runBuilder(params: {
     ],
     possibleDuplicates,
   };
+}
+
+// ---------------------------------------------------------------------------
+// saveProposalRows — the builder's new nodes as proposed_nodes rows. For a
+// dump that goes to the review modal they are what the user reviews; for a
+// dump handled as one turn (lib/ai/dump-turn.ts) they are the ledger of what
+// was proposed: the auto-apply calibration, Undo and the dump history read it.
+// ---------------------------------------------------------------------------
+
+export async function saveProposalRows(params: {
+  supabase: SupabaseClient;
+  rawEntryId: string;
+  workspaceId: string;
+  userId: string;
+  aiRunId: string;
+  nodes: BuiltProposal[];
+}): Promise<{ ok: true; rows: ProposedNode[] } | { ok: false; error: string }> {
+  const { supabase, rawEntryId, workspaceId, userId, aiRunId } = params;
+  if (params.nodes.length === 0) return { ok: true, rows: [] };
+  const rows = params.nodes.map((n) => ({
+    raw_entry_id: rawEntryId,
+    workspace_id: workspaceId,
+    user_id: userId,
+    ai_run_id: aiRunId,
+    local_ref: n.local_ref,
+    primary_parent_local_ref: n.primary_parent_local_ref,
+    existing_parent_node_id: n.existing_parent_node_id,
+    depends_on_local_refs: n.depends_on_local_refs ?? [],
+    soft_links: n.soft_links ?? [],
+    proposed_title: n.proposed_title,
+    proposed_summary: n.proposed_summary ?? null,
+    proposed_body: n.proposed_body ?? null,
+    proposed_node_type: n.proposed_node_type,
+    proposed_target_date: n.proposed_target_date ?? null,
+    extraction_confidence: n.extraction_confidence,
+    source_span: n.source_span ?? null,
+    proposal_status: "pending_review",
+  }));
+
+  let { data: savedNodes, error: nodesError } = await supabase
+    .from("proposed_nodes")
+    .insert(rows)
+    .select();
+
+  if (nodesError && isMissingColumnError(nodesError.message, "existing_parent_node_id")) {
+    const fallbackRows = rows.map((row) =>
+      Object.fromEntries(
+        Object.entries(row).filter(([key]) => key !== "existing_parent_node_id")
+      )
+    );
+    const retry = await supabase.from("proposed_nodes").insert(fallbackRows).select();
+    savedNodes = retry.data;
+    nodesError = retry.error;
+  }
+
+  // Same fallback for proposed_body — the migration that adds it may not
+  // have run yet on every environment, so we drop the column and retry
+  // rather than erroring out.
+  if (nodesError && isMissingColumnError(nodesError.message, "proposed_body")) {
+    const fallbackRows = rows.map((row) =>
+      Object.fromEntries(
+        Object.entries(row).filter(([key]) => key !== "proposed_body")
+      )
+    );
+    const retry = await supabase.from("proposed_nodes").insert(fallbackRows).select();
+    savedNodes = retry.data;
+    nodesError = retry.error;
+  }
+
+  if (nodesError || !savedNodes) {
+    return { ok: false, error: nodesError?.message ?? "Failed to save proposed_nodes" };
+  }
+  return { ok: true, rows: savedNodes as ProposedNode[] };
 }
 
 // ---------------------------------------------------------------------------
@@ -733,62 +875,19 @@ export async function runExtraction(params: {
     };
   }
 
-  // Persist proposed_nodes
-  const rows = qualifiedNodes.map((n) => ({
-    raw_entry_id: rawEntryId,
-    workspace_id: workspaceId,
-    user_id: userId,
-    ai_run_id: aiRunId,
-    local_ref: n.local_ref,
-    primary_parent_local_ref: n.primary_parent_local_ref,
-    existing_parent_node_id: n.existing_parent_node_id,
-    depends_on_local_refs: n.depends_on_local_refs ?? [],
-    soft_links: n.soft_links ?? [],
-    proposed_title: n.proposed_title,
-    proposed_summary: n.proposed_summary ?? null,
-    proposed_body: n.proposed_body ?? null,
-    proposed_node_type: n.proposed_node_type,
-    proposed_target_date: n.proposed_target_date ?? null,
-    extraction_confidence: n.extraction_confidence,
-    source_span: n.source_span ?? null,
-    proposal_status: "pending_review",
-  }));
-
-  let { data: savedNodes, error: nodesError } = await supabase
-    .from("proposed_nodes")
-    .insert(rows)
-    .select();
-
-  if (nodesError && isMissingColumnError(nodesError.message, "existing_parent_node_id")) {
-    const fallbackRows = rows.map((row) =>
-      Object.fromEntries(
-        Object.entries(row).filter(([key]) => key !== "existing_parent_node_id")
-      )
-    );
-    const retry = await supabase.from("proposed_nodes").insert(fallbackRows).select();
-    savedNodes = retry.data;
-    nodesError = retry.error;
+  const saved = await saveProposalRows({
+    supabase,
+    rawEntryId,
+    workspaceId,
+    userId,
+    aiRunId,
+    nodes: qualifiedNodes,
+  });
+  if (!saved.ok) {
+    await markFailed(supabase, rawEntryId, saved.error);
+    return { ok: false, error: saved.error };
   }
-
-  // Same fallback for proposed_body — the migration that adds it may not
-  // have run yet on every environment, so we drop the column and retry
-  // rather than erroring out.
-  if (nodesError && isMissingColumnError(nodesError.message, "proposed_body")) {
-    const fallbackRows = rows.map((row) =>
-      Object.fromEntries(
-        Object.entries(row).filter(([key]) => key !== "proposed_body")
-      )
-    );
-    const retry = await supabase.from("proposed_nodes").insert(fallbackRows).select();
-    savedNodes = retry.data;
-    nodesError = retry.error;
-  }
-
-  if (nodesError || !savedNodes) {
-    const errorText = nodesError?.message ?? "Failed to save proposed_nodes";
-    await markFailed(supabase, rawEntryId, errorText);
-    return { ok: false, error: errorText };
-  }
+  const savedNodes = saved.rows;
 
   // Mark raw_entry completed
   await supabase
@@ -799,7 +898,7 @@ export async function runExtraction(params: {
   return {
     ok: true,
     aiRunId,
-    proposedNodes: (savedNodes as ProposedNode[]).map((node) => ({
+    proposedNodes: savedNodes.map((node) => ({
       ...node,
       existing_parent_node_id:
         "existing_parent_node_id" in node ? node.existing_parent_node_id : null,
@@ -837,7 +936,7 @@ async function loadParentMap(
   return parentOf;
 }
 
-async function markFailed(
+export async function markFailed(
   supabase: SupabaseClient,
   rawEntryId: string,
   errorText: string

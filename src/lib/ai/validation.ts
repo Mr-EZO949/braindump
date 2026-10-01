@@ -66,6 +66,8 @@ const BUILDER_LINK_TYPES: ReadonlySet<string> = new Set([
 const UUID = /^[0-9a-fA-F-]{36}$/;
 const MAX_BUILDER_CHANGES = 20;
 const MAX_SOFT_LINKS_PER_NODE = 2;
+const MAX_EDIT_REQUESTS = 6;
+const MAX_EDIT_REQUEST_CHARS = 600;
 
 const LOCAL_REF = /^[A-Za-z][\w-]{0,15}$/;
 
@@ -378,9 +380,23 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
     }
   }
 
+  // edit_requests — the dump's own sentences about reorganizing existing
+  // nodes (extract-v26 quotes them instead of acting on them).
+  const editRequests: string[] = [];
+  if (Array.isArray(raw.edit_requests)) {
+    for (const entry of raw.edit_requests) {
+      if (!isString(entry)) continue;
+      const trimmed = entry.trim();
+      if (!trimmed || editRequests.includes(trimmed)) continue;
+      editRequests.push(trimmed.slice(0, MAX_EDIT_REQUEST_CHARS));
+      if (editRequests.length >= MAX_EDIT_REQUESTS) break;
+    }
+  }
+
   return {
     proposed_nodes: nodes,
     changes: [...parseBuilderChanges(raw.changes), ...linkChanges].slice(0, MAX_BUILDER_CHANGES),
+    edit_requests: editRequests,
     clarifying_questions: clarifyingQuestions,
     complete_existing_node_ids: completeExistingNodeIds,
     auto_complete_local_refs: autoCompleteLocalRefs,

@@ -138,10 +138,23 @@ export function parseDumpPriorityResponse(
   if (!parsed) return { changes: [], commitments: [], unclear: [] };
   const byRef = new Map(nodes.map((n) => [n.ref, n]));
   const changes: Record<string, unknown>[] = [];
+  // The question goes to the user: name items by title — Haiku sometimes
+  // writes its refs ("Should n12 move from n10…", e2e 2026-10-01).
+  const titleOfRef = new Map<string, string>([
+    ...nodes.map((n) => [n.ref, n.title] as const),
+    ...commitments.map((c) => [c.ref, c.title] as const),
+  ]);
   const unclear = (Array.isArray(parsed.unclear) ? parsed.unclear : [])
     .map(str)
     .filter(Boolean)
-    .map((q) => q.slice(0, 160));
+    .map((q) =>
+      q
+        .replace(/\b([nc]\d+)\s*\(([^)]*)\)/g, (whole, ref: string, inner: string) =>
+          titleOfRef.has(ref) ? `"${titleOfRef.get(ref)}"` : whole.replace(ref, "").trim() || inner,
+        )
+        .replace(/\b[nc]\d+\b/g, (ref) => (titleOfRef.has(ref) ? `"${titleOfRef.get(ref)}"` : ref))
+        .slice(0, 160),
+    );
   const seen = new Set<string>();
   const statusMoved = new Set<string>();
   // Haiku sometimes files a commitment row ({"ref":"c1","action":"update"})

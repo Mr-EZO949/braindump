@@ -74,6 +74,48 @@ export function resolveBuilderChanges(params: {
   };
 }
 
+// The edit pass's output folded into the main pass's (extraction.ts). On a
+// long dump the long prompt only QUOTES the requests to reorganize existing
+// nodes; the short prompt then carries them out, and its result — the edits
+// plus the new nodes they need — joins the rest here.
+//   • its local refs get a prefix, so "n1" from one pass can't be mistaken
+//     for "n1" from the other;
+//   • its nodes go FIRST: when both passes created the same thing, the
+//     deduplication keeps the earlier one — the one the edits point at.
+const EDIT_REF_PREFIX = "e_";
+const MAX_MERGED_QUESTIONS = 3;
+
+export function mergeEditPass(main: ExtractionOutput, edit: ExtractionOutput): ExtractionOutput {
+  const ref = (value: string) => (UUID.test(value) ? value : `${EDIT_REF_PREFIX}${value}`);
+  const nodes = edit.proposed_nodes.map((node) => ({
+    ...node,
+    local_ref: node.local_ref ? ref(node.local_ref) : node.local_ref,
+    primary_parent_local_ref: node.primary_parent_local_ref ? ref(node.primary_parent_local_ref) : null,
+    depends_on_local_refs: (node.depends_on_local_refs ?? []).map(ref),
+    soft_links: (node.soft_links ?? []).map((link) => ({ ...link, target_local_ref: ref(link.target_local_ref) })),
+  }));
+  const changes = edit.changes.map((change): BuilderChange => {
+    if (change.kind === "move") return { ...change, new_parent: ref(change.new_parent) };
+    if (change.kind === "link") return { ...change, source: ref(change.source), target: ref(change.target) };
+    return change;
+  });
+  return {
+    ...main,
+    proposed_nodes: [...nodes, ...main.proposed_nodes],
+    changes: [...changes, ...main.changes],
+    edit_requests: [],
+    // What the reorganization could not settle comes first.
+    clarifying_questions: [...new Set([...edit.clarifying_questions, ...main.clarifying_questions])].slice(
+      0,
+      MAX_MERGED_QUESTIONS,
+    ),
+    complete_existing_node_ids: [
+      ...new Set([...main.complete_existing_node_ids, ...edit.complete_existing_node_ids]),
+    ],
+    auto_complete_local_refs: [...main.auto_complete_local_refs, ...edit.auto_complete_local_refs.map(ref)],
+  };
+}
+
 // A brain dump's new nodes go to the review (proposed_nodes); edits to
 // existing nodes go on ONE card. A new node a move depends on has to be on
 // that card too — "make BrainDump its own project and move Test under it"

@@ -3,9 +3,15 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { BuilderChange } from "@/types/ai";
+import type { BuilderChange, ExtractionOutput } from "@/types/ai";
 
-import { builderToOps, resolveBuilderChanges, splitRestructureSet, type BuilderNode } from "./builder-ops";
+import {
+  builderToOps,
+  mergeEditPass,
+  resolveBuilderChanges,
+  splitRestructureSet,
+  type BuilderNode,
+} from "./builder-ops";
 
 const MONEY = "aaaaaaaa-0000-4000-8000-000000000001";
 const FUSED = "aaaaaaaa-0000-4000-8000-000000000002";
@@ -205,5 +211,71 @@ describe("builderToOps", () => {
       ],
     });
     expect(ops).toEqual([{ kind: "create_node", local_ref: "n1", title: "BrainDump", node_type: "task" }]);
+  });
+});
+
+describe("mergeEditPass — the short prompt's edits joined to the long prompt's adds", () => {
+  const output = (extra: Partial<ExtractionOutput>): ExtractionOutput => ({
+    proposed_nodes: [],
+    changes: [],
+    edit_requests: [],
+    clarifying_questions: [],
+    complete_existing_node_ids: [],
+    auto_complete_local_refs: [],
+    prompt_version: "test",
+    ...extra,
+  });
+
+  it("prefixes the edit pass's refs and puts its nodes first", () => {
+    const main = output({
+      proposed_nodes: [node("n1", "ML Course Project"), node("n2", "Pick a Dataset", { primary_parent_local_ref: "n1" })],
+      changes: [{ kind: "link", source: "n1", target: INTERN, edge_type: "useful_for" }],
+      edit_requests: ["braindump should be its own project with testing and marketing in it"],
+      clarifying_questions: ["Which bank?"],
+      complete_existing_node_ids: [FIXES],
+    });
+    const edit = output({
+      proposed_nodes: [
+        node("n1", "BrainDump", { proposed_node_type: "project", existing_parent_node_id: MONEY }),
+        node("n2", "Market BrainDump", {
+          primary_parent_local_ref: "n1",
+          depends_on_local_refs: ["n1"],
+          soft_links: [
+            { target_local_ref: "n1", edge_type: "supports", rationale: null },
+            { target_local_ref: INTERN, edge_type: "useful_for", rationale: null },
+          ],
+        }),
+      ],
+      changes: [
+        { kind: "update", node_id: FUSED, title: "Test BrainDump" },
+        { kind: "move", node_id: FUSED, new_parent: "n1" },
+        { kind: "move", node_id: FIXES, new_parent: MONEY },
+        { kind: "link", source: "n2", target: INTERN, edge_type: "supports" },
+      ],
+      clarifying_questions: ["Should the fixes move too?"],
+      complete_existing_node_ids: [FIXES],
+      auto_complete_local_refs: ["n2"],
+    });
+
+    const merged = mergeEditPass(main, edit);
+    expect(merged.proposed_nodes.map((n) => [n.local_ref, n.primary_parent_local_ref])).toEqual([
+      ["e_n1", null],
+      ["e_n2", "e_n1"],
+      ["n1", null],
+      ["n2", "n1"],
+    ]);
+    expect(merged.proposed_nodes[1].depends_on_local_refs).toEqual(["e_n1"]);
+    expect(merged.proposed_nodes[1].soft_links.map((l) => l.target_local_ref)).toEqual(["e_n1", INTERN]);
+    expect(merged.changes).toEqual([
+      { kind: "update", node_id: FUSED, title: "Test BrainDump" },
+      { kind: "move", node_id: FUSED, new_parent: "e_n1" },
+      { kind: "move", node_id: FIXES, new_parent: MONEY },
+      { kind: "link", source: "e_n2", target: INTERN, edge_type: "supports" },
+      { kind: "link", source: "n1", target: INTERN, edge_type: "useful_for" },
+    ]);
+    expect(merged.edit_requests).toEqual([]);
+    expect(merged.clarifying_questions).toEqual(["Should the fixes move too?", "Which bank?"]);
+    expect(merged.complete_existing_node_ids).toEqual([FIXES]);
+    expect(merged.auto_complete_local_refs).toEqual(["e_n2"]);
   });
 });

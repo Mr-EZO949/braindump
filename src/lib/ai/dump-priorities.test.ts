@@ -161,3 +161,25 @@ describe("statusTouchedIds", () => {
     expect(statusTouchedIds(null).size).toBe(0);
   });
 });
+
+describe("parseDumpPriorityResponse — questions name items, not refs", () => {
+  const nodes = [
+    { ref: "n10", id: "career", title: "Income & Career" },
+    { ref: "n12", id: "italian", title: "Italian Crash Course" },
+    { ref: "n14", id: "personal", title: "Personal Development" },
+  ];
+  it("replaces refs the model wrote into a question with the items' titles", () => {
+    const read = parseDumpPriorityResponse(
+      JSON.stringify({
+        changes: [],
+        unclear: ["Should n12 (Italian Crash Course) move from n10 (Income & Career) to n14, or stay?"],
+      }),
+      nodes,
+      "2026-10-01",
+    );
+    expect(read.unclear).toEqual([
+      'Should "Italian Crash Course" move from "Income & Career" to "Personal Development", or stay?',
+    ]);
+  });
+});
+

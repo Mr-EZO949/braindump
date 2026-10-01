@@ -316,6 +316,27 @@ describe("validateExtractionOutput — changes to existing nodes (extract-v25)",
     expect(out.changes).toEqual([{ kind: "move", node_id: A, new_parent: "n11" }]);
   });
 
+  it("keeps the quoted edit requests, trimmed and without repeats", () => {
+    const out = validateExtractionOutput(
+      {
+        proposed_nodes: [],
+        edit_requests: [
+          "  braindump should be its own project with testing and marketing in it ",
+          "braindump should be its own project with testing and marketing in it",
+          42,
+          "",
+          "italian isnt really an internship thing, its more personal development",
+        ],
+      },
+      session,
+    );
+    expect(out.edit_requests).toEqual([
+      "braindump should be its own project with testing and marketing in it",
+      "italian isnt really an internship thing, its more personal development",
+    ]);
+    expect(validateExtractionOutput({ proposed_nodes: [] }, session).edit_requests).toEqual([]);
+  });
+
   it("defaults to no changes", () => {
     expect(validateExtractionOutput({ proposed_nodes: [newNode] }, session).changes).toEqual([]);
   });

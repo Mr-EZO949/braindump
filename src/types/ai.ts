@@ -359,6 +359,29 @@ export interface ExtractionInput {
   variant?: "full" | "light";
 }
 
+// What one brain dump came to (POST /api/entries, docs/unified-turn.md) — the
+// content of the single card the dump's thread shows. The changes that wait
+// for the user travel next to it as `pending_action`, priorities and weekly
+// commitments as `priority_update` / `commitment_update`.
+export interface DumpTurn {
+  // The assistant's answer to the human part of the dump (venting, a direct
+  // question); null when the dump was only items.
+  reply: string | null;
+  // Applied already.
+  added: Array<{
+    id: string;
+    // The ledger row (proposed_nodes) — what Undo sends back.
+    proposal_id: string | null;
+    title: string;
+    node_type: string;
+    parent_title: string | null;
+  }>;
+  done: string[];
+  links: Array<{ source_title: string; target_title: string; edge_type: string }>;
+  // Things the builder or the priority read could not settle.
+  questions: string[];
+}
+
 // An edit to an EXISTING node the builder asks for alongside the nodes it adds
 // (extract-v25 / extract-light-v5). `new_parent`, `source` and `target` take an
 // existing node id or the local_ref of a node proposed in the same output.
@@ -376,6 +399,11 @@ export interface ExtractionOutput {
   >[];
   // Moves, renames/retypes and lateral links on nodes that already exist.
   changes: BuilderChange[];
+  // The user's sentences that ask to change EXISTING nodes, quoted by the long
+  // prompt (extract-v26), which no longer plans edits itself: the builder runs
+  // these through the short prompt (extraction.ts, the edit pass). Always
+  // empty from the short prompt.
+  edit_requests: string[];
   // Questions the extractor wants the user to answer before more nodes can
   // be usefully extracted — vague ideas, ambiguous references, meta-questions
   // like "idk what to focus on". Empty when the dump is fully actionable.
