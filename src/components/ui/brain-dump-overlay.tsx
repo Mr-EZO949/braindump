@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowUpIcon, CloseIcon, ImageIcon, MicIcon } from "@/components/ui/icons";
+import { DumpProgressLabel, type DumpProgressState } from "@/components/ui/dump-progress";
 import { useVoiceInput } from "@/components/voice/use-voice-input";
 
 type AttachedImage = {
@@ -20,6 +21,8 @@ type BrainDumpOverlayProps = {
   retryAvailable?: boolean;
   retrying?: boolean;
   submitting: boolean;
+  // Where the submitted dump is (streamed by /api/entries).
+  progress?: DumpProgressState | null;
   value: string;
 };
 
@@ -32,6 +35,7 @@ export function BrainDumpOverlay({
   retryAvailable = false,
   retrying = false,
   submitting,
+  progress = null,
   value,
 }: BrainDumpOverlayProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -212,6 +216,8 @@ export function BrainDumpOverlay({
             {recording ? <span className="brain-dump-rec-dot" /> : null}
           </button>
         </div>
+
+        {submitting && progress ? <DumpProgressLabel className="brain-dump-progress" progress={progress} /> : null}
 
         <button
           aria-label="Submit thought"

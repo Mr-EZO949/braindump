@@ -278,6 +278,9 @@ export async function runBuilder(params: {
   // model call — lets the caller start work that needs them (the dump
   // priority read) in parallel instead of after.
   onRetrieved?: (nodes: ContextNodeForPrompt[]) => void;
+  // Called when the edit pass starts (a long dump that asks to reorganize) —
+  // the dump's progress line says so.
+  onEditPass?: () => void;
 }): Promise<BuilderSuccess | BuilderFailure> {
   const { rawText, workspaceId, userId, supabase, today, signal } = params;
   // What the model sees: persona/workspace text + the existing nodes RELEVANT
@@ -444,6 +447,7 @@ export async function runBuilder(params: {
   // moved into). Its result joins the rest before deduplication.
   let editPassFailed = false;
   if (output.edit_requests.length > 0 && profile && !signal?.aborted) {
+    params.onEditPass?.();
     const editText = output.edit_requests.join("\n");
     try {
       // Retrieved again, for these sentences only — and with what sits

@@ -371,9 +371,15 @@ Each phase ships on its own and is testable from `testing-journal.md`.
    - **Still open:** the breakdown as a builder mode (the last Sonnet chat route); the
      composer's dump classifier (a dump typed in chat still takes the dump turn — same policy
      and card now, so the split no longer shows).
-5. **Server follow-ups + staged streaming.** Connections as a follow-up card; stage events.
+5. **Server follow-ups + staged streaming.** Connections as a follow-up card (done in
+   phase 3, client-triggered). **Stages built 2026-10-02 for dumps:** with `stream: true`
+   `/api/entries` answers in NDJSON — `reading` → `building` (retrieval done, the builder
+   call starts) → `reorganizing` (the edit pass, long dumps that ask to regroup) →
+   `applying` — then the usual JSON (`lib/chat/dump-stream.ts`). The Brain Dump box and the
+   chat bubble show "Sorting it into your graph · 14s" instead of a bare spinner
+   (`components/ui/dump-progress.tsx`). Chat turns keep their streamed text.
 
-Phases 1–3 are the felt change; phase 4's policy is built. 5 can wait.
+Phases 1–3 are the felt change; phase 4's policy and phase 5's stages are built.
 
 ## 6 · Decisions (owner, 2026-09-30)
 

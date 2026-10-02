@@ -87,6 +87,8 @@ import {
 } from "@/lib/chat/applied-marker";
 import { connectionsNote, turnNote } from "@/lib/chat/turn-note";
 import { createTurnMarkerParser, createUndoMarkerParser, turnCardFromApplied } from "@/lib/chat/turn-marker";
+import { readDumpResponse } from "@/lib/chat/dump-stream";
+import type { DumpProgressState } from "@/components/ui/dump-progress";
 import { classifyTaskSize } from "@/lib/ai/sizing";
 import { needsNextAction } from "@/lib/graph/next-action";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
@@ -344,6 +346,8 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [brainDumpWorkspaceId, setBrainDumpWorkspaceId] = useState<string | null>(null);
   const [brainDumpValue, setBrainDumpValue] = useState("");
   const [brainDumpSubmitting, setBrainDumpSubmitting] = useState(false);
+  // Where a submitted dump is (box or chat) — streamed by /api/entries.
+  const [dumpProgress, setDumpProgress] = useState<DumpProgressState | null>(null);
   const [brainDumpRetrying, setBrainDumpRetrying] = useState(false);
   const [brainDumpError, setBrainDumpError] = useState<string | null>(null);
   const [brainDumpFailedEntryId, setBrainDumpFailedEntryId] = useState<string | null>(null);
@@ -3110,6 +3114,9 @@ export function AppShell({ initialUser }: AppShellProps) {
           status: "error" as const,
         },
       ]);
+    // The wait is counted from the send, not from the first line back.
+    const startedAt = Date.now();
+    setDumpProgress({ stage: "reading", startedAt });
     try {
       const res = await fetch("/api/entries", {
         method: "POST",
@@ -3119,22 +3126,25 @@ export function AppShell({ initialUser }: AppShellProps) {
           workspace_id: targetWorkspaceId,
           auto_apply: readAutoApplyPreference(),
           history,
+          stream: true,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as Parameters<typeof applyDumpExtraction>[1] & {
-        error?: string;
-        message?: string;
-      };
-      if (!res.ok || res.status === 207) {
+      const { status, data } = await readDumpResponse<
+        Parameters<typeof applyDumpExtraction>[1] & { error?: string; message?: string }
+      >(res, (stage) => setDumpProgress({ stage, startedAt }));
+      if (status >= 300 || status === 207) {
         fail(data.error ?? data.message ?? "I couldn't work through that just now. Try again or rephrase it.");
         return;
       }
-      await applyDumpExtraction(trimmed, data, targetWorkspaceId, { continueThread: true });
+      await applyDumpExtraction(trimmed, data as Parameters<typeof applyDumpExtraction>[1], targetWorkspaceId, {
+        continueThread: true,
+      });
     } catch {
       fail("Network error processing that. Try again.");
     } finally {
       chatSendingRef.current = false;
       setChatLoading(false);
+      setDumpProgress(null);
     }
   };
 
@@ -3147,6 +3157,8 @@ export function AppShell({ initialUser }: AppShellProps) {
     setBrainDumpSubmitting(true);
     setBrainDumpError(null);
     setBrainDumpFailedEntryId(null);
+    const startedAt = Date.now();
+    setDumpProgress({ stage: "reading", startedAt });
     try {
       const res = await fetch("/api/entries", {
         method: "POST",
@@ -3155,21 +3167,23 @@ export function AppShell({ initialUser }: AppShellProps) {
           raw_text: trimmed,
           workspace_id: targetWorkspaceId,
           auto_apply: readAutoApplyPreference(),
+          stream: true,
         }),
       });
-      const data = await res.json() as {
+      const read = await readDumpResponse<{
         proposed_nodes?: ProposedNode[];
         clarifying_questions?: string[];
         raw_entry_id?: string;
         error?: string;
         message?: string;
-      };
-      if (!res.ok && res.status !== 207) {
+      }>(res, (stage) => setDumpProgress({ stage, startedAt }));
+      const data = read.data;
+      if (read.status >= 300) {
         setBrainDumpError(data.error ?? data.message ?? "Could not process that brain dump.");
         setBrainDumpFailedEntryId(data.raw_entry_id ?? null);
         return;
       }
-      if (res.status === 207) {
+      if (read.status === 207) {
         setBrainDumpError(data.error ?? data.message ?? "Extraction failed. Retry when ready.");
         setBrainDumpFailedEntryId(data.raw_entry_id ?? null);
         return;
@@ -3186,6 +3200,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       );
     } finally {
       setBrainDumpSubmitting(false);
+      setDumpProgress(null);
     }
   };
 
@@ -4527,6 +4542,7 @@ export function AppShell({ initialUser }: AppShellProps) {
             void resolveConnections(messageId, acceptedIds);
           }}
           pendingActionBusy={pendingActionBusy}
+          dumpProgress={dumpProgress}
           nudges={nudges}
           onSelectNudge={(nudge) => {
             void submitMessage(nudge.starter);
@@ -5015,6 +5031,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               retryAvailable={Boolean(brainDumpFailedEntryId)}
               retrying={brainDumpRetrying}
               submitting={brainDumpSubmitting}
+              progress={dumpProgress}
               value={brainDumpValue}
             />
           </motion.div>

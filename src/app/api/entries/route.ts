@@ -9,6 +9,7 @@ import { getRequestToday } from "@/lib/time/request-date";
 import { markFailed, runBuilder, runExtraction } from "@/lib/ai/extraction";
 import { applyDumpChanges } from "@/lib/ai/dump-turn";
 import { readDumpReply } from "@/lib/ai/dump-reply";
+import type { DumpStage } from "@/lib/chat/dump-stream";
 import { sanitizeHistory, type HistoryTurn } from "@/lib/ai/chat-memory";
 import { looksLikeRestructure } from "@/lib/graph/dump-heuristic";
 import { loadCalibrationStats, selectAutoApply } from "@/lib/ai/auto-apply";
@@ -142,6 +143,7 @@ export async function POST(req: NextRequest) {
     default_parent_node_id,
     auto_apply = true,
     history: rawHistory,
+    stream = false,
   } = body as {
     raw_text: string;
     workspace_id: string;
@@ -156,6 +158,8 @@ export async function POST(req: NextRequest) {
     auto_apply?: boolean;
     // A dump typed in the chat composer: the conversation so far, for the reply.
     history?: unknown;
+    // Answer in NDJSON: a line per stage, then the result (lib/chat/dump-stream.ts).
+    stream?: boolean;
   };
 
   // Empty input guard
@@ -250,7 +254,7 @@ export async function POST(req: NextRequest) {
   // reply, one card (docs/unified-turn.md). Generated steps (suggest-steps sets
   // default_parent_node_id) and the legacy chat save keep the review flow below.
   if (!default_parent_node_id && (source_type === "brain_dump" || source_type === "voice")) {
-    return dumpTurn({
+    const turnParams = {
       req,
       supabase,
       userId: user.id,
@@ -259,6 +263,35 @@ export async function POST(req: NextRequest) {
       text: trimmed,
       autoApply: auto_apply !== false,
       history: sanitizeHistory(rawHistory),
+    };
+    if (stream !== true) return dumpTurn(turnParams);
+    // Progress while it works: a line per stage, then the usual JSON.
+    const encoder = new TextEncoder();
+    const readable = new ReadableStream({
+      async start(controller) {
+        const write = (line: Record<string, unknown>) => {
+          try {
+            controller.enqueue(encoder.encode(`${JSON.stringify(line)}\n`));
+          } catch {
+            // The client went away — the turn still finishes and is saved.
+          }
+        };
+        try {
+          const res = await dumpTurn({ ...turnParams, emit: (stage) => write({ stage }) });
+          write({ status: res.status, result: await res.json() });
+        } catch (err) {
+          console.error("[entries] dump turn failed:", err);
+          write({ status: 500, result: { error: "Could not process that brain dump." } });
+        }
+        try {
+          controller.close();
+        } catch {
+          // Already closed.
+        }
+      },
+    });
+    return new Response(readable, {
+      headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-cache", "X-Accel-Buffering": "no" },
     });
   }
 
@@ -624,8 +657,12 @@ async function dumpTurn(params: {
   text: string;
   autoApply: boolean;
   history: HistoryTurn[];
+  // Progress for a streamed request (lib/chat/dump-stream.ts).
+  emit?: (stage: DumpStage) => void;
 }) {
   const { req, supabase, userId, workspaceId, rawEntryId, text } = params;
+  const emit = params.emit ?? (() => undefined);
+  emit("reading");
   const today = await getRequestToday();
 
   // The human half of the dump — needs nothing from retrieval, so it starts now.
@@ -651,7 +688,9 @@ async function dumpTurn(params: {
     // A dump that asks to reorganize needs to see inside the nodes it names.
     expandChildren: looksLikeRestructure(text),
     alongside: supabase.from("raw_entries").update({ status: "processing" }).eq("id", rawEntryId),
+    onEditPass: () => emit("reorganizing"),
     onRetrieved: (nodes) => {
+      emit("building");
       priorityRead = readDumpPriorities({
         dump: text,
         nodeIds: nodes.map((n) => n.id),
@@ -701,6 +740,7 @@ async function dumpTurn(params: {
     );
   }
 
+  emit("applying");
   // "did the exam, now waiting for the result" — the priority read's wait
   // beats the builder's "did" (the result isn't in).
   const statusTouched = statusTouchedIds(priorities);

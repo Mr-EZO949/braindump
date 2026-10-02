@@ -6959,6 +6959,25 @@ input[type="search"]::-webkit-search-results-decoration {
   gap: 4px;
 }
 
+/* Where a submitted dump is ("Sorting it into your graph · 14s"). */
+.brain-dump-progress {
+  flex: 1;
+  min-width: 0;
+  margin: 0 10px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.dump-progress-seconds {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .brain-dump-action-btn {
   display: flex;
   align-items: center;

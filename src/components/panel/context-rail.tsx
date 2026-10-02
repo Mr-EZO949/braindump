@@ -13,6 +13,7 @@ import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { AppliedActionCard } from "@/components/panel/applied-action-card";
 import { TurnCard, turnHasCard } from "@/components/panel/turn-card";
 import { ConnectionsCard } from "@/components/panel/connections-card";
+import { DumpProgressLabel, type DumpProgressState } from "@/components/ui/dump-progress";
 import { isChangeList } from "@/lib/chat/change-describe";
 
 // A change set's card (change, build_graph) shows inside the turn card; any
@@ -115,6 +116,8 @@ type ContextRailProps = {
   // A links card: the links kept (null → dismiss all).
   onResolveConnections: (messageId: string, acceptedIds: string[] | null) => void;
   pendingActionBusy: boolean;
+  // A dump typed in chat: its stage while the builder works (else "Reasoning").
+  dumpProgress?: DumpProgressState | null;
   nudges: Nudge[];
   onSelectNudge: (nudge: Nudge) => void;
   onSelectPrompt: (prompt: string) => void;
@@ -193,6 +196,7 @@ export function ContextRail({
   onUndoAppliedAction,
   onUndoTurnSection,
   onUndoAcceptedCard,
+  dumpProgress = null,
   onAnswerTurnQuestion,
   onResolveConnections,
   pendingActionBusy,
@@ -641,9 +645,16 @@ export function ContextRail({
                       <div className="chat-msg-assistant">
                         <div className="chat-msg-assistant-card">
                           <div className="chat-loading-indicator" aria-live="polite">
-                            <span className="text-[12px] font-medium text-[var(--color-text-secondary)]">
-                              Reasoning
-                            </span>
+                            {dumpProgress ? (
+                              <DumpProgressLabel
+                                className="text-[12px] font-medium text-[var(--color-text-secondary)]"
+                                progress={dumpProgress}
+                              />
+                            ) : (
+                              <span className="text-[12px] font-medium text-[var(--color-text-secondary)]">
+                                Reasoning
+                              </span>
+                            )}
                             <span className="chat-loading-dot" />
                             <span className="chat-loading-dot" />
                             <span className="chat-loading-dot" />
