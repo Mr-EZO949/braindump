@@ -33,6 +33,8 @@ export function buildDumpReplyUserMessage(params: {
   dump: string;
   today: string;
   nodes: DumpReplyPromptNode[];
+  // The conversation the dump was typed into (chat composer), oldest first.
+  history?: Array<{ role: "user" | "assistant"; body: string }>;
 }): string {
   const lines = params.nodes.map((n) => {
     const facts = [
@@ -43,9 +45,17 @@ export function buildDumpReplyUserMessage(params: {
     ].filter(Boolean);
     return `- ${n.title} (${facts.join(", ")})`;
   });
+  const history = params.history ?? [];
   return [
     `Today: ${params.today}`,
     `What's on their plate (most important first):\n${lines.length > 0 ? lines.join("\n") : "(nothing yet)"}`,
+    history.length > 0
+      ? `Earlier in this conversation (context only — answer the dump below):\n${history
+          .map((t) => `${t.role === "user" ? "User" : "You"}: ${t.body.replace(/\s+/g, " ").slice(0, 400)}`)
+          .join("\n")}`
+      : null,
     `Brain dump:\n${params.dump}`,
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }

@@ -24,6 +24,7 @@ const MAX_NODES = 24;
 const MAX_DUMP_CHARS = 4000;
 const MAX_OUTPUT_TOKENS = 200;
 const MAX_REPLY_CHARS = 600;
+const MAX_HISTORY_TURNS = 6;
 
 // Model text → the reply, or null when there is nothing to say.
 export function parseDumpReply(text: string): string | null {
@@ -42,6 +43,8 @@ export async function readDumpReply(params: {
   userId: string;
   workspaceId: string;
   signal?: AbortSignal;
+  // The thread the dump was typed into (chat composer).
+  history?: Array<{ role: "user" | "assistant"; body: string }>;
 }): Promise<string | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   const dump = params.dump.trim();
@@ -109,6 +112,7 @@ export async function readDumpReply(params: {
               dump: dump.slice(0, MAX_DUMP_CHARS),
               today: params.today,
               nodes,
+              history: (params.history ?? []).slice(-MAX_HISTORY_TURNS),
             }),
           },
         ],

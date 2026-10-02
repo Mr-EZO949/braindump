@@ -9,6 +9,7 @@ import { getRequestToday } from "@/lib/time/request-date";
 import { markFailed, runBuilder, runExtraction } from "@/lib/ai/extraction";
 import { applyDumpChanges } from "@/lib/ai/dump-turn";
 import { readDumpReply } from "@/lib/ai/dump-reply";
+import { sanitizeHistory, type HistoryTurn } from "@/lib/ai/chat-memory";
 import { looksLikeRestructure } from "@/lib/graph/dump-heuristic";
 import { loadCalibrationStats, selectAutoApply } from "@/lib/ai/auto-apply";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
@@ -140,6 +141,7 @@ export async function POST(req: NextRequest) {
     source_type = "brain_dump",
     default_parent_node_id,
     auto_apply = true,
+    history: rawHistory,
   } = body as {
     raw_text: string;
     workspace_id: string;
@@ -152,6 +154,8 @@ export async function POST(req: NextRequest) {
     default_parent_node_id?: string | null;
     // The user's "Auto-add confident items" preference (default on).
     auto_apply?: boolean;
+    // A dump typed in the chat composer: the conversation so far, for the reply.
+    history?: unknown;
   };
 
   // Empty input guard
@@ -254,6 +258,7 @@ export async function POST(req: NextRequest) {
       rawEntryId: rawEntry.id as string,
       text: trimmed,
       autoApply: auto_apply !== false,
+      history: sanitizeHistory(rawHistory),
     });
   }
 
@@ -618,12 +623,21 @@ async function dumpTurn(params: {
   rawEntryId: string;
   text: string;
   autoApply: boolean;
+  history: HistoryTurn[];
 }) {
   const { req, supabase, userId, workspaceId, rawEntryId, text } = params;
   const today = await getRequestToday();
 
   // The human half of the dump — needs nothing from retrieval, so it starts now.
-  const replyRead = readDumpReply({ dump: text, today, supabase, userId, workspaceId, signal: req.signal });
+  const replyRead = readDumpReply({
+    dump: text,
+    today,
+    supabase,
+    userId,
+    workspaceId,
+    signal: req.signal,
+    history: params.history,
+  });
   let priorityRead: Promise<DumpPriorityRead | null> = Promise.resolve(null);
   const built = await runBuilder({
     rawText: text,

@@ -113,8 +113,6 @@ type ContextRailProps = {
   onSelectLinkedNode: (nodeId: string) => void;
   onSetActiveTab: (tab: RailTab) => void;
   onSubmitChatInput: (message: string) => void;
-  pendingDumpText?: string | null;
-  onResolveDumpChoice?: (choice: "dump" | "chat") => void;
   pendingSizeBreakdown?: { title: string } | null;
   onResolveSizeBreakdown?: (choice: "light" | "full" | "keep") => void;
   onToggle: () => void;
@@ -190,8 +188,6 @@ export function ContextRail({
   onSelectLinkedNode,
   onSetActiveTab,
   onSubmitChatInput,
-  pendingDumpText,
-  onResolveDumpChoice,
   pendingSizeBreakdown,
   onResolveSizeBreakdown,
   onToggle,
@@ -624,35 +620,10 @@ export function ContextRail({
                 )}
               </div>
 
-              {/* Chat input — replaced by the dump chooser when a typed
-                  message reads as a brain dump. */}
+              {/* Chat input — replaced by the "break it down?" chooser after a
+                  big task was created. */}
               <div className="border-t border-[color:var(--color-border-faint)] px-4 py-3">
-                {pendingDumpText ? (
-                  <div className="flex flex-col gap-2.5">
-                    <p className="text-[12.5px] leading-snug text-(--color-text-secondary)">
-                      Should I build this into your graph, or just talk it through?
-                    </p>
-                    <p className="line-clamp-2 rounded-md border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.025)] px-3 py-2 text-[12px] italic text-(--color-text-muted)">
-                      {pendingDumpText}
-                    </p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onResolveDumpChoice?.("dump")}
-                        className="flex-1 rounded-full border border-[rgba(213,58,71,0.55)] bg-[rgba(213,58,71,0.95)] px-4 py-2 text-[12.5px] font-semibold text-white"
-                      >
-                        Add to my graph
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onResolveDumpChoice?.("chat")}
-                        className="flex-1 rounded-full border border-[rgba(255,255,255,0.12)] bg-transparent px-4 py-2 text-[12.5px] font-semibold text-(--color-text-secondary)"
-                      >
-                        Just chatting
-                      </button>
-                    </div>
-                  </div>
-                ) : pendingSizeBreakdown ? (
+                {pendingSizeBreakdown ? (
                   <div className="flex flex-col gap-2.5">
                     <p className="text-[12.5px] leading-snug text-(--color-text-secondary)">
                       This looks like a big task — more than one sitting. Have AI break it down?

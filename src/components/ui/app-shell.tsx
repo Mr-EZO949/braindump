@@ -438,9 +438,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [activeRailTab, setActiveRailTab] = useState<RailTab>("details");
   const [railChatInput, setRailChatInput] = useState("");
-  // When a chat message looks like a brain dump, we hold it here and show an
-  // inline "Brain dump / Just chatting" chooser instead of routing silently.
-  const [pendingDumpText, setPendingDumpText] = useState<string | null>(null);
   // When a freshly-created task looks like a multi-session project, we hold it
   // here and show an inline "break it down?" chooser in the chat rail (the
   // sizing layer — see lib/ai/sizing.ts).
@@ -2668,6 +2665,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       } | null;
     },
     workspaceId: string | null,
+    continueThread: boolean,
   ) => {
     const priorityAction = data.priority_update
       ? appliedActionFromPayload({ ...data.priority_update, tool_name: "update_priorities" })
@@ -2700,42 +2698,48 @@ export function AppShell({ initialUser }: AppShellProps) {
     const nothing =
       !changedGraph && card.questions.length === 0 && !priorityAction && !commitmentAction && !waiting;
 
-    // #18: a dump starts a FRESH chat thread (the previous one is auto-saved).
     const nowIso = new Date().toISOString();
     const turnMessageId = `chat-turn-${Math.random().toString(36).slice(2, 10)}`;
-    flushPendingChatSave();
-    setChatSessionId(null);
-    chatSessionIdRef.current = null;
-    setChatScope(createWorkspaceScope(workspaceName));
-    setChatMessages([
-      {
-        id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
-        role: "user" as const,
-        body: rawText,
-        createdAt: nowIso,
-        status: "ready" as const,
-      },
-      {
-        id: turnMessageId,
-        role: "assistant" as const,
-        body: turn.reply ?? (nothing ? "I went through that and found nothing to add or change." : ""),
-        createdAt: nowIso,
-        status: "ready" as const,
-        turn: card,
-        ...(priorityAction ? { appliedAction: { ...priorityAction, status: "applied" as const } } : {}),
-        ...(waiting
-          ? {
-              pendingAction: {
-                runId: waiting.run_id,
-                toolUseId: waiting.tool_use_id,
-                toolName: waiting.tool_name,
-                toolInput: waiting.tool_input,
-                status: "awaiting" as const,
-              },
-            }
-          : {}),
-      },
-    ]);
+    const turnMessage: ChatMessage = {
+      id: turnMessageId,
+      role: "assistant" as const,
+      body: turn.reply ?? (nothing ? "I went through that and found nothing to add or change." : ""),
+      createdAt: nowIso,
+      status: "ready" as const,
+      turn: card,
+      ...(priorityAction ? { appliedAction: { ...priorityAction, status: "applied" as const } } : {}),
+      ...(waiting
+        ? {
+            pendingAction: {
+              runId: waiting.run_id,
+              toolUseId: waiting.tool_use_id,
+              toolName: waiting.tool_name,
+              toolInput: waiting.tool_input,
+              status: "awaiting" as const,
+            },
+          }
+        : {}),
+    };
+    if (continueThread) {
+      setChatMessages((prev) => [...prev, turnMessage]);
+    } else {
+      // #18: a dump from the Brain Dump box starts a FRESH chat thread (the
+      // previous one is auto-saved).
+      flushPendingChatSave();
+      setChatSessionId(null);
+      chatSessionIdRef.current = null;
+      setChatScope(createWorkspaceScope(workspaceName));
+      setChatMessages([
+        {
+          id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
+          role: "user" as const,
+          body: rawText,
+          createdAt: nowIso,
+          status: "ready" as const,
+        },
+        turnMessage,
+      ]);
+    }
     dumpInChatRef.current = true;
     setRightPanelOpen(true);
     setActiveRailTab("chat");
@@ -2796,9 +2800,12 @@ export function AppShell({ initialUser }: AppShellProps) {
       } | null;
     },
     workspaceId: string | null,
+    // From the chat composer: the dump continues the current thread (its
+    // message is already shown) instead of opening a fresh one.
+    opts?: { continueThread?: boolean },
   ) => {
     if (data.turn) {
-      await applyDumpTurn(rawText, data.turn, data, workspaceId);
+      await applyDumpTurn(rawText, data.turn, data, workspaceId, opts?.continueThread ?? false);
       return;
     }
     const nodes = data.proposed_nodes ?? [];
@@ -2976,12 +2983,33 @@ export function AppShell({ initialUser }: AppShellProps) {
     showToast(`Removed ${removedIds.size} item${removedIds.size === 1 ? "" : "s"}.`);
   };
 
-  // Dump submitted from the chat composer (after the user picked "Brain
-  // dump" in the chooser). Same extraction pipeline as the button.
+  // A dump typed in the chat composer: the same turn as the Brain Dump box —
+  // one reply and one card — but it continues THIS thread, and the reply sees
+  // the conversation so far.
   const submitDumpFromChat = async (text: string) => {
     const trimmed = text.trim();
     const targetWorkspaceId = selectedWorkspaceId;
-    if (!trimmed || !targetWorkspaceId) return;
+    if (!trimmed || !targetWorkspaceId || chatSendingRef.current) return;
+    chatSendingRef.current = true;
+    const history = chatMessages
+      .filter((m) => m.status !== "error" && m.body.trim().length > 0)
+      .slice(-6)
+      .map((m) => ({ role: m.role, body: m.body.slice(0, 600) }));
+    setRightPanelOpen(true);
+    setActiveRailTab("chat");
+    setChatMessages((prev) => [...prev, createUserChatMessage(trimmed)]);
+    setChatLoading(true);
+    const fail = (body: string) =>
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `chat-err-${Math.random().toString(36).slice(2, 10)}`,
+          role: "assistant" as const,
+          body,
+          createdAt: new Date().toISOString(),
+          status: "error" as const,
+        },
+      ]);
     try {
       const res = await fetch("/api/entries", {
         method: "POST",
@@ -2990,54 +3018,23 @@ export function AppShell({ initialUser }: AppShellProps) {
           raw_text: trimmed,
           workspace_id: targetWorkspaceId,
           auto_apply: readAutoApplyPreference(),
+          history,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        proposed_nodes?: ProposedNode[];
-        clarifying_questions?: string[];
-        completed_existing_node_titles?: string[];
+      const data = (await res.json().catch(() => ({}))) as Parameters<typeof applyDumpExtraction>[1] & {
         error?: string;
         message?: string;
       };
-      if (!res.ok && res.status !== 207) {
-        const nowIso = new Date().toISOString();
-        setChatMessages((prev) => [
-          ...prev,
-          {
-            id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
-            role: "user" as const,
-            body: trimmed,
-            createdAt: nowIso,
-            status: "ready" as const,
-          },
-          {
-            id: `chat-err-${Math.random().toString(36).slice(2, 10)}`,
-            role: "assistant" as const,
-            body:
-              data.error ??
-              data.message ??
-              "I couldn't process that as a dump. Try again or rephrase it.",
-            createdAt: nowIso,
-            status: "error" as const,
-          },
-        ]);
-        setRightPanelOpen(true);
-        setActiveRailTab("chat");
+      if (!res.ok || res.status === 207) {
+        fail(data.error ?? data.message ?? "I couldn't work through that just now. Try again or rephrase it.");
         return;
       }
-      await applyDumpExtraction(trimmed, data, targetWorkspaceId);
+      await applyDumpExtraction(trimmed, data, targetWorkspaceId, { continueThread: true });
     } catch {
-      const nowIso = new Date().toISOString();
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: `chat-err-${Math.random().toString(36).slice(2, 10)}`,
-          role: "assistant" as const,
-          body: "Network error processing that dump. Try again.",
-          createdAt: nowIso,
-          status: "error" as const,
-        },
-      ]);
+      fail("Network error processing that. Try again.");
+    } finally {
+      chatSendingRef.current = false;
+      setChatLoading(false);
     }
   };
 
@@ -4481,21 +4478,15 @@ export function AppShell({ initialUser }: AppShellProps) {
           onSubmitChatInput={(message) => {
             const trimmed = message.trim();
             if (!trimmed) return;
-            // Two-stage detection so most chat messages incur ZERO AI cost:
-            //   1. Cheap client-side regex (looksLikeBrainDump) gates everything.
-            //   2. Only when it fires do we ask Haiku to confirm it's actually
-            //      a dump (vs a multi-clause question that happens to look
-            //      dump-like). Classifier failures fail-safe to "yes, dump"
-            //      so the chooser still shows and we never silently swallow
-            //      a real dump.
-            if (
-              pendingDumpText === null &&
-              !chatLoading &&
-              looksLikeBrainDump(trimmed)
-            ) {
+            // A message that reads like a brain dump is ONE turn in this
+            // thread — reply + card, the same as the Brain Dump box
+            // (docs/unified-turn.md); there is no "dump or chat?" chooser any
+            // more. The cheap regex gates; Haiku confirms (~$0.0004) so a
+            // multi-clause question doesn't pay for a graph-builder call.
+            if (!chatLoading && looksLikeBrainDump(trimmed)) {
               setRailChatInput("");
               void (async () => {
-                let isDump = true; // fail-safe default
+                let isDump = true; // fail-safe: a dump turn also answers questions
                 try {
                   const res = await fetch("/api/assistant/classify-dump", {
                     method: "POST",
@@ -4507,30 +4498,14 @@ export function AppShell({ initialUser }: AppShellProps) {
                     isDump = data.is_dump !== false;
                   }
                 } catch {
-                  // Network error: keep the fail-safe (treat as dump).
+                  // Network error: keep the fail-safe.
                 }
-                if (isDump) {
-                  setPendingDumpText(trimmed);
-                  setRightPanelOpen(true);
-                  setActiveRailTab("chat");
-                } else {
-                  void submitMessage(trimmed);
-                }
+                if (isDump) void submitDumpFromChat(trimmed);
+                else void submitMessage(trimmed);
               })();
               return;
             }
             void submitMessage(message);
-          }}
-          pendingDumpText={pendingDumpText}
-          onResolveDumpChoice={(choice) => {
-            const text = pendingDumpText;
-            setPendingDumpText(null);
-            if (!text) return;
-            if (choice === "chat") {
-              void submitMessage(text);
-              return;
-            }
-            void submitDumpFromChat(text);
           }}
           pendingSizeBreakdown={pendingSizeBreakdown}
           onResolveSizeBreakdown={handleResolveSizeBreakdown}
