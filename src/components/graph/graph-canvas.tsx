@@ -1435,8 +1435,6 @@ function getEdgeVisualStyle(
 function getNodeVisualState(options: {
   archived: boolean;
   completed: boolean;
-  /** Paused, or under a paused parent ("waiting for the result"). */
-  held: boolean;
   hovered: boolean;
   inHoveredNeighborhood: boolean;
   inSelectedNeighborhood: boolean;
@@ -1448,7 +1446,6 @@ function getNodeVisualState(options: {
   const {
     archived,
     completed,
-    held,
     hovered,
     inHoveredNeighborhood,
     inSelectedNeighborhood,
@@ -1575,21 +1572,6 @@ function getNodeVisualState(options: {
       shadowOpacity: isLight ? 0.19 : 0.16,
       text: TEXT_COMPLETED,
       topSheenOpacity: sheen(0.18),
-    };
-  }
-
-  if (held) {
-    // Ranking v2: on hold (waiting for a result, parked) — still readable and
-    // clickable, but visibly stepped back, alongside the smaller score size.
-    return {
-      border: borderToken(0.07),
-      surfaceTintOpacity: 0.12,
-      glowOpacity: 0,
-      heatOpacity: 0,
-      opacity: 0.55,
-      shadowOpacity: 0.12,
-      text: TEXT_DIM,
-      topSheenOpacity: sheen(0.24),
     };
   }
 
@@ -1730,19 +1712,6 @@ export function GraphCanvas({
     [graphData],
   );
 
-  // Paused nodes and everything under them — drawn stepped back (ranking v2).
-  const heldNodeIds = useMemo(() => {
-    const held = new Set<string>();
-    const walk = (nodeId: string) => {
-      if (held.has(nodeId)) return;
-      held.add(nodeId);
-      for (const child of childrenByParent.get(nodeId) ?? []) walk(child);
-    };
-    for (const node of graphData.nodes) {
-      if (node.status === "paused") walk(node.id);
-    }
-    return held;
-  }, [childrenByParent, graphData.nodes]);
 
   // This week's check-ins per habit, for the cadence dots.
   const habitWeekDone = useHabitWeekProgress(graphData.nodes);
@@ -2957,7 +2926,6 @@ export function GraphCanvas({
             const visual = getNodeVisualState({
               archived: node.status === "archived",
               completed: node.status === "completed",
-              held: heldNodeIds.has(node.id) && node.status !== "completed" && node.status !== "archived",
               hovered,
               inHoveredNeighborhood,
               inSelectedNeighborhood,
@@ -2981,7 +2949,9 @@ export function GraphCanvas({
             const badgeY = Math.min(-node.height / 2, initialY - node.fontSize * 0.82 - 9.5);
             const isBig = BREAKDOWN_TYPES.has(node.node_type);
             const isTask = node.node_type === "task";
-            const isActiveTask = isTask && node.status === "active";
+            // A task waiting on something (status "paused") looks like any
+            // open task — waiting only lowers its rank, i.e. its size.
+            const isOpenTask = isTask && (node.status === "active" || node.status === "paused");
             const nodeRadius = isBig
               ? clamp(node.height * 0.24, 12, 22)
               : Math.min(node.width, node.height) * 0.44;
@@ -3019,7 +2989,7 @@ export function GraphCanvas({
                     ? 0.2
                     : 0.16
               : visual.surfaceTintOpacity * 1.25;
-            const actionWashOpacity = isActiveTask
+            const actionWashOpacity = isOpenTask
               ? selected
                 ? 0.28
                 : hovered
@@ -3035,9 +3005,9 @@ export function GraphCanvas({
             // A second rank channel: gently dim the low-importance tail so the
             // eye is pulled toward high-priority nodes. State opacities
             // (selected / hovered / searchHit / completed / archived / dimmed)
-            // still win — we only reshape the "normal active" band.
+            // still win — we only reshape the open (active or waiting) band.
             const priorityOpacity =
-              node.status === "active" &&
+              (node.status === "active" || node.status === "paused") &&
               !selected &&
               !hovered &&
               !searchHit &&
@@ -3106,7 +3076,7 @@ export function GraphCanvas({
                     />
                     <stop offset="100%" stopColor={rgba(categoryColor, 0)} />
                   </linearGradient>
-                  {isActiveTask ? (
+                  {isOpenTask ? (
                     <linearGradient id={actionWashId} x1="0" x2="1" y1="0" y2="1">
                       <stop offset="0%" stopColor={rgba(theme === "light" ? "#e8acaa" : "#c44150", actionWashOpacity * 1.12)} />
                       <stop offset="38%" stopColor={rgba(theme === "light" ? "#e9c1b7" : "#92293a", actionWashOpacity * 0.8)} />
@@ -3160,7 +3130,7 @@ export function GraphCanvas({
                         ? "url(#node-completed-surface)"
                         : isBig
                           ? "url(#node-big-task-surface)"
-                          : isActiveTask
+                          : isOpenTask
                             ? "url(#node-task-surface)"
                           : isArea && theme === "light"
                             ? "url(#node-area-surface)"
@@ -3170,14 +3140,14 @@ export function GraphCanvas({
                     height={node.height}
                     rx={nodeRadius}
                     stroke={
-                      isActiveTask && !selected && !hovered && !searchHit
+                      isOpenTask && !selected && !hovered && !searchHit
                         ? theme === "light" ? "#d59e9e" : "#9c5867"
                         : isArea && !selected && !hovered && !searchHit
                           ? rgba(categoryColor, theme === "light" ? 0.5 : 0.7)
                           : visual.border
                     }
                     strokeDasharray={isIdea ? "5 4" : undefined}
-                    strokeWidth={selected ? 1.55 : hovered ? 1.2 : isArea || isActiveTask ? 1.2 : 1}
+                    strokeWidth={selected ? 1.55 : hovered ? 1.2 : isArea || isOpenTask ? 1.2 : 1}
                     width={node.width}
                     x={-node.width / 2}
                     y={-node.height / 2}
@@ -3191,7 +3161,7 @@ export function GraphCanvas({
                     x={-(node.width - 12) / 2}
                     y={-node.height / 2 + 3}
                   />
-                  {isActiveTask ? (
+                  {isOpenTask ? (
                     <rect
                       fill={`url(#${actionWashId})`}
                       height={node.height - 2}
@@ -3258,7 +3228,7 @@ export function GraphCanvas({
                       </text>
                     </g>
                   ) : null}
-                  {isActiveTask && !skipLabel ? (
+                  {isOpenTask && !skipLabel ? (
                     <g
                       style={{ pointerEvents: "none" }}
                       transform={`translate(${-node.width / 2 + 13}, ${-node.height / 2 + 3})`}
@@ -3414,7 +3384,7 @@ export function GraphCanvas({
                       fontSize={isArea ? node.fontSize * 0.82 : node.fontSize}
                       // Objectives carry a heavier title than task pills — the
                       // "weight" half of the size-&-weight distinction (#3).
-                      fontWeight={isCompleted && theme === "light" ? 610 : isObjective ? 680 : isActiveTask ? 660 : isBig ? 640 : isArea ? 500 : 540}
+                      fontWeight={isCompleted && theme === "light" ? 610 : isObjective ? 680 : isOpenTask ? 660 : isBig ? 640 : isArea ? 500 : 540}
                       letterSpacing={isArea ? "0.08em" : "-0.02em"}
                       textAnchor="middle"
                       textDecoration={isCompleted ? "line-through" : undefined}
