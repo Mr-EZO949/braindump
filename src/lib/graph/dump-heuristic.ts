@@ -77,19 +77,6 @@ export function looksLikeRestructure(text: string): boolean {
   return RESHAPE.test(t) || BELONGS.test(t);
 }
 
-// Does the text have a human part — a feeling, a bit of venting, a question
-// to the assistant — next to whatever it lists? Never a route: it only decides
-// whether a brain dump also gets a short reply (lib/ai/dump-reply.ts). A miss
-// costs nothing but that reply; a false hit costs one small call that answers
-// "nothing to say".
-export function looksConversational(text: string): boolean {
-  const t = text.toLowerCase();
-  if (t.includes("?")) return true;
-  return /\b(idk|i don'?t know|dunno|not sure|no idea|honestly|tbh|ugh|rough|tired|exhausted|drained|overwhelm\w*|stress\w*|anxious|anxiety|behind on|falling behind|stuck|scared|worried|nervous|burn(ed|t) ?out|i feel|feeling|can'?t (focus|keep up|seem|even)|too much|too thin|what (do|would|should) (you|i)|should i|help me|if you were me|am i)\b/.test(
-    t,
-  );
-}
-
 // Active projects and big tasks with no children — candidates for a "want a
 // roadmap?" / "break it down?" nudge. A child belongs_to a parent (edge: source=child, target=parent),
 // so a childless project is never the target of an active belongs_to edge.

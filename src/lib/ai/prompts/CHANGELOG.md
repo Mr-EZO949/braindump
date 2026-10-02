@@ -175,7 +175,13 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Brain-dump side reads (`dump-priorities.ts`, `dump-reply.ts`)
 
-### dump-reply-v1 (current) — the human half of a dump (2026-10-01)
+### dump-reply-v2 (current) — every dump is read; a verdict line first (2026-10-02)
+- The word filter (`looksConversational`) is gone: every dump gets the read (~$0.001), so a dump that only tells about the day ("long day, the 8am got cancelled…") gets its one sentence too. The model now writes a verdict on the first line — `NONE` (only items, dates, updates, instructions) · `ACK` (vents, ask nothing) · `ANSWER` (asks you something) · `BOTH` — then the reply. An acknowledgement gives no advice and names nothing they didn't mention; an answer answers in their terms ("money or exams?" → which one, and why). What they say they finished in this dump is never suggested as still to do (the plate is read before the builder applies it).
+- Length is enforced in `parseDumpReply`, not asked for only: ACK keeps its first sentence; ANSWER/BOTH stop at the last whole sentence within 60 words, never before the answer's first sentence.
+- Why: the owner's pure-venting dumps in the Brain Dump box got "found nothing to add or change"; v1 replies ran ~70 words.
+- Eval (5 synthetic dumps, a 10-item plate). Without the verdict line, the prompt alone answered an items-only dump, gave unasked advice after venting twice, and named a problem set the user had just finished. With it: day story → one sentence (21 words); items only → NONE; "money or exams?" → "Exams come first — Probability 2 … the reselling shifts are open-ended and can wait"; vent + "what would you drop?" → acknowledgement + drop Italian and reselling (no deadline); "mom's visiting, finished the CV" → NONE. $0.0049 per round of 5, two rounds.
+
+### dump-reply-v1 — the human half of a dump (2026-10-01)
 - New. A small Haiku read, run next to the graph builder only when the dump has a human part (`looksConversational`: a "?", venting or feeling words), answers it in 1–3 sentences above the dump's card: acknowledge what they said with their own specifics; answer a direct question ("what would you drop?") from what is on their plate (top-ranked work items with dates and holds); never describe the graph changes (the card does). `NONE` → no reply.
 - Why: `docs/unified-turn.md` phase 3. Until now a dump's question came back as a "clarifying question" in a modal and nobody answered it.
 - Eval (the mixed dump, 2 runs): both acknowledged the 4 hours of sleep and answered with a concrete drop (Italian crash course — no deadline; Clothes Reselling — no deadline, no steps). $0.0012–0.0013, ~2 s, in parallel with the builder. Replies ran ~70 words against the 55 asked.

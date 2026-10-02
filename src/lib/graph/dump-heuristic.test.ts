@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { looksConversational, looksLikeBreakdownAsk, looksLikeRestructure } from "./dump-heuristic";
+import { looksLikeBreakdownAsk, looksLikeRestructure } from "./dump-heuristic";
 
 describe("looksLikeBreakdownAsk (the one Sonnet chat turn)", () => {
   it.each([
@@ -70,25 +70,5 @@ describe("looksLikeRestructure (hint + retrieval, never a route)", () => {
     "how should i structure my thesis?",
   ])("leaves alone: %s", (msg) => {
     expect(looksLikeRestructure(msg)).toBe(false);
-  });
-});
-
-describe("looksConversational (does a dump also get a reply?)", () => {
-  it.each([
-    "ok honestly today was rough, slept like 4 hours. did the gym. need to email the prof",
-    "finished the report. what would you drop if you were me?",
-    "idk if i'm spreading myself too thin. stats midterm oct 20",
-    "feeling behind on everything, need to review chapters 1-4",
-    "should i take the internship or finish the thesis first",
-  ])("yes: %s", (text) => {
-    expect(looksConversational(text)).toBe(true);
-  });
-
-  it.each([
-    "did the gym, finished the TA shift, call with Abdo moved to friday, need to email the prof",
-    "stats midterm is oct 20, review chapters 1-4 and do two practice exams",
-    "braindump should be its own project with testing and marketing in it",
-  ])("no: %s", (text) => {
-    expect(looksConversational(text)).toBe(false);
   });
 });
