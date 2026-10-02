@@ -377,9 +377,24 @@ export interface DumpTurn {
     parent_title: string | null;
   }>;
   done: string[];
-  links: Array<{ source_title: string; target_title: string; edge_type: string }>;
+  // removed: a link the turn took away ("A and B aren't related").
+  links: Array<{ source_title: string; target_title: string; edge_type: string; removed?: boolean }>;
   // Things the builder or the priority read could not settle.
   questions: string[];
+  // How to put back each applied section (lib/graph/change-undo.ts steps).
+  undo?: TurnUndo;
+}
+
+// What a turn applied at once, for its card (a chat message's or a dump's;
+// the dump's reply travels separately).
+export type TurnApplied = Omit<DumpTurn, "reply">;
+
+// Undo steps per section of a turn's card. Typed loosely here (types/ stays
+// free of lib imports); lib/graph/change-undo.ts parses them on the way back.
+export interface TurnUndo {
+  added: unknown[];
+  done: unknown[];
+  links: unknown[];
 }
 
 // An edit to an EXISTING node the builder asks for alongside the nodes it adds

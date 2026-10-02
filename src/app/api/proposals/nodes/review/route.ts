@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
 
       // target_date carries through from the proposal to the canonical node
       // unchanged. Validation already ensured the field is YYYY-MM-DD or null,
-      // and the user can edit it post-accept via update_node / the form.
+      // and the user can edit it post-accept via chat or the form.
       const targetDate = (proposal.proposed_target_date as string | null) ?? null;
 
       // Auto-complete marker — the entries route sets source_span to

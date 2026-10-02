@@ -39,6 +39,9 @@ export interface ToolContext {
   userMessage?: string;
   // Aborted when the user hits Stop: cancels a builder call in flight.
   signal?: AbortSignal;
+  // The user's "Auto-add confident items" preference (default on): off →
+  // every new node from chat waits on the card too.
+  autoApply?: boolean;
 }
 
 export interface ToolSchema {

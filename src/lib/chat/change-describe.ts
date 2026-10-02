@@ -16,6 +16,13 @@ export type ChangeOpView = {
   source_node_id?: unknown;
   target_node_id?: unknown;
   edge_type?: unknown;
+  into_node_id?: unknown;
+  target_date?: unknown;
+  summary?: unknown;
+  // Written when the card is prepared (tools/change.ts): the node's title
+  // before a rename, how many nodes a delete takes with it.
+  before_title?: unknown;
+  subtree_count?: unknown;
 };
 
 export type NameOf = (ref: unknown) => string;
@@ -31,6 +38,9 @@ export const CHANGE_KIND_GLYPH: Record<string, string> = {
   create_edge: "⇄",
   complete: "✓",
   archive: "⌫",
+  remove_edge: "⊘",
+  delete_node: "✕",
+  merge: "⇉",
 };
 
 export const HIERARCHY_EDGE_TYPES = new Set(["belongs_to", "contains"]);
@@ -84,8 +94,12 @@ export function describeChange(op: ChangeOpView, nameOf: NameOf): string {
       const parts = [
         typeof op.title === "string" ? `rename to "${op.title}"` : null,
         typeof op.node_type === "string" ? `make it a ${typeLabel(op.node_type)}` : null,
+        typeof op.target_date === "string" ? (op.target_date ? `due ${op.target_date}` : "no deadline") : null,
+        typeof op.summary === "string" ? "new summary" : null,
       ].filter(Boolean);
-      return `${nameOf(op.node_id)}: ${parts.length > 0 ? parts.join(", ") : "edit"}`;
+      // After a rename the node's title IS the new one — name it by the old.
+      const name = typeof op.before_title === "string" && op.before_title ? op.before_title : nameOf(op.node_id);
+      return `${name}: ${parts.length > 0 ? parts.join(", ") : "edit"}`;
     }
     case "create_edge": {
       if (typeof op.edge_type === "string" && HIERARCHY_EDGE_TYPES.has(op.edge_type)) {
@@ -98,6 +112,17 @@ export function describeChange(op: ChangeOpView, nameOf: NameOf): string {
       return `Complete ${nameOf(op.node_id)}`;
     case "archive":
       return `Archive ${nameOf(op.node_id)}`;
+    case "remove_edge":
+      return typeof op.edge_type === "string" && op.edge_type
+        ? `Remove "${nameOf(op.source_node_id)} ${edgeLabel(op.edge_type)} ${nameOf(op.target_node_id)}"`
+        : `Unlink ${nameOf(op.source_node_id)} and ${nameOf(op.target_node_id)}`;
+    case "delete_node": {
+      const under = typeof op.subtree_count === "number" && op.subtree_count > 0 ? op.subtree_count : 0;
+      const name = typeof op.before_title === "string" && op.before_title ? op.before_title : nameOf(op.node_id);
+      return `Delete ${name} for good${under > 0 ? ` with the ${under} under it` : ""} — no undo`;
+    }
+    case "merge":
+      return `Merge ${nameOf(op.node_id)} into ${nameOf(op.into_node_id)}`;
     default:
       return kind || "(unknown)";
   }

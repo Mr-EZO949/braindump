@@ -1,8 +1,9 @@
-// One writer for AI graph changes. Whatever tool the change arrives through
-// (propose_node, propose_nodes_batch, propose_changes_batch), a new node must
-// come out as the same rows with the same follow-up work — the embedding, the
-// accept event, the judgment. The model calls and the status engine are mocked:
-// this is about what gets written.
+// One writer for AI graph changes. Whatever door a change comes through —
+// chat's change tool (applied at once, or accepted on its card) or a change
+// set applied directly — a new node must come out as the same rows with the
+// same follow-up work: the embedding, the accept event, the judgment. And
+// every change it makes can be put back (change-undo.ts). The model calls and
+// the status engine are mocked: this is about what gets written.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -40,6 +41,12 @@ vi.mock("@/lib/ai/clustering", () => ({
 
 const transitions: Array<{ nodeId: string; newStatus: string }> = [];
 vi.mock("@/lib/graph/status-transition", () => ({
+  VALID_TRANSITIONS: {
+    active: ["completed", "paused", "archived"],
+    completed: ["active", "archived"],
+    paused: ["active", "completed", "archived"],
+    archived: ["active"],
+  },
   transitionNodeStatus: vi.fn(async (params: { nodeId: string; newStatus: string }) => {
     transitions.push({ nodeId: params.nodeId, newStatus: params.newStatus });
     return { kind: "changed", previousStatus: "active", autoCompletedNodeIds: [], newlyAvailable: [] };
@@ -47,9 +54,11 @@ vi.mock("@/lib/graph/status-transition", () => ({
 }));
 
 import { dispatchTool } from "@/lib/ai/tools";
+import { planChange } from "@/lib/ai/tools/change";
 import { createFakeSupabase, type FakeSupabase } from "@/lib/test/fake-supabase";
 
 import { applyChangeSet } from "./change-set";
+import { parseUndoSteps, undoChangeSteps } from "./change-undo";
 
 type Row = Record<string, unknown>;
 
@@ -91,6 +100,9 @@ function seed(): FakeSupabase {
       parent("e-intern", "intern", "root"),
     ],
     feedback_events: [],
+    raw_entries: [],
+    proposed_nodes: [],
+    habit_completions: [],
   });
 }
 
@@ -128,122 +140,141 @@ beforeEach(() => {
   clusterPasses = 0;
 });
 
-describe("chat tools write through the change set", () => {
-  it("propose_node: creates the node under its parent", async () => {
+describe("chat's change tool: what the user said applies, the rest waits", () => {
+  it("a stated capture, completion and link apply at once — with Undo, nothing on a card", async () => {
     const db = seed();
-    const result = await callTool(db, "propose_node", {
-      title: "Email the recruiter",
-      node_type: "task",
-      parent_node_id: "intern",
-      target_date: "2026-10-03",
-    });
+    const plan = await planChange(
+      {
+        source: "user",
+        changes: [
+          { kind: "create_node", title: "Email the recruiter", node_type: "task", parent_node_id: "intern", target_date: "2026-10-03" },
+          { kind: "complete", node_id: "bugs" },
+          { kind: "create_edge", source_node_id: "fused", target_node_id: "intern", edge_type: "useful_for" },
+        ],
+      },
+      ctxFor(db, { userMessage: "add email the recruiter, fixed the bugs, and testing helps the internship" }),
+    );
 
-    expect(result).toMatchObject({
-      accepted: true,
-      title: "Email the recruiter",
-      node_type: "task",
-      parent_edge_created: true,
-    });
-    expect(byTitle(db, "Email the recruiter")).toMatchObject({
-      node_type: "task",
-      status: "active",
-      importance_index: 50,
-      target_date: "2026-10-03",
-      workspace_id: WS,
-    });
-    expect(result.node_id).toBe(byTitle(db, "Email the recruiter")?.id);
+    expect(plan.waiting).toBeNull();
+    expect(plan.turn?.added).toEqual([
+      expect.objectContaining({ title: "Email the recruiter", node_type: "task", parent_title: "Internship in Milan" }),
+    ]);
+    expect(plan.turn?.done).toEqual(["Fix the 10 bugs"]);
+    expect(plan.turn?.links).toEqual([
+      { source_title: "Test & Market BrainDump", target_title: "Internship in Milan", edge_type: "useful_for" },
+    ]);
+    expect(plan.result).toMatchObject({ accepted: true, applied: 3 });
+    expect(byTitle(db, "Email the recruiter")).toMatchObject({ target_date: "2026-10-03" });
     expect(parentOf(db, "Email the recruiter")).toBe("Internship in Milan");
+    expect(transitions).toEqual([{ nodeId: "bugs", newStatus: "completed" }]);
+    // One undo step per applied section.
+    expect(plan.turn?.undo?.added).toHaveLength(1);
+    expect(plan.turn?.undo?.done).toHaveLength(1);
+    expect(plan.turn?.undo?.links).toHaveLength(1);
+    // The ledger: the chat message as an entry, the node as an accepted proposal.
+    expect(db.tables.raw_entries).toEqual([expect.objectContaining({ source_type: "assistant_save", status: "completed" })]);
+    expect(db.tables.proposed_nodes).toEqual([
+      expect.objectContaining({ proposed_title: "Email the recruiter", proposal_status: "accepted", accepted_node_id: byTitle(db, "Email the recruiter")?.id }),
+    ]);
   });
 
-  it("propose_node: no parent given → the workspace root", async () => {
+  it("a reorganization waits as one unit: the new parent, the move, the rename", async () => {
     const db = seed();
-    const result = await callTool(db, "propose_node", { title: "Health", node_type: "area" });
-    expect(result.accepted).toBe(true);
-    expect(parentOf(db, "Health")).toBe("ezo");
+    const plan = await planChange(
+      {
+        source: "user",
+        changes: [
+          { kind: "create_node", local_ref: "p", title: "BrainDump", node_type: "project", parent_node_id: "money" },
+          { kind: "update", node_id: "fused", title: "Test BrainDump" },
+          { kind: "move", node_id: "fused", new_parent_node_id: "p" },
+          { kind: "create_node", title: "Call the bank", node_type: "task" },
+        ],
+      },
+      ctxFor(db),
+    );
+
+    // Only the unrelated capture went in.
+    expect(plan.turn?.added.map((n) => n.title)).toEqual(["Call the bank"]);
+    expect(byTitle(db, "BrainDump")).toBeUndefined();
+    expect(byTitle(db, "Test & Market BrainDump")).toBeDefined();
+    expect(plan.waiting?.changes.map((op) => op.kind)).toEqual(["create_node", "update", "move"]);
+    // The card names the node by its title before the rename.
+    expect(plan.waiting?.changes[1]).toMatchObject({ before_title: "Test & Market BrainDump" });
   });
 
-  it("propose_node: an unknown parent is refused and nothing is written", async () => {
+  it("the assistant's own suggestion writes nothing — it all waits, marked as a suggestion", async () => {
     const db = seed();
-    const result = await callTool(db, "propose_node", {
-      title: "Lost",
-      node_type: "task",
-      parent_node_id: "nope",
-    });
-    expect(result.accepted).toBe(false);
+    const plan = await planChange(
+      {
+        source: "suggestion",
+        changes: [{ kind: "create_node", title: "Block 2h for Prob 2", node_type: "task", parent_node_id: "intern" }],
+      },
+      ctxFor(db),
+    );
+    expect(plan.turn).toMatchObject({ added: [], done: [], links: [] });
+    expect(plan.waiting).toMatchObject({ suggested: true, origin: "chat" });
+    expect(byTitle(db, "Block 2h for Prob 2")).toBeUndefined();
+    expect(db.tables.proposed_nodes).toEqual([]);
+  });
+
+  it("no source given counts as a suggestion — the safe side is a card", async () => {
+    const db = seed();
+    const plan = await planChange({ changes: [{ kind: "complete", node_id: "bugs" }] }, ctxFor(db));
+    expect(plan.waiting?.suggested).toBe(true);
+    expect(transitions).toEqual([]);
+  });
+
+  it("an id that isn't in the workspace is refused and nothing is written", async () => {
+    const db = seed();
+    const plan = await planChange(
+      {
+        source: "user",
+        changes: [{ kind: "create_node", title: "Lost", node_type: "task", parent_node_id: "nope" }],
+      },
+      ctxFor(db),
+    );
+    expect(plan.result).toMatchObject({ accepted: false });
+    expect(String(plan.result.error)).toContain("Not in this workspace");
     expect(byTitle(db, "Lost")).toBeUndefined();
   });
 
-  it("propose_nodes_batch: nests by local_ref, even when the parent is listed later", async () => {
+  it("a parent link is a move — it waits", async () => {
     const db = seed();
-    const result = await callTool(db, "propose_nodes_batch", {
-      nodes: [
-        { title: "Draft the CV", node_type: "task", parent_local_ref: "p" },
-        { local_ref: "p", title: "Internship search", node_type: "project", parent_node_id: "intern" },
-        { title: "List 10 companies", node_type: "task", parent_local_ref: "p" },
-      ],
-    });
-
-    expect(result.accepted).toBe(true);
-    expect((result.created as Row[]).map((c) => c.title)).toEqual([
-      "Draft the CV",
-      "Internship search",
-      "List 10 companies",
-    ]);
-    expect((result.created as Row[]).every((c) => c.parent_edge_created === true)).toBe(true);
-    expect(parentOf(db, "Internship search")).toBe("Internship in Milan");
-    expect(parentOf(db, "Draft the CV")).toBe("Internship search");
-    expect(parentOf(db, "List 10 companies")).toBe("Internship search");
+    const plan = await planChange(
+      {
+        source: "user",
+        changes: [{ kind: "create_edge", source_node_id: "bugs", target_node_id: "intern", edge_type: "belongs_to" }],
+      },
+      ctxFor(db),
+    );
+    expect(plan.waiting?.changes).toEqual([{ kind: "move", node_id: "bugs", new_parent_node_id: "intern" }]);
+    expect(parentOf(db, "Fix the 10 bugs")).toBe("Test & Market BrainDump");
   });
 
-  it("propose_nodes_batch: one bad item refuses the whole batch", async () => {
+  it("the accepted rows of a card apply, with their undo steps", async () => {
     const db = seed();
-    const result = await callTool(db, "propose_nodes_batch", {
-      nodes: [
-        { title: "Fine", node_type: "task" },
-        { title: "", node_type: "task" },
-      ],
-    });
-    expect(result.accepted).toBe(false);
-    expect(byTitle(db, "Fine")).toBeUndefined();
-  });
-
-  it("propose_changes_batch: a restructure lands in one go", async () => {
-    const db = seed();
-    const result = await callTool(db, "propose_changes_batch", {
+    const result = await callTool(db, "change", {
       changes: [
         { kind: "create_node", local_ref: "p", title: "BrainDump", node_type: "project", parent_node_id: "money" },
         { kind: "update", node_id: "fused", title: "Test BrainDump" },
         { kind: "move", node_id: "fused", new_parent_node_id: "p" },
-        { kind: "create_node", title: "Market BrainDump", node_type: "big_task", parent_node_id: "p" },
-        { kind: "create_edge", source_node_id: "p", target_node_id: "intern", edge_type: "useful_for" },
-        { kind: "complete", node_id: "bugs" },
       ],
+      origin: "chat",
     });
-
-    expect(result).toMatchObject({ accepted: true, applied: 6, total: 6, message: "Applied 6 changes ✓" });
-    expect(parentOf(db, "BrainDump")).toBe("Money Projects");
+    expect(result).toMatchObject({ accepted: true, applied: 3, total: 3, message: "Applied 3 changes ✓" });
     expect(parentOf(db, "Test BrainDump")).toBe("BrainDump");
-    expect(parentOf(db, "Market BrainDump")).toBe("BrainDump");
-    // The old parent link is released, not left beside the new one.
     expect(db.tables.edges.find((e) => e.id === "e-fused")?.status).toBe("orphaned");
-    const project = byTitle(db, "BrainDump");
-    expect(
-      db.tables.edges.some(
-        (e) => e.source_node_id === project?.id && e.target_node_id === "intern" && e.edge_type === "useful_for",
-      ),
-    ).toBe(true);
-    expect(transitions).toEqual([{ nodeId: "bugs", newStatus: "completed" }]);
+    expect((result.undo as unknown[]).length).toBe(3);
   });
 
-  it("propose_changes_batch: a loop is refused and reported, the rest applies", async () => {
+  it("a loop is refused and reported, the rest applies", async () => {
     const db = seed();
-    const result = await callTool(db, "propose_changes_batch", {
+    const result = await callTool(db, "change", {
       changes: [
         { kind: "move", node_id: "fused", new_parent_node_id: "bugs" },
         { kind: "update", node_id: "bugs", title: "Fix the bugs" },
       ],
     });
-
     expect(result).toMatchObject({ accepted: true, applied: 1, total: 2 });
     expect(String(result.error)).toContain("1 of 2");
     expect(parentOf(db, "Test & Market BrainDump")).toBe("Money Projects");
@@ -251,26 +282,118 @@ describe("chat tools write through the change set", () => {
   });
 });
 
+describe("Undo puts each change back", () => {
+  const undoAll = async (db: FakeSupabase, steps: unknown[]) =>
+    undoChangeSteps(ctxFor(db), parseUndoSteps(JSON.parse(JSON.stringify(steps))));
+
+  it("a new node is removed again", async () => {
+    const db = seed();
+    const outcome = await applyChangeSet(ctxFor(db), [
+      { kind: "create_node", title: "Book the flight", node_type: "task", parent_node_id: "intern" },
+    ]);
+    expect(byTitle(db, "Book the flight")).toBeDefined();
+    const result = await undoAll(db, outcome.undo.map((u) => u.step));
+    expect(result).toEqual({ undone: 1, failed: [] });
+    expect(byTitle(db, "Book the flight")).toBeUndefined();
+  });
+
+  it("a move goes back under the old parent, a rename gets its old title", async () => {
+    const db = seed();
+    const outcome = await applyChangeSet(ctxFor(db), [
+      { kind: "update", node_id: "fused", title: "Test BrainDump" },
+      { kind: "move", node_id: "fused", new_parent_node_id: "intern" },
+    ]);
+    expect(parentOf(db, "Test BrainDump")).toBe("Internship in Milan");
+    await undoAll(db, outcome.undo.map((u) => u.step));
+    expect(byTitle(db, "Test & Market BrainDump")).toBeDefined();
+    expect(parentOf(db, "Test & Market BrainDump")).toBe("Money Projects");
+  });
+
+  it("a completion reopens", async () => {
+    const db = seed();
+    const outcome = await applyChangeSet(ctxFor(db), [{ kind: "complete", node_id: "bugs" }]);
+    expect(outcome.undo.map((u) => u.step)).toEqual([{ kind: "restore_status", node_id: "bugs", status: "active" }]);
+    // The status engine is mocked: mark it done by hand, as it would.
+    db.tables.nodes.find((n) => n.id === "bugs")!.status = "completed";
+    transitions.length = 0;
+    await undoAll(db, outcome.undo.map((u) => u.step));
+    expect(transitions).toEqual([{ nodeId: "bugs", newStatus: "active" }]);
+  });
+
+  it("a link added is taken away; a link removed comes back", async () => {
+    const db = seed();
+    db.tables.edges.push({
+      id: "e-lat",
+      user_id: USER,
+      workspace_id: WS,
+      source_node_id: "bugs",
+      target_node_id: "intern",
+      edge_type: "supports",
+      status: "active",
+      explanation: "fixing bugs shows skill",
+    });
+    const added = await applyChangeSet(ctxFor(db), [
+      { kind: "create_edge", source_node_id: "money", target_node_id: "intern", edge_type: "useful_for" },
+    ]);
+    const removed = await applyChangeSet(ctxFor(db), [
+      { kind: "remove_edge", source_node_id: "intern", target_node_id: "bugs" },
+    ]);
+    expect(removed.results[0]).toMatchObject({ ok: true });
+    expect(db.tables.edges.some((e) => e.id === "e-lat")).toBe(false);
+    // The parent link of "bugs" is never touched by an unlink.
+    expect(parentOf(db, "Fix the 10 bugs")).toBe("Test & Market BrainDump");
+
+    await undoAll(db, [...added.undo, ...removed.undo].map((u) => u.step));
+    expect(db.tables.edges.some((e) => e.source_node_id === "money" && e.edge_type === "useful_for")).toBe(false);
+    expect(
+      db.tables.edges.some(
+        (e) => e.source_node_id === "bugs" && e.target_node_id === "intern" && e.edge_type === "supports" && e.status === "active",
+      ),
+    ).toBe(true);
+  });
+
+  it("an unlink with nothing to remove fails instead of claiming success", async () => {
+    const db = seed();
+    const outcome = await applyChangeSet(ctxFor(db), [
+      { kind: "remove_edge", source_node_id: "money", target_node_id: "intern" },
+    ]);
+    expect(outcome.results[0]).toMatchObject({ ok: false, error: "no link between those nodes" });
+  });
+
+  it("a delete takes the subtree, has no undo, and never takes the root", async () => {
+    const db = seed();
+    const outcome = await applyChangeSet(ctxFor(db), [{ kind: "delete_node", node_id: "money" }]);
+    expect(outcome.results[0]).toMatchObject({ ok: true, detail: "3 node(s) deleted" });
+    expect(db.tables.nodes.map((n) => n.id).sort()).toEqual(["intern", "root"]);
+    expect(outcome.undo).toEqual([]);
+
+    const root = await applyChangeSet(ctxFor(db), [{ kind: "delete_node", node_id: "root" }]);
+    expect(root.results[0]).toMatchObject({ ok: false });
+  });
+
+  it("malformed steps from the browser are dropped, not guessed at", () => {
+    expect(
+      parseUndoSteps([
+        { kind: "remove_node", node_id: "x'; drop table nodes; --" },
+        { kind: "drop_table" },
+        { kind: "restore_status", node_id: "11111111-1111-1111-1111-111111111111", status: "deleted" },
+        { kind: "restore_parent", node_id: "11111111-1111-1111-1111-111111111111", parent_id: null },
+      ]),
+    ).toEqual([{ kind: "restore_parent", node_id: "11111111-1111-1111-1111-111111111111", parent_id: null }]);
+  });
+});
+
 describe("a new node gets the same intake through every door", () => {
-  const doors: Array<[string, unknown]> = [
-    ["propose_node", { title: "Write the cover letter", node_type: "task", parent_node_id: "intern" }],
-    [
-      "propose_nodes_batch",
-      { nodes: [{ title: "Write the cover letter", node_type: "task", parent_node_id: "intern" }] },
-    ],
-    [
-      "propose_changes_batch",
-      {
-        changes: [
-          { kind: "create_node", title: "Write the cover letter", node_type: "task", parent_node_id: "intern" },
-        ],
-      },
-    ],
+  const input = { title: "Write the cover letter", node_type: "task", parent_node_id: "intern" };
+  const doors: Array<[string, (db: FakeSupabase) => Promise<unknown>]> = [
+    ["chat, applied at once", (db) => planChange({ source: "user", changes: [{ kind: "create_node", ...input }] }, ctxFor(db))],
+    ["chat, accepted on the card", (db) => callTool(db, "change", { changes: [{ kind: "create_node", ...input }] })],
+    ["a change set applied directly", (db) => applyChangeSet(ctxFor(db), [{ kind: "create_node", ...input }])],
   ];
 
-  it.each(doors)("%s", async (tool, input) => {
+  it.each(doors)("%s", async (_door, run) => {
     const db = seed();
-    await callTool(db, tool, input);
+    await run(db);
 
     const node = byTitle(db, "Write the cover letter");
     expect(node).toMatchObject({

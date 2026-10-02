@@ -1,16 +1,18 @@
-// What one brain dump came to, as ONE card under the assistant's reply
-// (docs/unified-turn.md): what was added and finished (with Undo), what
-// matters and the week (each with its own Undo), what still needs the user's
-// OK — row by row — and anything that has to be asked. Before 2026-09-30 the
-// same result was spread over a review modal, a toast, three separate chat
-// cards and a second modal.
+// What one turn came to — a brain dump or a chat message that changed the
+// graph — as ONE card under the assistant's reply (docs/unified-turn.md):
+// what was added, finished and linked (each with its own Undo), what matters
+// and the week (each with its own Undo), what still needs the user's OK —
+// row by row, with an Undo once applied — and anything that has to be asked.
+// Before 2026-09-30 a dump's result was spread over a review modal, a toast,
+// three separate chat cards and a second modal; before 2026-10-02 a chat
+// change was a different card that waited for Accept on everything.
 
 import { useState } from "react";
 
 import { AppliedActionCard } from "@/components/panel/applied-action-card";
 import { ChangeChecklist, useChangeSelection } from "@/components/panel/change-checklist";
 import { edgeLabel, isChangeList, namerFor, typeLabel, type ChangeOpView } from "@/lib/chat/change-describe";
-import type { AppliedAction, PendingAction, TurnCardData } from "@/types/chat";
+import type { AppliedAction, PendingAction, TurnAddedStatus, TurnCardData, TurnSection } from "@/types/chat";
 
 interface TurnCardProps {
   turn: TurnCardData;
@@ -20,7 +22,9 @@ interface TurnCardProps {
   pending?: PendingAction;
   disabled: boolean;
   nodeTitles?: ReadonlyMap<string, string>;
-  onUndoAdded: () => void;
+  onUndoSection: (section: TurnSection) => void;
+  // Puts back the rows the user accepted (pending.undo).
+  onUndoAccepted: () => void;
   onUndoPriorities: () => void;
   onUndoCommitments: () => void;
   onResolve: (decision: "accept" | "reject", acceptedIndexes?: number[]) => void;
@@ -37,7 +41,8 @@ export function TurnCard({
   pending,
   disabled,
   nodeTitles,
-  onUndoAdded,
+  onUndoSection,
+  onUndoAccepted,
   onUndoPriorities,
   onUndoCommitments,
   onResolve,
@@ -51,13 +56,15 @@ export function TurnCard({
   const undone = turn.addedStatus === "undone";
   const canUndo =
     (turn.addedStatus === "applied" || turn.addedStatus === "error") &&
-    turn.added.some((n) => n.proposalId);
+    ((turn.undo?.added.length ?? 0) > 0 || turn.added.some((n) => n.proposalId));
   const added = showAllAdded ? turn.added : turn.added.slice(0, ADDED_PREVIEW);
   const notes =
     pending && Array.isArray(pending.toolInput.notes)
       ? (pending.toolInput.notes as unknown[]).filter((n): n is string => typeof n === "string")
       : [];
   const awaiting = pending?.status === "awaiting";
+  // The assistant's own idea (change with source "suggestion").
+  const suggested = pending?.toolInput.suggested === true;
 
   const submitAnswer = (index: number) => {
     const answer = (drafts[index] ?? "").trim();
@@ -66,7 +73,7 @@ export function TurnCard({
   };
 
   return (
-    <div className="turn-card" role="group" aria-label="What this brain dump changed">
+    <div className="turn-card" role="group" aria-label="What this changed">
       {turn.added.length > 0 ? (
         <section className={`turn-section${undone ? " turn-section--undone" : ""}`}>
           <div className="applied-card-head">
@@ -75,7 +82,7 @@ export function TurnCard({
               {undone ? "Removed again" : `Added ${turn.added.length}`}
             </span>
             {canUndo ? (
-              <button className="applied-card-undo" onClick={onUndoAdded} type="button">
+              <button className="applied-card-undo" onClick={() => onUndoSection("added")} type="button">
                 Undo
               </button>
             ) : turn.addedStatus === "undoing" ? (
@@ -105,15 +112,20 @@ export function TurnCard({
       ) : null}
 
       {turn.done.length > 0 ? (
-        <section className="turn-section">
+        <section className={`turn-section${turn.doneStatus === "undone" ? " turn-section--reverted" : ""}`}>
           <div className="applied-card-head">
-            <span className="applied-card-mark" aria-hidden="true">✓</span>
-            <span className="applied-card-title">Marked done</span>
+            <span className="applied-card-mark" aria-hidden="true">{turn.doneStatus === "undone" ? "↺" : "✓"}</span>
+            <span className="applied-card-title">{turn.doneStatus === "undone" ? "Open again" : "Marked done"}</span>
+            <SectionUndo
+              count={turn.undo?.done.length ?? 0}
+              onUndo={() => onUndoSection("done")}
+              status={turn.doneStatus}
+            />
           </div>
           <ul className="turn-list">
             {turn.done.map((title) => (
               <li className="turn-row" key={title}>
-                <span className="turn-row-name turn-row-name--done">{title}</span>
+                <span className={`turn-row-name${turn.doneStatus === "undone" ? "" : " turn-row-name--done"}`}>{title}</span>
               </li>
             ))}
           </ul>
@@ -121,17 +133,36 @@ export function TurnCard({
       ) : null}
 
       {turn.links.length > 0 ? (
-        <section className="turn-section">
+        <section
+          className={`turn-section${
+            turn.linksStatus === "undone"
+              ? turn.links.every((l) => l.removed)
+                ? " turn-section--reverted"
+                : " turn-section--undone"
+              : ""
+          }`}
+        >
           <div className="applied-card-head">
-            <span className="applied-card-mark" aria-hidden="true">⇄</span>
-            <span className="applied-card-title">Linked</span>
+            <span className="applied-card-mark" aria-hidden="true">{turn.linksStatus === "undone" ? "↺" : "⇄"}</span>
+            <span className="applied-card-title">
+              {turn.linksStatus === "undone"
+                ? "Put back"
+                : turn.links.every((l) => l.removed)
+                  ? "Unlinked"
+                  : "Linked"}
+            </span>
+            <SectionUndo
+              count={turn.undo?.links.length ?? 0}
+              onUndo={() => onUndoSection("links")}
+              status={turn.linksStatus}
+            />
           </div>
           <ul className="turn-list">
             {turn.links.map((link, index) => (
               <li className="turn-row" key={index}>
-                <span className="turn-row-name">{link.sourceTitle}</span>
+                <span className={`turn-row-name${link.removed ? " turn-row-name--done" : ""}`}>{link.sourceTitle}</span>
                 <span className="turn-row-detail">
-                  {edgeLabel(link.edgeType)} {link.targetTitle}
+                  {link.removed ? "no longer linked to" : edgeLabel(link.edgeType)} {link.targetTitle}
                 </span>
               </li>
             ))}
@@ -152,7 +183,7 @@ export function TurnCard({
       ) : null}
 
       {pending && ops.length > 0 ? (
-        <section className="turn-section">
+        <section className={`turn-section${pending.undoStatus === "undone" ? " turn-section--reverted" : ""}`}>
           <div className="applied-card-head">
             {pending.status === "accepted" || pending.status === "applying" ? (
               <span className="applied-card-mark" aria-hidden="true">✓</span>
@@ -161,15 +192,20 @@ export function TurnCard({
             )}
             <span className="applied-card-title">
               {awaiting
-                ? `Needs your OK · ${ops.length}`
+                ? `${suggested ? "Suggested" : "Needs your OK"} · ${ops.length}`
                 : pending.status === "applying"
                   ? "Applying…"
                   : pending.status === "rejected"
                   ? "Left as it was"
                   : pending.status === "error"
                     ? "Needs your OK"
-                    : "Applied"}
+                    : pending.undoStatus === "undone"
+                      ? "Put back"
+                      : "Applied"}
             </span>
+            {pending.status === "accepted" ? (
+              <SectionUndo count={pending.undo?.length ?? 0} onUndo={onUndoAccepted} status={pending.undoStatus} />
+            ) : null}
           </div>
           <ChangeChecklist
             disabled={disabled}
@@ -261,6 +297,25 @@ export function TurnCard({
         </section>
       ) : null}
     </div>
+  );
+}
+
+// The Undo on one applied section — only while there is something to undo.
+function SectionUndo({
+  count,
+  status,
+  onUndo,
+}: {
+  count: number;
+  status?: TurnAddedStatus;
+  onUndo: () => void;
+}) {
+  if (count === 0 || status === "undone") return null;
+  if (status === "undoing") return <span className="applied-card-busy">Undoing…</span>;
+  return (
+    <button className="applied-card-undo" onClick={onUndo} type="button">
+      {status === "error" ? "Undo failed — retry" : "Undo"}
+    </button>
   );
 }
 

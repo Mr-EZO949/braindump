@@ -1,7 +1,7 @@
 // The one writer of AI graph changes. A change set is an ordered list of ops —
-// create · move · update · link · complete · archive — that may refer to nodes
-// created in the same set by local_ref. Chat's mutation tools
-// (lib/ai/tools/mutations.ts) are thin wrappers over it, so a node is the same
+// create · move · update · link · unlink · complete · archive · delete · merge —
+// that may refer to nodes created in the same set by local_ref. Chat's mutation tools
+// (lib/ai/tools/change.ts, build.ts) write through it, so a node is the same
 // object whichever tool created it, and gets the same intake as an accepted
 // brain-dump proposal (node-intake.ts). Spec: docs/unified-turn.md.
 //
@@ -11,9 +11,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { runClusteringPass } from "@/lib/ai/clustering";
+import type { RestorableFields, UndoStep } from "@/lib/graph/change-undo";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { ensureWorkspaceRoot } from "@/lib/graph/ensure-workspace-root";
 import { getWorkspaceRootId, setNodeParent } from "@/lib/graph/hierarchy";
+import { mergeNodes } from "@/lib/graph/merge";
 import { getImportanceLabel } from "@/lib/graph/importance";
 import {
   DEFAULT_IMPORTANCE_INDEX,
@@ -23,9 +25,10 @@ import {
   type IntakeNode,
 } from "@/lib/graph/node-intake";
 import { NODE_TYPES } from "@/lib/graph/node-types";
+import { getStructuralSubtree } from "@/lib/graph/structure";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { localDateISO } from "@/lib/time/local-date";
-import type { NodeStatus, NodeType } from "@/types/graph";
+import type { GraphData, NodeStatus, NodeType } from "@/types/graph";
 
 export interface ChangeContext {
   supabase: SupabaseClient;
@@ -69,6 +72,8 @@ export type ChangeOp =
       summary?: string;
       target_date?: string;
       body?: string;
+      // For the card only (tools/change.ts): the title before a rename.
+      before_title?: string;
     }
   | {
       kind: "create_edge";
@@ -78,9 +83,27 @@ export type ChangeOp =
       explanation?: string;
     }
   | { kind: "complete"; node_id: string }
-  | { kind: "archive"; node_id: string };
+  | { kind: "archive"; node_id: string }
+  // Removes the lateral links between two nodes (both directions; one type
+  // when given). A parent link is never removed this way — that is a move.
+  | { kind: "remove_edge"; source_node_id: string; target_node_id: string; edge_type?: string }
+  // Permanent: the node and everything structurally under it, like the
+  // Delete button. No Undo — the card says so.
+  | { kind: "delete_node"; node_id: string; before_title?: string; subtree_count?: number }
+  // node_id is folded into into_node_id (its links move over, it is archived).
+  | { kind: "merge"; node_id: string; into_node_id: string };
 
-export const CHANGE_KINDS = ["create_node", "move", "update", "create_edge", "complete", "archive"] as const;
+export const CHANGE_KINDS = [
+  "create_node",
+  "move",
+  "update",
+  "create_edge",
+  "remove_edge",
+  "complete",
+  "archive",
+  "delete_node",
+  "merge",
+] as const;
 
 export type OpResult =
   | { kind: string; ok: true; id?: string; detail?: string }
@@ -96,6 +119,9 @@ export interface ChangeSetOutcome {
   // One per op, in the order given.
   results: OpResult[];
   created: CreatedNode[];
+  // How to put back each op that changed something (change-undo.ts), by op
+  // index. A permanent delete and a merge have none.
+  undo: Array<{ index: number; step: UndoStep }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +271,7 @@ export async function moveNode(
     moved: true,
     node_id: nodeId,
     parent_node_id: parentId,
+    previous_parent_id: result.previousParentId ?? null,
     previous_parent_title: result.previousParentTitle,
     message: `Moved "${result.nodeTitle}" under "${result.parentTitle}" ✓`,
   };
@@ -309,7 +336,7 @@ async function hasWorkChildren(ctx: ChangeContext, nodeId: string): Promise<bool
 }
 
 // Patches title / summary / node_type / importance_index / target_date / body.
-// Shared by update_node and the "update" op (which rescores once per set).
+// The "update" op (which rescores once per set).
 export async function updateNodeFields(
   input: unknown,
   ctx: ChangeContext,
@@ -445,6 +472,124 @@ export function changeNodeStatus(
   });
 }
 
+// The undo step for a move: back under the parent it came from.
+function moveUndo(nodeId: string, moved: Record<string, unknown>): UndoStep {
+  const previous = moved.previous_parent_id;
+  return { kind: "restore_parent", node_id: nodeId, parent_id: typeof previous === "string" ? previous : null };
+}
+
+// The current values of the fields an update is about to change.
+async function fieldsBefore(
+  ctx: ChangeContext,
+  nodeId: string,
+  op: Extract<ChangeOp, { kind: "update" }>,
+): Promise<RestorableFields | null> {
+  if (!nodeId) return null;
+  const { data } = await ctx.supabase
+    .from("nodes")
+    .select("title, summary, node_type, target_date, body")
+    .eq("id", nodeId)
+    .eq("user_id", ctx.userId)
+    .eq("workspace_id", ctx.workspaceId)
+    .maybeSingle();
+  if (!data) return null;
+  const row = data as RestorableFields;
+  const fields: RestorableFields = {};
+  if (typeof op.title === "string" && row.title) fields.title = row.title;
+  if (typeof op.summary === "string") fields.summary = row.summary ?? null;
+  if (typeof op.node_type === "string" && row.node_type) fields.node_type = row.node_type;
+  if (typeof op.target_date === "string") fields.target_date = row.target_date ?? null;
+  if (typeof op.body === "string") fields.body = row.body ?? null;
+  return Object.keys(fields).length > 0 ? fields : null;
+}
+
+// Removes the active lateral links between two nodes, either direction (one
+// type when given). Returns how to put each back.
+async function removeLateralEdges(
+  ctx: ChangeContext,
+  aId: string,
+  bId: string,
+  edgeType: string | undefined,
+): Promise<{ ok: true; edges: UndoStep[] } | { ok: false; error: string }> {
+  if (!aId || !bId || aId === bId) return { ok: false, error: "two different nodes required" };
+  const type = typeof edgeType === "string" ? edgeType.toLowerCase() : "";
+  if (type && isHierarchyEdgeType(type)) {
+    return { ok: false, error: "a parent link is changed with a move, not removed" };
+  }
+  const { data, error } = await ctx.supabase
+    .from("edges")
+    .select("id, source_node_id, target_node_id, edge_type, explanation")
+    .eq("user_id", ctx.userId)
+    .eq("workspace_id", ctx.workspaceId)
+    .eq("status", "active")
+    .in("source_node_id", [aId, bId])
+    .in("target_node_id", [aId, bId]);
+  if (error) return { ok: false, error: error.message };
+  const rows = ((data ?? []) as Array<{
+    id: string;
+    source_node_id: string;
+    target_node_id: string;
+    edge_type: string;
+    explanation: string | null;
+  }>).filter(
+    (e) =>
+      e.source_node_id !== e.target_node_id &&
+      !isHierarchyEdgeType(e.edge_type) &&
+      (!type || e.edge_type === type),
+  );
+  if (rows.length === 0) return { ok: false, error: "no link between those nodes" };
+  const { error: deleteError } = await ctx.supabase
+    .from("edges")
+    .delete()
+    .in(
+      "id",
+      rows.map((e) => e.id),
+    )
+    .eq("user_id", ctx.userId);
+  if (deleteError) return { ok: false, error: deleteError.message };
+  return {
+    ok: true,
+    edges: rows.map((e) => ({
+      kind: "restore_edge" as const,
+      source_node_id: e.source_node_id,
+      target_node_id: e.target_node_id,
+      edge_type: e.edge_type,
+      explanation: e.explanation,
+    })),
+  };
+}
+
+// Deletes a node and its structural subtree — the same set the Delete button
+// removes (lib/graph/structure.ts getStructuralSubtree). Never the root.
+async function deleteSubtree(
+  ctx: ChangeContext,
+  nodeId: string,
+): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
+  const scope = { supabase: ctx.supabase, userId: ctx.userId, workspaceId: ctx.workspaceId };
+  const [{ data: nodes }, { data: edges }, rootId] = await Promise.all([
+    ctx.supabase.from("nodes").select("id").eq("user_id", ctx.userId).eq("workspace_id", ctx.workspaceId),
+    ctx.supabase
+      .from("edges")
+      .select("id, source_node_id, target_node_id, edge_type")
+      .eq("user_id", ctx.userId)
+      .eq("workspace_id", ctx.workspaceId)
+      .eq("status", "active"),
+    getWorkspaceRootId(scope),
+  ]);
+  const ids = new Set(((nodes ?? []) as Array<{ id: string }>).map((n) => n.id));
+  if (!ids.has(nodeId)) return { ok: false, error: "node not in this workspace" };
+  if (nodeId === rootId) return { ok: false, error: "the workspace root can't be deleted" };
+  const subtree = getStructuralSubtree({ nodes: nodes ?? [], edges: edges ?? [] } as unknown as GraphData, nodeId);
+  const doomed = subtree.nodeIds.filter((id) => id !== rootId);
+  const { error } = await ctx.supabase
+    .from("nodes")
+    .delete()
+    .in("id", doomed)
+    .eq("user_id", ctx.userId)
+    .eq("workspace_id", ctx.workspaceId);
+  return error ? { ok: false, error: error.message } : { ok: true, count: doomed.length };
+}
+
 // ---------------------------------------------------------------------------
 // applyChangeSet
 // Creates the new nodes first (so any op can point at them by local_ref no
@@ -465,6 +610,7 @@ export async function applyChangeSet(
   const resolveRef = (value: unknown): string =>
     typeof value === "string" && value.length > 0 ? (localRefToId.get(value) ?? value) : "";
   const rootId = workspaceRootOnce(ctx);
+  const undo: ChangeSetOutcome["undo"] = [];
   let scoresStale = false;
   let anchoredAtRoot = false;
 
@@ -511,6 +657,10 @@ export async function applyChangeSet(
     }
     const nodeId = node.id as string;
     created.push({ index: i, id: nodeId, title, summary, node_type: nodeType, parentAttached: false });
+    undo.push({
+      index: i,
+      step: { kind: "remove_node", node_id: nodeId, ...(op.ledger_id ? { ledger_id: op.ledger_id } : {}) },
+    });
     if (typeof op.local_ref === "string" && op.local_ref) localRefToId.set(op.local_ref, nodeId);
     if (targetDate) scoresStale = true;
   }
@@ -555,13 +705,17 @@ export async function applyChangeSet(
           results[i] = { kind: "move", ok: false, error: String(moved.error ?? "move failed") };
           break;
         }
-        if (moved.moved) scoresStale = true;
+        if (moved.moved) {
+          scoresStale = true;
+          undo.push({ index: i, step: moveUndo(nodeId, moved) });
+        }
         results[i] = { kind: "move", ok: true, id: nodeId, detail: String(moved.message ?? "") };
         break;
       }
 
       case "update": {
         const nodeId = resolveRef(op.node_id);
+        const before = await fieldsBefore(ctx, nodeId, op);
         const updated = await updateNodeFields(
           {
             node_id: nodeId,
@@ -581,6 +735,7 @@ export async function applyChangeSet(
           break;
         }
         if (typeof op.node_type === "string" || typeof op.target_date === "string") scoresStale = true;
+        if (before) undo.push({ index: i, step: { kind: "restore_fields", node_id: nodeId, fields: before } });
         results[i] = { kind: "update", ok: true, id: nodeId };
         break;
       }
@@ -608,7 +763,10 @@ export async function applyChangeSet(
             results[i] = { kind: "create_edge", ok: false, error: String(moved.error ?? "move failed") };
             break;
           }
-          if (moved.moved) scoresStale = true;
+          if (moved.moved) {
+            scoresStale = true;
+            undo.push({ index: i, step: moveUndo(childId, moved) });
+          }
           results[i] = { kind: "create_edge", ok: true, detail: String(moved.message ?? "") };
           break;
         }
@@ -624,9 +782,52 @@ export async function applyChangeSet(
           break;
         }
         const linked = await createLateralEdge(ctx, sourceId, targetId, edgeType, explanation);
+        if (linked.ok && !linked.alreadyExisted) {
+          undo.push({ index: i, step: { kind: "remove_edge", edge_id: linked.edgeId } });
+        }
         results[i] = linked.ok
           ? { kind: "create_edge", ok: true, id: linked.edgeId }
           : { kind: "create_edge", ok: false, error: linked.error };
+        break;
+      }
+
+      case "remove_edge": {
+        const removed = await removeLateralEdges(ctx, resolveRef(op.source_node_id), resolveRef(op.target_node_id), op.edge_type);
+        if (!removed.ok) {
+          results[i] = { kind: "remove_edge", ok: false, error: removed.error };
+          break;
+        }
+        for (const edge of removed.edges) undo.push({ index: i, step: edge });
+        results[i] = { kind: "remove_edge", ok: true, detail: `${removed.edges.length} link(s) removed` };
+        break;
+      }
+
+      case "delete_node": {
+        const nodeId = resolveRef(op.node_id);
+        const deleted = nodeId ? await deleteSubtree(ctx, nodeId) : { ok: false as const, error: "node_id required" };
+        if (!deleted.ok) {
+          results[i] = { kind: "delete_node", ok: false, error: deleted.error };
+          break;
+        }
+        scoresStale = true;
+        results[i] = { kind: "delete_node", ok: true, id: nodeId, detail: `${deleted.count} node(s) deleted` };
+        break;
+      }
+
+      case "merge": {
+        const nodeId = resolveRef(op.node_id);
+        const intoId = resolveRef(op.into_node_id);
+        if (!nodeId || !intoId || nodeId === intoId) {
+          results[i] = { kind: "merge", ok: false, error: "two different nodes required" };
+          break;
+        }
+        const merged = await mergeNodes(ctx.supabase, ctx.userId, nodeId, intoId);
+        if (!merged.ok) {
+          results[i] = { kind: "merge", ok: false, error: merged.error };
+          break;
+        }
+        scoresStale = true;
+        results[i] = { kind: "merge", ok: true, id: intoId };
         break;
       }
 
@@ -652,7 +853,20 @@ export async function applyChangeSet(
           };
           break;
         }
-        if (outcome.kind === "changed") scoresStale = true;
+        if (outcome.kind === "changed") {
+          scoresStale = true;
+          undo.push({
+            index: i,
+            step: {
+              kind: "restore_status",
+              node_id: nodeId,
+              status: outcome.previousStatus,
+              ...(outcome.autoCompletedNodeIds.length > 0 ? { also: outcome.autoCompletedNodeIds } : {}),
+            },
+          });
+        } else if (outcome.kind === "habit_logged") {
+          undo.push({ index: i, step: { kind: "unlog_habit", node_id: nodeId, date: outcome.loggedOn } });
+        }
         results[i] = {
           kind: op.kind,
           ok: true,
@@ -674,7 +888,7 @@ export async function applyChangeSet(
   if (created.length === 0) {
     // One score recompute for the whole set (each op skipped its own).
     if (scoresStale) await recomputeScores(ctx);
-    return { results, created };
+    return { results, created, undo };
   }
 
   // Intake for the new nodes — the same an accepted dump proposal gets.
@@ -713,5 +927,5 @@ export async function applyChangeSet(
     await settle();
   }
 
-  return { results, created };
+  return { results, created, undo };
 }

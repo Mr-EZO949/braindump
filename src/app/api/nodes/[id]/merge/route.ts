@@ -8,7 +8,7 @@
 //   - suggestion_id: if provided, marks the merge_suggestion as merged
 //
 // Real merge logic lives in lib/graph/merge.ts so the chat-driven
-// propose_merge tool can reuse it.
+// change tool's merge op can reuse it.
 
 import { NextRequest, NextResponse } from "next/server";
 

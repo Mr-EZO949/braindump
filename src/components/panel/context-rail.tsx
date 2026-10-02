@@ -13,11 +13,22 @@ import { PendingActionCard } from "@/components/panel/pending-action-card";
 import { AppliedActionCard } from "@/components/panel/applied-action-card";
 import { TurnCard, turnHasCard } from "@/components/panel/turn-card";
 import { ConnectionsCard } from "@/components/panel/connections-card";
+import { isChangeList } from "@/lib/chat/change-describe";
+
+// A change set's card (change, build_graph) shows inside the turn card; any
+// other card of the same turn (a question, a suggestion) shows under it.
+function isChangeSetCard(action: PendingAction | undefined): action is PendingAction {
+  return (
+    !!action &&
+    (action.toolName === "change" || action.toolName === "build_graph") &&
+    isChangeList(action.toolInput.changes)
+  );
+}
 import { HabitStreak } from "@/components/panel/habit-streak";
 import { NodeSchedule } from "@/components/panel/node-schedule";
 import { useVoiceInput } from "@/components/voice/use-voice-input";
 import { classifyTaskSize } from "@/lib/ai/sizing";
-import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, RailTab } from "@/types/chat";
+import type { ChatMessage, ChatNodeContext, ChatScope, Nudge, PendingAction, RailTab, TurnSection } from "@/types/chat";
 import type { GraphData, NodeStatus } from "@/types/graph";
 import type { ChatSessionMeta } from "@/lib/chat/sessions";
 import { NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
@@ -96,8 +107,10 @@ type ContextRailProps = {
   // slot: which applied change of the message — its own, or (brain-dump turn
   // card) the weekly commitments.
   onUndoAppliedAction: (messageId: string, slot?: "commitments") => void;
-  // Brain-dump turn card: undo what was added; answer a question it asked.
-  onUndoTurnAdded: (messageId: string) => void;
+  // A turn card: undo one applied section, or the rows accepted on a card;
+  // answer a question it asked.
+  onUndoTurnSection: (messageId: string, section: TurnSection) => void;
+  onUndoAcceptedCard: (messageId: string) => void;
   onAnswerTurnQuestion: (messageId: string, questionIndex: number, answer: string) => void;
   // A links card: the links kept (null → dismiss all).
   onResolveConnections: (messageId: string, acceptedIds: string[] | null) => void;
@@ -178,7 +191,8 @@ export function ContextRail({
   onResolvePendingAction,
   onCancelChat,
   onUndoAppliedAction,
-  onUndoTurnAdded,
+  onUndoTurnSection,
+  onUndoAcceptedCard,
   onAnswerTurnQuestion,
   onResolveConnections,
   pendingActionBusy,
@@ -533,8 +547,14 @@ export function ContextRail({
                             ) : null}
 
                             {message.turn ? (
-                              // A brain dump: everything it changed on ONE card.
-                              turnHasCard(message.turn, message.appliedAction, message.pendingAction) ? (
+                              // A brain dump or a chat change: everything it
+                              // changed on ONE card.
+                              <>
+                              {turnHasCard(
+                                message.turn,
+                                message.appliedAction,
+                                isChangeSetCard(message.pendingAction) ? message.pendingAction : undefined,
+                              ) ? (
                                 <TurnCard
                                   disabled={pendingActionBusy || chatLoading}
                                   nodeTitles={nodeTitles}
@@ -542,14 +562,28 @@ export function ContextRail({
                                   onResolve={(decision, acceptedIndexes) =>
                                     onResolvePendingAction(message.id, decision, undefined, acceptedIndexes)
                                   }
-                                  onUndoAdded={() => onUndoTurnAdded(message.id)}
+                                  onUndoAccepted={() => onUndoAcceptedCard(message.id)}
+                                  onUndoSection={(section) => onUndoTurnSection(message.id, section)}
                                   onUndoCommitments={() => onUndoAppliedAction(message.id, "commitments")}
                                   onUndoPriorities={() => onUndoAppliedAction(message.id)}
-                                  pending={message.pendingAction}
+                                  pending={isChangeSetCard(message.pendingAction) ? message.pendingAction : undefined}
                                   priorities={message.appliedAction}
                                   turn={message.turn}
                                 />
-                              ) : null
+                              ) : null}
+                              {/* A card of another kind in the same turn (a question, a suggestion). */}
+                              {message.pendingAction && !isChangeSetCard(message.pendingAction) ? (
+                                <PendingActionCard
+                                  action={message.pendingAction}
+                                  disabled={pendingActionBusy}
+                                  nodeTitles={nodeTitles}
+                                  onResolve={(decision, choice, acceptedIndexes) =>
+                                    onResolvePendingAction(message.id, decision, choice, acceptedIndexes)
+                                  }
+                                  onUndo={() => onUndoAcceptedCard(message.id)}
+                                />
+                              ) : null}
+                              </>
                             ) : (
                               <>
                                 {message.appliedAction ? (
@@ -567,6 +601,7 @@ export function ContextRail({
                                     onResolve={(decision, choice, acceptedIndexes) =>
                                       onResolvePendingAction(message.id, decision, choice, acceptedIndexes)
                                     }
+                                    onUndo={() => onUndoAcceptedCard(message.id)}
                                   />
                                 ) : null}
                               </>

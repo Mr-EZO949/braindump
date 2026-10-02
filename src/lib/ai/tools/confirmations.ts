@@ -15,10 +15,6 @@ function titlesOf(value: unknown): string[] {
     .filter((t): t is string => !!t);
 }
 
-function quoted(title: unknown): string {
-  return typeof title === "string" && title.trim() ? ` "${title.trim()}"` : "";
-}
-
 function parseResult(content: string): ToolResult {
   try {
     const parsed: unknown = JSON.parse(content);
@@ -65,7 +61,6 @@ export function confirmationFor(toolName: string, content: string): string {
   if (typeof result.message === "string" && result.message.trim()) return result.message.trim();
 
   switch (toolName) {
-    case "complete_node":
     case "mark_task_done": {
       if (result.habit_logged) return "Logged for today ✓";
       if (result.already_completed) return "That was already done ✓";
@@ -74,20 +69,6 @@ export function confirmationFor(toolName: string, content: string): string {
         ? `Done ✓ That unblocks: ${unblocked.slice(0, 3).join(", ")}.`
         : "Done ✓";
     }
-    case "archive_node":
-      return "Archived ✓";
-    case "update_node":
-      return "Updated ✓";
-    case "propose_node":
-      return `Added${quoted(result.title)} ✓`;
-    case "propose_nodes_batch": {
-      const n = Array.isArray(result.created) ? result.created.length : Number(result.created_count);
-      return Number.isFinite(n) && n > 0 ? `Added ${n} items ✓` : "Added ✓";
-    }
-    case "propose_edge":
-      return "Connected ✓";
-    case "propose_merge":
-      return "Merged ✓";
     case "add_task_to_calendar":
       return "Added to your calendar ✓";
     case "reschedule_task":

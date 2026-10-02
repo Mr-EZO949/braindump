@@ -16,20 +16,21 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { applyChangeSet, type ChangeContext, type ChangeOp } from "@/lib/graph/change-set";
-import type { DumpTurn } from "@/types/ai";
+import type { UndoStep } from "@/lib/graph/change-undo";
+import type { DumpTurn, TurnUndo } from "@/types/ai";
 
-import { loadCalibrationStats, selectAutoApply } from "./auto-apply";
+import { loadCalibrationStats, selectAutoApply, type AutoApplyCandidate } from "./auto-apply";
 import { builderToOps } from "./builder-ops";
 import { saveProposalRows, type BuilderSuccess } from "./extraction";
 import { resolveRefs, splitByPolicy } from "./turn-policy";
-
-const UUID = /^[0-9a-fA-F-]{36}$/;
 
 export interface DumpChanges {
   // Applied already — what the card shows under "Added" / "Done" / "Linked".
   added: DumpTurn["added"];
   done: string[];
   links: DumpTurn["links"];
+  // How to put each of those sections back (change-undo.ts).
+  undo: TurnUndo;
   // Waiting for the user: a change set that stands on its own.
   waiting: ChangeOp[];
   notes: string[];
@@ -42,10 +43,123 @@ function refsOf(op: ChangeOp): string[] {
     case "move":
       return [op.node_id, op.new_parent_node_id ?? ""];
     case "create_edge":
+    case "remove_edge":
       return [op.source_node_id, op.target_node_id];
+    case "merge":
+      return [op.node_id, op.into_node_id];
     default:
       return [op.node_id];
   }
+}
+
+// One turn's change set, whichever box it came from (a dump, a chat message,
+// build_graph): what this user reliably accepts is applied now — with Undo —
+// and the rest is returned to wait on the card.
+export async function applyTurnChanges(params: {
+  ctx: ChangeContext;
+  // Creates carry ledger_id when they have a ledger row.
+  ops: ChangeOp[];
+  // The ledger rows of the creates (the calibration reads their class).
+  ledger: Array<AutoApplyCandidate>;
+  // Ledger rows that must wait whatever the calibration says (possible duplicates).
+  held: ReadonlySet<string>;
+  // The user's "Auto-add confident items" preference.
+  autoApply: boolean;
+  source: "chat" | "dump";
+}): Promise<Omit<DumpChanges, "notes">> {
+  const { ctx, ops } = params;
+  const { supabase, userId, workspaceId } = ctx;
+
+  // 1 · Which new nodes this user reliably accepts.
+  const autoRefs = new Set<string>();
+  if (params.autoApply && params.ledger.length > 0) {
+    try {
+      const stats = await loadCalibrationStats(supabase, userId);
+      const autoIds = new Set(selectAutoApply({ proposals: params.ledger, heldIds: new Set(params.held), stats }));
+      for (const row of params.ledger) if (row.local_ref && autoIds.has(row.id)) autoRefs.add(row.local_ref);
+    } catch (err) {
+      console.warn("[turn] auto-apply selection failed — everything goes on the card:", err);
+    }
+  }
+
+  // 2 · Apply what is safe; the rest waits.
+  const { now, ask } = splitByPolicy(ops, autoRefs);
+  const outcome =
+    now.length > 0
+      ? await applyChangeSet(ctx, now, { source: params.source })
+      : { results: [], created: [], undo: [] };
+
+  const refToId = new Map<string, string>();
+  const createdByIndex = new Map(outcome.created.map((node) => [node.index, node]));
+  now.forEach((op, index) => {
+    const node = createdByIndex.get(index);
+    if (node && op.kind === "create_node" && op.local_ref) refToId.set(op.local_ref, node.id);
+  });
+
+  // Names for the card: every existing node an op mentions, in one read.
+  const titleByRef = new Map<string, string>();
+  for (const op of ops) if (op.kind === "create_node" && op.local_ref) titleByRef.set(op.local_ref, op.title);
+  const localRefs = new Set(ops.flatMap((op) => (op.kind === "create_node" && op.local_ref ? [op.local_ref] : [])));
+  const existingIds = [...new Set(ops.flatMap(refsOf).filter((ref) => ref && !localRefs.has(ref)))];
+  if (existingIds.length > 0) {
+    const { data } = await supabase
+      .from("nodes")
+      .select("id, title")
+      .eq("user_id", userId)
+      .eq("workspace_id", workspaceId)
+      .in("id", existingIds);
+    for (const row of (data ?? []) as Array<{ id: string; title: string }>) titleByRef.set(row.id, row.title);
+  }
+  const nameOf = (ref: string | undefined) => (ref ? (titleByRef.get(ref) ?? null) : null);
+
+  const undoByIndex = new Map<number, UndoStep[]>();
+  for (const { index, step } of outcome.undo) undoByIndex.set(index, [...(undoByIndex.get(index) ?? []), step]);
+
+  const added: DumpChanges["added"] = [];
+  const done: string[] = [];
+  const links: DumpChanges["links"] = [];
+  const undo: TurnUndo = { added: [], done: [], links: [] };
+  const acceptedLedger: Array<{ ledgerId: string; nodeId: string }> = [];
+  now.forEach((op, index) => {
+    const result = outcome.results[index];
+    if (!result?.ok) {
+      if (result) console.warn(`[turn] ${op.kind} did not apply:`, result.error);
+      return;
+    }
+    const steps = undoByIndex.get(index) ?? [];
+    if (op.kind === "create_node") {
+      const node = createdByIndex.get(index);
+      if (!node) return;
+      added.push({
+        id: node.id,
+        proposal_id: op.ledger_id ?? null,
+        title: node.title,
+        node_type: node.node_type,
+        parent_title: nameOf(op.parent_local_ref ?? op.parent_node_id),
+      });
+      undo.added.push(...steps);
+      if (op.ledger_id) acceptedLedger.push({ ledgerId: op.ledger_id, nodeId: node.id });
+    } else if (op.kind === "complete") {
+      const title = nameOf(op.node_id);
+      if (title) done.push(title);
+      undo.done.push(...steps);
+    } else if (op.kind === "create_edge" || op.kind === "remove_edge") {
+      const source = nameOf(op.source_node_id);
+      const target = nameOf(op.target_node_id);
+      if (source && target) {
+        links.push({
+          source_title: source,
+          target_title: target,
+          edge_type: op.edge_type ?? "related_to",
+          ...(op.kind === "remove_edge" ? { removed: true } : {}),
+        });
+      }
+      undo.links.push(...steps);
+    }
+  });
+  await settleLedger({ supabase, userId, workspaceId }, { accepted: acceptedLedger, rejected: [] });
+
+  return { added, done, links, undo, waiting: resolveRefs(ask, refToId) };
 }
 
 export async function applyDumpChanges(params: {
@@ -56,6 +170,7 @@ export async function applyDumpChanges(params: {
   completeExistingNodeIds: string[];
   // The user's "Auto-add confident items" preference.
   autoApply: boolean;
+  source?: "chat" | "dump";
 }): Promise<DumpChanges> {
   const { ctx, built } = params;
   const { supabase, userId, workspaceId } = ctx;
@@ -84,103 +199,36 @@ export async function applyDumpChanges(params: {
     return ledgerId && op.kind === "create_node" ? { ...op, ledger_id: ledgerId } : op;
   });
 
-  // 3 · Which new nodes this user reliably accepts (same rule as before).
-  const autoRefs = new Set<string>();
-  if (params.autoApply && ledgerRows.length > 0) {
-    try {
-      const held = new Set(
-        built.possibleDuplicates.flatMap((dup) => {
-          const id = ledgerIdByRef.get(dup.localRef);
-          return id ? [id] : [];
-        }),
-      );
-      const stats = await loadCalibrationStats(supabase, userId);
-      const autoIds = new Set(
-        selectAutoApply({
-          proposals: ledgerRows.map((row) => ({
-            id: row.id,
-            local_ref: row.local_ref ?? null,
-            primary_parent_local_ref: row.primary_parent_local_ref ?? null,
-            existing_parent_node_id: row.existing_parent_node_id ?? null,
-            proposed_node_type: row.proposed_node_type,
-            extraction_confidence: row.extraction_confidence,
-          })),
-          heldIds: held,
-          stats,
-        }),
-      );
-      for (const row of ledgerRows) if (row.local_ref && autoIds.has(row.id)) autoRefs.add(row.local_ref);
-    } catch (err) {
-      console.warn("[dump-turn] auto-apply selection failed — everything goes on the card:", err);
-    }
-  }
-
-  // 4 · Apply what is safe; the rest waits.
-  const { now, ask } = splitByPolicy(ops, autoRefs);
-  const outcome =
-    now.length > 0 ? await applyChangeSet(ctx, now, { source: "dump" }) : { results: [], created: [] };
-
-  const refToId = new Map<string, string>();
-  const createdByIndex = new Map(outcome.created.map((node) => [node.index, node]));
-  now.forEach((op, index) => {
-    const node = createdByIndex.get(index);
-    if (node && op.kind === "create_node" && op.local_ref) refToId.set(op.local_ref, node.id);
+  const changes = await applyTurnChanges({
+    ctx,
+    ops,
+    ledger: ledgerRows.map((row) => ({
+      id: row.id,
+      local_ref: row.local_ref ?? null,
+      primary_parent_local_ref: row.primary_parent_local_ref ?? null,
+      existing_parent_node_id: row.existing_parent_node_id ?? null,
+      proposed_node_type: row.proposed_node_type,
+      extraction_confidence: row.extraction_confidence,
+    })),
+    held: new Set(
+      built.possibleDuplicates.flatMap((dup) => {
+        const id = ledgerIdByRef.get(dup.localRef);
+        return id ? [id] : [];
+      }),
+    ),
+    autoApply: params.autoApply,
+    source: params.source ?? "dump",
   });
-
-  // Names for the card: every existing node an op mentions, in one read.
-  const titleByRef = new Map<string, string>();
-  for (const op of ops) if (op.kind === "create_node" && op.local_ref) titleByRef.set(op.local_ref, op.title);
-  const existingIds = [...new Set(ops.flatMap(refsOf).filter((ref) => UUID.test(ref)))];
-  if (existingIds.length > 0) {
-    const { data } = await supabase
-      .from("nodes")
-      .select("id, title")
-      .eq("user_id", userId)
-      .eq("workspace_id", workspaceId)
-      .in("id", existingIds);
-    for (const row of (data ?? []) as Array<{ id: string; title: string }>) titleByRef.set(row.id, row.title);
-  }
-  const nameOf = (ref: string | undefined) => (ref ? (titleByRef.get(ref) ?? null) : null);
-
-  const added: DumpChanges["added"] = [];
-  const done: string[] = [];
-  const links: DumpChanges["links"] = [];
-  const acceptedLedger: Array<{ ledgerId: string; nodeId: string }> = [];
-  now.forEach((op, index) => {
-    const result = outcome.results[index];
-    if (!result?.ok) {
-      if (result) console.warn(`[dump-turn] ${op.kind} did not apply:`, result.error);
-      return;
-    }
-    if (op.kind === "create_node") {
-      const node = createdByIndex.get(index);
-      if (!node) return;
-      added.push({
-        id: node.id,
-        proposal_id: op.ledger_id ?? null,
-        title: node.title,
-        node_type: node.node_type,
-        parent_title: nameOf(op.parent_local_ref ?? op.parent_node_id),
-      });
-      if (op.ledger_id) acceptedLedger.push({ ledgerId: op.ledger_id, nodeId: node.id });
-    } else if (op.kind === "complete") {
-      const title = nameOf(op.node_id);
-      if (title) done.push(title);
-    } else if (op.kind === "create_edge") {
-      const source = nameOf(op.source_node_id);
-      const target = nameOf(op.target_node_id);
-      if (source && target) links.push({ source_title: source, target_title: target, edge_type: op.edge_type });
-    }
-  });
-  await settleLedger({ supabase, userId, workspaceId }, { accepted: acceptedLedger, rejected: [] });
 
   const proposalTitleByRef = new Map(built.nodes.map((n) => [n.local_ref, n.proposed_title]));
-  const waitingRefs = new Set(ask.flatMap((op) => (op.kind === "create_node" && op.local_ref ? [op.local_ref] : [])));
+  const waitingRefs = new Set(
+    changes.waiting.flatMap((op) => (op.kind === "create_node" && op.local_ref ? [op.local_ref] : [])),
+  );
   const notes = built.possibleDuplicates
     .filter((dup) => waitingRefs.has(dup.localRef))
     .map((dup) => `"${proposalTitleByRef.get(dup.localRef) ?? "A new item"}" looks like your existing "${dup.existingTitle}".`);
 
-  return { added, done, links, waiting: resolveRefs(ask, refToId), notes };
+  return { ...changes, notes };
 }
 
 // Records what became of proposed nodes: accepted ones point at the node they

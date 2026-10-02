@@ -163,10 +163,16 @@ export const UPDATE_PRIORITIES: ToolDefinition = {
   schema: {
     name: "update_priorities",
     description:
-      "Change what matters about EXISTING nodes — their status, deadline, stakes or focus — from what the user says. All changes in one call; applies immediately (the user sees what moved, with an Undo). Actions: complete (finished it) · wait (did their part, now waiting on a result/reply/decision: 'took the exam, waiting for results' — NOT complete; its open steps leave Focus) · resume (the wait is over / picking it back up) · deadline (set, move or clear target_date) · stakes (high: a lot rides on it — 'I need it for my masters'; low: 'it's pass/fail') · focus ('focus on X this week', 'X first' — fades over ~2 weeks) · deprioritize ('X can wait') · drop (cancelled, not doing it). Pass each node's exact title. Not for creating nodes.",
+      "Change what matters about EXISTING nodes — their status, deadline, stakes or focus — from what the user says. All changes in one call; source \"user\" applies immediately (the user sees what moved, with an Undo), source \"suggestion\" (your own advice) waits on a card for their OK. Actions: complete (finished it) · wait (did their part, now waiting on a result/reply/decision: 'took the exam, waiting for results' — NOT complete; its open steps leave Focus) · resume (the wait is over / picking it back up) · deadline (set, move or clear target_date) · stakes (high: a lot rides on it — 'I need it for my masters'; low: 'it's pass/fail') · focus ('focus on X this week', 'X first' — fades over ~2 weeks) · deprioritize ('X can wait') · drop (cancelled, not doing it). Pass each node's exact title. Not for creating nodes.",
     input_schema: {
       type: "object",
       properties: {
+        source: {
+          type: "string",
+          enum: ["user", "suggestion"],
+          description:
+            "user = the user said it (\"focus on stats this week\", \"took the exam, waiting on results\") — applies at once with Undo. suggestion = YOUR recommendation the user hasn't agreed to (they asked what to prioritize, you advise) — waits on a card for their OK.",
+        },
         changes: {
           type: "array",
           minItems: 1,
@@ -201,7 +207,7 @@ export const UPDATE_PRIORITIES: ToolDefinition = {
           },
         },
       },
-      required: ["changes"],
+      required: ["source", "changes"],
     },
   },
   handler: (input, ctx: ToolContext) => applyPriorityChanges(ctx, input),

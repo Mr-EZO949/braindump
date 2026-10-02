@@ -16691,6 +16691,18 @@ input[type="search"]::-webkit-search-results-decoration {
   text-decoration: line-through;
 }
 
+/* Undone, but the rows still exist (a completion reopened, a removed link
+   put back): dimmed, not struck. */
+.turn-section--reverted .turn-list {
+  opacity: 0.5;
+}
+
+.turn-section--reverted .applied-card-mark {
+  background: var(--color-text-muted);
+  box-shadow: none;
+  color: var(--color-bg-surface);
+}
+
 .turn-section--undone .applied-card-mark {
   background: var(--color-text-muted);
   box-shadow: none;

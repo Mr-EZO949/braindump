@@ -86,6 +86,7 @@ import {
   type AppliedMarkerPayload,
 } from "@/lib/chat/applied-marker";
 import { connectionsNote, turnNote } from "@/lib/chat/turn-note";
+import { createTurnMarkerParser, createUndoMarkerParser, turnCardFromApplied } from "@/lib/chat/turn-marker";
 import { classifyTaskSize } from "@/lib/ai/sizing";
 import { needsNextAction } from "@/lib/graph/next-action";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
@@ -98,7 +99,9 @@ import type {
   ChatScope,
   Nudge,
   PendingAction,
+  TurnAddedStatus,
   TurnCardData,
+  TurnSection,
 } from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, Node, NodeType, Workspace } from "@/types/graph";
 import { addDaysISO, localDateISO } from "@/lib/time/local-date";
@@ -1366,29 +1369,69 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   // Undo on a brain-dump turn card's "Added": removes the nodes that dump
   // created (and teaches the auto-apply calibration, as the old toast did).
-  const undoTurnAdded = async (messageId: string) => {
+  // The Undo on one section of a turn card (Added / Marked done / Linked).
+  // Cards from before 2026-10-02 carry no undo steps: their Added Undo goes
+  // through the proposal ledger instead.
+  const undoTurnSection = async (messageId: string, section: TurnSection) => {
     const turn = chatMessages.find((m) => m.id === messageId)?.turn;
-    if (!turn || (turn.addedStatus !== "applied" && turn.addedStatus !== "error")) return;
-    const proposalIds = turn.added.flatMap((n) => (n.proposalId ? [n.proposalId] : []));
-    if (proposalIds.length === 0) return;
-    const setStatus = (addedStatus: TurnCardData["addedStatus"]) =>
+    if (!turn) return;
+    const statusKey = section === "added" ? "addedStatus" : section === "done" ? "doneStatus" : "linksStatus";
+    const status = turn[statusKey] ?? "applied";
+    if (status !== "applied" && status !== "error") return;
+    const steps = turn.undo?.[section] ?? [];
+    const proposalIds = section === "added" ? turn.added.flatMap((n) => (n.proposalId ? [n.proposalId] : [])) : [];
+    if (steps.length === 0 && proposalIds.length === 0) return;
+    const setStatus = (next: TurnAddedStatus) =>
       setChatMessages((prev) =>
-        prev.map((m) => (m.id === messageId && m.turn ? { ...m, turn: { ...m.turn, addedStatus } } : m)),
+        prev.map((m) => (m.id === messageId && m.turn ? { ...m, turn: { ...m.turn, [statusKey]: next } } : m)),
       );
     setStatus("undoing");
-    const removedIds = new Set(await undoAutoApplied(proposalIds));
-    if (removedIds.size === 0) {
-      setStatus("error");
-      return;
+    const ok =
+      steps.length > 0 ? await undoChangeSteps(steps) : (await undoAutoApplied(proposalIds)).length > 0;
+    setStatus(ok ? "undone" : "error");
+    if (ok) await reloadGraphAfterUndo();
+  };
+
+  // The Undo on a card's accepted rows (a reorganization, a suggestion OK'd).
+  const undoAcceptedCard = async (messageId: string) => {
+    const action = chatMessages.find((m) => m.id === messageId)?.pendingAction;
+    if (!action || action.status !== "accepted" || !action.undo?.length) return;
+    if (action.undoStatus && action.undoStatus !== "error") return;
+    const setStatus = (undoStatus: TurnAddedStatus) =>
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId && m.pendingAction ? { ...m, pendingAction: { ...m.pendingAction, undoStatus } } : m,
+        ),
+      );
+    setStatus("undoing");
+    const ok = await undoChangeSteps(action.undo);
+    setStatus(ok ? "undone" : "error");
+    if (ok) await reloadGraphAfterUndo();
+  };
+
+  const undoChangeSteps = async (steps: unknown[]): Promise<boolean> => {
+    if (!selectedWorkspaceId) return false;
+    try {
+      const res = await fetch("/api/changes/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_id: selectedWorkspaceId, steps }),
+      });
+      if (!res.ok) return false;
+      const data = (await res.json()) as { undone?: number };
+      return (data.undone ?? 0) > 0;
+    } catch {
+      return false;
     }
-    setStatus("undone");
-    setGraphData((prev) => ({
-      ...prev,
-      nodes: prev.nodes.filter((n) => !removedIds.has(n.id)),
-      edges: prev.edges.filter(
-        (e) => !removedIds.has(e.source_node_id) && !removedIds.has(e.target_node_id),
-      ),
-    }));
+  };
+
+  const reloadGraphAfterUndo = async () => {
+    if (!selectedWorkspaceId || !authUser?.id) return;
+    try {
+      setGraphData(await loadWorkspaceGraphData(authUser.id, selectedWorkspaceId, selectedWorkspace?.name ?? null));
+    } catch {
+      // The next load catches up.
+    }
   };
 
   // A question on a brain-dump turn card, answered: the answer is an ordinary
@@ -1463,8 +1506,14 @@ export function AppShell({ initialUser }: AppShellProps) {
     const decoder = new TextDecoder();
     const parser = createPauseMarkerParser();
     // Chained after the pause parser: a change chat already applied
-    // (update_priorities) arrives as its own marker → applied card + Undo.
+    // (update_priorities) arrives as its own marker → applied card + Undo;
+    // a change / build_graph call's turn card (what applied now, with Undo);
+    // the Undo for the rows a card's Accept just applied.
     const appliedParser = createAppliedMarkerParser();
+    const turnParser = createTurnMarkerParser();
+    const undoParser = createUndoMarkerParser();
+    const turnAddedIds = new Set<string>();
+    let turnChanged = false;
     let cleanText = "";
     let sawPause = false;
     const appliedNodeIds = new Set<string>();
@@ -1505,8 +1554,48 @@ export function AppShell({ initialUser }: AppShellProps) {
       );
     };
 
+    const attachTurn = (card: TurnCardData) => {
+      for (const node of card.added) turnAddedIds.add(node.id);
+      turnChanged = true;
+      setChatMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantMsgId) return m;
+          if (!m.turn) return { ...m, turn: card };
+          // A second change in the same reply: one card, sections joined.
+          const undo = m.turn.undo ?? { added: [], done: [], links: [] };
+          return {
+            ...m,
+            turn: {
+              ...m.turn,
+              added: [...m.turn.added, ...card.added],
+              done: [...m.turn.done, ...card.done],
+              links: [...m.turn.links, ...card.links],
+              questions: [...m.turn.questions, ...card.questions],
+              undo: {
+                added: [...undo.added, ...(card.undo?.added ?? [])],
+                done: [...undo.done, ...(card.undo?.done ?? [])],
+                links: [...undo.links, ...(card.undo?.links ?? [])],
+              },
+            },
+          };
+        }),
+      );
+    };
+
+    const attachUndo = (steps: unknown[]) => {
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId && m.pendingAction ? { ...m, pendingAction: { ...m.pendingAction, undo: steps } } : m,
+        ),
+      );
+    };
+
     const takeText = (text: string) => {
-      const next = appliedParser.push(text);
+      const afterUndo = undoParser.push(text);
+      if (afterUndo.marker) attachUndo(afterUndo.marker);
+      const afterTurn = turnParser.push(afterUndo.text);
+      if (afterTurn.marker) attachTurn(afterTurn.marker);
+      const next = appliedParser.push(afterTurn.text);
       if (next.marker) attachApplied(next.marker);
       if (next.text.length > 0) {
         cleanText += next.text;
@@ -1526,10 +1615,24 @@ export function AppShell({ initialUser }: AppShellProps) {
       }
     }
     takeText(parser.flush().text);
-    const tail = appliedParser.flush();
-    if (tail.text.length > 0) {
-      cleanText += tail.text;
+    // Drain the chained parsers in order (undo → turn → applied).
+    let rest = undoParser.flush().text;
+    rest = turnParser.push(rest).text + turnParser.flush().text;
+    rest = appliedParser.push(rest).text + appliedParser.flush().text;
+    if (rest.length > 0) {
+      cleanText += rest;
       writeBody(cleanText);
+    }
+
+    // A chat change applied at once: show it on the graph now, and look for
+    // links around the new nodes — the same follow-up a dump gets.
+    if (turnChanged && targetWorkspaceId && authUser?.id) {
+      void loadWorkspaceGraphData(authUser.id, targetWorkspaceId, selectedWorkspace?.name ?? null)
+        .then((next) => setGraphData(next))
+        .catch(() => {
+          // The next load catches up.
+        });
+      if (turnAddedIds.size > 0) void analyzeNodes([...turnAddedIds], targetWorkspaceId, assistantMsgId);
     }
 
     // The graph already changed — resize the nodes now and pulse the ones
@@ -1635,6 +1738,8 @@ export function AppShell({ initialUser }: AppShellProps) {
           workspace_id: targetWorkspaceId,
           selected_node_id: nextScope.kind === "node" ? nextScope.node.id : null,
           history,
+          // Same preference as the Brain Dump box: confident new items apply at once.
+          auto_apply: readAutoApplyPreference(),
         }),
         signal: abortCtrl.signal,
       });
@@ -1720,6 +1825,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           decision,
           choice,
           ...(decision === "accept" && acceptedIndexes ? { accepted_indexes: acceptedIndexes } : {}),
+          auto_apply: readAutoApplyPreference(),
         }),
         signal: abortCtrl.signal,
       });
@@ -2685,22 +2791,8 @@ export function AppShell({ initialUser }: AppShellProps) {
     const waiting = data.pending_action ?? null;
 
     const card: TurnCardData = {
-      added: turn.added.map((n) => ({
-        id: n.id,
-        proposalId: n.proposal_id,
-        title: n.title,
-        nodeType: n.node_type,
-        parentTitle: n.parent_title,
-      })),
-      addedStatus: "applied",
-      done: turn.done,
-      links: turn.links.map((l) => ({
-        sourceTitle: l.source_title,
-        targetTitle: l.target_title,
-        edgeType: l.edge_type,
-      })),
+      ...(turnCardFromApplied(turn) ?? { added: [], addedStatus: "applied", done: [], links: [], questions: [] }),
       ...(commitmentAction ? { commitments: { ...commitmentAction, status: "applied" as const } } : {}),
-      questions: turn.questions.map((text) => ({ text })),
     };
     const changedGraph = card.added.length > 0 || card.done.length > 0 || card.links.length > 0;
     const nothing =
@@ -4424,8 +4516,11 @@ export function AppShell({ initialUser }: AppShellProps) {
           onUndoAppliedAction={(messageId, slot) => {
             void undoAppliedAction(messageId, slot);
           }}
-          onUndoTurnAdded={(messageId) => {
-            void undoTurnAdded(messageId);
+          onUndoTurnSection={(messageId, section) => {
+            void undoTurnSection(messageId, section);
+          }}
+          onUndoAcceptedCard={(messageId) => {
+            void undoAcceptedCard(messageId);
           }}
           onAnswerTurnQuestion={answerTurnQuestion}
           onResolveConnections={(messageId, acceptedIds) => {

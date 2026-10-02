@@ -1,5 +1,6 @@
-// build_graph: the chat model asks, the graph builder plans, the user accepts
-// one card, the change-set writer applies it. The builder's model call is
+// build_graph: the chat model asks, the graph builder plans, the dump policy
+// applies what is safe at once and puts the reorganizing on one card, the
+// change-set writer applies what the user accepts. The builder's model call is
 // mocked (runBuilder) — this checks the plumbing around it.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,9 @@ import type { BuilderSuccess } from "@/lib/ai/extraction";
 
 const builderCalls: Array<{ rawText: string; expandChildren?: boolean; source?: string }> = [];
 let builderResult: BuilderSuccess | { ok: false; error: string; userMessage: string };
-vi.mock("@/lib/ai/extraction", () => ({
+vi.mock("@/lib/ai/extraction", async (importOriginal) => ({
+  // The real ledger writer (saveProposalRows) against the fake database.
+  ...(await importOriginal<typeof import("@/lib/ai/extraction")>()),
   runBuilder: vi.fn(async (params: { rawText: string; expandChildren?: boolean; source?: string }) => {
     builderCalls.push({ rawText: params.rawText, expandChildren: params.expandChildren, source: params.source });
     return builderResult;
@@ -65,6 +68,8 @@ function seed(): FakeSupabase {
     ],
     edges: [parent("e-money", MONEY, ROOT), parent("e-fused", FUSED, MONEY)],
     feedback_events: [],
+    raw_entries: [],
+    proposed_nodes: [],
   });
 }
 
@@ -138,6 +143,8 @@ describe("runTurnTools — build_graph", () => {
       },
     ]);
     expect(builderCalls[0].rawText.startsWith(MESSAGE)).toBe(true);
+    // A reorganization waits as one unit: the new parent, its new child, the
+    // rename and the move — nothing of it is in the graph yet.
     expect(turn.pending?.name).toBe(BUILD_GRAPH_TOOL);
     expect((turn.pending?.input as BuildPlanInput).changes.map((c) => c.kind)).toEqual([
       "create_node",
@@ -145,8 +152,29 @@ describe("runTurnTools — build_graph", () => {
       "update",
       "move",
     ]);
-    // Nothing is written until the user accepts.
     expect(db.tables.nodes).toHaveLength(3);
+    // The card is the turn card: nothing applied, the rows wait inside it.
+    expect(turn.turns).toEqual([expect.objectContaining({ added: [], done: [], links: [] })]);
+    // The ledger has the two proposals, waiting.
+    expect(db.tables.raw_entries).toEqual([expect.objectContaining({ source_type: "assistant_save", raw_text: MESSAGE })]);
+    expect(db.tables.proposed_nodes.map((r) => r.proposal_status)).toEqual(["pending_review", "pending_review"]);
+  });
+
+  it("a plain capture applies at once — the card shows it with Undo, nothing waits", async () => {
+    const db = seed();
+    builderResult = restructurePlan({
+      nodes: [
+        { ...restructurePlan().nodes[0], local_ref: "n1", proposed_title: "Call the bank", proposed_node_type: "task", existing_parent_node_id: MONEY },
+      ],
+      changes: [],
+    });
+    const turn = await runTurnTools([{ id: "t1", name: BUILD_GRAPH_TOOL, input: {} }], ctxFor(db, "need to call the bank"));
+
+    expect(turn.pending).toBeNull();
+    expect(turn.turns[0].added).toEqual([expect.objectContaining({ title: "Call the bank", parent_title: "Money Projects" })]);
+    expect(turn.turns[0].undo?.added).toHaveLength(1);
+    expect(db.tables.nodes.some((n) => n.title === "Call the bank")).toBe(true);
+    expect(JSON.parse(turn.results[0].content)).toMatchObject({ accepted: true, applied: 1, added: ["Call the bank (task) under Money Projects"] });
   });
 
   it("applies exactly the accepted plan", async () => {
@@ -185,11 +213,8 @@ describe("runTurnTools — build_graph", () => {
     const turn = await runTurnTools([{ id: "t1", name: BUILD_GRAPH_TOOL, input: {} }], ctxFor(db, MESSAGE));
     const plan = turn.pending!.input as BuildPlanInput;
     expect(plan.notes).toEqual(['"Market BrainDump" looks like your existing "Test & Market BrainDump".']);
-
-    const out = await dispatchTool({ name: BUILD_GRAPH_TOOL, input: plan, tool_use_id: "t1", ctx: ctxFor(db, MESSAGE) });
-    expect((JSON.parse(out.content) as Row).message).toBe(
-      "Applied 4 changes ✓\n\nYou said 'the fixes' — which node is that?",
-    );
+    // Questions sit on the card, each with its own answer box.
+    expect(turn.turns[0].questions).toEqual(["You said 'the fixes' — which node is that?"]);
   });
 
   it("with nothing to confirm it answers the model instead of showing an empty card", async () => {
@@ -260,22 +285,38 @@ describe("builderText — how much of the chat model's note the builder gets", (
 });
 
 describe("runTurnTools — other calls in the same turn", () => {
-  it("pauses on the first mutation and leaves read-only calls for the resume", async () => {
+  it("pauses on the first card and leaves read-only calls for the resume", async () => {
     const db = seed();
+    const suggestion = { source: "suggestion", changes: [{ kind: "create_node", title: "Email the prof", node_type: "task" }] };
     const turn = await runTurnTools(
       [
         { id: "t1", name: "get_workspace_summary", input: {} },
-        { id: "t2", name: "propose_node", input: { title: "Email the prof", node_type: "task" } },
-        { id: "t3", name: "complete_node", input: { node_id: FUSED } },
+        { id: "t2", name: "change", input: suggestion },
+        { id: "t3", name: "change", input: { source: "user", changes: [{ kind: "complete", node_id: FUSED }] } },
       ],
-      ctxFor(db, "add email the prof"),
+      ctxFor(db, "what would you add?"),
     );
-    expect(turn.pending).toMatchObject({ id: "t2", name: "propose_node" });
-    expect(turn.deferred).toEqual([
-      { id: "t1", name: "get_workspace_summary", input: {} },
-      { id: "t3", name: "complete_node", input: { node_id: FUSED } },
-    ]);
+    expect(turn.pending).toMatchObject({ id: "t2", name: "change", input: expect.objectContaining({ suggested: true }) });
+    expect(turn.deferred.map((d) => d.id)).toEqual(["t1", "t3"]);
     expect(turn.applied).toEqual([]);
+    expect(db.tables.nodes).toHaveLength(3);
+  });
+
+  it("a priority change the assistant only suggests waits for OK (owner, 2026-10-02)", async () => {
+    const db = seed();
+    const turn = await runTurnTools(
+      [
+        {
+          id: "t1",
+          name: "update_priorities",
+          input: { source: "suggestion", changes: [{ node_id: MONEY, title: "Money Projects", action: "deprioritize" }] },
+        },
+      ],
+      ctxFor(db, "money or exams?"),
+    );
+    expect(turn.pending).toMatchObject({ id: "t1", name: "update_priorities" });
+    expect(turn.applied).toEqual([]);
+    expect(db.tables.nodes.find((n) => n.id === MONEY)?.stakes).toBeNull();
   });
 
   it("runs a direct tool now even though a card is pending", async () => {

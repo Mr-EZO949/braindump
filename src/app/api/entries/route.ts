@@ -772,6 +772,7 @@ async function dumpTurn(params: {
     done: changes.done,
     links: changes.links,
     questions: [...new Set([...built.clarifyingQuestions, ...(priorities?.unclear ?? [])])].slice(0, MAX_QUESTIONS),
+    undo: changes.undo,
   };
 
   return NextResponse.json({

@@ -9,18 +9,19 @@ describe("confirmationFor", () => {
     );
   });
 
-  it("names what got unblocked by a completion", () => {
+  it("names what got unblocked by a completed calendar task", () => {
     const content = JSON.stringify({ accepted: true, newly_available: [{ id: "1", title: "Write intro" }] });
-    expect(confirmationFor("complete_node", content)).toBe("Done ✓ That unblocks: Write intro.");
+    expect(confirmationFor("mark_task_done", content)).toBe("Done ✓ That unblocks: Write intro.");
   });
 
   it("says a habit was logged, not completed", () => {
-    expect(confirmationFor("complete_node", JSON.stringify({ accepted: true, habit_logged: true }))).toBe("Logged for today ✓");
+    expect(confirmationFor("mark_task_done", JSON.stringify({ accepted: true, habit_logged: true }))).toBe("Logged for today ✓");
   });
 
-  it("counts batch adds and quotes single adds", () => {
-    expect(confirmationFor("propose_nodes_batch", JSON.stringify({ accepted: true, created: [{}, {}, {}] }))).toBe("Added 3 items ✓");
-    expect(confirmationFor("propose_node", JSON.stringify({ accepted: true, title: "Call Abdo" }))).toBe('Added "Call Abdo" ✓');
+  it("a change set's own count", () => {
+    expect(confirmationFor("change", JSON.stringify({ accepted: true, applied: 3, message: "Applied 3 changes ✓" }))).toBe(
+      "Applied 3 changes ✓",
+    );
   });
 
   it("falls back to a generic reply for unknown tools or non-JSON results", () => {

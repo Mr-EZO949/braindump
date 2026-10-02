@@ -36,8 +36,9 @@ import { persistAIRun, recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { getToolSchemas, runTurnTools } from "@/lib/ai/tools";
-import { looksMultiStep } from "@/lib/ai/tools/confirmations";
+import { answerStillOwed, looksMultiStep } from "@/lib/ai/tools/confirmations";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
+import { encodeTurnMarker } from "@/lib/chat/turn-marker";
 import { buildHistoryMessages, sanitizeHistory, type HistoryTurn } from "@/lib/ai/chat-memory";
 import { getTemporalFlag } from "@/lib/ai/temporal-flags";
 import type { AssistantMode } from "@/types/ai";
@@ -118,12 +119,15 @@ export async function POST(req: NextRequest) {
     selected_node_id = null,
     mode = "explain",
     history: rawHistory,
+    auto_apply,
   } = body as {
     message: string;
     workspace_id: string;
     selected_node_id?: string | null;
     mode?: string;
     history?: unknown;
+    // The "Auto-add confident items" preference — same as a dump's.
+    auto_apply?: boolean;
   };
 
   const history = sanitizeHistory(rawHistory);
@@ -312,6 +316,7 @@ export async function POST(req: NextRequest) {
     today: todayISO,
     userMessage: message.trim(),
     signal: toolAbort.signal,
+    autoApply: auto_apply !== false,
   };
 
   // The graph snapshot rides in the system prompt, where every turn of the
@@ -464,8 +469,11 @@ export async function POST(req: NextRequest) {
           );
           if (aborted) break;
           // A direct tool (update_priorities) already changed the graph —
-          // the browser shows what moved, with an Undo.
+          // the browser shows what moved, with an Undo. A change / build_graph
+          // call's card: what it applied now (Undo per section) — the rows
+          // that wait arrive next, in the pause marker, inside the same card.
           for (const applied of turn.applied) send(encodeAppliedMarker(applied));
+          for (const card of turn.turns) send(encodeTurnMarker(card));
 
           // A card is pending: persist the history + the pending and deferred
           // tool calls so the resume endpoint can pick up where we left off
@@ -525,6 +533,18 @@ export async function POST(req: NextRequest) {
             lone &&
             lone.failed.length === 0 &&
             !looksMultiStep(message) &&
+            assistantModel === AI_MODELS.CLAUDE_HAIKU
+          ) {
+            break;
+          }
+          // The same for a change the user stated that applied in full: the
+          // turn card lists it, with Undo — "Done" would only repeat it.
+          const loneTurn = turn.results.length === 1 && turn.turns.length === 1 ? turn.results[0] : null;
+          if (
+            loneTurn &&
+            !loneTurn.is_error &&
+            !looksMultiStep(message) &&
+            !answerStillOwed(message, fullText) &&
             assistantModel === AI_MODELS.CLAUDE_HAIKU
           ) {
             break;

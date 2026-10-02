@@ -50,7 +50,7 @@ describe("turnNote — what the chat model is told a dump changed", () => {
     });
     expect(note).toContain('Added to the graph: "Review Chapters 1-4" (big task, under Pass Statistics Midterm); "Call the Bank" (task)');
     expect(note).toContain("Marked done: Go to the gym; Update CV");
-    expect(note).toContain("Linked: ML Course Project useful for Get Internship");
+    expect(note).toContain("Links: ML Course Project useful for Get Internship");
     expect(note).toContain('Asked the user: "Tutoring ad — a task now?"');
     expect(note).toContain('Asked: "Which bank?" — the user answered: "Intesa"');
   });

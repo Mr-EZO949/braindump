@@ -57,6 +57,10 @@ export interface PendingAction {
   errorMessage?: string;
   // A change-set card accepted in part: the rows the user kept.
   acceptedIndexes?: number[];
+  // After Accept: how to put the accepted rows back (lib/graph/change-undo.ts
+  // steps, from the resume route), and where that Undo stands.
+  undo?: unknown[];
+  undoStatus?: TurnAddedStatus;
 }
 
 // A change chat already applied (update_priorities) — shown as a card with an
@@ -97,11 +101,19 @@ export interface TurnAddedNode {
   parentTitle: string | null;
 }
 
+export type TurnSection = "added" | "done" | "links";
+
 export interface TurnCardData {
   added: TurnAddedNode[];
   addedStatus: TurnAddedStatus;
   done: string[];
-  links: Array<{ sourceTitle: string; targetTitle: string; edgeType: string }>;
+  doneStatus?: TurnAddedStatus;
+  // removed: a link the turn took away.
+  links: Array<{ sourceTitle: string; targetTitle: string; edgeType: string; removed?: boolean }>;
+  linksStatus?: TurnAddedStatus;
+  // How to put each section back (lib/graph/change-undo.ts steps). Cards from
+  // before 2026-10-02 have none: their Added Undo goes by proposalId.
+  undo?: Record<TurnSection, unknown[]>;
   // Fixed weekly times the dump named (saved already, with its own Undo).
   commitments?: AppliedAction;
   questions: Array<{ text: string; answer?: string }>;

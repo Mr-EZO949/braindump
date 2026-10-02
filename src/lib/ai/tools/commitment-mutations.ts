@@ -192,10 +192,16 @@ export const SET_COMMITMENTS: ToolDefinition = {
   schema: {
     name: "set_commitments",
     description:
-      "Save, change or remove the user's FIXED weekly commitments — times they are not free: a class, lecture, lab, work shift, practice, standing meeting ('stats every weekday at 2pm', 'I work Tue/Thu 9–5', 'no more practice on fridays'). Applies immediately (the user sees it with an Undo); Focus and the planner then plan around this time. Not for one-off events (add_task_to_calendar) and not for habits without a fixed time.",
+      "Save, change or remove the user's FIXED weekly commitments — times they are not free: a class, lecture, lab, work shift, practice, standing meeting ('stats every weekday at 2pm', 'I work Tue/Thu 9–5', 'no more practice on fridays'). Source \"user\" applies immediately (the user sees it with an Undo); source \"suggestion\" (your idea) waits on a card. Focus and the planner then plan around this time. Not for one-off events (add_task_to_calendar) and not for habits without a fixed time.",
     input_schema: {
       type: "object",
       properties: {
+        source: {
+          type: "string",
+          enum: ["user", "suggestion"],
+          description:
+            "user = the user said it (\"stats every weekday at 2pm\") — applies at once with Undo. suggestion = YOUR recommendation the user hasn't agreed to (you think they should block time) — waits on a card for their OK.",
+        },
         changes: {
           type: "array",
           minItems: 1,
@@ -238,7 +244,7 @@ export const SET_COMMITMENTS: ToolDefinition = {
           },
         },
       },
-      required: ["changes"],
+      required: ["source", "changes"],
     },
   },
   handler: (input, ctx: ToolContext) => applyCommitmentChanges(ctx, input, "chat"),

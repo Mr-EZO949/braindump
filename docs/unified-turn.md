@@ -343,13 +343,37 @@ Each phase ships on its own and is testable from `testing-journal.md`.
      through `lib/time/relative-day.ts`; one bad reference no longer discards the output.
    - Deleted: `/api/graph-edit`, the graph-edit modal, the `<nodes>` / `<graph_edit>` tag
      handling.
-   - **Not done (moved to phase 4):** folding the node/edge tools into one `change` tool, and
-     breakdowns as a builder mode (the last Sonnet chat route). Both change the chat model's
-     tools and need their own eval; nothing in the felt change depends on them.
-4. **One policy.** Calibrated apply-with-Undo for chat ops; Undo on every applied card.
+   - **Not done (moved to phase 4):** folding the node/edge tools into one `change` tool
+     (done 2026-10-02, see 4), and breakdowns as a builder mode (the last Sonnet chat route).
+4. **One policy — built 2026-10-02.** Chat changes go through the same policy as a dump:
+   - **One tool, `change`** (`lib/ai/tools/change.ts`), replaces the eight node/edge tools. Its
+     ops add `remove_edge`, `delete_node` (permanent, the subtree, never the root, no Undo —
+     the card says so) and `merge` to the change set (`change-set.ts`). Every call carries
+     `source`: `"user"` → the dump policy (`applyTurnChanges` in `dump-turn.ts`, calibration
+     from the same ledger: chat creates write a `raw_entries` row with source `assistant_save`
+     and `proposed_nodes` rows); `"suggestion"` → everything waits, marked "Suggested". A
+     missing source counts as a suggestion. `build_graph` runs the same policy.
+   - **Advice stays advice** (owner): `update_priorities` / `set_commitments` called with
+     source `"suggestion"` wait on a card (`isSuggestedDirectCall`, `tools/index.ts`); OK'd,
+     they apply with their own applied card and Undo (resume route).
+   - **Undo for everything applied** (`lib/graph/change-undo.ts`, `POST /api/changes/undo`):
+     `applyChangeSet` records one step per op — remove the new node (the ledger learns it was
+     a no), reopen what was completed (and what it closed), remove the habit check-in, remove
+     an added link, restore a removed one, move back, restore old fields. The turn card has an
+     Undo per section (Added / Marked done / Linked); a card's accepted rows get one too (the
+     resume route sends their steps in a `<<BRAINDUMP_UNDO>>` marker). Dumps get the same.
+   - **The same card**: a chat change streams its applied part in a `<<BRAINDUMP_TURN>>`
+     marker; the message renders `TurnCard`, with the waiting rows inside it — the card a
+     dump gets.
+   - Checked: unit tests (fake DB) for the policy, the ops and every undo step;
+     `scripts/test-change-tool.ts` (gitignored) on the real DB, 22/22; 8-message prompt eval
+     ($0.165); 3 chat turns in the browser.
+   - **Still open:** the breakdown as a builder mode (the last Sonnet chat route); the
+     composer's dump classifier (a dump typed in chat still takes the dump turn — same policy
+     and card now, so the split no longer shows).
 5. **Server follow-ups + staged streaming.** Connections as a follow-up card; stage events.
 
-Phases 1–3 are the felt change. 4 and 5 are improvements on top and can wait.
+Phases 1–3 are the felt change; phase 4's policy is built. 5 can wait.
 
 ## 6 · Decisions (owner, 2026-09-30)
 

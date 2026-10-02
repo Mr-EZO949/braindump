@@ -7,32 +7,21 @@
 // regroups nodes whether the words arrive in the Brain Dump box or in chat,
 // and Sonnet no longer carries a whole chat turn to do it.
 //
-// A "planned" tool: the plan is computed server-side (planBuild) before the
-// user is asked, the card shows the builder's change set, and the handler
-// applies exactly that set after Accept.
+// A "planned" tool: the builder's change set goes through the same policy as
+// a brain dump's (dump-turn.ts) before the model hears back — what the user
+// reliably accepts is applied at once with Undo, the reorganizing waits on
+// the card, and the handler applies exactly the rows accepted there.
 
 import { builderToOps } from "@/lib/ai/builder-ops";
+import { applyDumpChanges } from "@/lib/ai/dump-turn";
 import { runBuilder } from "@/lib/ai/extraction";
-import { applyChangeSet, type ChangeOp } from "@/lib/graph/change-set";
 
+import { applyBuildPlan, type BuildPlanInput } from "./apply-plan";
+export { applyBuildPlan, type BuildPlanInput } from "./apply-plan";
+import { appliedForModel, createChatEntry, type TurnPlan } from "./change";
 import type { ToolContext, ToolDefinition } from "./read-only";
 
 export const BUILD_GRAPH_TOOL = "build_graph";
-
-// What the card shows and the handler applies. `origin: "dump"` marks a set a
-// brain dump asked for (api/entries) — its Accept never goes back to a model.
-export interface BuildPlanInput {
-  changes: ChangeOp[];
-  questions?: string[];
-  notes?: string[];
-  origin?: "chat" | "dump";
-}
-
-export type BuildPlan =
-  // Something to confirm: the tool pauses on it.
-  | { kind: "changes"; input: BuildPlanInput }
-  // Nothing to confirm: the model gets this back at once and carries on.
-  | { kind: "none"; result: Record<string, unknown> };
 
 // A message that only agrees to something the assistant offered.
 const BARE_AGREEMENT =
@@ -57,12 +46,12 @@ export function builderText(userMessage: string | undefined, note: string): stri
   return `${message}\n\n(What the user is referring to, from the conversation — use it only to resolve "it" / "that" / "this"; the user's own words above decide what changes: ${note})`;
 }
 
-export async function planBuild(input: unknown, ctx: ToolContext): Promise<BuildPlan> {
+export async function planBuild(input: unknown, ctx: ToolContext): Promise<TurnPlan> {
   const args = (input ?? {}) as { note?: unknown };
   const note = typeof args.note === "string" ? args.note.trim().slice(0, 1500) : "";
   const rawText = builderText(ctx.userMessage, note);
   if (!rawText) {
-    return { kind: "none", result: { accepted: false, error: "Nothing to build from — pass a note." } };
+    return { turn: null, waiting: null, result: { accepted: false, error: "Nothing to build from — pass a note." } };
   }
 
   const built = await runBuilder({
@@ -76,19 +65,20 @@ export async function planBuild(input: unknown, ctx: ToolContext): Promise<Build
     expandChildren: true,
   });
   if (!built.ok) {
-    return { kind: "none", result: { accepted: false, error: built.userMessage } };
+    return { turn: null, waiting: null, result: { accepted: false, error: built.userMessage } };
   }
 
-  const changes = builderToOps({
+  const ops = builderToOps({
     nodes: built.nodes,
     changes: built.changes,
     completeExistingNodeIds: built.completeExistingNodeIds,
     autoCompleteLocalRefs: built.autoCompleteLocalRefs,
   });
   const questions = built.clarifyingQuestions;
-  if (changes.length === 0) {
+  if (ops.length === 0) {
     return {
-      kind: "none",
+      turn: null,
+      waiting: null,
       result: {
         built: 0,
         message: "The builder found nothing to add or change.",
@@ -99,44 +89,31 @@ export async function planBuild(input: unknown, ctx: ToolContext): Promise<Build
     };
   }
 
-  const titleByRef = new Map(built.nodes.map((n) => [n.local_ref, n.proposed_title]));
-  const notes = built.possibleDuplicates.map(
-    (dup) => `"${titleByRef.get(dup.localRef) ?? "A new item"}" looks like your existing "${dup.existingTitle}".`,
-  );
-  return {
-    kind: "changes",
-    input: {
-      changes,
-      ...(questions.length > 0 ? { questions } : {}),
-      ...(notes.length > 0 ? { notes } : {}),
-    },
-  };
-}
-
-// Applies an accepted plan. The confirmation is written here — counts, what
-// didn't land, and the builder's open questions — so the usual Accept needs
-// no follow-up model call.
-export async function applyBuildPlan(
-  plan: BuildPlanInput,
-  ctx: ToolContext,
-): Promise<Record<string, unknown>> {
-  const { results } = await applyChangeSet(ctx, plan.changes, {
-    source: plan.origin === "dump" ? "dump" : "chat",
+  // The ledger needs an entry to hang on; without one everything waits.
+  const entryId = await createChatEntry(ctx);
+  if (!entryId) {
+    return {
+      turn: { added: [], done: [], links: [], questions },
+      waiting: { changes: ops, origin: "chat" },
+      result: {},
+    };
+  }
+  const changes = await applyDumpChanges({
+    ctx,
+    rawEntryId: entryId,
+    built,
+    completeExistingNodeIds: built.completeExistingNodeIds,
+    autoApply: ctx.autoApply !== false,
+    source: "chat",
   });
-  const okCount = results.filter((r) => r.ok).length;
-  const failedCount = results.length - okCount;
-  const questions = (plan.questions ?? []).filter((q) => typeof q === "string" && q.trim());
-  const done = okCount === 1 ? "Done ✓" : `Applied ${okCount} changes ✓`;
+  const turn = { added: changes.added, done: changes.done, links: changes.links, questions, undo: changes.undo };
   return {
-    accepted: okCount > 0,
-    applied: okCount,
-    total: results.length,
-    results,
-    // A partial failure goes back to the model (actionSucceeded reads
-    // `error`) so it can say what didn't land instead of a bare "Done".
-    ...(failedCount > 0
-      ? { error: `${failedCount} of ${results.length} changes failed — see results` }
-      : { message: questions.length > 0 ? `${done}\n\n${questions.join("\n")}` : done }),
+    turn,
+    waiting:
+      changes.waiting.length > 0
+        ? { changes: changes.waiting, origin: "chat", ...(changes.notes.length > 0 ? { notes: changes.notes } : {}) }
+        : null,
+    result: appliedForModel(turn, changes.waiting.length),
   };
 }
 

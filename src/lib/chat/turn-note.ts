@@ -1,6 +1,7 @@
-// What a brain dump changed, in plain words, for the chat model.
+// What a turn changed (a brain dump, or a chat change), in plain words, for
+// the chat model.
 //
-// A dump's result is a card, and history goes to the model as text — without
+// A turn's result is a card, and history goes to the model as text — without
 // this the next turn would see only the reply sentence and could not follow
 // "no, put the second one under Thesis" or "yes, make that a task". The note
 // lists what was added, finished, linked, what still waits for the user and
@@ -36,10 +37,19 @@ export function turnNote(
         : `Added to the graph: ${listed(items)}`,
     );
   }
-  if (turn.done.length > 0) lines.push(`Marked done: ${listed(turn.done)}`);
-  if (turn.links.length > 0) {
+  if (turn.done.length > 0) {
     lines.push(
-      `Linked: ${listed(turn.links.map((l) => `${l.sourceTitle} ${edgeLabel(l.edgeType)} ${l.targetTitle}`))}`,
+      turn.doneStatus === "undone"
+        ? `Marked done, then UNDONE by the user — open again: ${listed(turn.done)}`
+        : `Marked done: ${listed(turn.done)}`,
+    );
+  }
+  if (turn.links.length > 0) {
+    const words = turn.links.map((l) =>
+      l.removed ? `${l.sourceTitle} no longer linked to ${l.targetTitle}` : `${l.sourceTitle} ${edgeLabel(l.edgeType)} ${l.targetTitle}`,
+    );
+    lines.push(
+      turn.linksStatus === "undone" ? `Link changes UNDONE by the user: ${listed(words)}` : `Links: ${listed(words)}`,
     );
   }
   if (message.appliedAction) lines.push(appliedActionNote(message.appliedAction).replace(/^\[|\]$/g, ""));
@@ -58,7 +68,13 @@ export function turnNote(
       const kept = pending.acceptedIndexes ? new Set(pending.acceptedIndexes) : null;
       const accepted = words.filter((_, i) => !kept || kept.has(i));
       const skipped = kept ? words.filter((_, i) => !kept.has(i)) : [];
-      if (accepted.length > 0) lines.push(`Accepted by the user and applied: ${listed(accepted)}`);
+      if (accepted.length > 0) {
+        lines.push(
+          pending.undoStatus === "undone"
+            ? `Accepted, then UNDONE by the user — back as before: ${listed(accepted)}`
+            : `Accepted by the user and applied: ${listed(accepted)}`,
+        );
+      }
       if (skipped.length > 0) lines.push(`Skipped by the user: ${listed(skipped)}`);
     }
   }
@@ -68,7 +84,7 @@ export function turnNote(
   }
 
   if (lines.length === 0) return "";
-  return `[What this brain dump changed — the user saw it as a card under this reply.\n${lines.map((l) => `- ${l}`).join("\n")}]`;
+  return `[What this changed — the user saw it as a card under this reply.\n${lines.map((l) => `- ${l}`).join("\n")}]`;
 }
 
 // The links card, for the chat model: what was suggested and what the user did.

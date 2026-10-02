@@ -10,13 +10,14 @@
 // Tool handlers are server-side only. Never expose this module to the browser.
 
 import { READ_ONLY_TOOLS, type ToolContext, type ToolDefinition } from "./read-only";
-import { MUTATION_TOOLS } from "./mutations";
+import { CHANGE_TOOL, CHANGE_TOOLS, planChange, type TurnPlan } from "./change";
 import { PLANNER_MUTATION_TOOLS } from "./planner-mutations";
 import { PRIORITY_MUTATION_TOOLS } from "./priority-mutations";
 import { COMMITMENT_MUTATION_TOOLS } from "./commitment-mutations";
 import { INTERACTIVE_TOOLS } from "./interactive";
 import { BUILD_GRAPH_TOOL, BUILD_TOOLS, planBuild } from "./build";
 import type { AppliedMarkerPayload } from "@/lib/chat/applied-marker";
+import type { TurnApplied } from "@/types/ai";
 
 export type { ToolContext, ToolDefinition, ToolSchema, ToolHandler } from "./read-only";
 
@@ -25,14 +26,17 @@ export type { ToolContext, ToolDefinition, ToolSchema, ToolHandler } from "./rea
 // mutation handler after Accept, or feeds the user's pick back for ask_choice.
 // Direct tools (update_priorities, set_commitments) change things WITHOUT a
 // pause: they run eagerly and hand the browser an Undo instead (dispatchEager
-// below). Only fully reversible changes belong here.
-// build_graph is a PLANNED mutation: its proposal is worked out server-side
-// (the graph builder) before the user is asked — see runTurnTools.
+// below). Only fully reversible changes belong here — and only what the user
+// said: a direct tool call the model marks source "suggestion" waits on a
+// card like any mutation (owner, 2026-10-02: advice stays advice until OK'd).
+// change and build_graph are PLANNED mutations: the dump policy runs before
+// the model hears back (tools/change.ts) — part applied now, part on a card.
 const ALL_MUTATION_TOOLS: ToolDefinition[] = [
-  ...MUTATION_TOOLS,
+  ...CHANGE_TOOLS,
   ...BUILD_TOOLS,
   ...PLANNER_MUTATION_TOOLS,
 ];
+const PLANNED_TOOLS = new Set([CHANGE_TOOL, BUILD_GRAPH_TOOL]);
 const DIRECT_TOOLS: ToolDefinition[] = [...PRIORITY_MUTATION_TOOLS, ...COMMITMENT_MUTATION_TOOLS];
 const REGISTRY: ToolDefinition[] = [
   ...READ_ONLY_TOOLS,
@@ -67,10 +71,15 @@ export function isInteractiveTool(name: string): boolean {
   return INTERACTIVE_NAMES.has(name);
 }
 
+// A direct tool's call that only suggests — the user didn't ask for it.
+export function isSuggestedDirectCall(name: string, input: unknown): boolean {
+  return DIRECT_NAMES.has(name) && (input as { source?: unknown } | null)?.source === "suggestion";
+}
+
 // Tools that pause the agent loop for the user (mutations await confirmation;
 // interactive tools await an answer). Anything else runs eagerly.
-export function isPausingTool(name: string): boolean {
-  return MUTATION_NAMES.has(name) || INTERACTIVE_NAMES.has(name);
+export function isPausingTool(name: string, input?: unknown): boolean {
+  return MUTATION_NAMES.has(name) || INTERACTIVE_NAMES.has(name) || isSuggestedDirectCall(name, input);
 }
 
 export interface DispatchResult {
@@ -183,6 +192,9 @@ export interface TurnTools {
   // The call the user must answer — with its final input (a planned tool's
   // input IS the plan) — or null when nothing pauses.
   pending: ToolUse | null;
+  // A planned tool's card: what it applied at once (with Undo), its
+  // questions; the pending rows show inside it.
+  turns: TurnApplied[];
   // Everything else in the turn, when something pauses.
   deferred: DeferredToolUse[];
   // Changes direct tools made: the browser shows each with an Undo.
@@ -193,8 +205,9 @@ export interface TurnTools {
 
 // Decides what one assistant turn's tool calls come to. Shared by the chat
 // and resume routes, which used to carry a copy each.
-//   • The first pausing call becomes the card. build_graph is planned first:
-//     with nothing to confirm it turns into a plain result and the next
+//   • The first pausing call becomes the card. change and build_graph are
+//     planned first: what the policy applies now goes on a turn card; with
+//     nothing left to confirm the call turns into a plain result and the next
 //     pausing call (if any) takes its place.
 //   • Direct tools run even when a card is pending — "took the exam, waiting
 //     on the result, and add these three things" must not lose the first half
@@ -203,24 +216,27 @@ export interface TurnTools {
 export async function runTurnTools(blocks: ToolUse[], ctx: ToolContext): Promise<TurnTools> {
   const done = new Map<string, DispatchResult>();
   const applied: AppliedMarkerPayload[] = [];
+  const turns: TurnApplied[] = [];
   let pending: ToolUse | null = null;
 
   for (const block of blocks) {
-    if (!isPausingTool(block.name)) continue;
-    if (block.name !== BUILD_GRAPH_TOOL) {
+    if (!isPausingTool(block.name, block.input)) continue;
+    if (!PLANNED_TOOLS.has(block.name)) {
       pending = block;
       break;
     }
-    const plan = await planBuild(block.input, ctx);
-    if (plan.kind === "changes") {
-      pending = { ...block, input: plan.input };
+    const plan: TurnPlan =
+      block.name === BUILD_GRAPH_TOOL ? await planBuild(block.input, ctx) : await planChange(block.input, ctx);
+    if (plan.turn) turns.push(plan.turn);
+    if (plan.waiting) {
+      pending = { ...block, input: plan.waiting };
       break;
     }
     done.set(block.id, {
       name: block.name,
       tool_use_id: block.id,
       content: JSON.stringify(plan.result),
-      is_error: false,
+      is_error: plan.result.accepted === false && typeof plan.result.error === "string",
     });
   }
 
@@ -232,13 +248,15 @@ export async function runTurnTools(blocks: ToolUse[], ctx: ToolContext): Promise
 
   if (!pending) {
     const results = await Promise.all(blocks.map((block) => done.get(block.id) ?? runEager(block)));
-    return { pending: null, deferred: [], applied, results };
+    return { pending: null, turns, deferred: [], applied, results };
   }
 
   const deferred: DeferredToolUse[] = [];
   for (const block of blocks) {
     if (block.id === pending.id) continue;
-    const result = done.get(block.id) ?? (isDirectTool(block.name) ? await runEager(block) : null);
+    const result =
+      done.get(block.id) ??
+      (isDirectTool(block.name) && !isSuggestedDirectCall(block.name, block.input) ? await runEager(block) : null);
     deferred.push({
       id: block.id,
       name: block.name,
@@ -246,6 +264,6 @@ export async function runTurnTools(blocks: ToolUse[], ctx: ToolContext): Promise
       ...(result ? { result: { content: result.content, is_error: result.is_error } } : {}),
     });
   }
-  return { pending, deferred, applied, results: [] };
+  return { pending, turns, deferred, applied, results: [] };
 }
 

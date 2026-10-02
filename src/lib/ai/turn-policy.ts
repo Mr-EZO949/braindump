@@ -3,10 +3,11 @@
 // on the card. The same rule whichever box the words were typed in.
 //
 //   apply now   completions · a new node this user reliably accepts
-//               (auto-apply.ts decides which) · a link between nodes that are
-//               there
-//   wait        move · rename / retype · archive · a new node the calibration
-//               holds back · everything that belongs to a reorganization
+//               (auto-apply.ts decides which) · a link added or removed
+//               between nodes that are there
+//   wait        move · rename / retype · archive · delete · merge · a new node
+//               the calibration holds back · everything that belongs to a
+//               reorganization
 //
 // A reorganization is reviewed as ONE unit: the new parent it moves things
 // under, that parent's other new children, and the links to the nodes it
@@ -57,8 +58,11 @@ export function splitByPolicy(
       editedIds.add(op.node_id);
       const target = moveTarget(op);
       if (creates.has(target)) askRefs.add(target);
-    } else if (op.kind === "update" || op.kind === "archive") {
+    } else if (op.kind === "update" || op.kind === "archive" || op.kind === "delete_node") {
       editedIds.add(op.node_id);
+    } else if (op.kind === "merge") {
+      editedIds.add(op.node_id);
+      editedIds.add(op.into_node_id);
     }
   }
   // A new node under a waiting new node waits too.
@@ -86,6 +90,7 @@ export function splitByPolicy(
         wait = !createRef(op) || askRefs.has(createRef(op)!);
         break;
       case "create_edge":
+      case "remove_edge":
         wait = waits(op.source_node_id) || waits(op.target_node_id);
         break;
       case "complete":
@@ -116,14 +121,18 @@ export function resolveRefs(ops: ChangeOp[], refToId: ReadonlyMap<string, string
         return { ...without(op, "new_parent_local_ref"), new_parent_node_id: parentId };
       }
       case "create_edge":
+      case "remove_edge":
         return {
           ...op,
           source_node_id: id(op.source_node_id) ?? op.source_node_id,
           target_node_id: id(op.target_node_id) ?? op.target_node_id,
         };
+      case "merge":
+        return { ...op, node_id: id(op.node_id) ?? op.node_id, into_node_id: id(op.into_node_id) ?? op.into_node_id };
       case "update":
       case "complete":
       case "archive":
+      case "delete_node":
         return { ...op, node_id: id(op.node_id) ?? op.node_id };
     }
   });
@@ -206,7 +215,11 @@ function resolveSelection(
         ok = !gone(moveTarget(op));
         break;
       case "create_edge":
+      case "remove_edge":
         ok = !gone(op.source_node_id) && !gone(op.target_node_id);
+        break;
+      case "merge":
+        ok = !gone(op.node_id) && !gone(op.into_node_id);
         break;
       default:
         ok = !gone(op.node_id);

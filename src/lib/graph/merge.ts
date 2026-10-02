@@ -1,6 +1,6 @@
 // Shared merge core. Single implementation used by:
 //   • /api/nodes/[id]/merge (the HTTP route)
-//   • propose_merge mutation tool (chat-driven merge)
+//   • the change tool's merge op (chat-driven merge, via change-set.ts)
 //
 // Behaviour mirrors the original route exactly: re-point active edges from
 // the source to the target, resolve duplicates by confidence, preserve

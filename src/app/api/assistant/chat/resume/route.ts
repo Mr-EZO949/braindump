@@ -40,18 +40,22 @@ import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { buildAssistantContext } from "@/lib/ai/context";
 import {
+  dispatchEager,
   dispatchTool,
   getToolSchemas,
   isDirectTool,
   isReadOnlyTool,
+  isSuggestedDirectCall,
   runTurnTools,
   type DeferredToolUse,
 } from "@/lib/ai/tools";
 import { applyBuildPlan, BUILD_GRAPH_TOOL, type BuildPlanInput } from "@/lib/ai/tools/build";
+import { CHANGE_TOOL } from "@/lib/ai/tools/change";
 import { settleCardLedger } from "@/lib/ai/dump-turn";
 import { selectOps } from "@/lib/ai/turn-policy";
 import type { ChangeOp } from "@/lib/graph/change-set";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
+import { encodeTurnMarker, encodeUndoMarker } from "@/lib/chat/turn-marker";
 import { resolveChoice } from "@/lib/ai/tools/interactive";
 import { actionSucceeded, answerStillOwed, confirmationFor, looksMultiStep } from "@/lib/ai/tools/confirmations";
 import { usesSonnet } from "@/lib/ai/chat-router";
@@ -60,7 +64,19 @@ import type { AssistantMode } from "@/types/ai";
 const MAX_TOOL_ROUNDS = 6;
 const TOOL_RESULT_MAX_CHARS = 2000;
 // Tools whose card is a list of change-set ops the user can accept row by row.
-const CHANGE_SET_TOOLS = new Set([BUILD_GRAPH_TOOL, "propose_changes_batch"]);
+const CHANGE_SET_TOOLS = new Set([BUILD_GRAPH_TOOL, CHANGE_TOOL]);
+
+// An accepted change set's result: its undo steps go to the browser (the
+// card's Undo), the rest to the model.
+function splitUndo(content: string): { content: string; undo: unknown[] } {
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    const { undo, ...rest } = parsed;
+    return { content: JSON.stringify(rest), undo: Array.isArray(undo) ? undo : [] };
+  } catch {
+    return { content, undo: [] };
+  }
+}
 
 function truncateToolContent(
   content: string | Array<{ type: "text"; text: string }>,
@@ -143,10 +159,11 @@ export async function POST(req: NextRequest) {
     return new Response("Invalid JSON body", { status: 400 });
   }
 
-  const { run_id, decision, choice, accepted_indexes } = body as {
+  const { run_id, decision, choice, accepted_indexes, auto_apply } = body as {
     run_id?: string;
     decision?: string;
     choice?: string;
+    auto_apply?: boolean;
     // A change-set card accepted in part: the positions of the rows the user
     // kept. Absent → all of them.
     accepted_indexes?: unknown;
@@ -208,6 +225,7 @@ export async function POST(req: NextRequest) {
     defer: (work: () => Promise<void>) => after(work),
     // For a build_graph the model proposes later in this same turn.
     userMessage: lastUserQuestion(messages),
+    autoApply: auto_apply !== false,
   };
 
   // A change set a BRAIN DUMP asked for (api/entries puts the builder's edits
@@ -229,10 +247,13 @@ export async function POST(req: NextRequest) {
     if (chosen.length > 0) {
       const result = await applyBuildPlan({ ...plan, changes: chosen, origin: "dump" }, toolCtx);
       applied = Array.isArray(result.results) ? (result.results as typeof applied) : [];
-      const content = JSON.stringify(result);
-      reply = actionSucceeded(content, false)
-        ? confirmationFor(BUILD_GRAPH_TOOL, content)
-        : "Some of that didn't apply — tell me here what you want changed and I'll redo it.";
+      const { content, undo } = splitUndo(JSON.stringify(result));
+      // The accepted rows get their own Undo on the card (the marker first).
+      reply =
+        (undo.length > 0 ? encodeUndoMarker(undo) : "") +
+        (actionSucceeded(content, false)
+          ? confirmationFor(BUILD_GRAPH_TOOL, content)
+          : "Some of that didn't apply — tell me here what you want changed and I'll redo it.");
     }
     await settleCardLedger(
       { supabase, userId: user.id, workspaceId },
@@ -262,6 +283,9 @@ export async function POST(req: NextRequest) {
   const toolResults: ToolResultBlockParam[] = [];
   // The accepted action's own result, kept untruncated for the no-model reply.
   let acceptedResult: { content: string; isError: boolean } | null = null;
+  // Sent to the browser before any text: the accepted rows' Undo, or the
+  // applied card of a suggestion the user OK'd.
+  let prefix = "";
 
   // Primary (the one the user explicitly answered).
   const isChoiceTool = run.pending_tool_name === "ask_choice";
@@ -281,18 +305,48 @@ export async function POST(req: NextRequest) {
       is_error: false,
     });
   } else if (decision === "accept") {
-    // A change-set card accepted in part (build_graph, propose_changes_batch).
+    // A change-set card accepted in part (change, build_graph).
+    const toolName = run.pending_tool_name as string;
     const pendingInput = run.pending_tool_input as { changes?: unknown } | null;
-    const partial =
-      keptIndexes && CHANGE_SET_TOOLS.has(run.pending_tool_name as string) && Array.isArray(pendingInput?.changes)
-        ? { ...pendingInput, changes: selectOps(pendingInput.changes as ChangeOp[], keptIndexes) }
-        : null;
-    const result = await dispatchTool({
-      name: run.pending_tool_name as string,
-      input: partial ?? run.pending_tool_input,
-      tool_use_id: run.pending_tool_use_id as string,
-      ctx: toolCtx,
-    });
+    const isChangeSet = CHANGE_SET_TOOLS.has(toolName) && Array.isArray(pendingInput?.changes);
+    const offered = isChangeSet ? (pendingInput!.changes as ChangeOp[]) : [];
+    const chosen = isChangeSet && keptIndexes ? selectOps(offered, keptIndexes) : offered;
+    let result;
+    if (isSuggestedDirectCall(toolName, run.pending_tool_input)) {
+      // A priority / weekly-time change the assistant suggested, now OK'd:
+      // it applies like the user's own, with its applied card and Undo.
+      const ran = await dispatchEager({
+        name: toolName,
+        input: run.pending_tool_input,
+        tool_use_id: run.pending_tool_use_id as string,
+        ctx: toolCtx,
+      });
+      if (ran.applied) prefix += encodeAppliedMarker(ran.applied);
+      result = ran.result;
+    } else {
+      result = await dispatchTool({
+        name: toolName,
+        input: isChangeSet ? { ...pendingInput, changes: chosen } : run.pending_tool_input,
+        tool_use_id: run.pending_tool_use_id as string,
+        ctx: toolCtx,
+      });
+    }
+    if (isChangeSet) {
+      const { content, undo } = splitUndo(result.content);
+      result = { ...result, content };
+      if (undo.length > 0) prefix += encodeUndoMarker(undo);
+      let appliedResults: Array<{ ok: boolean; id?: string }> = [];
+      try {
+        const parsed = JSON.parse(content) as { results?: unknown };
+        if (Array.isArray(parsed.results)) appliedResults = parsed.results as typeof appliedResults;
+      } catch {
+        // No per-row results — nothing to settle.
+      }
+      await settleCardLedger(
+        { supabase, userId: user.id, workspaceId },
+        { offered, applied: chosen, results: appliedResults },
+      );
+    }
     acceptedResult = { content: result.content, isError: result.is_error };
     toolResults.push({
       type: "tool_result",
@@ -306,6 +360,14 @@ export async function POST(req: NextRequest) {
     // proposed edges in the edge-review modal. Do NOT run it here too — that
     // would double the infer_edge spend.
   } else {
+    const pendingInput = run.pending_tool_input as { changes?: unknown } | null;
+    if (CHANGE_SET_TOOLS.has(run.pending_tool_name as string) && Array.isArray(pendingInput?.changes)) {
+      // Skipped new nodes are a "no" the calibration learns from.
+      await settleCardLedger(
+        { supabase, userId: user.id, workspaceId },
+        { offered: pendingInput.changes as ChangeOp[], applied: [], results: [] },
+      );
+    }
     toolResults.push({
       type: "tool_result",
       tool_use_id: run.pending_tool_use_id as string,
@@ -380,7 +442,7 @@ export async function POST(req: NextRequest) {
     !answerStillOwed(lastUserQuestion(messages), lastAssistantText(messages)) &&
     (assistantModel === AI_MODELS.CLAUDE_HAIKU || run.pending_tool_name === "plan_day")
   ) {
-    return new Response(confirmationFor(run.pending_tool_name as string, acceptedResult.content), {
+    return new Response(prefix + confirmationFor(run.pending_tool_name as string, acceptedResult.content), {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "X-Resume-Decision": decision,
@@ -441,6 +503,7 @@ export async function POST(req: NextRequest) {
         }
       };
 
+      send(prefix);
       try {
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           if (aborted) break;
@@ -494,8 +557,9 @@ export async function POST(req: NextRequest) {
           );
           if (aborted) break;
           // A direct tool's change reaches the browser as an applied card
-          // with an Undo.
+          // with an Undo; a change / build_graph call's as a turn card.
           for (const applied of turn.applied) send(encodeAppliedMarker(applied));
+          for (const card of turn.turns) send(encodeTurnMarker(card));
 
           if (turn.pending) {
             const pending = turn.pending;

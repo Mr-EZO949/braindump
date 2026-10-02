@@ -7,14 +7,8 @@
 import { useMemo } from "react";
 
 import { ChangeChecklist, useChangeSelection } from "@/components/panel/change-checklist";
-import {
-  edgeLabel,
-  hierarchyEnds,
-  HIERARCHY_EDGE_TYPES,
-  isChangeList,
-  namerFor,
-  type ChangeOpView,
-} from "@/lib/chat/change-describe";
+import { isChangeList, namerFor, type ChangeOpView } from "@/lib/chat/change-describe";
+import { describePriorityChange, parsePriorityChanges } from "@/lib/graph/priority-changes";
 import type { PendingAction } from "@/types/chat";
 
 interface PendingActionCardProps {
@@ -24,25 +18,40 @@ interface PendingActionCardProps {
   onResolve: (decision: "accept" | "reject" | "choice", choice?: string, acceptedIndexes?: number[]) => void;
   // Node id → title, so the card names nodes instead of showing UUIDs.
   nodeTitles?: ReadonlyMap<string, string>;
+  // After Accept: puts the accepted rows back (action.undo).
+  onUndo?: () => void;
 }
 
 const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
-  propose_node: { verb: "Add", noun: "new node" },
-  propose_nodes_batch: { verb: "Add", noun: "nodes" },
-  propose_changes_batch: { verb: "Apply", noun: "changes" },
-  // The graph builder's change set (tools/build.ts) — same list of ops.
+  // A change set (tools/change.ts, tools/build.ts): a list of ops.
+  change: { verb: "Apply", noun: "changes" },
   build_graph: { verb: "Apply", noun: "changes" },
-  propose_edge: { verb: "Connect", noun: "nodes" },
-  propose_merge: { verb: "Merge", noun: "nodes" },
-  update_node: { verb: "Edit", noun: "node" },
-  archive_node: { verb: "Archive", noun: "node" },
-  complete_node: { verb: "Complete", noun: "node" },
+  // A suggestion the assistant made (source "suggestion") — waits for OK.
+  update_priorities: { verb: "Suggested", noun: "priorities" },
+  set_commitments: { verb: "Suggested", noun: "weekly times" },
   add_task_to_calendar: { verb: "Schedule", noun: "task" },
   reschedule_task: { verb: "Reschedule", noun: "task" },
   mark_task_done: { verb: "Mark done", noun: "task" },
 };
 
-const CHANGE_SET_TOOLS = new Set(["propose_changes_batch", "build_graph"]);
+const CHANGE_SET_TOOLS = new Set(["change", "build_graph"]);
+
+// A suggested direct-tool call, in words: one line per change.
+function suggestionLines(action: PendingAction): string[] | null {
+  if (action.toolName === "update_priorities") {
+    const parsed = parsePriorityChanges(action.toolInput);
+    return parsed.ok ? parsed.changes.map(describePriorityChange) : null;
+  }
+  if (action.toolName === "set_commitments" && Array.isArray(action.toolInput.changes)) {
+    return (action.toolInput.changes as Array<Record<string, unknown>>).map((c) => {
+      const verb = c.action === "remove" ? "Remove" : c.action === "update" ? "Change" : "Add";
+      const days = Array.isArray(c.days) ? ` ${(c.days as unknown[]).join(", ")}` : "";
+      const time = typeof c.start_time === "string" ? ` ${c.start_time}${typeof c.end_time === "string" ? `–${c.end_time}` : ""}` : "";
+      return `${verb} ${typeof c.title === "string" ? c.title : "a weekly time"}${days}${time}`;
+    });
+  }
+  return null;
+}
 const EMPTY_OPS: ChangeOpView[] = [];
 
 function labelFor(name: string): { verb: string; noun: string } {
@@ -61,17 +70,8 @@ function renderField(value: unknown): string | null {
   }
 }
 
-interface BatchNode {
-  title?: unknown;
-  node_type?: unknown;
-}
-
-function isBatchNodeList(value: unknown): value is BatchNode[] {
-  return Array.isArray(value) && value.every((v) => typeof v === "object" && v !== null);
-}
-
-export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: PendingActionCardProps) {
-  // Change-set cards (build_graph, propose_changes_batch): every row is the
+export function PendingActionCard({ action, disabled, onResolve, nodeTitles, onUndo }: PendingActionCardProps) {
+  // Change-set cards (change, build_graph): every row is the
   // user's own call. Declared before any early return — hooks can't be conditional.
   const changeOps = useMemo(
     () =>
@@ -132,52 +132,28 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
     );
   }
 
-  const isBatch = action.toolName === "propose_nodes_batch";
   const isChangesBatch = CHANGE_SET_TOOLS.has(action.toolName);
   // What the builder wants the user to know before accepting (a new item
   // that looks like an existing one).
-  const notes =
-    action.toolName === "build_graph" && Array.isArray(action.toolInput.notes)
-      ? (action.toolInput.notes as unknown[]).filter((n): n is string => typeof n === "string")
-      : [];
-  const batchNodes = isBatch && isBatchNodeList(action.toolInput.nodes)
-    ? (action.toolInput.nodes as BatchNode[])
-    : null;
+  const notes = Array.isArray(action.toolInput.notes)
+    ? (action.toolInput.notes as unknown[]).filter((n): n is string => typeof n === "string")
+    : [];
   const changes = isChangesBatch && changeOps.length > 0 ? changeOps : null;
-
   const nameOf = namerFor(changes ?? [], nodeTitles);
-
-  // propose_edge with belongs_to / contains moves a node — say so.
-  const isEdge = action.toolName === "propose_edge";
-  const isMove =
-    isEdge &&
-    typeof action.toolInput.edge_type === "string" &&
-    HIERARCHY_EDGE_TYPES.has(action.toolInput.edge_type);
-  const { verb, noun } = isMove ? { verb: "Move", noun: "node" } : labelFor(action.toolName);
-  const edgeLine = !isEdge
-    ? null
-    : isMove
-      ? (() => {
-          const { child, parent } = hierarchyEnds(action.toolInput);
-          return `${nameOf(child)} → under ${nameOf(parent)}`;
-        })()
-      : `${nameOf(action.toolInput.source_node_id)} ${edgeLabel(action.toolInput.edge_type)} ${nameOf(action.toolInput.target_node_id)}`;
+  const suggested = suggestionLines(action);
+  const { verb, noun } = labelFor(action.toolName);
 
   const entries =
-    isBatch || isChangesBatch
-      ? [] // batch cards render their own lists below
-      : isEdge
-        ? Object.entries({ why: action.toolInput.explanation }).filter(
-            ([, value]) => renderField(value) !== null,
-          )
-        : Object.entries(action.toolInput)
-            .filter(([, value]) => renderField(value) !== null)
-            // Ids the graph can name are shown as titles ("node", "parent node").
-            .map(([key, value]): [string, unknown] =>
-              typeof value === "string" && /_node_id$|^node_id$/.test(key) && nodeTitles?.has(value)
-                ? [key.replace(/_id$/, "").replace(/_/g, " "), nodeTitles.get(value)]
-                : [key, value],
-            );
+    isChangesBatch || suggested
+      ? [] // these cards render their own lists below
+      : Object.entries(action.toolInput)
+          .filter(([, value]) => renderField(value) !== null)
+          // Ids the graph can name are shown as titles ("node", "parent node").
+          .map(([key, value]): [string, unknown] =>
+            typeof value === "string" && /_node_id$|^node_id$/.test(key) && nodeTitles?.has(value)
+              ? [key.replace(/_id$/, "").replace(/_/g, " "), nodeTitles.get(value)]
+              : [key, value],
+          );
 
   const awaiting = action.status === "awaiting";
   const accepted = action.status === "accepted";
@@ -190,33 +166,17 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
       <div className="pending-action-header">
         <span className="pending-action-verb">{verb}</span>
         <span className="pending-action-noun">
-          {isBatch && batchNodes
-            ? `${batchNodes.length} ${noun}`
-            : isChangesBatch && changes
-              ? `${changes.length} ${noun}`
-              : noun}
+          {isChangesBatch && changes ? `${changes.length} ${noun}` : noun}
         </span>
       </div>
 
-      {isBatch && batchNodes ? (
+      {suggested ? (
         <ul className="pending-action-batch-list">
-          {batchNodes.slice(0, 12).map((node, idx) => {
-            const title = typeof node.title === "string" ? node.title : "(untitled)";
-            const type = typeof node.node_type === "string" ? node.node_type : "";
-            return (
-              <li className="pending-action-batch-item" key={idx}>
-                <span className="pending-action-batch-title">{title}</span>
-                {type ? (
-                  <span className="pending-action-batch-type">{type}</span>
-                ) : null}
-              </li>
-            );
-          })}
-          {batchNodes.length > 12 ? (
-            <li className="pending-action-batch-more">
-              +{batchNodes.length - 12} more
+          {suggested.map((line, idx) => (
+            <li className="pending-action-batch-item" key={idx}>
+              <span className="pending-action-batch-title">{line}</span>
             </li>
-          ) : null}
+          ))}
         </ul>
       ) : null}
 
@@ -241,15 +201,7 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
         </ul>
       ) : null}
 
-      {edgeLine ? (
-        <ul className="pending-action-batch-list">
-          <li className="pending-action-batch-item">
-            <span className="pending-action-batch-title">{edgeLine}</span>
-          </li>
-        </ul>
-      ) : null}
-
-      {!isBatch && entries.length > 0 ? (
+      {entries.length > 0 ? (
         <div className="pending-action-fields">
           {entries.map(([key, value]) => {
             const rendered = renderField(value);
@@ -312,7 +264,18 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
         </div>
       ) : null}
       {accepted ? (
-        <div className="pending-action-status pending-action-status-accepted">Accepted</div>
+        <div className="pending-action-status pending-action-status-accepted">
+          {action.undoStatus === "undone" ? "Put back" : "Accepted"}
+          {action.undo && action.undo.length > 0 && onUndo && action.undoStatus !== "undone" ? (
+            action.undoStatus === "undoing" ? (
+              <span className="applied-card-busy"> · Undoing…</span>
+            ) : (
+              <button className="applied-card-undo" disabled={disabled} onClick={onUndo} type="button">
+                Undo
+              </button>
+            )
+          ) : null}
+        </div>
       ) : null}
       {rejected ? (
         <div className="pending-action-status pending-action-status-rejected">Declined</div>
