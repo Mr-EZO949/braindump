@@ -181,6 +181,7 @@ export class GeminiProvider implements AIProvider {
         workspace_id: input.workspace_id,
         user_id: input.user_id,
         prompt_version: EXTRACT_PROMPT_VERSION,
+        today: input.today,
       });
     } catch (error) {
       throw malformedResponse({

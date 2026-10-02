@@ -13,7 +13,9 @@
 // existing class / project it belongs to — "for ML I have to pick a dataset by
 // friday" put "due Oct 2" on the class Machine Learning, and "need to review
 // chapters 1-4" became "focus" on Statistics; and one fact changes one item
-// ("stats midterm is oct 20" dated the midterm goal AND the class).
+// ("stats midterm is oct 20" dated the midterm goal AND the class); a to-do
+// about an item ("email the prof about the midterm by friday") does not date
+// the item.
 export const DUMP_PRIORITIES_PROMPT_VERSION = "dump-priorities-v3";
 
 export const DUMP_PRIORITIES_SYSTEM = `You read a brain dump for two kinds of facts. New items and plain completions are handled by another step — skip them.
@@ -21,7 +23,7 @@ export const DUMP_PRIORITIES_SYSTEM = `You read a brain dump for two kinds of fa
 1. "changes" — facts that change WHAT MATTERS about the user's EXISTING items, one change per fact:
 - wait: the user did their part and now waits on a result, reply or decision ("took the exam, waiting for results", "sent the application, waiting to hear back"). waiting_for = 2-4 words. If they say when it comes ("results next week"), put those words in date_words.
 - resume: the wait is over or they're picking a paused item back up (status paused only).
-- deadline: a due date set or moved ("psych got moved to friday", "the essay is due oct 20"). Copy the user's words for the date into date_words — never work a date out yourself.
+- deadline: a due date set or moved FOR THAT ITEM ("psych got moved to friday", "the essay is due oct 20"). Copy the user's words for the date into date_words — never work a date out yourself. A date on a to-do that is ABOUT an item is the to-do's date, not the item's: "need to email prof marino about the stats midterm review by friday" → no change (the email is new; the midterm's date didn't move).
 - stakes: "I need this for my masters", "a lot rides on it" → high; "it's pass/fail", "barely counts" → low.
 - focus: only when they say it — "focus on X (this week)", "X first"; "need to finish X" is a to-do, not focus. deprioritize: "X can wait", "not now".
 - drop: cancelled, not doing it, dropped the course.

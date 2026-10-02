@@ -180,6 +180,32 @@ describe("validateExtractionOutput (compact v20+ output)", () => {
   });
 });
 
+describe("validateExtractionOutput — the user's date words beat the model's arithmetic", () => {
+  // 2026-10-02 is a Friday.
+  const friday = { ...session, today: "2026-10-02" };
+  const node = (extra: Record<string, unknown>) => ({
+    local_ref: "n1",
+    proposed_title: "Email the professor",
+    proposed_node_type: "task",
+    extraction_confidence: 0.9,
+    ...extra,
+  });
+
+  it("resolves the words with the calendar and ignores a wrong target_date", () => {
+    const out = validateExtractionOutput({ proposed_nodes: [node({ target_date: "2026-10-06", date_words: "by friday" })] }, friday);
+    expect(out.proposed_nodes[0].proposed_target_date).toBe("2026-10-09");
+    const oct20 = validateExtractionOutput({ proposed_nodes: [node({ target_date: "2026-10-21", date_words: "oct 20" })] }, friday);
+    expect(oct20.proposed_nodes[0].proposed_target_date).toBe("2026-10-20");
+  });
+
+  it("keeps target_date when the words don't resolve, or no date is known", () => {
+    const q3 = validateExtractionOutput({ proposed_nodes: [node({ target_date: "2026-12-31", date_words: "end of the year" })] }, friday);
+    expect(q3.proposed_nodes[0].proposed_target_date).toBe("2026-12-31");
+    const noToday = validateExtractionOutput({ proposed_nodes: [node({ target_date: "2026-10-06", date_words: "friday" })] }, session);
+    expect(noToday.proposed_nodes[0].proposed_target_date).toBe("2026-10-06");
+  });
+});
+
 describe("validateExtractionOutput — one bad reference never costs the output", () => {
   const n = (local_ref: string, extra: Record<string, unknown> = {}) => ({
     local_ref,

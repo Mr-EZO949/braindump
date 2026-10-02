@@ -16,6 +16,9 @@
 // v5 (docs/unified-turn.md, phase 2): the prompt is now the graph BUILDER. It
 // edits existing nodes itself through "changes" (move / update / link) instead
 // of asking a question for chat to act on, and chat's build_graph tool runs it.
+// v6 (2026-10-02): the user's date words are copied into date_words and the
+// server resolves them (lib/time/relative-day.ts) — on a Friday, "by friday"
+// came back as the next TUESDAY. Same resolver the priority read uses.
 //
 // Same output schema and the same Session block as extract.ts, so the rest of
 // the pipeline (resolution, auto-apply, completions) is unchanged. Longer
@@ -23,7 +26,7 @@
 
 import { buildExtractionVariableBlock, type ExtractionPromptParams } from "./extract";
 
-export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v5";
+export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v6";
 
 const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to the user's existing knowledge graph. Most of these updates report things the user just did, plus a few new things to do; some ask to reorganize what is already there. Keep the graph sparse: propose only what the dump clearly states.
 
@@ -71,12 +74,12 @@ const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to t
 - Only edit nodes the dump actually names. If it is unclear WHICH node is meant or WHERE it should go, ask in clarifying_questions instead of guessing. Deleting and marking done are not edits: done → complete_existing_node_ids; "drop X" → leave it.
 
 5. Deadlines.
-- Only an explicit date or weekday ("by Friday", "due Oct 3", "end of the month") → target_date YYYY-MM-DD, resolved against today in the Session block ("Friday" = next Friday on/after today). Put it on the item the deadline is about. Anything else ("soon", "this week", "before the launch") → leave it out; never invent a date.
+- Only an explicit date or weekday ("by Friday", "due Oct 3", "end of the month") → copy the user's words for it into date_words ("friday", "oct 3", "end of the month") AND give target_date YYYY-MM-DD resolved against today in the Session block. The server reads date_words with a calendar and trusts that over your target_date. Put it on the item the deadline is about — a to-do's date belongs to the to-do, not to the goal or class it is for. Anything else ("soon", "this week", "before the launch") → leave both out; never invent a date.
 
 Confidence: 0.9+ when clearly stated, 0.6–0.8 when inferred.
 
 Respond with ONLY valid JSON, compact (no indentation or line breaks). Always include proposed_nodes (use [] when there is nothing new); leave out any other field that would be null or an empty array.
-{"proposed_nodes":[{"local_ref":"n1","proposed_title":"string","proposed_summary":"string","proposed_body":"string","proposed_node_type":"task","primary_parent_local_ref":"n2","existing_parent_node_id":"existing node id","target_date":"YYYY-MM-DD","extraction_confidence":0.9}],"changes":[{"kind":"move","node_id":"existing node id","new_parent":"existing node id or n1"}],"clarifying_questions":["string"],"complete_existing_node_ids":["existing node id"],"auto_complete_local_refs":["n1"]}`;
+{"proposed_nodes":[{"local_ref":"n1","proposed_title":"string","proposed_summary":"string","proposed_body":"string","proposed_node_type":"task","primary_parent_local_ref":"n2","existing_parent_node_id":"existing node id","target_date":"YYYY-MM-DD","date_words":"friday","extraction_confidence":0.9}],"changes":[{"kind":"move","node_id":"existing node id","new_parent":"existing node id or n1"}],"clarifying_questions":["string"],"complete_existing_node_ids":["existing node id"],"auto_complete_local_refs":["n1"]}`;
 
 export function buildLightExtractionPromptParts(params: ExtractionPromptParams): {
   rubricBlock: string;

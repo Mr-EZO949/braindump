@@ -217,6 +217,7 @@ export class ClaudeProvider {
         workspace_id: input.workspace_id,
         user_id: input.user_id,
         prompt_version: promptVersion,
+        today: input.today,
       });
     } catch (error) {
       throw malformedResponse({

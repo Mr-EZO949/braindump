@@ -74,7 +74,9 @@
 //   commitment, never a node; (e) a soft link may point at an EXISTING node's
 //   id — the model had invented a copy of an existing goal to link to, and
 //   both were dropped; (f) venting and questions to the assistant get a reply
-//   from another step, so they are no longer clarifying questions.
+//   from another step, so they are no longer clarifying questions. (g) the
+//   user's date words go into date_words and the server resolves them
+//   (lib/time/relative-day.ts): on a Friday, "by friday" came back as Tuesday.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
@@ -322,9 +324,9 @@ Completion-detection rule (IMPORTANT — apply BEFORE creating any node):
 - Net effect: dumps that describe completed work should mostly update existing nodes via complete_existing_node_ids, occasionally create-and-auto-complete a milestone, and almost never create plain "this happened" event notes.
 
 Deadline rule (target_date):
-- If the user mentions an explicit deadline ("by Friday", "due Thursday", "before May 15", "submit by Monday", "ship by end of Q3"), populate target_date as YYYY-MM-DD.
+- If the user mentions an explicit deadline ("by Friday", "due Thursday", "before May 15", "submit by Monday", "ship by end of Q3"), copy their words for the date into date_words ("friday", "may 15", "next monday", "end of Q3") AND give target_date as YYYY-MM-DD. The server reads date_words with a calendar and trusts that over your target_date — weekdays are easy to get wrong.
 - Resolve relative dates against the workspace's "today" (provided in the Session block when available; otherwise infer the current date from context).
-- Day-of-week without explicit date ("by Friday") → next occurrence of that weekday at or after today.
+- Day-of-week without explicit date ("by Friday") → the coming one; said on that same weekday, it means a week from today.
 - "End of Q3", "by August", "by next month" → last day of that period.
 - If the user is vague ("soon", "this week"), leave target_date null — don't invent dates.
 - target_date is most useful on goals, projects and big tasks (those surface in the Roadmap view). For tasks, only set it if the deadline is a hard external constraint (assignment due date, IRB deadline, etc.).
@@ -351,6 +353,7 @@ Write it compact: no indentation or line breaks. Leave out any field whose value
         }
       ],
       "target_date": "YYYY-MM-DD or null",
+      "date_words": "the user's words for that date, copied — or null",
       "extraction_confidence": 0.0
     }
   ],

@@ -2,6 +2,7 @@
 // Every structured AI response is validated here before being written to the DB.
 // If validation fails the caller catches the error, logs the failure, and does not write.
 
+import { resolveRelativeDay } from "@/lib/time/relative-day";
 import type {
   BuilderChange,
   BuilderLinkType,
@@ -142,6 +143,8 @@ export interface ExtractionSession {
   workspace_id: string;
   user_id: string;
   prompt_version: string;
+  // The user's local date — resolves the date words a node carries.
+  today?: string;
 }
 
 // One bad reference must never cost the whole output. Until 2026-09-30 a soft
@@ -253,10 +256,17 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
     // target_date — optional ISO date deadline. Drop anything that doesn't
     // match YYYY-MM-DD rather than rejecting the whole node, since the model
     // sometimes returns "Aug 1" or other shapes despite the prompt.
-    const proposedTargetDate =
-      isString(n.target_date) && /^\d{4}-\d{2}-\d{2}$/.test(n.target_date)
-        ? n.target_date
+    // The user's own words for the date ("friday", "oct 20") beat the model's
+    // arithmetic: on a Friday, "by friday" came back as the next Tuesday. The
+    // same resolver the priority read and chat tools use; target_date only when
+    // the words don't resolve ("end of Q3").
+    const fromWords =
+      isString(n.date_words) && n.date_words.trim() && session.today
+        ? resolveRelativeDay(n.date_words, session.today)
         : null;
+    const proposedTargetDate =
+      fromWords ??
+      (isString(n.target_date) && /^\d{4}-\d{2}-\d{2}$/.test(n.target_date) ? n.target_date : null);
 
     return [{
       local_ref: localRef,
