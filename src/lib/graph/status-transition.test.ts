@@ -5,7 +5,8 @@ import { transitionNodeStatus } from "./status-transition";
 // Minimal chainable Supabase stand-in: every builder method records itself and
 // returns the chain; maybeSingle() resolves to the given node row. Enough to
 // assert WHICH writes a transition performs without a database.
-function fakeSupabase(nodeRow: Record<string, unknown> | null) {
+// writeErrors: table → the error message a write to it resolves with.
+function fakeSupabase(nodeRow: Record<string, unknown> | null, writeErrors: Record<string, string> = {}) {
   const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
   const from = (table: string) => {
     const chain: Record<string, unknown> = new Proxy(
@@ -13,6 +14,7 @@ function fakeSupabase(nodeRow: Record<string, unknown> | null) {
       {
         get(_target, prop: string) {
           if (prop === "then") return undefined; // not a thenable; await yields the chain
+          if (prop === "error") return writeErrors[table] ? { message: writeErrors[table] } : null;
           if (prop === "maybeSingle") {
             return async () => ({ data: nodeRow, error: null });
           }
@@ -54,15 +56,35 @@ describe("transitionNodeStatus — habit semantics (#13)", () => {
       loggedOn: "2026-09-28",
     });
 
+    // Stored as the user's own check-in: the column's check constraint only
+    // allows 'manual' | 'plan_task', and 'chat' was rejected on every write.
     const upsert = calls.find((c) => c.table === "habit_completions" && c.method === "upsert");
     expect(upsert?.args[0]).toMatchObject({
       node_id: "habit-1",
       completed_on: "2026-09-28",
-      source: "chat",
+      source: "manual",
     });
 
     // The node row must never be touched — that's what made habits vanish.
     expect(calls.some((c) => c.table === "nodes" && c.method === "update")).toBe(false);
+  });
+
+  it("reports a failed check-in instead of claiming it was logged", async () => {
+    const { client } = fakeSupabase(
+      { id: "habit-1", status: "active", node_type: "habit", workspace_id: "ws-1", completed_at: null },
+      { habit_completions: 'new row violates check constraint "habit_completions_source_check"' },
+    );
+
+    const result = await transitionNodeStatus({
+      supabase: client,
+      userId: "user-1",
+      nodeId: "habit-1",
+      newStatus: "completed",
+      today: "2026-09-28",
+      habitSource: "dump",
+    });
+
+    expect(result.kind).toBe("error");
   });
 });
 

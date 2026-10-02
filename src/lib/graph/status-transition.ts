@@ -55,6 +55,11 @@ export function isRecurringNodeType(nodeType: string | null | undefined): boolea
 export type HabitCompletionSource = "manual" | "chat" | "dump" | "plan_task";
 
 // Idempotent: the unique (node_id, completed_on) constraint absorbs repeats.
+// The column only allows 'manual' | 'plan_task' (it exists to tell a check-in
+// from a planner cascade), so "I did my skincare" in chat or a dump is stored
+// as the user's own check-in. Until 2026-10-02 chat and dumps wrote 'chat' /
+// 'dump', the check constraint rejected every row, and the error was dropped
+// while the reply said "marked done".
 export async function logHabitCompletion(params: {
   supabase: SupabaseClient;
   userId: string;
@@ -62,18 +67,19 @@ export async function logHabitCompletion(params: {
   // The USER's local date (YYYY-MM-DD). Never derive this from UTC.
   date: string;
   source: HabitCompletionSource;
-}): Promise<void> {
-  await params.supabase
+}): Promise<{ error: string | null }> {
+  const { error } = await params.supabase
     .from("habit_completions")
     .upsert(
       {
         user_id: params.userId,
         node_id: params.nodeId,
         completed_on: params.date,
-        source: params.source,
+        source: params.source === "plan_task" ? "plan_task" : "manual",
       },
       { onConflict: "node_id,completed_on", ignoreDuplicates: true },
     );
+  return { error: error?.message ?? null };
 }
 
 type WorkspaceNodeRow = {
@@ -180,13 +186,14 @@ export async function transitionNodeStatus(params: {
 
   // Habits recur — completing one logs the user's day and keeps it active.
   if (isRecurringNodeType(node.node_type as string) && newStatus === "completed") {
-    await logHabitCompletion({
+    const logged = await logHabitCompletion({
       supabase,
       userId,
       nodeId,
       date: today,
       source: params.habitSource ?? "manual",
     });
+    if (logged.error) return { kind: "error", httpStatus: 500, error: logged.error };
     return { kind: "habit_logged", nodeId, status: previousStatus, loggedOn: today };
   }
 
