@@ -146,7 +146,6 @@
 }
 
 :root[data-theme="light"] .graph-search-control,
-:root[data-theme="light"] .graph-filter-shell,
 :root[data-theme="light"] .graph-create-trigger,
 :root[data-theme="light"] .graph-edit-toggle,
 :root[data-theme="light"] .type-explorer-toggle,
@@ -161,7 +160,6 @@
 :root[data-theme="light"]
   :is(
     .graph-search-control,
-    .graph-filter-shell,
     .graph-create-trigger,
     .graph-edit-toggle,
     .type-explorer-toggle
@@ -170,8 +168,7 @@
   background: var(--light-paper);
 }
 
-:root[data-theme="light"] .graph-edit-toggle-active,
-:root[data-theme="light"] .graph-filter-reset-active {
+:root[data-theme="light"] .graph-edit-toggle-active {
   background: #f6e7e4;
   border-color: rgba(184, 45, 62, 0.38);
   color: #922838;

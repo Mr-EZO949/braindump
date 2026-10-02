@@ -369,7 +369,7 @@ export function MainStage({
 
           <div className="graph-filter-row">
             <button
-              aria-label={hideCompleted ? "Show completed nodes on the graph" : "Hide completed nodes from the graph"}
+              aria-label="Show completed nodes on the graph"
               aria-pressed={!hideCompleted}
               className="graph-done-toggle"
               onClick={onToggleHideCompleted}
