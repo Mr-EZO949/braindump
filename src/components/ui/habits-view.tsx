@@ -249,47 +249,38 @@ export function HabitsView({ graphData, onSelectNode, onPlannerInvalidate }: Hab
       return next;
     });
 
+    // One request for every habit (GET /api/habits?ids=…): the done days used
+    // to fill in one habit at a time, a request each.
     const ac = new AbortController();
     let cancelled = false;
+    const ids = habitNodes.map((n) => n.id);
+    const settle = (entry: (id: string) => HabitState) =>
+      setHabits((prev) => {
+        const next = new Map(prev);
+        for (const id of ids) next.set(id, entry(id));
+        return next;
+      });
     (async () => {
-      await Promise.all(
-        habitNodes.map(async (n) => {
-          try {
-            const res = await fetch(`/api/habits/${n.id}?days=${HISTORY_DAYS}`, {
-              signal: ac.signal,
-              cache: "no-store",
-            });
-            if (!res.ok) {
-              if (!cancelled) {
-                setHabits((prev) => {
-                  const next = new Map(prev);
-                  next.set(n.id, { loading: false, data: null, error: `HTTP ${res.status}` });
-                  return next;
-                });
-              }
-              return;
-            }
-            const json = (await res.json()) as HabitData;
-            if (cancelled) return;
-            setHabits((prev) => {
-              const next = new Map(prev);
-              next.set(n.id, { loading: false, data: json, error: null });
-              return next;
-            });
-          } catch (err) {
-            if (cancelled || (err as Error).name === "AbortError") return;
-            setHabits((prev) => {
-              const next = new Map(prev);
-              next.set(n.id, {
-                loading: false,
-                data: null,
-                error: (err as Error).message ?? "Failed to load",
-              });
-              return next;
-            });
-          }
-        }),
-      );
+      try {
+        const res = await fetch(`/api/habits?ids=${ids.join(",")}&days=${HISTORY_DAYS}`, {
+          signal: ac.signal,
+          cache: "no-store",
+        });
+        if (cancelled) return;
+        if (!res.ok) {
+          settle(() => ({ loading: false, data: null, error: `HTTP ${res.status}` }));
+          return;
+        }
+        const json = (await res.json()) as { habits?: Record<string, HabitData> };
+        if (cancelled) return;
+        settle((id) => {
+          const data = json.habits?.[id] ?? null;
+          return { loading: false, data, error: data ? null : "Not found" };
+        });
+      } catch (err) {
+        if (cancelled || (err as Error).name === "AbortError") return;
+        settle(() => ({ loading: false, data: null, error: (err as Error).message ?? "Failed to load" }));
+      }
     })();
 
     return () => {
