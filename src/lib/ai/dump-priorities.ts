@@ -41,7 +41,7 @@ export interface DumpPriorityRead {
   unclear: string[];
 }
 
-type RefNode = { ref: string; id: string; title: string };
+type RefNode = { ref: string; id: string; title: string; status?: string | null };
 type RefCommitment = Commitment & { ref: string };
 
 // A clock time ("2pm", "14:00", "noon") next to a weekday or a repeat word
@@ -172,6 +172,10 @@ export function parseDumpPriorityResponse(
     const node = byRef.get(str(row.ref));
     const action = str(row.action) as PriorityAction;
     if (!node || !PRIORITY_ACTIONS.includes(action) || !DUMP_ACTIONS.has(action)) continue;
+    // Only a node on hold can be picked back up. On 2026-10-02 "i finally
+    // updated my cv so thats done" came back as resume on the (active) CV task:
+    // a "Back on" line for nothing, and it kept the builder from marking it done.
+    if (action === "resume" && node.status !== undefined && node.status !== "paused") continue;
     if (seen.has(`${node.id}:${action}`)) continue;
     if (STATUS_ACTIONS.has(action) && statusMoved.has(node.id)) continue;
 
@@ -211,7 +215,9 @@ export function parseDumpPriorityResponse(
 export function statusTouchedIds(read: DumpPriorityRead | null): Set<string> {
   return new Set(
     (read?.changes ?? [])
-      .filter((c) => STATUS_ACTIONS.has(String(c.action)))
+      // "did it, now waiting" / "dropped it" beat the builder's "did it";
+      // picking something back up never cancels a completion.
+      .filter((c) => STATUS_ACTIONS.has(String(c.action)) && c.action !== "resume")
       .map((c) => String(c.node_id)),
   );
 }

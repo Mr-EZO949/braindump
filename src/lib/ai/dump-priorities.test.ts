@@ -160,6 +160,20 @@ describe("statusTouchedIds", () => {
     expect([...statusTouchedIds(read)]).toEqual(["stats"]);
     expect(statusTouchedIds(null).size).toBe(0);
   });
+
+  it("'updated my cv so that's done' read as resume on an active node: dropped, the completion stands (e2e 2026-10-02)", () => {
+    const withStatus = [
+      { ref: "n1", id: "cv", title: "Update CV", status: "active" },
+      { ref: "n2", id: "visa", title: "Visa appointment", status: "paused" },
+    ];
+    const read = parseDumpPriorityResponse(
+      JSON.stringify({ changes: [{ ref: "n1", action: "resume" }, { ref: "n2", action: "resume" }] }),
+      withStatus,
+      TODAY,
+    );
+    expect(read.changes.map((c) => c.node_id)).toEqual(["visa"]);
+    expect(statusTouchedIds(read).size).toBe(0);
+  });
 });
 
 describe("parseDumpPriorityResponse — questions name items, not refs", () => {
