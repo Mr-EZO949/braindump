@@ -314,7 +314,7 @@ Each phase ships on its own and is testable from `testing-journal.md`.
      user) — the chat turns were assembled exactly as the route does and the tool calls run
      through `runTurnTools`; `/api/entries/[id]/retry` ignores a dump's restructure.
 3. **One thread, one card** — ✅ built 2026-10-01 → 02 (no migration; `extract-v26`,
-   `extract-light-v6`, `dump-priorities-v3`, `dump-reply-v2`). Live notes and the driver:
+   `extract-light-v6`, `dump-priorities-v3`, `dump-reply-v3`). Live notes and the driver:
    `docs/unified-turn-handoff.md`.
    - **One change set per dump** (`lib/ai/dump-turn.ts`): the builder's new nodes, edits,
      links and completions become one op list. **One policy** (`lib/ai/turn-policy.ts`):
@@ -331,7 +331,7 @@ Each phase ships on its own and is testable from `testing-journal.md`.
      modal, the toast and the separate cards are no longer shown for a user's dump
      (suggest-steps, the bootstrap wizard and the retry route keep the modal).
    - **The reply** (`dump-reply.ts`): a small Haiku read answers the venting / the question,
-     in parallel with the builder, on every dump (`dump-reply-v2`, 2026-10-02: a verdict
+     in parallel with the builder, on every dump (`dump-reply-v2`/`v3`, 2026-10-02: a verdict
      line NONE / ACK / ANSWER / BOTH first; a dump that is only items gets NONE).
    - **The thread remembers** (`lib/chat/turn-note.ts`): history tells the chat model what the
      dump added, finished, linked, what waits and what was asked.
