@@ -123,17 +123,6 @@ export interface GraphData {
   edges: Edge[];
 }
 
-export type GraphEditOperation =
-  | { op: "move"; node: string; new_parent: string }
-  | { op: "remove_edge"; source: string; target: string; edge_type?: string }
-  | { op: "rename"; node: string; new_title: string }
-  | { op: "archive"; node: string }
-  // Insert `intermediate` between an existing child→parent relationship.
-  // Effect: child belongs_to intermediate, intermediate belongs_to child's
-  // current parent. Atomic via the route handler (two moves under the hood
-  // but exposed as one op so the UI / scripts can express intent cleanly).
-  | { op: "insert_between"; intermediate: string; child: string };
-
 export interface CreateNodeInput {
   custom_type: string;
   importance_index: number;

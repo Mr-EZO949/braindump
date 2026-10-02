@@ -2,8 +2,9 @@
 //
 // A parent is a `belongs_to` edge, child → parent, and a node has at most one
 // live one (DB index idx_edges_single_parent). Layout, Todos, Roadmap, delete
-// and the ranking all read that edge, so every write path — chat tools, the
-// graph-edit route — goes through here instead of inserting edges itself.
+// and the ranking all read that edge, so every write path — the change set
+// (lib/graph/change-set.ts) and the review routes — goes through here instead
+// of inserting edges itself.
 //
 // History (2026-09-30): chat used to insert `contains` edges (parent → child),
 // which nothing treats as structure, and had no way to replace a parent — a

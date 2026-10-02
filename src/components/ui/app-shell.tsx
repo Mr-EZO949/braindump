@@ -25,7 +25,6 @@ import {
 } from "@/lib/chat/sessions";
 import { ProposedNodesReview } from "@/components/ui/proposed-nodes-review";
 import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
-import { GraphEditReview } from "@/components/ui/graph-edit-review";
 import { MergeAlert } from "@/components/ui/merge-alert";
 import { NudgeRibbon } from "@/components/nudges/nudge-ribbon";
 import { WorkspaceBootstrapWizard } from "@/components/ui/workspace-bootstrap-wizard";
@@ -101,7 +100,7 @@ import type {
   PendingAction,
   TurnCardData,
 } from "@/types/chat";
-import type { CreateNodeInput, Edge, GraphData, GraphEditOperation, Node, NodeType, Workspace } from "@/types/graph";
+import type { CreateNodeInput, Edge, GraphData, Node, NodeType, Workspace } from "@/types/graph";
 import { addDaysISO, localDateISO } from "@/lib/time/local-date";
 import { todayIsoDate } from "@/lib/planner/auto-schedule";
 import { clientDayHints } from "@/lib/habits/streak";
@@ -412,8 +411,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   // fetch also aborts the upstream model call server-side (the route forwards
   // req.signal to Anthropic), so a cancel doesn't keep burning tokens.
   const stepSuggestAbortRef = useRef<AbortController | null>(null);
-  const [graphEditOps, setGraphEditOps] = useState<GraphEditOperation[]>([]);
-  const [graphEditReviewOpen, setGraphEditReviewOpen] = useState(false);
   const [proposedEdges, setProposedEdges] = useState<ProposedEdgeWithNodes[]>([]);
   const [edgeReviewOpen, setEdgeReviewOpen] = useState(false);
   const [analyzingConnections, setAnalyzingConnections] = useState(false);
@@ -1447,7 +1444,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   // Streams /api/assistant/chat (or /resume) into the assistant bubble.
   // Handles the <<BRAINDUMP_PAUSE>> marker: when seen, attaches a pending
   // action to the bubble so the user gets an inline Accept/Reject card.
-  // Also runs the legacy <nodes> / <graph_edit> / <recompute_scores/> post-
+  // Also runs the <recompute_scores/> post-
   // processing on the marker-stripped final text.
   const consumeAssistantStream = async (
     res: Response,
@@ -1540,15 +1537,7 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     if (sawPause) return;
 
-    // Legacy tag post-processing — only when we reached end_turn (no pause).
-    const nodesMatch = cleanText.match(/<nodes>\s*([\s\S]*?)\s*<\/nodes>/);
-    if (nodesMatch && nodesMatch[1]?.trim() && targetWorkspaceId) {
-      const nodesContent = nodesMatch[1].trim();
-      cleanText = cleanText.replace(/<nodes>[\s\S]*?<\/nodes>/, "").trimEnd();
-      writeBody(cleanText);
-      void handleExtractNodes(nodesContent, targetWorkspaceId);
-    }
-
+    // <recompute_scores/> — only when we reached end_turn (no pause).
     if (/<recompute_scores\s*\/?>/.test(cleanText) && targetWorkspaceId) {
       cleanText = cleanText.replace(/<recompute_scores\s*\/?>/g, "").trimEnd();
       writeBody(cleanText);
@@ -1571,21 +1560,6 @@ export function AppShell({ initialUser }: AppShellProps) {
         .catch(() => {
           // Score recompute failed silently
         });
-    }
-
-    const editMatch = cleanText.match(/<graph_edit>\s*([\s\S]*?)\s*<\/graph_edit>/);
-    if (editMatch && editMatch[1]?.trim() && targetWorkspaceId) {
-      cleanText = cleanText.replace(/<graph_edit>[\s\S]*?<\/graph_edit>/, "").trimEnd();
-      writeBody(cleanText);
-      try {
-        const parsedOps = JSON.parse(editMatch[1].trim()) as GraphEditOperation[];
-        if (Array.isArray(parsedOps) && parsedOps.length > 0) {
-          setGraphEditOps(parsedOps);
-          setGraphEditReviewOpen(true);
-        }
-      } catch {
-        // Invalid JSON — ignore silently
-      }
     }
   };
 
@@ -3708,35 +3682,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     closeProposedEdgesReview();
   };
 
-  const handleGraphEditConfirm = async (ops: GraphEditOperation[]) => {
-    if (!selectedWorkspaceId) return;
-    setGraphEditReviewOpen(false);
-    setGraphEditOps([]);
-
-    try {
-      const res = await fetch("/api/graph-edit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: selectedWorkspaceId, operations: ops }),
-      });
-      const data = await res.json() as {
-        updated_nodes?: Node[];
-        updated_edges?: Edge[];
-      };
-
-      if (res.ok && data.updated_nodes && data.updated_edges) {
-        setGraphData({
-          nodes: data.updated_nodes as Node[],
-          edges: (data.updated_edges as Edge[]).filter(
-            (e) => e.status !== "orphaned" && e.status !== "user_rejected",
-          ),
-        });
-      }
-    } catch {
-      // Failed silently
-    }
-  };
-
   // threadMessageId: the chat message whose turn added these nodes — the links
   // go into that thread as a card instead of a modal (docs/unified-turn.md).
   const applyAnalysisResult = (result: AnalysisResponse, threadMessageId?: string) => {
@@ -4548,27 +4493,6 @@ export function AppShell({ initialUser }: AppShellProps) {
               submitting={proposedNodesSubmitting}
               clarifyingQuestions={clarifyingQuestions}
               onAnswerInline={handleClarifyingAnswerInline}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Graph edit review — centered modal */}
-      <AnimatePresence>
-        {graphEditReviewOpen && graphEditOps.length > 0 && (
-          <motion.div
-            key="ger-backdrop"
-            className="fixed inset-0 z-60 flex items-center justify-center"
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            initial={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            style={{ background: "rgba(0,0,0,0.45)" }}
-          >
-            <GraphEditReview
-              operations={graphEditOps}
-              onConfirm={(ops) => handleGraphEditConfirm(ops)}
-              onDismiss={() => { setGraphEditReviewOpen(false); setGraphEditOps([]); }}
             />
           </motion.div>
         )}

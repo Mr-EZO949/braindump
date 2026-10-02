@@ -8570,63 +8570,6 @@ input[type="search"]::-webkit-search-results-decoration {
   opacity: 0.38;
 }
 
-/* Graph edit review rows */
-.ger-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 10px;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--motion-fast), border-color var(--motion-fast);
-}
-
-.ger-row:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.ger-row--selected {
-  border-color: rgba(213, 58, 71, 0.18);
-  background: rgba(213, 58, 71, 0.04);
-}
-
-.ger-check {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  color: var(--color-accent-primary);
-  flex-shrink: 0;
-}
-
-.ger-row--selected .ger-check {
-  border-color: rgba(213, 58, 71, 0.4);
-  background: rgba(213, 58, 71, 0.12);
-}
-
-.ger-icon {
-  font-size: 13px;
-  color: var(--color-text-muted);
-  flex-shrink: 0;
-  width: 18px;
-  text-align: center;
-}
-
-.ger-desc {
-  font-size: 13px;
-  color: var(--color-text-secondary);
-  letter-spacing: -0.01em;
-  cursor: default;
-}
-
 /* ─── Rail Chat Input ─────────────────────────────────────── */
 
 .rail-chat-input {
