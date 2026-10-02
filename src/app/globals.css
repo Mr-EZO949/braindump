@@ -3851,6 +3851,13 @@ input[type="search"]::-webkit-search-results-decoration {
   cursor: not-allowed;
 }
 
+/* The mode dock floats over the bottom of the rail (fixed, centred on the
+   viewport), so the rail keeps its pinned actions and the chat composer
+   above it. */
+.context-rail-responsive aside {
+  padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+}
+
 /* Keep History out of the way while the settings panel is open. */
 [data-system-panel-open="true"] .history-shelf {
   display: none;
@@ -13623,6 +13630,9 @@ body:has(.app-shell[data-app-mode="graph"]) {
   .context-rail-responsive aside {
     width: 100% !important;
     position: relative !important;
+    /* Fill the sheet, not the content — otherwise the panel runs past the
+       bottom of the screen and its pinned footer ends up off-screen. */
+    height: 100%;
   }
 
   /* System panel becomes full-width on tablet */
