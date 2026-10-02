@@ -1,7 +1,7 @@
 # One turn — chat and building as a single pipeline
 
-**Status: approved 2026-09-30, order 1 → 2 → 3. Phases 1 and 2 are built (section 5);
-phases 3–5 are not.** Written after the owner's note that the separation between "just answering" and
+**Status: approved 2026-09-30, order 1 → 2 → 3. Phases 1–3 are built (section 5; phase 3
+minus two clean-up items); phases 4–5 are not.** Written after the owner's note that the separation between "just answering" and
 "planning / building the graph / extracting / connections" is the thing that feels wrong.
 Sections 1–2 describe the app as it was on 2026-09-30, before phase 1.
 
@@ -313,12 +313,38 @@ Each phase ships on its own and is testable from `testing-journal.md`.
    - **Not covered:** the HTTP routes and the browser (the local allowlist blocks the test
      user) — the chat turns were assembled exactly as the route does and the tool calls run
      through `runTurnTools`; `/api/entries/[id]/retry` ignores a dump's restructure.
-3. **One thread, one card.** Brain Dump box posts a turn; change-set card in the thread
-   (backed by a `change_sets` table: per-item accept / reject, the record of what was
-   proposed); modal becomes the expanded view; chooser, legacy tags and the synthetic turns
-   are deleted; thread history carries a compact note of each change set; the node/edge tools
-   fold into `change`; breakdowns become a builder mode. *Owner notices:* the seam is gone —
-   type anything anywhere, follow up on a dump in plain words.
+3. **One thread, one card** — ✅ built 2026-10-01 → 02 (no migration; `extract-v26`,
+   `extract-light-v6`, `dump-priorities-v3`, `dump-reply-v1`). Live notes and the driver:
+   `docs/unified-turn-handoff.md`.
+   - **One change set per dump** (`lib/ai/dump-turn.ts`): the builder's new nodes, edits,
+     links and completions become one op list. **One policy** (`lib/ai/turn-policy.ts`):
+     completions, links and the new nodes this user reliably accepts (the same `auto-apply.ts`
+     calibration) apply at once with Undo; every reorganization — with the new parent it
+     needs — waits as one unit. This pulled the create-node half of phase 4 in.
+   - **No `change_sets` table after all.** `proposed_nodes` stays the ledger of what the
+     builder proposed (status + `accepted_node_id`): the calibration, Undo and the dump
+     history keep reading it, and the waiting ops sit in a parked `build_graph` run.
+   - **One card** (`turn-card.tsx`): Added (Undo) · Marked done · Linked · What matters · Your
+     week · Needs your OK · questions. Every row of a change card — dump or chat — is
+     accepted or skipped on its own (`change-checklist.tsx`, `selectOps`); a row that needs a
+     skipped one is blocked, a node whose new parent was skipped is re-homed. The review
+     modal, the toast and the separate cards are no longer shown for a user's dump
+     (suggest-steps, the bootstrap wizard and the retry route keep the modal).
+   - **The reply** (`dump-reply.ts`): a small Haiku read answers the venting / the question,
+     in parallel with the builder, only when there is one.
+   - **The thread remembers** (`lib/chat/turn-note.ts`): history tells the chat model what the
+     dump added, finished, linked, what waits and what was asked.
+   - **Connections** found after a turn arrive as a "Links I noticed" card in its thread.
+   - **No chooser**: a dump typed in chat is the same turn, continuing that thread; the reply
+     sees the conversation.
+   - **Builder**: the long prompt quotes edit requests and the short prompt carries them out
+     (the long prompt failed 4 of 5 reorganizations); deadlines come from the user's words
+     through `lib/time/relative-day.ts`; one bad reference no longer discards the output.
+   - Deleted: `/api/graph-edit`, the graph-edit modal, the `<nodes>` / `<graph_edit>` tag
+     handling.
+   - **Not done (moved to phase 4):** folding the node/edge tools into one `change` tool, and
+     breakdowns as a builder mode (the last Sonnet chat route). Both change the chat model's
+     tools and need their own eval; nothing in the felt change depends on them.
 4. **One policy.** Calibrated apply-with-Undo for chat ops; Undo on every applied card.
 5. **Server follow-ups + staged streaming.** Connections as a follow-up card; stage events.
 
