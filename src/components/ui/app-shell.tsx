@@ -1724,8 +1724,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         signal: abortCtrl.signal,
       });
 
-      await consumeAssistantStream(res, messageId, targetWorkspaceId, true);
-      if (decision === "accept") {
+      const markApplied = () =>
         setChatMessages((prev) =>
           prev.map((m) =>
             m.id === messageId && m.pendingAction?.status === "applying"
@@ -1733,7 +1732,27 @@ export function AppShell({ initialUser }: AppShellProps) {
               : m,
           ),
         );
+      // The server applies the accepted action BEFORE it answers. When a
+      // follow-up answer streams after it (seconds of text), show the change
+      // now instead of after the last word — "mark X done" used to land on
+      // the graph only once the reply to the rest of the message was over.
+      // The graph is loaded again below: the follow-up can change more.
+      let graphLoadedAfterReply = false;
+      if (decision === "accept" && res.ok && res.headers.get("X-Resume-Model") !== "none") {
+        markApplied();
+        if (targetWorkspaceId && authUser?.id) {
+          void loadWorkspaceGraphData(authUser.id, targetWorkspaceId, selectedWorkspace?.name ?? null)
+            .then((next) => {
+              if (!graphLoadedAfterReply) setGraphData(next);
+            })
+            .catch(() => {
+              // The load after the reply catches up.
+            });
+        }
       }
+
+      await consumeAssistantStream(res, messageId, targetWorkspaceId, true);
+      if (decision === "accept") markApplied();
 
       // If the user accepted a graph-changing tool, refresh the graph.
       if (decision === "accept" && targetWorkspaceId && authUser?.id) {
@@ -1743,6 +1762,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           targetWorkspaceId,
           selectedWorkspace?.name ?? null,
         );
+        graphLoadedAfterReply = true;
         setGraphData(nextGraphData);
 
         // Parity with the braindump pipeline: any node the assistant just
