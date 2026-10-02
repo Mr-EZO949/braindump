@@ -14021,394 +14021,8 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 /* ============================================================
-   List view + Roadmap view
+   Roadmap view
    ============================================================ */
-
-.list-view {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 28px 32px 96px;
-  overflow-y: auto;
-  max-width: 920px;
-  margin: 0 auto;
-  width: 100%;
-}
-
-.list-view-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.list-view-search {
-  flex: 1 1 240px;
-  min-width: 200px;
-  font-size: 13px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--color-bg-surface);
-  border: 1px solid var(--color-border-subtle);
-  color: var(--color-text-primary);
-}
-
-.list-view-search:focus {
-  outline: none;
-  border-color: rgba(213, 58, 71, 0.4);
-  box-shadow: 0 0 0 3px rgba(213, 58, 71, 0.06);
-}
-
-.list-view-sort {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.list-view-sort-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.list-view-sort-select {
-  font-size: 12.5px;
-  padding: 7px 10px;
-  border-radius: 8px;
-  background: var(--color-bg-surface);
-  border: 1px solid var(--color-border-subtle);
-  color: var(--color-text-primary);
-  cursor: pointer;
-}
-
-.list-view-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.list-view-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.list-view-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
-  border-radius: 999px;
-  font-size: 11.5px;
-  font-weight: 500;
-  letter-spacing: -0.005em;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-surface);
-  border: 1px solid var(--color-border-subtle);
-  cursor: pointer;
-  transition: color var(--motion-fast), border-color var(--motion-fast), background var(--motion-fast);
-}
-
-.list-view-chip:hover {
-  color: var(--color-text-primary);
-  border-color: rgba(0, 0, 0, 0.18);
-}
-
-.list-view-chip[data-active="true"] {
-  color: var(--color-text-primary);
-  background: rgba(213, 58, 71, 0.08);
-  border-color: rgba(213, 58, 71, 0.35);
-}
-
-.list-view-chip-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-}
-
-.list-view-chip-count {
-  font-size: 10.5px;
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.list-view-empty {
-  padding: 48px 24px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--color-text-muted);
-}
-
-.list-view-rows {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.list-view-row {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 13px;
-  width: 100%;
-  padding: 10px 15px;
-  border-radius: 11px;
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-surface-elevated);
-  /* Tier-colored left edge gives priority a visual cue at a glance.
-     Width is constant; the color (set by [data-tier]) does the work. */
-  border-left: 3px solid var(--list-view-row-tier-color, transparent);
-  cursor: pointer;
-  text-align: left;
-  transition:
-    border-color var(--motion-fast),
-    transform var(--motion-fast),
-    box-shadow var(--motion-fast);
-}
-
-.list-view-row[data-tier="critical"] {
-  --list-view-row-tier-color: rgba(223, 69, 83, 0.95);
-}
-.list-view-row[data-tier="high"] {
-  --list-view-row-tier-color: rgba(223, 69, 83, 0.55);
-}
-.list-view-row[data-tier="normal"] {
-  --list-view-row-tier-color: rgba(255, 255, 255, 0.16);
-}
-.list-view-row[data-tier="low"] {
-  --list-view-row-tier-color: rgba(255, 255, 255, 0.06);
-}
-
-:root[data-theme="light"] .list-view-row[data-tier="normal"] {
-  --list-view-row-tier-color: rgba(0, 0, 0, 0.16);
-}
-:root[data-theme="light"] .list-view-row[data-tier="low"] {
-  --list-view-row-tier-color: rgba(0, 0, 0, 0.06);
-}
-
-.list-view-row:hover {
-  border-color: rgba(255, 255, 255, 0.14);
-  transform: translateY(-1px);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.26);
-}
-
-.list-view-row[data-completed="true"] {
-  opacity: 0.6;
-}
-
-.list-view-row[data-archived="true"] {
-  opacity: 0.4;
-}
-
-.list-view-row-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-}
-
-.list-view-row-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.list-view-row-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  letter-spacing: -0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.list-view-row-parent {
-  font-size: 10.5px;
-  color: var(--color-text-muted);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.list-view-row-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 11px;
-  color: var(--color-text-muted);
-}
-
-.list-view-row-type {
-  text-transform: capitalize;
-  letter-spacing: 0.04em;
-  font-size: 10.5px;
-  font-weight: 600;
-}
-
-.list-view-row-streak {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: rgba(127, 201, 135, 0.16);
-  color: rgba(80, 160, 100, 1);
-  border: 1px solid rgba(127, 201, 135, 0.36);
-}
-
-.list-view-row-streak[data-at-risk="true"] {
-  background: rgba(213, 58, 71, 0.12);
-  color: rgba(180, 36, 50, 1);
-  border-color: rgba(213, 58, 71, 0.38);
-}
-
-.list-view-row-streak[data-done="true"] {
-  background: rgba(95, 201, 160, 0.18);
-  color: rgba(40, 130, 90, 1);
-  border-color: rgba(95, 201, 160, 0.45);
-}
-
-.list-view-row-children {
-  font-variant-numeric: tabular-nums;
-}
-
-.list-view-row-date {
-  font-size: 11px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-surface-hover);
-  padding: 2px 8px;
-  border-radius: 6px;
-  white-space: nowrap;
-}
-
-.list-view-row-score {
-  font-size: 13px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-secondary);
-  min-width: 38px;
-  padding: 5px 6px;
-  text-align: center;
-  border-radius: 8px;
-  background: var(--color-bg-surface-hover);
-}
-
-.list-view-row-score[data-tier="critical"] {
-  background: rgba(223, 69, 83, 0.18);
-  color: rgba(255, 220, 224, 1);
-}
-.list-view-row-score[data-tier="high"] {
-  background: rgba(223, 69, 83, 0.1);
-  color: rgba(246, 200, 206, 1);
-}
-.list-view-row-score[data-tier="normal"] {
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(246, 242, 237, 0.85);
-}
-.list-view-row-score[data-tier="low"] {
-  background: rgba(255, 255, 255, 0.02);
-  color: rgba(246, 242, 237, 0.55);
-}
-
-:root[data-theme="light"] .list-view-row-score[data-tier="critical"] {
-  background: rgba(223, 69, 83, 0.14);
-  color: rgba(150, 30, 40, 1);
-}
-:root[data-theme="light"] .list-view-row-score[data-tier="high"] {
-  background: rgba(223, 69, 83, 0.08);
-  color: rgba(180, 50, 60, 1);
-}
-:root[data-theme="light"] .list-view-row-score[data-tier="normal"] {
-  background: rgba(0, 0, 0, 0.04);
-  color: rgba(28, 28, 30, 0.8);
-}
-:root[data-theme="light"] .list-view-row-score[data-tier="low"] {
-  background: rgba(0, 0, 0, 0.02);
-  color: rgba(28, 28, 30, 0.55);
-}
-
-/* List view — status grouping */
-.list-view-summary {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin: 8px 0 4px;
-}
-
-.list-view-summary .list-view-chip-dot[data-tier="critical"] {
-  background: rgba(223, 69, 83, 0.95);
-}
-.list-view-summary .list-view-chip-dot[data-tier="high"] {
-  background: rgba(223, 69, 83, 0.55);
-}
-
-.list-view-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.list-view-group-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 4px;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-text-secondary);
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.list-view-group-header:hover {
-  color: var(--color-text-primary);
-}
-
-.list-view-group-count {
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-surface-hover);
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 11px;
-}
-
-.list-view-group[data-status="active"] .list-view-group-header {
-  color: var(--color-text-primary);
-  border-left: 3px solid var(--color-accent-primary);
-  padding-left: 8px;
-}
-
-.list-view-group[data-status="completed"] .list-view-rows,
-.list-view-group[data-status="archived"] .list-view-rows {
-  opacity: 0.72;
-}
-
-.list-view-group-chevron {
-  margin-left: auto;
-  transition: transform 0.15s ease;
-}
-
-.list-view-group-header[data-collapsed="true"] .list-view-group-chevron {
-  transform: rotate(-90deg);
-}
-
-/* Roadmap view --------------------------------------------------- */
 
 .roadmap-view {
   flex: 1;
@@ -14748,30 +14362,6 @@ input[type="search"]::-webkit-search-results-decoration {
 
 /* Sub-buttons inherit .mode-dock-btn entirely — no border, no extra
    background. Active state comes from .mode-dock-btn[data-active]. */
-
-/* TodosView header (and any other list-style view that needs a title) */
-
-.list-view-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 4px;
-}
-
-.list-view-title {
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--color-text-primary);
-  margin: 0;
-}
-
-.list-view-subtitle {
-  font-size: 11.5px;
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-}
 
 /* ============================================================
    Habits view — per-habit contribution-graph style calendars
@@ -15369,96 +14959,452 @@ input[type="search"]::-webkit-search-results-decoration {
   transform: scale(0.94);
 }
 
-/* TodosView checkbox markers ------------------------------------ */
+/* ============================================================
+   Todos view — open work by project, priority or due date
+   (components/ui/todos-view.tsx, grouping in lib/graph/todos.ts)
+   ============================================================ */
 
-.todos-row-wrap {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-}
-
-.todos-row-wrap > .list-view-row {
+.todos-view {
   flex: 1;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 28px 32px 112px;
+  overflow-y: auto;
+  max-width: 820px;
+  margin: 0 auto;
+  width: 100%;
 }
 
-/* Node types v2 — big tasks list their step progress and expand to show
-   their steps, indented beneath them. */
-.todos-row-wrap[data-step] {
-  padding-left: 30px;
+.todos-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.list-view-row[data-big-task] {
-  box-shadow: inset 2px 0 0 rgba(213, 58, 71, 0.55);
+.todos-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+  margin: 0;
 }
 
-.todos-steps {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 1px 7px;
-  border-radius: 6px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 10.5px;
-  font-weight: 500;
+.todos-counts {
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--color-accent-primary);
-  background: var(--color-accent-soft);
-  vertical-align: 1px;
-  white-space: nowrap;
+  color: var(--color-text-muted);
 }
 
-.todos-expand {
-  flex-shrink: 0;
-  width: 26px;
-  align-self: center;
-  height: 26px;
-  display: inline-flex;
+.todos-toolbar {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 7px;
-  color: var(--color-text-tertiary);
-  background: transparent;
-  border: 1px solid var(--color-border-subtle);
-  transition: transform var(--motion-fast), background var(--motion-fast);
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.todos-expand:hover {
+.todos-search {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-primary);
+}
+
+.todos-search::placeholder {
+  color: var(--color-text-muted);
+}
+
+.todos-search:focus {
+  outline: none;
+  border-color: rgba(213, 58, 71, 0.4);
+  box-shadow: 0 0 0 3px rgba(213, 58, 71, 0.06);
+}
+
+.todos-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.todos-empty {
+  padding: 40px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.todos-empty p {
+  margin: 0;
+}
+
+.todos-empty .todos-empty-title {
+  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+/* A section: one project (or due bucket), its rows separated by hairlines. */
+.todo-section {
+  border-radius: 14px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-faint);
+  overflow: hidden;
+}
+
+.todo-section[data-quiet] {
+  background: transparent;
+  border: 1px dashed var(--color-border-subtle);
+}
+
+.todo-section[data-tone="overdue"] {
+  border-color: rgba(213, 58, 71, 0.3);
+}
+
+.todo-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 14px 11px 12px;
+  background: none;
+  border: 0;
+  text-align: left;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.todo-section-chevron {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  transition: transform var(--motion-fast);
+}
+
+.todo-section-head[aria-expanded="false"] .todo-section-chevron {
+  transform: rotate(-90deg);
+}
+
+.todo-section-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.todo-section[data-quiet] .todo-section-title {
+  color: var(--color-text-secondary);
+}
+
+.todo-section[data-tone="overdue"] .todo-section-title {
+  color: var(--color-accent-primary);
+}
+
+.todo-section-type {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
   background: var(--color-bg-surface-hover);
 }
 
-.todos-expand[data-expanded] svg {
-  transform: rotate(180deg);
+.todo-section-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
 }
 
-.todos-row-check {
+.todo-section[data-plain] .todo-list {
+  border-top: 0;
+}
+
+.todo-section-caption {
+  margin: 0;
+  padding: 10px 14px 2px;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+
+.todo-section-more {
+  margin: 0;
+  padding: 6px 14px 12px 42px;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+
+.todo-list,
+.todo-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.todo-list {
+  padding: 4px 0;
+  border-top: 1px solid var(--color-border-faint);
+}
+
+/* Steps sit under their big task's title, on a thin guide line. */
+.todo-steps {
+  position: relative;
+  margin-left: 28px;
+}
+
+.todo-steps::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 0;
+  bottom: 12px;
+  width: 1px;
+  background: var(--color-border-subtle);
+}
+
+.todo-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 10px 0 14px;
+  transition: background var(--motion-fast);
+}
+
+.todo-row:hover {
+  background: var(--color-bg-surface-hover);
+}
+
+.todo-check {
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  align-self: center;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  background: var(--color-bg-surface);
-  border: 1.5px solid var(--color-border-subtle);
+  background: transparent;
+  border: 1.5px solid var(--color-text-muted);
   color: rgba(95, 201, 160, 1);
   cursor: pointer;
   transition: background var(--motion-fast), border-color var(--motion-fast);
 }
 
-.todos-row-check:hover {
-  border-color: rgba(95, 201, 160, 0.6);
+.todo-check svg {
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.todo-check:hover {
+  border-color: rgba(95, 201, 160, 0.8);
   background: rgba(95, 201, 160, 0.08);
 }
 
-.todos-row-check[data-checked="true"] {
-  background: rgba(95, 201, 160, 0.95);
+.todo-check:hover svg {
+  opacity: 0.6;
+}
+
+/* Only the two top priority tiers color the box — the order already ranks. */
+.todo-check[data-tier="critical"] {
+  border-color: var(--color-accent-primary);
+  background: rgba(213, 58, 71, 0.1);
+}
+
+.todo-check[data-tier="high"] {
+  border-color: rgba(213, 58, 71, 0.6);
+}
+
+.todo-check[data-checked] {
   border-color: rgba(80, 180, 130, 1);
+  background: rgba(95, 201, 160, 0.95);
   color: #fff;
 }
 
-.todos-row-check[data-checked="true"]:hover {
-  background: rgba(95, 201, 160, 0.8);
+.todo-check[data-checked] svg {
+  opacity: 1;
+}
+
+.todo-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 9px 0;
+  background: none;
+  border: 0;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.todo-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.todo-row[data-big] .todo-title {
+  font-weight: 600;
+}
+
+.todo-row[data-done] .todo-title {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.todo-row[data-paused] .todo-title {
+  color: var(--color-text-secondary);
+}
+
+.todo-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+
+.todo-trail {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.todo-due {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-surface-hover);
+}
+
+.todo-due[data-tone="later"] {
+  color: var(--color-text-tertiary);
+}
+
+.todo-due[data-tone="today"] {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.todo-due[data-tone="overdue"] {
+  color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+}
+
+/* A deadline borrowed from the project, not the task's own. */
+.todo-due[data-inherited] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
+}
+
+.todo-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+.todo-progress-bar {
+  width: 28px;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--color-border-subtle);
+}
+
+.todo-progress-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(95, 201, 160, 0.9);
+}
+
+/* Fixed slot so dates line up whether or not a row has steps. */
+.todo-steps-toggle,
+.todo-steps-slot {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+}
+
+.todo-steps-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.todo-steps-toggle:hover {
+  color: var(--color-text-primary);
+  background: var(--color-border-subtle);
+}
+
+.todo-steps-toggle svg {
+  transform: rotate(-90deg);
+  transition: transform var(--motion-fast);
+}
+
+.todo-steps-toggle[data-open] svg {
+  transform: none;
+}
+
+.todo-check:focus-visible,
+.todo-steps-toggle:focus-visible,
+.todo-section-head:focus-visible {
+  outline: 2px solid rgba(213, 58, 71, 0.5);
+  outline-offset: 1px;
+}
+
+.todo-main:focus-visible {
+  outline: 2px solid rgba(213, 58, 71, 0.5);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+@media (max-width: 640px) {
+  .todos-view {
+    padding: 18px 12px 120px;
+  }
+
+  .todo-row {
+    min-height: 46px;
+  }
+
+  .todo-progress-bar,
+  .todo-section-type {
+    display: none;
+  }
 }
 
 /* ─── Nudge ribbon ──────────────────────────────────────────────────── */

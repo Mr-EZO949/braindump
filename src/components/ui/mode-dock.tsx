@@ -199,7 +199,7 @@ export function ModeDock({
                 data-active={mode === "todos"}
                 onClick={() => onSetMode("todos")}
                 type="button"
-                title="Tasks only — flat sortable list"
+                title="Tasks by project, priority or due date"
                 initial={{ opacity: 0, scale: 0.85, marginLeft: -10, width: 0 }}
                 animate={{ opacity: 1, scale: 1, marginLeft: 0, width: "auto" }}
                 exit={{ opacity: 0, scale: 0.85, marginLeft: -10, width: 0 }}

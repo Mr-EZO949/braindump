@@ -1,9 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { GraphData, Node } from "@/types/graph";
-import { buildPrimaryStructuralTree } from "@/lib/graph/structure";
-import { CHECKABLE_TYPES } from "@/lib/graph/node-types";
+import { NODE_TYPE_INFO } from "@/lib/graph/node-types";
+import {
+  TODOS_GROUPINGS,
+  buildTodos,
+  dueLabel,
+  todoScore,
+  type TodoItem,
+  type TodoSection,
+  type TodosGrouping,
+} from "@/lib/graph/todos";
+import { computeWorkProgress } from "@/lib/graph/work-progress";
+import { localDateISO } from "@/lib/time/local-date";
 
 type TodosViewProps = {
   graphData: GraphData;
@@ -11,463 +21,369 @@ type TodosViewProps = {
   onToggleStatus: (nodeId: string, status: Node["status"]) => void;
 };
 
-type SortKey = "score" | "recent" | "deadline";
-
-function scoreOf(n: Node): number {
-  return n.current_importance_score ?? n.importance_index ?? 0;
-}
-
-// Tier mapping mirrors getScoreTier() in context-rail.tsx — kept in sync so
-// the list-row chip color matches the tier label in the details panel.
-function scoreTier(score: number): "critical" | "high" | "normal" | "low" {
-  if (score >= 90) return "critical";
-  if (score >= 74) return "high";
-  if (score >= 40) return "normal";
-  return "low";
-}
-
-type GroupStatus = "active" | "paused" | "completed" | "archived";
-
-function statusRank(status: string | null | undefined): number {
-  switch (status) {
-    case "active":
-    case null:
-    case undefined:
-      return 0;
-    case "paused":
-      return 1;
-    case "completed":
-      return 2;
-    case "archived":
-      return 3;
-    default:
-      return 4;
-  }
-}
-
-// Bucket a task into one of the four list groups. Unset/unknown status falls
-// back to "active" so a freshly captured task always lands somewhere visible.
-function groupStatus(status: string | null | undefined): GroupStatus {
-  switch (status) {
-    case "paused":
-      return "paused";
-    case "completed":
-      return "completed";
-    case "archived":
-      return "archived";
-    default:
-      return "active";
-  }
-}
-
-function formatShortDate(iso: string): string {
-  const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
-  if (!y || !m || !d) return iso;
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-const GROUP_ORDER: GroupStatus[] = ["active", "paused", "completed", "archived"];
-
-const GROUP_LABEL: Record<GroupStatus, string> = {
-  active: "Active",
-  paused: "Paused",
-  completed: "Completed",
-  archived: "Archived",
+const GROUPING_LABEL: Record<TodosGrouping, string> = {
+  project: "Project",
+  priority: "Priority",
+  due: "Due",
 };
 
-export function TodosView({ graphData, onSelectNode, onToggleStatus }: TodosViewProps) {
-  const [sortKey, setSortKey] = useState<SortKey>("score");
-  const [showCompleted, setShowCompleted] = useState(true);
-  const [showArchived, setShowArchived] = useState(false);
-  const [search, setSearch] = useState("");
-  // Completed/archived start collapsed — they are review surfaces, not the
-  // working set. Toggling a group header flips its membership here.
-  const [collapsed, setCollapsed] = useState<Set<GroupStatus>>(
-    () => new Set<GroupStatus>(["completed", "archived"]),
+const GROUPING_STORAGE_KEY = "braindump:todos-grouping";
+
+// How long a just-checked task stays in place (struck through) before it
+// moves to Done — long enough to see it land, short enough not to linger.
+const SETTLE_MS = 1600;
+
+// Done can grow without end; show the most recent ones.
+const DONE_SHOWN = 30;
+
+// Same thresholds as getScoreTier() in context-rail.tsx: only the two top
+// tiers get a colored checkbox, everything else stays quiet.
+function priorityTier(node: Node): "critical" | "high" | undefined {
+  const score = Math.round(todoScore(node));
+  if (score >= 90) return "critical";
+  if (score >= 74) return "high";
+  return undefined;
+}
+
+function readGrouping(): TodosGrouping {
+  try {
+    const stored = window.localStorage.getItem(GROUPING_STORAGE_KEY);
+    if (stored && (TODOS_GROUPINGS as readonly string[]).includes(stored)) return stored as TodosGrouping;
+  } catch {
+    // storage unavailable — default grouping
+  }
+  return "project";
+}
+
+function Chevron({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
+}
 
-  const toggleCollapsed = (status: GroupStatus) => {
-    setCollapsed((prev) => {
+export function TodosView({ graphData, onSelectNode, onToggleStatus }: TodosViewProps) {
+  // Todos only mounts after a click in the dock (never server-rendered), so
+  // the stored choice can be read on the first render.
+  const [grouping, setGrouping] = useState<TodosGrouping>(readGrouping);
+  const [search, setSearch] = useState("");
+  // Section keys the user folded. Paused and Done start folded — they're for
+  // review, not the working set.
+  const [folded, setFolded] = useState<Set<string>>(() => new Set(["paused", "done"]));
+  // Big tasks whose steps are hidden (steps show by default — they're the
+  // actionable part).
+  const [hiddenSteps, setHiddenSteps] = useState<Set<string>>(() => new Set());
+  const [settling, setSettling] = useState<Set<string>>(() => new Set());
+  const settleTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  useEffect(() => {
+    const timers = settleTimers.current;
+    return () => timers.forEach((timer) => clearTimeout(timer));
+  }, []);
+
+  const chooseGrouping = (next: TodosGrouping) => {
+    setGrouping(next);
+    try {
+      window.localStorage.setItem(GROUPING_STORAGE_KEY, next);
+    } catch {
+      // storage unavailable — the choice lasts for this visit
+    }
+  };
+
+  const toggleIn = (setter: typeof setFolded, key: string) =>
+    setter((prev) => {
       const next = new Set(prev);
-      if (next.has(status)) next.delete(status);
-      else next.add(status);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const today = localDateISO();
+  const model = useMemo(
+    () => buildTodos(graphData, { grouping, today, search, settling }),
+    [graphData, grouping, today, search, settling],
+  );
+  const progress = useMemo(() => computeWorkProgress(graphData), [graphData]);
+
+  const endSettle = (nodeId: string) => {
+    const timer = settleTimers.current.get(nodeId);
+    if (timer) clearTimeout(timer);
+    settleTimers.current.delete(nodeId);
+    setSettling((prev) => {
+      if (!prev.has(nodeId)) return prev;
+      const next = new Set(prev);
+      next.delete(nodeId);
       return next;
     });
   };
 
-  // Big tasks whose steps are shown (expanded) under them.
-  const [expandedBigTasks, setExpandedBigTasks] = useState<Set<string>>(new Set());
-  const toggleExpanded = (nodeId: string) => {
-    setExpandedBigTasks((prev) => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) next.delete(nodeId);
-      else next.add(nodeId);
-      return next;
-    });
-  };
-
-  const { parentByChild } = useMemo(() => {
-    const tree = buildPrimaryStructuralTree(graphData);
-    const parentByChild = new Map<string, string>();
-    tree.parentCandidates.forEach((cand, childId) => {
-      parentByChild.set(childId, cand.parentId);
-    });
-    return { parentByChild };
-  }, [graphData]);
-
-  const { groups, total, summary, stepsByBigTask, progressByBigTask } = useMemo(() => {
-    const nodeMap = new Map(graphData.nodes.map((n) => [n.id, n]));
-    const lower = search.trim().toLowerCase();
-
-    const filtered = graphData.nodes.filter((n) => {
-      // Checkable work only — tasks and big tasks. This is the Todos lens.
-      if (!CHECKABLE_TYPES.has(n.node_type)) return false;
-      if (!showArchived && n.status === "archived") return false;
-      if (!showCompleted && n.status === "completed") return false;
-      if (lower) {
-        const hay = `${n.title} ${n.summary ?? ""}`.toLowerCase();
-        if (!hay.includes(lower)) return false;
-      }
-      return true;
-    });
-
-    // A big task's progress counts all its (non-archived) steps, visible or
-    // not; its listed steps nest under it instead of repeating at top level.
-    // While searching the list stays flat so every match is visible.
-    const listedIds = new Set(filtered.map((n) => n.id));
-    const progressByBigTask = new Map<string, { done: number; total: number }>();
-    for (const n of graphData.nodes) {
-      const parentId = parentByChild.get(n.id);
-      const parentNode = parentId ? nodeMap.get(parentId) : undefined;
-      if (!parentNode || parentNode.node_type !== "big_task") continue;
-      if (!CHECKABLE_TYPES.has(n.node_type) || n.status === "archived") continue;
-      const entry = progressByBigTask.get(parentNode.id) ?? { done: 0, total: 0 };
-      entry.total += 1;
-      if (n.status === "completed") entry.done += 1;
-      progressByBigTask.set(parentNode.id, entry);
-    }
-    const stepsByBigTask = new Map<string, Node[]>();
-    const topLevel = filtered.filter((node) => {
-      if (lower) return true;
-      const parentId = parentByChild.get(node.id);
-      const parentNode = parentId ? nodeMap.get(parentId) : undefined;
-      if (!parentNode || parentNode.node_type !== "big_task" || !listedIds.has(parentNode.id)) {
-        return true;
-      }
-      const steps = stepsByBigTask.get(parentNode.id) ?? [];
-      steps.push(node);
-      stepsByBigTask.set(parentNode.id, steps);
-      return false;
-    });
-    stepsByBigTask.forEach((steps) =>
-      steps.sort((a, b) => statusRank(a.status) - statusRank(b.status) || scoreOf(b) - scoreOf(a)),
-    );
-
-    const items = topLevel.map((node) => {
-      const parentId = parentByChild.get(node.id) ?? null;
-      const parent = parentId ? nodeMap.get(parentId) ?? null : null;
-      return { node, parent };
-    });
-
-    items.sort((a, b) => {
-      const sr = statusRank(a.node.status) - statusRank(b.node.status);
-      if (sr !== 0) return sr;
-      switch (sortKey) {
-        case "score":
-          return scoreOf(b.node) - scoreOf(a.node);
-        case "recent":
-          return (b.node.updated_at ?? "").localeCompare(a.node.updated_at ?? "");
-        case "deadline": {
-          const ad = a.node.target_date ?? null;
-          const bd = b.node.target_date ?? null;
-          if (ad && bd) return ad.localeCompare(bd);
-          if (ad) return -1;
-          if (bd) return 1;
-          return scoreOf(b.node) - scoreOf(a.node);
-        }
-      }
-    });
-
-    // Bucket the sorted list into the four status groups, preserving the
-    // sort order within each group (the array is already ordered).
-    const groups: Record<GroupStatus, typeof items> = {
-      active: [],
-      paused: [],
-      completed: [],
-      archived: [],
-    };
-    for (const item of items) {
-      groups[groupStatus(item.node.status)].push(item);
-    }
-
-    // Tier breakdown of the active group — the colored dots in the summary.
-    let activeCritical = 0;
-    let activeHigh = 0;
-    for (const { node } of groups.active) {
-      const tier = scoreTier(Math.round(scoreOf(node)));
-      if (tier === "critical") activeCritical += 1;
-      else if (tier === "high") activeHigh += 1;
-    }
-
-    const summary = {
-      active: groups.active.length,
-      paused: groups.paused.length,
-      completed: groups.completed.length,
-      archived: groups.archived.length,
-      activeCritical,
-      activeHigh,
-    };
-
-    return { groups, total: items.length, summary, stepsByBigTask, progressByBigTask };
-  }, [graphData, search, sortKey, showCompleted, showArchived, parentByChild]);
-
-  function renderRow(
-    node: Node,
-    parent: Node | null,
-    opts: {
-      progress?: { done: number; total: number } | null;
-      steps?: number;
-      expanded?: boolean;
-      step?: boolean;
-    } = {},
-  ) {
-    const score = Math.round(scoreOf(node));
+  const toggleDone = (node: Node) => {
     const completed = node.status === "completed";
-    const archived = node.status === "archived";
+    if (completed) {
+      endSettle(node.id);
+      onToggleStatus(node.id, "active");
+      return;
+    }
+    setSettling((prev) => new Set(prev).add(node.id));
+    settleTimers.current.set(
+      node.id,
+      setTimeout(() => endSettle(node.id), SETTLE_MS),
+    );
+    onToggleStatus(node.id, "completed");
+  };
+
+  // The line under a title says only what its place in the list doesn't:
+  // the parent unless the section names it (or it's a nested step), why
+  // something is paused, a big task that still needs breaking down.
+  function metaFor(entry: TodoItem, section: TodoSection | null, depth: number): string[] {
+    const { node, parent } = entry;
+    const parts: string[] = [];
+    if (node.status === "paused") {
+      parts.push(node.waiting_for ? `Waiting for ${node.waiting_for}` : "Paused");
+      if (node.resume_on) parts.push(`back ${dueLabel(node.resume_on, today).text}`);
+    }
+    const sectionNamesParent = section?.kind === "parent" && section.parent?.id === parent?.id;
+    if (parent && depth === 0 && !sectionNamesParent) parts.push(parent.title);
+    if (node.node_type === "big_task" && !progress.get(node.id)?.total && node.status !== "completed") {
+      parts.push("No steps yet");
+    }
+    return parts;
+  }
+
+  function renderItem(entry: TodoItem, section: TodoSection | null, depth = 0): ReactNode {
+    const { node } = entry;
+    const completed = node.status === "completed";
     const isBigTask = node.node_type === "big_task";
+    const stepProgress = isBigTask ? progress.get(node.id) : undefined;
+    const stepsShown = entry.steps.length > 0 && !hiddenSteps.has(node.id);
+    // In Project grouping the section header carries the project's deadline;
+    // repeat an inherited one only where the row stands alone.
+    const due =
+      entry.due && !completed && !(grouping === "project" && !search && entry.due.from) ? entry.due : null;
+    const label = due ? dueLabel(due.date, today) : null;
+    const meta = metaFor(entry, section, depth);
+
     return (
-      <li key={node.id} className="todos-row-wrap" data-step={opts.step || undefined}>
-        <button
-          type="button"
-          className="todos-row-check"
-          data-checked={completed || undefined}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleStatus(node.id, completed ? "active" : "completed");
-          }}
-          aria-label={completed ? "Mark as not done" : "Mark done"}
-          title={completed ? "Mark as not done" : "Mark done"}
+      <li key={node.id} className="todo-item" data-depth={depth || undefined}>
+        <div
+          className="todo-row"
+          data-big={isBigTask || undefined}
+          data-done={completed || undefined}
+          data-paused={node.status === "paused" || undefined}
         >
-          {completed ? (
-            <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-              <path
-                d="m4 8.2 2.8 2.8 5.2-6"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          ) : null}
-        </button>
-        <button
-          type="button"
-          className="list-view-row"
-          data-completed={completed || undefined}
-          data-archived={archived || undefined}
-          data-big-task={isBigTask || undefined}
-          data-tier={scoreTier(score)}
-          title={node.importance_reason ?? undefined}
-          onClick={() => onSelectNode(node.id)}
-        >
-          <span className="list-view-row-score" data-tier={scoreTier(score)}>
-            {score}
-          </span>
-          <span className="list-view-row-main">
-            <span className="list-view-row-title">
-              {node.title}
-              {isBigTask ? (
-                <span className="todos-steps">
-                  {opts.progress ? `${opts.progress.done}/${opts.progress.total} steps` : "Big task · no steps yet"}
-                </span>
-              ) : null}
-            </span>
-            {parent ? <span className="list-view-row-parent">{parent.title}</span> : null}
-          </span>
-          {node.target_date ? (
-            <span className="list-view-row-date">{formatShortDate(node.target_date)}</span>
-          ) : null}
-        </button>
-        {isBigTask && (opts.steps ?? 0) > 0 ? (
           <button
             type="button"
-            className="todos-expand"
-            data-expanded={opts.expanded || undefined}
-            aria-expanded={Boolean(opts.expanded)}
-            aria-label={opts.expanded ? "Hide steps" : "Show steps"}
-            title={opts.expanded ? "Hide steps" : "Show steps"}
-            onClick={() => toggleExpanded(node.id)}
+            className="todo-check"
+            data-checked={completed || undefined}
+            data-tier={priorityTier(node)}
+            onClick={() => toggleDone(node)}
+            aria-label={completed ? `Mark "${node.title}" as not done` : `Mark "${node.title}" done`}
+            title={completed ? "Mark as not done" : "Mark done"}
           >
-            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-              <path
-                d="m4 6 4 4 4-4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
+            <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+              <path d="m4 8.2 2.8 2.8 5.2-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
+          <button
+            type="button"
+            className="todo-main"
+            onClick={() => onSelectNode(node.id)}
+            title={node.importance_reason ?? "Open in the graph"}
+          >
+            <span className="todo-title">{node.title}</span>
+            {meta.length > 0 ? <span className="todo-meta">{meta.join(" · ")}</span> : null}
+          </button>
+          <span className="todo-trail">
+            {label ? (
+              <span
+                className="todo-due"
+                data-tone={label.tone}
+                data-inherited={due?.from ? true : undefined}
+                title={due?.from ? `Deadline of ${due.from.title}` : "Deadline"}
+              >
+                {label.text}
+              </span>
+            ) : null}
+            {stepProgress && stepProgress.total > 0 ? (
+              <span className="todo-progress" title={`${stepProgress.done} of ${stepProgress.total} steps done`}>
+                <span className="todo-progress-bar" aria-hidden="true">
+                  <span style={{ width: `${(stepProgress.done / stepProgress.total) * 100}%` }} />
+                </span>
+                {stepProgress.done}/{stepProgress.total}
+              </span>
+            ) : null}
+            {entry.steps.length > 0 ? (
+              <button
+                type="button"
+                className="todo-steps-toggle"
+                data-open={stepsShown || undefined}
+                aria-expanded={stepsShown}
+                aria-label={stepsShown ? "Hide steps" : "Show steps"}
+                title={stepsShown ? "Hide steps" : "Show steps"}
+                onClick={() => toggleIn(setHiddenSteps, node.id)}
+              >
+                <Chevron />
+              </button>
+            ) : (
+              <span className="todo-steps-slot" aria-hidden="true" />
+            )}
+          </span>
+        </div>
+        {stepsShown ? (
+          <ul className="todo-steps">{entry.steps.map((step) => renderItem(step, section, depth + 1))}</ul>
         ) : null}
       </li>
     );
   }
 
-  return (
-    <div className="list-view">
-      <div className="list-view-header">
-        <h2 className="list-view-title">Todos</h2>
-        {total > 0 ? (
-          <div className="list-view-summary">
-            <span className="list-view-chip" aria-label={`${summary.active} active`}>
-              <span className="list-view-chip-dot" style={{ background: "var(--color-accent-primary)" }} />
-              Active
-              <span className="list-view-chip-count">{summary.active}</span>
-              {summary.activeCritical > 0 ? (
-                <span
-                  className="list-view-chip-dot"
-                  data-tier="critical"
-                  title={`${summary.activeCritical} critical`}
-                />
-              ) : null}
-              {summary.activeHigh > 0 ? (
-                <span
-                  className="list-view-chip-dot"
-                  data-tier="high"
-                  title={`${summary.activeHigh} high`}
-                />
-              ) : null}
-            </span>
-            {summary.paused > 0 ? (
-              <span className="list-view-chip">
-                ⏸ Paused
-                <span className="list-view-chip-count">{summary.paused}</span>
-              </span>
-            ) : null}
-            {summary.completed > 0 ? (
-              <span className="list-view-chip">
-                ✓ Done
-                <span className="list-view-chip-count">{summary.completed}</span>
-              </span>
-            ) : null}
-            {summary.archived > 0 ? (
-              <span className="list-view-chip">
-                Archived
-                <span className="list-view-chip-count">{summary.archived}</span>
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+  function renderSection(
+    key: string,
+    head: ReactNode,
+    count: number,
+    items: TodoItem[],
+    section: TodoSection | null,
+    opts: { quiet?: boolean; footer?: ReactNode } = {},
+  ) {
+    const isFolded = folded.has(key);
+    return (
+      <section key={key} className="todo-section" data-quiet={opts.quiet || undefined} data-tone={section?.tone}>
+        <button
+          type="button"
+          className="todo-section-head"
+          aria-expanded={!isFolded}
+          onClick={() => toggleIn(setFolded, key)}
+        >
+          <Chevron className="todo-section-chevron" />
+          {head}
+          <span className="todo-section-count">{count}</span>
+        </button>
+        {isFolded ? null : (
+          <>
+            <ul className="todo-list">{items.map((entry) => renderItem(entry, section))}</ul>
+            {opts.footer}
+          </>
+        )}
+      </section>
+    );
+  }
 
-      <div className="list-view-toolbar">
+  function sectionHead(section: TodoSection) {
+    if (section.kind !== "parent" || !section.parent) {
+      return <span className="todo-section-title">{section.title}</span>;
+    }
+    const parent = section.parent;
+    const label = parent.target_date ? dueLabel(parent.target_date, today) : null;
+    return (
+      <>
+        <span className="todo-section-title">{section.title}</span>
+        <span className="todo-section-type">{NODE_TYPE_INFO[parent.node_type]?.label ?? parent.node_type}</span>
+        {label ? (
+          <span className="todo-due" data-tone={label.tone} title="Deadline">
+            {label.text}
+          </span>
+        ) : null}
+      </>
+    );
+  }
+
+  const nothingOpen = model.openCount === 0 && !search;
+  const doneShown = model.done.slice(0, DONE_SHOWN);
+
+  return (
+    <div className="todos-view">
+      <header className="todos-header">
+        <h2 className="todos-title">Todos</h2>
+        <span className="todos-counts">
+          {model.openCount} open
+          {model.doneCount > 0 ? ` · ${model.doneCount} done` : ""}
+        </span>
+      </header>
+
+      <div className="todos-toolbar">
         <input
           type="search"
-          className="list-view-search"
-          placeholder="Search task title or summary…"
+          className="todos-search"
+          placeholder="Search tasks"
+          aria-label="Search tasks"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <div className="list-view-sort">
-          <label className="list-view-sort-label">Sort</label>
-          <select
-            className="list-view-sort-select"
-            value={sortKey}
-            onChange={(e) => setSortKey(e.target.value as SortKey)}
-          >
-            <option value="score">Score</option>
-            <option value="recent">Recent</option>
-            <option value="deadline">Deadline</option>
-          </select>
+        <div className="habits-segment" role="tablist" aria-label="Group by">
+          {TODOS_GROUPINGS.map((g) => (
+            <button
+              key={g}
+              type="button"
+              role="tab"
+              className="habits-segment-btn"
+              data-active={grouping === g}
+              aria-selected={grouping === g}
+              onClick={() => chooseGrouping(g)}
+            >
+              {GROUPING_LABEL[g]}
+            </button>
+          ))}
         </div>
-        <label className="list-view-toggle">
-          <input
-            type="checkbox"
-            checked={showCompleted}
-            onChange={(e) => setShowCompleted(e.target.checked)}
-          />
-          <span>Show completed</span>
-        </label>
-        <label className="list-view-toggle">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(e) => setShowArchived(e.target.checked)}
-          />
-          <span>Show archived</span>
-        </label>
       </div>
 
-      {total === 0 ? (
-        <div className="list-view-empty">
-          {search
-            ? "No matches."
-            : "No active tasks. Add one with +, or enable Show completed / Show archived to review past work."}
+      {nothingOpen ? (
+        <div className="todos-empty">
+          <p className="todos-empty-title">Nothing open.</p>
+          <p>New tasks show up here when you dump or add them in the graph.</p>
         </div>
-      ) : (
-        <div className="list-view-groups">
-          {GROUP_ORDER.map((status) => {
-            const items = groups[status];
-            // A group that is empty while others have rows simply renders
-            // nothing — no empty section headers cluttering the list.
-            if (items.length === 0) return null;
-            const isCollapsed = collapsed.has(status);
-            return (
-              <section
-                key={status}
-                className="list-view-group"
-                data-status={status}
-              >
-                <button
-                  type="button"
-                  className="list-view-group-header"
-                  data-collapsed={isCollapsed || undefined}
-                  aria-expanded={!isCollapsed}
-                  onClick={() => toggleCollapsed(status)}
-                >
-                  <span>{GROUP_LABEL[status]}</span>
-                  <span className="list-view-group-count">{items.length}</span>
-                  <svg
-                    className="list-view-group-chevron"
-                    viewBox="0 0 16 16"
-                    width="12"
-                    height="12"
-                    aria-hidden="true"
-                  >
-                    <path
-                      d="m4 6 4 4 4-4"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-                {isCollapsed ? null : (
-                  <ul className="list-view-rows">
-                    {items.flatMap(({ node, parent }) => {
-                      const progress = progressByBigTask.get(node.id) ?? null;
-                      const steps = stepsByBigTask.get(node.id) ?? [];
-                      const expanded = expandedBigTasks.has(node.id);
-                      return [
-                        renderRow(node, parent, { progress, steps: steps.length, expanded }),
-                        ...(expanded ? steps.map((step) => renderRow(step, null, { step: true })) : []),
-                      ];
-                    })}
-                  </ul>
-                )}
-              </section>
-            );
-          })}
-        </div>
-      )}
+      ) : null}
+
+      <div className="todos-sections">
+        {model.sections.map((section) => {
+          if (section.kind !== "search" && section.kind !== "flat") {
+            return renderSection(section.key, sectionHead(section), section.count, section.items, section);
+          }
+          // One list (Priority, or search results) needs no foldable header.
+          if (section.items.length === 0) {
+            return section.kind === "search" ? (
+              <div key={section.key} className="todos-empty">
+                No tasks match “{search.trim()}”.
+              </div>
+            ) : null;
+          }
+          return (
+            <section key={section.key} className="todo-section" data-plain>
+              {section.kind === "search" ? <p className="todo-section-caption">{section.title}</p> : null}
+              <ul className="todo-list">{section.items.map((entry) => renderItem(entry, section))}</ul>
+            </section>
+          );
+        })}
+
+        {model.paused.length > 0
+          ? renderSection(
+              "paused",
+              <span className="todo-section-title">Paused</span>,
+              model.paused.length,
+              model.paused,
+              null,
+              { quiet: true },
+            )
+          : null}
+
+        {model.done.length > 0
+          ? renderSection(
+              "done",
+              <span className="todo-section-title">Done</span>,
+              model.done.length,
+              doneShown,
+              null,
+              {
+                quiet: true,
+                footer:
+                  model.done.length > DONE_SHOWN ? (
+                    <p className="todo-section-more">
+                      {model.done.length - DONE_SHOWN} older — search to find one.
+                    </p>
+                  ) : null,
+              },
+            )
+          : null}
+      </div>
     </div>
   );
 }
