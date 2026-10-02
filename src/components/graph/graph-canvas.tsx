@@ -3417,7 +3417,7 @@ export function GraphCanvas({
                       fontWeight={isCompleted && theme === "light" ? 610 : isObjective ? 680 : isActiveTask ? 660 : isBig ? 640 : isArea ? 500 : 540}
                       letterSpacing={isArea ? "0.08em" : "-0.02em"}
                       textAnchor="middle"
-                      textDecoration={isCompleted && theme === "dark" ? "line-through" : undefined}
+                      textDecoration={isCompleted ? "line-through" : undefined}
                       y={initialY}
                     >
                       {node.lines.map((line, index) => (
