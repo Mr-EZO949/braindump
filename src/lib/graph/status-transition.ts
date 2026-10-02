@@ -17,12 +17,18 @@
 //     cascades, check off linked plan_tasks.
 //   On reopen: auto-reopen descendants completed in the same cascade, reverse
 //     plan_task check-offs.
-//   On archive: orphan all connected edges. On unarchive: restore them.
+//   On archive: orphan the live connected edges. On unarchive: restore them,
+//     one parent at most, none to a node that is still archived.
 //   Logs lifecycle_events (immutable) + feedback_events on every transition.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { runPrerequisiteCascade } from "@/lib/ai/lifecycle";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
+import {
+  ARCHIVE_ORPHANS_STATUSES,
+  pickEdgesToRestore,
+  type ArchiveEdge,
+} from "@/lib/graph/archive-edges";
 import type { NodeStatus } from "@/types/graph";
 
 // Valid transition map: current status → allowed next statuses.
@@ -132,6 +138,71 @@ function collectBelongsToDescendantIds(params: {
   }
 
   return descendants;
+}
+
+// Unarchive: revive the edges pickEdgesToRestore allows (archive-edges.ts) —
+// never all orphaned ones, which can give the node two parents and makes the
+// single-parent index reject the whole update.
+async function restoreArchivedNodeEdges(params: {
+  supabase: SupabaseClient;
+  userId: string;
+  nodeId: string;
+  nowIso: string;
+}) {
+  const { supabase, userId, nodeId, nowIso } = params;
+  const { data: edgeRows } = await supabase
+    .from("edges")
+    .select("id, source_node_id, target_node_id, edge_type, status, created_at")
+    .eq("user_id", userId)
+    .or(`source_node_id.eq.${nodeId},target_node_id.eq.${nodeId}`);
+  const edges = (edgeRows ?? []) as ArchiveEdge[];
+  const orphaned = edges.filter((edge) => edge.status === "orphaned");
+  if (orphaned.length === 0) return;
+
+  const otherIds = [
+    ...new Set(
+      orphaned.map((edge) =>
+        edge.source_node_id === nodeId ? edge.target_node_id : edge.source_node_id,
+      ),
+    ),
+  ];
+  const childIds = [
+    ...new Set(
+      orphaned
+        .filter((edge) => edge.edge_type === "belongs_to" && edge.target_node_id === nodeId)
+        .map((edge) => edge.source_node_id),
+    ),
+  ];
+  const [{ data: otherNodes }, { data: childParentRows }] = await Promise.all([
+    supabase.from("nodes").select("id, status").eq("user_id", userId).in("id", otherIds),
+    childIds.length > 0
+      ? supabase
+          .from("edges")
+          .select("source_node_id")
+          .eq("user_id", userId)
+          .eq("edge_type", "belongs_to")
+          .in("source_node_id", childIds)
+          .not("status", "in", '("orphaned","user_rejected")')
+      : Promise.resolve({ data: [] as Array<{ source_node_id: string }> }),
+  ]);
+
+  const restoreIds = pickEdgesToRestore({
+    nodeId,
+    edges,
+    statusByNodeId: new Map(
+      ((otherNodes ?? []) as Array<{ id: string; status: string | null }>).map((n) => [n.id, n.status]),
+    ),
+    parentedNodeIds: new Set(
+      ((childParentRows ?? []) as Array<{ source_node_id: string }>).map((row) => row.source_node_id),
+    ),
+  });
+  if (restoreIds.length === 0) return;
+  const { error } = await supabase
+    .from("edges")
+    .update({ status: "active", updated_at: nowIso })
+    .eq("user_id", userId)
+    .in("id", restoreIds);
+  if (error) console.error("[status-transition] restoring edges failed:", error.message);
 }
 
 export type TransitionResult =
@@ -322,21 +393,18 @@ export async function transitionNodeStatus(params: {
           metadata: { previous_status: previousStatus, new_status: newStatus },
         })
       : null,
-    // Edge lifecycle: archive orphans every connected edge; unarchive restores.
+    // Edge lifecycle: archive orphans the live connected edges (rejected ones
+    // stay rejected); unarchive restores what archive-edges.ts allows.
     // (Completing does NOT orphan — a done task stays attached to its parent.)
     newStatus === "archived"
       ? supabase
           .from("edges")
           .update({ status: "orphaned", updated_at: nowIso })
           .eq("user_id", userId)
+          .in("status", [...ARCHIVE_ORPHANS_STATUSES])
           .or(`source_node_id.eq.${nodeId},target_node_id.eq.${nodeId}`)
       : newStatus === "active" && previousStatus === "archived"
-        ? supabase
-            .from("edges")
-            .update({ status: "active", updated_at: nowIso })
-            .eq("user_id", userId)
-            .eq("status", "orphaned")
-            .or(`source_node_id.eq.${nodeId},target_node_id.eq.${nodeId}`)
+        ? restoreArchivedNodeEdges({ supabase, userId, nodeId, nowIso })
         : null,
     // The belongs_to subtree follows the node (complete ↔ reopen).
     affectedDescendantNodeIds.length > 0

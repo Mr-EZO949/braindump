@@ -72,6 +72,7 @@ import {
   buildPrimaryStructuralTree,
   getStructuralSubtreeFromIndexes,
 } from "@/lib/graph/structure";
+import { isLiveEdge, pickEdgesToRestore } from "@/lib/graph/archive-edges";
 import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -4052,8 +4053,37 @@ export function AppShell({ initialUser }: AppShellProps) {
         .map((n) => [n.id, { status: n.status ?? null, completed_at: n.completed_at ?? null }] as const),
     );
 
+    // Edges only change on archive / unarchive, by the server's own rules
+    // (archive-edges.ts). Snapshot them so a failed request can put them back.
+    const touchingEdges = graphData.edges.filter(
+      (e) => e.source_node_id === nodeId || e.target_node_id === nodeId,
+    );
+    const edgeStatusChanges = new Map<string, Edge["status"]>();
+    if (status === "archived") {
+      for (const e of touchingEdges) if (isLiveEdge(e)) edgeStatusChanges.set(e.id, "orphaned");
+    } else if (previousNode.status === "archived") {
+      const restoreIds = pickEdgesToRestore({
+        nodeId,
+        edges: touchingEdges,
+        statusByNodeId: new Map(graphData.nodes.map((n) => [n.id, n.status])),
+        parentedNodeIds: new Set(
+          graphData.edges
+            .filter((e) => e.edge_type === "belongs_to" && isLiveEdge(e))
+            .map((e) => e.source_node_id),
+        ),
+      });
+      for (const id of restoreIds) edgeStatusChanges.set(id, "active");
+    }
+    const edgeStatusSnapshot = new Map(
+      touchingEdges.filter((e) => edgeStatusChanges.has(e.id)).map((e) => [e.id, e.status ?? null]),
+    );
+
     // Apply optimistic update immediately so the UI responds on first click.
-    function applyStatusLocally(prev: GraphData, targetStatus: Node["status"]): GraphData {
+    function applyStatusLocally(
+      prev: GraphData,
+      targetStatus: Node["status"],
+      edgeStatuses: ReadonlyMap<string, Edge["status"]>,
+    ): GraphData {
       return {
         ...prev,
         nodes: prev.nodes.map((n) =>
@@ -4067,23 +4097,16 @@ export function AppShell({ initialUser }: AppShellProps) {
             : n,
         ),
         edges:
-          targetStatus === "archived"
-            ? prev.edges.map((e) =>
-                e.source_node_id === nodeId || e.target_node_id === nodeId
-                  ? { ...e, status: "orphaned" as const }
-                  : e,
-              )
+          edgeStatuses.size === 0
+            ? prev.edges
             : prev.edges.map((e) =>
-                (e.source_node_id === nodeId || e.target_node_id === nodeId) &&
-                e.status === "orphaned"
-                  ? { ...e, status: "active" as const }
-                  : e,
+                edgeStatuses.has(e.id) ? { ...e, status: edgeStatuses.get(e.id) } : e,
               ),
       };
     }
 
     setGraphData((prev) => {
-      const base = applyStatusLocally(prev, status);
+      const base = applyStatusLocally(prev, status, edgeStatusChanges);
       if (!cascadeStatus || cascadeIds.length === 0) return base;
       const cascadeCompletedAt = cascadeStatus === "completed" ? new Date().toISOString() : null;
       return {
@@ -4105,7 +4128,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (!res.ok) {
       // Revert clicked node + edges, and restore every cascaded descendant.
       setGraphData((prev) => {
-        const reverted = applyStatusLocally(prev, previousNode.status);
+        const reverted = applyStatusLocally(prev, previousNode.status, edgeStatusSnapshot);
         if (affectedSnapshot.size === 0) return reverted;
         return {
           ...reverted,

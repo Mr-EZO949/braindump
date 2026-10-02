@@ -163,3 +163,89 @@ describe("transitionNodeStatus — guards", () => {
     expect(result).toMatchObject({ kind: "error", httpStatus: 404 });
   });
 });
+
+// A fake whose queries resolve: each from() chain is recorded and awaits to
+// { data: respond(table, ops), error: null }, so a transition runs to the end.
+function resolvingSupabase(
+  nodeRow: Record<string, unknown>,
+  respond: (table: string, ops: Array<{ method: string; args: unknown[] }>) => unknown,
+) {
+  const chains: Array<{ table: string; ops: Array<{ method: string; args: unknown[] }> }> = [];
+  const from = (table: string) => {
+    const record = { table, ops: [] as Array<{ method: string; args: unknown[] }> };
+    chains.push(record);
+    const chain: Record<string, unknown> = new Proxy(
+      {},
+      {
+        get(_target, prop: string) {
+          if (prop === "maybeSingle") return async () => ({ data: nodeRow, error: null });
+          if (prop === "then") {
+            return (resolve: (value: unknown) => void) =>
+              resolve({ data: respond(table, record.ops), error: null });
+          }
+          return (...args: unknown[]) => {
+            record.ops.push({ method: prop, args });
+            return chain;
+          };
+        },
+      },
+    );
+    return chain;
+  };
+  return { client: { from } as unknown as SupabaseClient, chains };
+}
+
+const edgeUpdates = (chains: Array<{ table: string; ops: Array<{ method: string; args: unknown[] }> }>) =>
+  chains.filter((c) => c.table === "edges" && c.ops.some((op) => op.method === "update"));
+
+describe("transitionNodeStatus — archive edges", () => {
+  it("archiving orphans only live edges, so a rejected link stays rejected", async () => {
+    const { client, chains } = resolvingSupabase(
+      { id: "a", status: "active", node_type: "task", workspace_id: "ws-1", completed_at: null },
+      () => null,
+    );
+    const result = await transitionNodeStatus({
+      supabase: client,
+      userId: "user-1",
+      nodeId: "a",
+      newStatus: "archived",
+      today: "2026-10-02",
+      recomputeScores: false,
+    });
+    expect(result).toMatchObject({ kind: "changed", status: "archived" });
+    const [update] = edgeUpdates(chains);
+    expect(update.ops).toContainEqual({ method: "in", args: ["status", ["active", "decayed"]] });
+  });
+
+  it("unarchiving a node that was moved first revives one parent, not both", async () => {
+    const touching = [
+      { id: "old", source_node_id: "a", target_node_id: "p1", edge_type: "belongs_to", status: "orphaned", created_at: "2026-09-01T00:00:00Z" },
+      { id: "new", source_node_id: "a", target_node_id: "p2", edge_type: "belongs_to", status: "orphaned", created_at: "2026-09-20T00:00:00Z" },
+    ];
+    const { client, chains } = resolvingSupabase(
+      { id: "a", status: "archived", node_type: "task", workspace_id: "ws-1", completed_at: null },
+      (table, ops) => {
+        if (table === "edges" && ops.some((op) => op.method === "or")) return touching;
+        if (table === "nodes" && ops.some((op) => op.method === "select")) {
+          return [
+            { id: "p1", status: "active" },
+            { id: "p2", status: "active" },
+          ];
+        }
+        return null;
+      },
+    );
+    const result = await transitionNodeStatus({
+      supabase: client,
+      userId: "user-1",
+      nodeId: "a",
+      newStatus: "active",
+      today: "2026-10-02",
+      recomputeScores: false,
+    });
+    expect(result).toMatchObject({ kind: "changed", status: "active" });
+    const [update] = edgeUpdates(chains);
+    expect(update.ops).toContainEqual({ method: "update", args: [expect.objectContaining({ status: "active" })] });
+    expect(update.ops).toContainEqual({ method: "in", args: ["id", ["new"]] });
+  });
+});
