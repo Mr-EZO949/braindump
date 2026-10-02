@@ -10607,6 +10607,21 @@ input[type="search"]::-webkit-search-results-decoration {
   color: var(--color-text-secondary);
 }
 
+.pending-action-status-busy {
+  color: var(--color-text-secondary);
+  animation: pendingBusyPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pendingBusyPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
 .pending-action-status-rejected {
   color: var(--color-text-muted);
 }

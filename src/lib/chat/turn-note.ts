@@ -54,7 +54,7 @@ export function turnNote(
       lines.push(`Proposed, still waiting for the user's OK on the card (NOT applied yet): ${listed(words)}`);
     } else if (pending.status === "rejected") {
       lines.push(`Proposed and DECLINED by the user: ${listed(words)}`);
-    } else if (pending.status === "accepted") {
+    } else if (pending.status === "accepted" || pending.status === "applying") {
       const kept = pending.acceptedIndexes ? new Set(pending.acceptedIndexes) : null;
       const accepted = words.filter((_, i) => !kept || kept.has(i));
       const skipped = kept ? words.filter((_, i) => !kept.has(i)) : [];

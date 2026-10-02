@@ -181,6 +181,7 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
 
   const awaiting = action.status === "awaiting";
   const accepted = action.status === "accepted";
+  const applying = action.status === "applying";
   const rejected = action.status === "rejected";
   const errored = action.status === "error";
 
@@ -305,6 +306,11 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles }: P
         </div>
       ) : null}
 
+      {applying ? (
+        <div className="pending-action-status pending-action-status-busy" role="status">
+          Applying…
+        </div>
+      ) : null}
       {accepted ? (
         <div className="pending-action-status pending-action-status-accepted">Accepted</div>
       ) : null}

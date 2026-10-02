@@ -45,7 +45,8 @@ export interface ChatMessageSection {
 // When Claude proposes a mutation tool, the server pauses the stream and
 // emits a <<BRAINDUMP_PAUSE>> marker. The client parses it into this shape
 // and renders an inline Accept/Reject card on the in-flight assistant bubble.
-export type PendingActionStatus = "awaiting" | "accepted" | "rejected" | "error";
+// "applying": accepted, the server is still carrying it out.
+export type PendingActionStatus = "awaiting" | "applying" | "accepted" | "rejected" | "error";
 
 export interface PendingAction {
   runId: string;

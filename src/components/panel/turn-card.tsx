@@ -154,7 +154,7 @@ export function TurnCard({
       {pending && ops.length > 0 ? (
         <section className="turn-section">
           <div className="applied-card-head">
-            {pending.status === "accepted" ? (
+            {pending.status === "accepted" || pending.status === "applying" ? (
               <span className="applied-card-mark" aria-hidden="true">✓</span>
             ) : (
               <span className="applied-card-mark applied-card-mark--ask" aria-hidden="true">?</span>
@@ -162,7 +162,9 @@ export function TurnCard({
             <span className="applied-card-title">
               {awaiting
                 ? `Needs your OK · ${ops.length}`
-                : pending.status === "rejected"
+                : pending.status === "applying"
+                  ? "Applying…"
+                  : pending.status === "rejected"
                   ? "Left as it was"
                   : pending.status === "error"
                     ? "Needs your OK"

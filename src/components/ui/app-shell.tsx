@@ -1698,7 +1698,8 @@ export function AppShell({ initialUser }: AppShellProps) {
                 ...m,
                 pendingAction: {
                   ...m.pendingAction,
-                  status: decision === "reject" ? "rejected" : "accepted",
+                  // Accept shows "Applying…" until the server has done it.
+                  status: decision === "reject" ? "rejected" : decision === "accept" ? "applying" : "accepted",
                   ...(decision === "accept" && acceptedIndexes ? { acceptedIndexes } : {}),
                 },
               }
@@ -1721,6 +1722,15 @@ export function AppShell({ initialUser }: AppShellProps) {
       });
 
       await consumeAssistantStream(res, messageId, targetWorkspaceId, true);
+      if (decision === "accept") {
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId && m.pendingAction?.status === "applying"
+              ? { ...m, pendingAction: { ...m.pendingAction, status: "accepted" } }
+              : m,
+          ),
+        );
+      }
 
       // If the user accepted a graph-changing tool, refresh the graph.
       if (decision === "accept" && targetWorkspaceId && authUser?.id) {
