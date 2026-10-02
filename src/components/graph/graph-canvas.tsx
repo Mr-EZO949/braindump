@@ -2976,6 +2976,9 @@ export function GraphCanvas({
                 : "url(#node-shadow)";
             const lineHeight = node.lines.length === 1 ? 0 : node.fontSize * 1.04;
             const initialY = node.lines.length === 1 ? 2 : -lineHeight / 2 + 1;
+            // The DONE / BIG TASK badge rides the top border, but on a small
+            // card that would cover the title — then it sits higher.
+            const badgeY = Math.min(-node.height / 2, initialY - node.fontSize * 0.82 - 9.5);
             const isBig = BREAKDOWN_TYPES.has(node.node_type);
             const isTask = node.node_type === "task";
             const isActiveTask = isTask && node.status === "active";
@@ -3120,7 +3123,7 @@ export function GraphCanvas({
                     className="graph-node-pulse"
                     fill="none"
                     height={node.height + 8}
-                    rx={Math.min(node.width + 8, node.height + 8) * 0.44}
+                    rx={nodeRadius + 4}
                     stroke="rgba(225, 70, 84, 0.9)"
                     strokeWidth={1.8}
                     width={node.width + 8}
@@ -3146,7 +3149,7 @@ export function GraphCanvas({
                     fill={theme === "light" ? "#766558" : "rgba(4,4,6,0.92)"}
                     height={node.height + 6}
                     opacity={theme === "light" ? visual.shadowOpacity * 0.22 : visual.shadowOpacity}
-                    rx={Math.min(node.width + 6, node.height + 6) * 0.44}
+                    rx={nodeRadius + 3}
                     width={node.width + 6}
                     x={-(node.width + 6) / 2}
                     y={-(node.height + 6) / 2 + (theme === "light" ? 4 : 7)}
@@ -3240,7 +3243,7 @@ export function GraphCanvas({
                     y={-(node.height - 2) / 2}
                   />
                   {isCompleted && theme === "light" && !skipLabel ? (
-                    <g style={{ pointerEvents: "none" }} transform={`translate(0, ${-node.height / 2})`}>
+                    <g style={{ pointerEvents: "none" }} transform={`translate(0, ${badgeY})`}>
                       <rect fill="#d8ead9" height={15} rx={7.5} width={46} x={-23} y={-7.5} />
                       <text
                         fill="#347348"
@@ -3270,7 +3273,7 @@ export function GraphCanvas({
                     </g>
                   ) : null}
                   {isBig && !isCompleted && !skipLabel ? (
-                    <g style={{ pointerEvents: "none" }} transform={`translate(0, ${-node.height / 2})`}>
+                    <g style={{ pointerEvents: "none" }} transform={`translate(0, ${badgeY})`}>
                       <rect
                         fill={theme === "light" ? "#f5ddd8" : "#653844"}
                         height={15}
@@ -3450,9 +3453,12 @@ export function GraphCanvas({
                     onPointerDown={(event) => event.stopPropagation()}
                     role="button"
                     tabIndex={0}
-                    transform={`translate(${node.width / 2 - 13}, ${node.height / 2 + 6}) scale(${collapseControlScale})`}
+                    // Scaled up (phones, zoomed out) it grows down and left from
+                    // the card's corner, and its hit area stops at the button's
+                    // top — a tap on the card itself still opens the node.
+                    transform={`translate(${node.width / 2 + 8 - 21 * collapseControlScale}, ${node.height / 2 - 5 + 11 * collapseControlScale}) scale(${collapseControlScale})`}
                   >
-                    <rect fill="transparent" height={38} width={62} x={-31} y={-19} />
+                    <rect fill="transparent" height={36} width={58} x={-29} y={-12} />
                     <rect
                       className="graph-collapse-button"
                       fill={theme === "light" ? (isCollapsed ? "#f8e4df" : "#fffdfa") : (isCollapsed ? "#51303a" : "#292529")}
