@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { actionSucceeded, confirmationFor, looksMultiStep } from "./confirmations";
+import { actionSucceeded, answerStillOwed, confirmationFor, looksMultiStep } from "./confirmations";
 
 describe("confirmationFor", () => {
   it("uses the tool's own message when it has one", () => {
@@ -45,5 +45,25 @@ describe("looksMultiStep", () => {
   it("leaves single actions alone", () => {
     expect(looksMultiStep("mark the gym as done")).toBe(false);
     expect(looksMultiStep("move the call with Abdo to Friday")).toBe(false);
+  });
+});
+
+describe("answerStillOwed — a question waiting behind the card", () => {
+  const sleep =
+    "I also was able to fix my sleep schedule. idk what to focus on tho should i priorotize money making or exams idk?";
+
+  it("an announcement before the card leaves the question unanswered", () => {
+    expect(answerStillOwed(sleep, 'Mark "Fix Sleep Schedule" done first.')).toBe(true);
+    expect(answerStillOwed("did my skincare, what should I do next", "Nice.")).toBe(true);
+  });
+
+  it("an answer before the card, or no question, needs no follow-up call", () => {
+    expect(
+      answerStillOwed(
+        sleep,
+        "Exams first: passing the backlog unlocks the internship and the better-paid work after it. Keep one small money task a day so it doesn't stall — and nice work on the sleep schedule.",
+      ),
+    ).toBe(false);
+    expect(answerStillOwed("did my skincare and stretching today", "")).toBe(false);
   });
 });

@@ -46,6 +46,20 @@ export function looksMultiStep(userMessage: string): boolean {
     /\band (then |also )?(schedule|add|create|mark|move|set|put|link|connect|rename|archive|delete|remove|plan|make|complete|reschedule)\b/.test(t);
 }
 
+// Did the user ask something the reply before the card hasn't answered yet?
+// The prompt says to answer first and put the card last (assistant-v25); when
+// the model instead only announced the action ("Mark X done first.") and meant
+// to answer after the Accept, a one-line "Done ✓" would drop the answer
+// (owner, 2026-09-30: "fixed my sleep schedule — money or exams?").
+export function answerStillOwed(userMessage: string, replyBeforeCard: string): boolean {
+  const asked =
+    userMessage.includes("?") ||
+    /\b(should i|what should|what do you think|how (do|can|should) i|which (one|is)|idk (what|if|how|which)|any (tips|advice|ideas))\b/i.test(
+      userMessage,
+    );
+  return asked && replyBeforeCard.trim().length < 140;
+}
+
 export function confirmationFor(toolName: string, content: string): string {
   const result = parseResult(content);
   if (typeof result.message === "string" && result.message.trim()) return result.message.trim();

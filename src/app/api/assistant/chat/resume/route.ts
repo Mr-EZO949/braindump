@@ -53,7 +53,7 @@ import { selectOps } from "@/lib/ai/turn-policy";
 import type { ChangeOp } from "@/lib/graph/change-set";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
 import { resolveChoice } from "@/lib/ai/tools/interactive";
-import { actionSucceeded, confirmationFor, looksMultiStep } from "@/lib/ai/tools/confirmations";
+import { actionSucceeded, answerStillOwed, confirmationFor, looksMultiStep } from "@/lib/ai/tools/confirmations";
 import { usesSonnet } from "@/lib/ai/chat-router";
 import type { AssistantMode } from "@/types/ai";
 
@@ -82,6 +82,26 @@ function truncateToolContent(
 // resume turn can pick the same model tier the initial turn would (Haiku for
 // chat, Sonnet for graph edits). Skips tool_result-only user turns and strips
 // the "User question:" preamble the chat route wraps the message in.
+// Everything the paused turn wrote since the user's message (every round:
+// text, a lookup, more text, the card).
+function lastAssistantText(messages: MessageParam[]): string {
+  const texts: string[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const blocks = typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content;
+    const text = blocks
+      .filter((b): b is TextBlockParam => (b as { type?: string }).type === "text")
+      .map((b) => b.text)
+      .join("\n");
+    if (m.role === "user") {
+      if (text) break; // the user's own message — the turn started here
+      continue; // tool results
+    }
+    if (text) texts.unshift(text);
+  }
+  return texts.join("\n");
+}
+
 function lastUserQuestion(messages: MessageParam[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
@@ -357,6 +377,7 @@ export async function POST(req: NextRequest) {
     deferred.every((d) => d.result && isDirectTool(d.name)) &&
     actionSucceeded(acceptedResult.content, acceptedResult.isError) &&
     !looksMultiStep(lastUserQuestion(messages)) &&
+    !answerStillOwed(lastUserQuestion(messages), lastAssistantText(messages)) &&
     (assistantModel === AI_MODELS.CLAUDE_HAIKU || run.pending_tool_name === "plan_day")
   ) {
     return new Response(confirmationFor(run.pending_tool_name as string, acceptedResult.content), {
