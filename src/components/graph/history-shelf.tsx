@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { AI_LIFECYCLE } from "@/lib/ai/config";
 import { groupArchivedNodes } from "@/lib/graph/archive-groups";
 import { NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
 import type { GraphData, Node } from "@/types/graph";
@@ -14,12 +15,17 @@ type HistoryShelfProps = {
   selectedNodeId: string | null;
 };
 
-function shortDate(iso: string | null | undefined): string {
+function shortDate(iso: string | null | undefined, plusDays = 0): string {
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
+  date.setDate(date.getDate() + plusDays);
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+
+// The nightly cleanup (api/cron/node-cleanup) deletes these for good.
+const ARCHIVE_KEEP_DAYS = AI_LIFECYCLE.ARCHIVED_DELETE_AFTER_DAYS;
+const DONE_KEEP_DAYS = AI_LIFECYCLE.COMPLETED_DELETE_AFTER_DAYS;
 
 export function HistoryShelf({
   completedNodes,
@@ -54,19 +60,35 @@ export function HistoryShelf({
         .filter((group) => group.nodes.length > 0)
     : archivedGroups;
 
+  // A tab whose list emptied (its last item restored or reopened) closes.
+  const tab =
+    (openTab === "done" && completedNodes.length === 0) ||
+    (openTab === "archive" && archivedCount === 0)
+      ? null
+      : openTab;
+
+  useEffect(() => {
+    if (!tab) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenTab(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [tab]);
+
   if (completedNodes.length === 0 && archivedCount === 0) return null;
 
   return (
     <div className="history-shelf">
-      {openTab ? (
+      {tab ? (
         <section
           className="history-shelf-panel"
-          aria-label={openTab === "archive" ? "Archive" : "Completed history"}
+          aria-label={tab === "archive" ? "Archive" : "Completed history"}
         >
           <div className="history-shelf-header">
             <div>
               <span className="history-shelf-kicker">History</span>
-              <h2>{openTab === "archive" ? "Archive" : "Finished work"}</h2>
+              <h2>{tab === "archive" ? "Archive" : "Finished work"}</h2>
             </div>
             <button
               className="history-shelf-close"
@@ -78,12 +100,12 @@ export function HistoryShelf({
             </button>
           </div>
           <p className="history-shelf-description">
-            {openTab === "archive"
-              ? "Put aside for now. Everything here can return to your graph."
-              : "Older completed items stay here; recent wins remain on the graph."}
+            {tab === "archive"
+              ? `Put aside for now. Restore anything within ${ARCHIVE_KEEP_DAYS} days of archiving it.`
+              : `Recent wins stay on the graph for a week. Finished work is kept here for ${DONE_KEEP_DAYS} days.`}
           </p>
 
-          {openTab === "archive" ? (
+          {tab === "archive" ? (
             <>
               <label className="history-shelf-search">
                 <span className="sr-only">Search archive</span>
@@ -121,7 +143,7 @@ export function HistoryShelf({
                               <span className="history-shelf-item-title">{node.title}</span>
                               <span className="history-shelf-item-meta">
                                 {node.archived_at
-                                  ? `Archived ${shortDate(node.archived_at)}`
+                                  ? `Archived ${shortDate(node.archived_at)} · kept until ${shortDate(node.archived_at, ARCHIVE_KEEP_DAYS)}`
                                   : "Archived"}
                               </span>
                             </button>
@@ -174,9 +196,9 @@ export function HistoryShelf({
       <div className="history-shelf-triggers">
         {completedNodes.length > 0 ? (
           <button
-            aria-expanded={openTab === "done"}
+            aria-expanded={tab === "done"}
             className="history-shelf-trigger history-shelf-trigger--done"
-            onClick={() => setOpenTab(openTab === "done" ? null : "done")}
+            onClick={() => setOpenTab(tab === "done" ? null : "done")}
             type="button"
           >
             <span className="history-shelf-trigger-icon" aria-hidden="true">
@@ -187,9 +209,9 @@ export function HistoryShelf({
         ) : null}
         {archivedCount > 0 ? (
           <button
-            aria-expanded={openTab === "archive"}
+            aria-expanded={tab === "archive"}
             className="history-shelf-trigger history-shelf-trigger--archive"
-            onClick={() => setOpenTab(openTab === "archive" ? null : "archive")}
+            onClick={() => setOpenTab(tab === "archive" ? null : "archive")}
             type="button"
           >
             <span className="history-shelf-trigger-icon" aria-hidden="true">
