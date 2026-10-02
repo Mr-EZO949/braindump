@@ -8,10 +8,19 @@ import type { ToolContext, ToolDefinition } from "./read-only";
 import { buildPlannerCandidates } from "../planner";
 import { aiProvider } from "../index";
 import { persistAIRun } from "../telemetry";
-import { PLAN_PROMPT_VERSION } from "../prompts/plan";
+import { PLAN_PROMPT_VERSION, planWindowMinutes } from "../prompts/plan";
 import { DAY_START_MINUTE } from "@/lib/planner/auto-schedule";
-import { busyOn, sessionBusyNote } from "@/lib/planner/commitments";
-import { localDateISO } from "@/lib/time/local-date";
+import {
+  busyOn,
+  busyWithin,
+  minutesToTime,
+  nextSessionStartMinute,
+  oneOffBusy,
+  sessionBusyNote,
+  timeToMinutes,
+} from "@/lib/planner/commitments";
+import { localDateISO, localMinuteOfDay } from "@/lib/time/local-date";
+import { getRequestTimeZone } from "@/lib/time/request-date";
 
 // YYYY-MM-DD. Postgres `date` parses a broader set, but we want Claude to
 // emit ISO dates consistently so the UI formats them predictably.
@@ -296,7 +305,7 @@ const PLAN_DAY: ToolDefinition = {
   schema: {
     name: "plan_day",
     description:
-      "Build a time-blocked plan for the user's session from their active work items, and draft it in the Planner for review. Use when the user asks to plan their day/afternoon/next N hours, make a schedule, or time-block their work. Requires Accept.",
+      "Build a time-blocked plan for the user's session from their active work items, and draft it in the Planner for review. Use when the user asks to plan their day/afternoon/next N hours, make a schedule, or time-block their work. Saved weekly commitments are planned around automatically; busy time the user names in the conversation (\"lectures 2:30–6:30 today\", \"dentist at 4\") goes in `busy` — plan right away, don't first ask whether it repeats. The plan avoids only what is saved or passed here, so never say it does otherwise. Requires Accept.",
     input_schema: {
       type: "object",
       properties: {
@@ -309,14 +318,37 @@ const PLAN_DAY: ToolDefinition = {
           type: "integer",
           minimum: 15,
           maximum: 600,
-          description: "Total minutes — only when window is 'custom'.",
+          description: "Total minutes from start_time — only when window is 'custom' (\"2:30 to 11pm\" = 510).",
+        },
+        start_time: {
+          type: "string",
+          description: "When the session starts, 24h HH:MM in the user's time, only when they say it (\"from 2:30\" → \"14:30\"). Omit to start now (a full day starts 09:00).",
+        },
+        busy: {
+          type: "array",
+          maxItems: 8,
+          description: "Times TODAY the user said they are busy that are not saved commitments — a lecture, an appointment. 24h HH:MM.",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              start: { type: "string" },
+              end: { type: "string" },
+            },
+            required: ["start", "end"],
+          },
         },
       },
       required: ["window"],
     },
   },
   handler: async (input, ctx: ToolContext) => {
-    const args = (input ?? {}) as { window?: string; custom_minutes?: number };
+    const args = (input ?? {}) as {
+      window?: string;
+      custom_minutes?: number;
+      start_time?: string;
+      busy?: unknown;
+    };
     const window = (["1h", "2h", "day", "custom"].includes(args.window ?? "")
       ? args.window
       : "day") as "1h" | "2h" | "day" | "custom";
@@ -335,13 +367,26 @@ const PLAN_DAY: ToolDefinition = {
       return { accepted: false, error: "No active work items to plan — add a few tasks or goals first." };
     }
 
-    // A full day lands at 09:00 in the Planner (its day-plan default); plan
-    // around today's fixed commitments inside it. Short windows start "now",
-    // which this tool can't see — Accept still lays those around busy time.
-    const busy =
-      window === "day"
-        ? sessionBusyNote(busyOn(bundle.commitments, ctx.today ?? localDateISO(new Date(), null)), DAY_START_MINUTE, 480)
-        : null;
+    // Plan only the free time of the session: today's saved commitments plus
+    // the busy time the user named in chat. The session starts where Accept
+    // will put it in the Planner — the user's start_time, else 09:00 for a
+    // full day and "now" (rounded as the Planner rounds) for the rest. Until
+    // 2026-10-02 only a full day saw commitments and nothing could say "I have
+    // lectures 2:30–6:30 today", so "schedule 2:30–11pm" filled the lectures.
+    const today = ctx.today ?? localDateISO(new Date(), null);
+    const startMinute =
+      timeToMinutes(args.start_time) ??
+      (window === "day"
+        ? DAY_START_MINUTE
+        : nextSessionStartMinute(localMinuteOfDay(new Date(), await getRequestTimeZone())));
+    const sessionMinutes = planWindowMinutes(window, customMinutes);
+    const busyToday = [...busyOn(bundle.commitments, today), ...oneOffBusy(args.busy)].sort(
+      (a, b) => a.start - b.start,
+    );
+    const busy = sessionBusyNote(busyToday, startMinute, sessionMinutes);
+    const plannedAround = busyWithin(busyToday, startMinute, startMinute + sessionMinutes).map(
+      (b) => `${b.title} ${minutesToTime(b.start)}–${minutesToTime(b.end)}`,
+    );
 
     let planResult;
     try {
@@ -419,7 +464,9 @@ const PLAN_DAY: ToolDefinition = {
       accepted: true,
       planning_window: window,
       block_count: output.blocks.length,
-      message: `Drafted a ${window === "day" ? "full-day" : window} plan with ${output.blocks.length} blocks. Open the Planner to review and adjust.`,
+      message: `Drafted a ${window === "day" ? "full-day" : window} plan with ${output.blocks.length} blocks${
+        plannedAround.length > 0 ? `, around ${plannedAround.join(", ")}` : ""
+      }. Open the Planner to review and adjust.`,
     };
   },
 };

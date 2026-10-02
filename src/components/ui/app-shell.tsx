@@ -355,6 +355,9 @@ export function AppShell({ initialUser }: AppShellProps) {
   // Bumped when a chat `plan_day` is accepted, to pull its freshly-drafted plan
   // into the planner's review UI (journal #6).
   const [draftPlanRefreshKey, setDraftPlanRefreshKey] = useState(0);
+  // That plan_day's start time and the busy time named in chat, so Accept in
+  // the Planner lays the blocks where the plan was made for.
+  const [draftPlanHint, setDraftPlanHint] = useState<{ startTime: unknown; busy: unknown } | null>(null);
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
   const [proposedNodesSubmitting, setProposedNodesSubmitting] = useState(false);
@@ -1766,6 +1769,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         // into its review UI so the user actually sees what was generated (#6).
         if (action.toolName === "plan_day") {
           setAppMode("assistant");
+          setDraftPlanHint({ startTime: action.toolInput?.start_time, busy: action.toolInput?.busy });
           setDraftPlanRefreshKey((v) => v + 1);
         }
       }
@@ -4284,6 +4288,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 workspaceId={selectedWorkspaceId}
                 tasksRefreshKey={plannerRefreshKey}
                 draftPlanRefreshKey={draftPlanRefreshKey}
+                draftPlanHint={draftPlanHint}
                 onAskInChat={(message) => {
                   void submitMessage(message);
                 }}

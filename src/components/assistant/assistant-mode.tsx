@@ -25,6 +25,7 @@ import {
   layoutAroundBusy,
   loadActiveCommitments,
   minutesToTime,
+  oneOffBusy,
   type BusyInterval,
   type Commitment,
 } from "@/lib/planner/commitments";
@@ -1292,6 +1293,9 @@ type AssistantModeProps = {
   // applies it with correct local-time scheduling). Fixes: chat "generated a
   // schedule" but nothing shows on the planner (journal #6).
   draftPlanRefreshKey?: number;
+  // The accepted plan_day's start_time ("HH:MM") and the busy time named in
+  // chat (oneOffBusy) — the server planned the free time around them.
+  draftPlanHint?: { startTime: unknown; busy: unknown } | null;
   onAskInChat?: (message: string) => void;
   // Called after the planner toggles a task that has a linked graph node,
   // so app-shell can mirror the new status into its local graphData state
@@ -1305,6 +1309,7 @@ export function AssistantMode({
   workspaceId,
   tasksRefreshKey,
   draftPlanRefreshKey,
+  draftPlanHint,
   onAskInChat,
   onLinkedNodeStatusChange,
 }: AssistantModeProps) {
@@ -1379,6 +1384,8 @@ export function AssistantMode({
   // Kept here (not on the session row) because anchoring is a UI-only choice
   // the accept handler reads when converting blocks into scheduled tasks.
   const planStartTimeRef = useRef<string | null>(null);
+  // Busy time named in chat for a chat-drafted plan (not saved commitments).
+  const planOneOffBusyRef = useRef<BusyInterval[]>([]);
 
   // Set when accepting a plan for a day that already has plan-derived tasks;
   // drives the replan clarifying modal (replace / add / cancel).
@@ -1555,10 +1562,13 @@ export function AssistantMode({
 
   useEffect(() => {
     if (draftPlanRefreshKey === undefined || draftPlanRefreshKey === 0) return;
+    const startTime = typeof draftPlanHint?.startTime === "string" ? draftPlanHint.startTime : "";
+    planStartTimeRef.current = isValidTimeString(startTime) ? startTime : null;
+    planOneOffBusyRef.current = oneOffBusy(draftPlanHint?.busy);
     void loadLatestDraftPlan().catch(() => {
       // ignore — the draft stays in the DB; the user can re-open the planner
     });
-  }, [draftPlanRefreshKey, loadLatestDraftPlan]);
+  }, [draftPlanRefreshKey, draftPlanHint, loadLatestDraftPlan]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -1908,6 +1918,7 @@ export function AssistantMode({
     const ac = new AbortController();
     planAbortRef.current = ac;
     planStartTimeRef.current = isValidTimeString(start_time ?? "") ? start_time : null;
+    planOneOffBusyRef.current = [];
     setPlannerState((prev) => ({ ...prev, loading: true, error: null }));
     // Where Accept will put this plan — the server plans around the fixed
     // commitments inside it (docs/commitments.md).
@@ -2068,7 +2079,7 @@ export function AssistantMode({
       const starts = layoutAroundBusy(
         keptBlocks.map((block) => block.duration_minutes),
         anchorMinutes,
-        busyOn(commitments, targetDate),
+        [...busyOn(commitments, targetDate), ...planOneOffBusyRef.current],
       );
 
       for (const [index, block] of keptBlocks.entries()) {

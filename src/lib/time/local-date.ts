@@ -51,6 +51,20 @@ export function localDateISO(date: Date = new Date(), timeZone?: string | null):
   return date.toISOString().slice(0, 10);
 }
 
+// Minutes since local midnight of `date` in `timeZone` (UTC when unknown).
+export function localMinuteOfDay(date: Date = new Date(), timeZone?: string | null): number {
+  const zone = timeZone && isValidTimeZone(timeZone) ? timeZone : "UTC";
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: zone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  return hour * 60 + minute;
+}
+
 // Calendar arithmetic on a YYYY-MM-DD string (no time zone involved).
 export function addDaysISO(isoDate: string, days: number): string {
   const [y, m, d] = isoDate.split("-").map((part) => Number.parseInt(part, 10));

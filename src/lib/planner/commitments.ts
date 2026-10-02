@@ -124,6 +124,27 @@ export function freeStretches(busy: BusyInterval[], start: number, end: number):
 }
 
 /**
+ * Busy time the user names for one plan ("lectures 2:30–6:30 today") — not a
+ * saved commitment. From chat's plan_day input; bad rows are dropped.
+ */
+export function oneOffBusy(raw: unknown): BusyInterval[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 8).flatMap((item, index) => {
+    const row = (item ?? {}) as { title?: unknown; start?: unknown; end?: unknown };
+    const start = timeToMinutes(typeof row.start === "string" ? row.start : null);
+    const end = timeToMinutes(typeof row.end === "string" ? row.end : null);
+    if (start === null || end === null || end <= start) return [];
+    const title = typeof row.title === "string" && row.title.trim() ? row.title.trim().slice(0, 60) : "Busy";
+    return [{ id: `once-${index}`, title, start, end }];
+  });
+}
+
+/** Where a session that starts "now" begins: 15 min out, on the half hour. */
+export function nextSessionStartMinute(nowMinute: number): number {
+  return Math.min(23 * 60 + 30, Math.ceil((nowMinute + 15) / 30) * 30);
+}
+
+/**
  * Start minutes for blocks laid out in order from `anchor`, skipping busy
  * time: a block that would run into a commitment starts after it instead.
  */

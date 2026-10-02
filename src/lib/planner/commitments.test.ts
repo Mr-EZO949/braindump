@@ -10,7 +10,9 @@ import {
   freeTimeAt,
   isoWeekday,
   layoutAroundBusy,
+  nextSessionStartMinute,
   normalizeCommitment,
+  oneOffBusy,
   sessionBusyNote,
   type Commitment,
 } from "./commitments";
@@ -125,5 +127,21 @@ describe("words", () => {
       normalizeCommitment({ ...stats, start_time: "14:00:00", end_time: "15:00:00", days: [1, 2, 3, 4, 5] }),
     ).toEqual(stats);
     expect(normalizeCommitment({ ...stats, days: [] })).toBeNull();
+  });
+});
+
+describe("busy time named for one plan", () => {
+  it("parses rows and drops bad ones", () => {
+    expect(oneOffBusy([{ title: "Lectures", start: "14:30", end: "18:30" }, { start: "9:00", end: "8:00" }, null])).toEqual([
+      { id: "once-0", title: "Lectures", start: h(14, 30), end: h(18, 30) },
+    ]);
+    expect(oneOffBusy("nope")).toEqual([]);
+    expect(oneOffBusy([{ start: "16:00", end: "17:00" }])[0].title).toBe("Busy");
+  });
+
+  it("a session that starts now begins 15 minutes out, on the half hour", () => {
+    expect(nextSessionStartMinute(h(12, 10))).toBe(h(12, 30));
+    expect(nextSessionStartMinute(h(12, 20))).toBe(h(13));
+    expect(nextSessionStartMinute(h(23, 50))).toBe(h(23, 30));
   });
 });
