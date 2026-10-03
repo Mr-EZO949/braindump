@@ -13,7 +13,12 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 - From the first end-to-end runs of a long MIXED dump (venting + a question + completions + new work with dates + two reorganizations + two stated links + a weekly class time): read the dump to its last line ("also need to call the bank" was dropped); a habit done today is a completion (the full prompt lacked the rule); steps the user names are children with the date on the step (a "pick a dataset by friday, then write the proposal" became one big task); a weekly fixed time is a commitment, never a habit node; a soft link may target an existing node's id (the model had invented a copy of an existing goal to link to and lost the link with it); venting and questions to the assistant produce no clarifying question (`dump-reply-v1` answers them).
 - Eval (synthetic 16-node workspace, throwaway user, the 1,136-char mixed dump, end to end in the browser): 3 runs while the prompt moved from "changes first" to "quote and hand off". Final run: every item captured (10 new nodes incl. the bank call and the named ML steps), gym logged + CV done, both reorganizations exactly as asked (BrainDump project with Test/Market and the old fixes moved along; Italian under Personal Development keeping `useful_for` the internship), both stated links, the class as a commitment and no habit node. $0.0425 (13.4k in / 1.6k out, 13.8 s) + edit pass $0.0129 (6.4 s).
 
-### extract-light-v6 (current) · extract-v26 — the user's date words (2026-10-02)
+### extract-light-v7 (current) — weekly fixed times are not nodes (2026-10-03)
+- The light prompt gets the full prompt's rule: a fixed weekly time set by someone else (a lecture, a lab, a shift, a team practice) is the user's schedule, saved by the priority read as a commitment — no habit, task or note for it.
+- Why: "volleyball practice is tuesdays and fridays 5 to 7pm. and stats lecture is every tuesday and thursday 2 to 4pm" typed in chat (a short dump) saved both weekly times AND made two habit nodes, "Volleyball Practice" and "Statistics Lecture" — "every tuesday" read as a habit cadence.
+- Eval (one live run, same message, throwaway user): two weekly times, no new nodes. $0.0116 for the whole dump turn (light builder $0.0085, 21 output tokens; v6 on the same message: $0.0111 and two habit nodes).
+
+### extract-light-v6 · extract-v26 — the user's date words (2026-10-02)
 - Both builder prompts copy the user's words for a deadline into `date_words` ("friday", "oct 20", "next monday") next to `target_date`; validation resolves them with `lib/time/relative-day.ts` (the resolver the priority read and chat tools already use) and keeps `target_date` only when the words don't resolve ("end of Q3"). The light prompt also says a to-do's date belongs to the to-do, not to the goal or class it is about.
 - Why: on Friday 2026-10-02 the light prompt turned "email the prof … by friday" into Tuesday 10-06, while the priority read put Friday 10-09 on the midterm goal — two models, two wrong-or-different answers for one phrase.
 - Eval (one short real dump, $0.013): "the stats midterm got moved to oct 22. also need to email prof marino about the review session by friday, and did the gym" → midterm due 10-22 (priority read), new email task due 10-09 (resolver), the midterm untouched by the email's date, gym logged.
@@ -222,7 +227,17 @@ Run `POST /api/eval/run` before and after changes to verify regression.
 
 ## Planner (`plan.ts`)
 
-### plan-v3 (current)
+### plan-v7 (current) — a whole waking day (2026-10-03)
+- A day plan runs from its start (the time the user gave, else now; 08:00 on another day) to 23:00, up to 18 h, instead of a fixed 8 h; custom windows go to 18 h (were 10 h). One module sizes it for the Planner, the plan route, chat's `plan_day` and `buildPlan`: `lib/planner/plan-window.ts`.
+- The Session block names the clock span ("session 08:00–23:00"). New rules: a long session (5+ h) gets a break about every 2 h of focus and lunch / dinner at normal times, hardest work early; never invent work, repeat an item or add a block for busy time — when the work runs out, ONE "Free time" break; reasons are one short clause (≤12 words).
+- Code around it: the JSON schema is now enforced on Sonnet too (it was Haiku only); a block that only restates a fixed commitment is dropped before the free minutes are packed (`validatePlanOutput`); output cap 6,144 → 16,000 tokens; an answer cut off at the cap becomes "This plan was too long to finish in one go…" instead of "invalid response".
+- Why: the owner plans ~15 h a day. On the first 15-hour run (Tuesday, lecture 14–16 and practice 18–20) Sonnet wrote ~25 blocks on clock time including a 4-hour "Stats lecture" placeholder; the validator packed it into the 660 free minutes and dropped everything after it (dinner, the evening) — 4,368 output tokens, $0.049, 31 s.
+- Eval (throwaway user, synthetic workspace, through the app): 15-hour Planner plan on that Tuesday → work 08:00–14:00 with lunch, gym 16:00–17:30, dinner, evening work, "Free time" to 23:00, nothing in either commitment — $0.036, 20 s (that run still paid a failed first attempt; the schema went on after it). Chat "plan my day from 8am, dentist 11 to 12" → 08:00–23:00, nothing 11–12, lunch + dinner — $0.017 (1,186 output tokens), 10 s, one attempt. 2-hour plan → Haiku, $0.004, 6.5 s, unchanged.
+
+### plan-v4 – plan-v6
+- Not logged here at the time: v4–v6 added fixed commitments (busy time and free stretches in the Session block, docs/commitments.md) and the Haiku/Sonnet split with an enforced schema on Haiku.
+
+### plan-v3
 - Replaced the fixed "focus blocks 25–50 minutes" rule with content-grounded sizing: estimate each block's duration from the item's title/summary/type (quick chore ~10–15m, normal task ~30–45m, deep work 60–120m), and explicitly do not pad everything to one length
 - Why: the planner was inventing uniform durations ungrounded in the actual work — a one-line reply and a multi-hour task got the same block. The planner already has each item's content, so it can estimate per-item without a separate duration service.
 
