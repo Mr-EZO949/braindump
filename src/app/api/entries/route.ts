@@ -24,6 +24,7 @@ import { classifyDumpSize } from "@/lib/ai/dump-size";
 import { BUILD_GRAPH_TOOL, type BuildPlanInput } from "@/lib/ai/tools/build";
 import { AI_INGESTION, AI_FLAGS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { checkEntryRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
+import { timed, withTimings } from "@/lib/perf/timings";
 import type { DumpTurn, RawEntrySourceType } from "@/types/ai";
 
 // How many branches hang directly off the workspace root. 0 when there is no
@@ -98,6 +99,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const requestStart = Date.now();
   // ---------------------------------------------------------------------------
   // Auth
   // ---------------------------------------------------------------------------
@@ -294,7 +296,10 @@ export async function POST(req: NextRequest) {
       autoApply: auto_apply !== false,
       history: sanitizeHistory(rawHistory),
     };
-    if (stream !== true) return dumpTurn(turnParams);
+    // One log line per dump: where its time went (lib/perf/timings.ts).
+    const runTurn = (emit?: (stage: DumpStage) => void) =>
+      withTimings("dump", requestStart, () => dumpTurn({ ...turnParams, emit }));
+    if (stream !== true) return runTurn();
     // Progress while it works: a line per stage, then the usual JSON.
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
@@ -307,7 +312,7 @@ export async function POST(req: NextRequest) {
           }
         };
         try {
-          const res = await dumpTurn({ ...turnParams, emit: (stage) => write({ stage }) });
+          const res = await runTurn((stage) => write({ stage }));
           write({ status: res.status, result: await res.json() });
         } catch (err) {
           console.error("[entries] dump turn failed:", err);
@@ -696,15 +701,17 @@ async function dumpTurn(params: {
   const today = await getRequestToday();
 
   // The human half of the dump — needs nothing from retrieval, so it starts now.
-  const replyRead = readDumpReply({
-    dump: text,
-    today,
-    supabase,
-    userId,
-    workspaceId,
-    signal: req.signal,
-    history: params.history,
-  });
+  const replyRead = timed("reply (haiku)", () =>
+    readDumpReply({
+      dump: text,
+      today,
+      supabase,
+      userId,
+      workspaceId,
+      signal: req.signal,
+      history: params.history,
+    }),
+  );
   let priorityRead: Promise<DumpPriorityRead | null> = Promise.resolve(null);
   const built = await runBuilder({
     rawText: text,
@@ -721,28 +728,33 @@ async function dumpTurn(params: {
     onEditPass: () => emit("reorganizing"),
     onRetrieved: (nodes) => {
       emit("building");
-      priorityRead = readDumpPriorities({
-        dump: text,
-        nodeIds: nodes.map((n) => n.id),
-        today,
-        supabase,
-        userId,
-        workspaceId,
-      });
+      priorityRead = timed("priorities (haiku)", () =>
+        readDumpPriorities({
+          dump: text,
+          nodeIds: nodes.map((n) => n.id),
+          today,
+          supabase,
+          userId,
+          workspaceId,
+        }),
+      );
     },
   });
   const [priorities, reply] = await Promise.all([priorityRead, replyRead]);
 
   const toolCtx = { supabase, userId, workspaceId, selectedNodeId: null, today };
   // Fixed weekly times and priority facts don't depend on the builder, so
-  // they save even when it fails.
-  const commitmentUpdate = await (async () => {
+  // they save even when it fails. The weekly times don't touch the graph
+  // either: they save while the change set is written.
+  const savingCommitments = timed("commitments", async () => {
     if (!priorities || priorities.commitments.length === 0) return null;
     const applied = await applyCommitmentChanges(toolCtx, { changes: priorities.commitments }, "dump");
     return applied.accepted && "undo" in applied
       ? { applied: applied.applied, failed: applied.failed, undo: applied.undo }
       : null;
-  })();
+  });
+  // (awaited below; this only keeps a failure from counting as unhandled meanwhile)
+  savingCommitments.catch(() => undefined);
   const applyPriorities = async () => {
     const unclear = priorities?.unclear ?? [];
     const applied =
@@ -764,7 +776,7 @@ async function dumpTurn(params: {
         error: built.userMessage,
         message: "Extraction failed. Retry with POST /api/entries and retry_entry_id.",
         priority_update: await applyPriorities(),
-        commitment_update: commitmentUpdate,
+        commitment_update: await savingCommitments,
       },
       { status: 207 },
     );
@@ -774,7 +786,7 @@ async function dumpTurn(params: {
   // "did the exam, now waiting for the result" — the priority read's wait
   // beats the builder's "did" (the result isn't in).
   const statusTouched = statusTouchedIds(priorities);
-  const [changes] = await Promise.all([
+  const [changes, , commitmentUpdate] = await Promise.all([
     applyDumpChanges({
       ctx: { supabase, userId, workspaceId, today, defer: (work) => after(work) },
       rawEntryId,
@@ -783,9 +795,13 @@ async function dumpTurn(params: {
       autoApply: params.autoApply,
     }),
     supabase.from("raw_entries").update({ status: "completed" }).eq("id", rawEntryId),
+    savingCommitments,
   ]);
-  // After the change set: its one score recompute then sees the new nodes too.
-  const priorityUpdate = await applyPriorities();
+
+  // After the change set: its one score recompute then sees the new nodes
+  // too. The card is parked meanwhile.
+  const applyingPriorities = timed("priority changes", applyPriorities);
+  applyingPriorities.catch(() => undefined); // awaited below
 
   // What waits for the user — parked as a pending run so the usual resume
   // endpoint applies it (whole or in part); no model ever continues it.
@@ -835,6 +851,7 @@ async function dumpTurn(params: {
       };
     }
   }
+  const priorityUpdate = await applyingPriorities;
 
   const turn: DumpTurn = {
     reply,
