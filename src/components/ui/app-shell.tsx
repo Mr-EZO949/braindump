@@ -4809,9 +4809,10 @@ export function AppShell({ initialUser }: AppShellProps) {
         )}
       </AnimatePresence>
 
-      {/* AI status chip — shown during extraction and connection analysis */}
+      {/* AI status chip — shown during extraction and connection analysis.
+          Not over the open Brain Dump box: it shows its own progress. */}
       <AnimatePresence>
-        {(brainDumpSubmitting || analyzingConnections) && (
+        {!brainDumpOpen && (brainDumpSubmitting || analyzingConnections) && (
           <motion.div
             key="ai-status"
             className="ai-status-chip"
@@ -4887,6 +4888,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       !freezeNudgeDismissed &&
       !stepSuggestionOpen &&
       !whatNowOpen &&
+      !brainDumpOpen &&
       needsActionNodes.length > 0 ? (
         <div className="freeze-nudge" role="status">
           <span className="freeze-nudge-text">
