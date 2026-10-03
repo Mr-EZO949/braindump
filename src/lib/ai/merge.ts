@@ -73,6 +73,9 @@ export async function detectDuplicates(params: {
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
+  // Stored embeddings of the new nodes, by id — the query vectors, so no
+  // embedding call is made for them.
+  embeddings?: ReadonlyMap<string, number[]>;
 }): Promise<MergeCandidate[]> {
   if (!AI_FLAGS.MERGE_SUGGESTIONS_ENABLED) return [];
 
@@ -83,6 +86,7 @@ export async function detectDuplicates(params: {
     const queryText = [node.title, node.summary].filter(Boolean).join("\n");
     const matches = await matchNodes({
       queryText,
+      queryEmbedding: params.embeddings?.get(node.id),
       workspaceId,
       userId,
       supabase,

@@ -5,7 +5,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aiProvider, aiRerankProvider } from "@/lib/ai/index";
-import { matchNodes, generateAndStoreEmbedding } from "@/lib/ai/embeddings";
+import { matchNodes, generateAndStoreEmbedding, loadStoredEmbeddings } from "@/lib/ai/embeddings";
 import { AI_CANDIDATES, AI_FLAGS } from "@/lib/ai/config";
 // MAX_INFERENCE_PAIRS is derived from AI_CANDIDATES.INFERENCE_MAX below
 import { INFER_EDGE_PROMPT_VERSION } from "@/lib/ai/prompts/infer-edge";
@@ -47,6 +47,8 @@ export async function runConnectionAnalysis(params: {
   // becomes stable bytes across calls — enabling prompt-cache hits on Claude.
   // If omitted, each call builds its own (legacy path, safe fallback).
   workspaceContext?: string;
+  // The node's stored embedding when the caller already loaded it.
+  embedding?: number[];
 }): Promise<ConnectionResult> {
   if (!AI_FLAGS.EDGE_INFERENCE_ENABLED) {
     return { proposed: 0, skipped: 0, failed: 0 };
@@ -84,20 +86,27 @@ export async function runConnectionAnalysis(params: {
     }
   }
 
-  // 2. Ensure embedding exists (no-op if already embedded)
-  await generateAndStoreEmbedding({
-    nodeId,
-    title: sourceTitle,
-    summary: sourceSummary,
-    workspaceId,
-    userId,
-    supabase,
-  }).catch(() => {});
+  // 2. The node's embedding: the stored one (it is the vector of this same
+  // title + summary, so it is also the query below), or a new one.
+  const embedding =
+    params.embedding ??
+    (await loadStoredEmbeddings({ nodeIds: [nodeId], workspaceId, userId, supabase }).catch(() => null))?.get(nodeId);
+  if (!embedding) {
+    await generateAndStoreEmbedding({
+      nodeId,
+      title: sourceTitle,
+      summary: sourceSummary,
+      workspaceId,
+      userId,
+      supabase,
+    }).catch(() => {});
+  }
 
   // 3. Retrieve top K similar nodes via embedding
   const queryText = [sourceTitle, sourceSummary].filter(Boolean).join("\n");
   const matchedCandidates = await matchNodes({
     queryText,
+    queryEmbedding: embedding,
     workspaceId,
     userId,
     supabase,

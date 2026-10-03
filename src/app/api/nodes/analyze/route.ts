@@ -11,7 +11,7 @@ import {
   fetchPendingEdges,
 } from "@/lib/ai/connection";
 import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
-import { generateAndStoreEmbedding } from "@/lib/ai/embeddings";
+import { generateAndStoreEmbeddings, loadStoredEmbeddings } from "@/lib/ai/embeddings";
 import { detectDuplicates } from "@/lib/ai/merge";
 import { drainAIJobsWithAdminClient, enqueueAIJob } from "@/lib/ai/jobs";
 import { AI_FLAGS, AI_JOBS, AI_RATE_LIMITS } from "@/lib/ai/config";
@@ -146,8 +146,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Step 1: Embed all nodes sequentially so each node is in node_embeddings
-  // before matchNodes runs on any sibling.
+  // Step 1: every node in node_embeddings before matchNodes runs on any
+  // sibling. An accept embeds its new nodes already (node-intake.ts), so
+  // their stored vectors are read and reused — as the query for connection
+  // analysis and duplicate detection too; only nodes without one are
+  // embedded, in one batch call. (Until 2026-10-03 each node was embedded
+  // again here, one call at a time, then twice more downstream.)
   const { data: nodeRows } = await supabase
     .from("nodes")
     .select("id, title, summary, node_type")
@@ -155,15 +159,25 @@ export async function POST(req: NextRequest) {
     .eq("workspace_id", workspace_id)
     .eq("user_id", user.id);
 
-  for (const node of nodeRows ?? []) {
-    await generateAndStoreEmbedding({
-      nodeId: node.id as string,
-      title: node.title as string,
-      summary: node.summary as string | null,
-      workspaceId: workspace_id,
-      userId: user.id,
-      supabase,
+  const embeddingScope = { workspaceId: workspace_id, userId: user.id, supabase };
+  const vectors = await loadStoredEmbeddings({ ...embeddingScope, nodeIds: normalizedNodeIds }).catch(
+    () => new Map<string, number[]>(),
+  );
+  const unembedded = (nodeRows ?? []).filter((node) => !vectors.has(node.id as string));
+  if (unembedded.length > 0) {
+    await generateAndStoreEmbeddings({
+      ...embeddingScope,
+      nodes: unembedded.map((node) => ({
+        nodeId: node.id as string,
+        title: node.title as string,
+        summary: node.summary as string | null,
+      })),
     }).catch(() => {});
+    const added = await loadStoredEmbeddings({
+      ...embeddingScope,
+      nodeIds: unembedded.map((node) => node.id as string),
+    }).catch(() => new Map<string, number[]>());
+    for (const [id, vector] of added) vectors.set(id, vector);
   }
 
   // Cost optimization: run edge INFERENCE only where it pays off. Every node is
@@ -219,6 +233,7 @@ export async function POST(req: NextRequest) {
           userId: user.id,
           supabase,
           workspaceContext: batchWorkspaceContext,
+          embedding: vectors.get(nodeId),
         });
         return { nodeId, ...result };
       } catch {
@@ -255,6 +270,7 @@ export async function POST(req: NextRequest) {
     workspaceId: workspace_id,
     userId: user.id,
     supabase,
+    embeddings: vectors,
   });
 
   const warnings: string[] = [];

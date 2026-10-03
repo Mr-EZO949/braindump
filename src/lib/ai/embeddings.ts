@@ -32,6 +32,10 @@ export interface EmbedNodeParams {
 
 export interface MatchNodesParams {
   queryText: string;
+  // The query's vector when it's already known — a node's stored embedding
+  // is the vector of its own title + summary (nodeEmbeddingText), so matching
+  // from a node needs no new embedding call.
+  queryEmbedding?: number[];
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
@@ -349,6 +353,32 @@ export async function matchNodes(
     limit = AI_CANDIDATES.RETRIEVAL_K,
   } = params;
 
+  const queryVector =
+    params.queryEmbedding && params.queryEmbedding.length > 0
+      ? params.queryEmbedding
+      : await embedQuery({ queryText, userId, workspaceId, supabase });
+
+  const { data, error } = await supabase.rpc("match_nodes", {
+    query_embedding: JSON.stringify(queryVector),
+    match_user_id: userId,
+    match_workspace_id: workspaceId,
+    match_count: limit,
+    exclude_node_id: excludeNodeId ?? null,
+    include_completed: includeCompleted,
+  });
+
+  if (error) throw new Error(`match_nodes RPC failed: ${error.message}`);
+
+  return (data ?? []) as MatchedNode[];
+}
+
+async function embedQuery(params: {
+  queryText: string;
+  userId: string;
+  workspaceId: string;
+  supabase: SupabaseClient;
+}): Promise<number[]> {
+  const { queryText, userId, workspaceId, supabase } = params;
   const result = await requestEmbedding({
     inputText: queryText,
     userId,
@@ -381,19 +411,46 @@ export async function matchNodes(
 
     throw new Error(normalized.userMessage);
   });
+  return result.output.embedding;
+}
 
-  const { data, error } = await supabase.rpc("match_nodes", {
-    query_embedding: JSON.stringify(result.output.embedding),
-    match_user_id: userId,
-    match_workspace_id: workspaceId,
-    match_count: limit,
-    exclude_node_id: excludeNodeId ?? null,
-    include_completed: includeCompleted,
-  });
+// ---------------------------------------------------------------------------
+// loadStoredEmbeddings — the vectors node_embeddings already holds for these
+// nodes, by node id (a node without one is left out). Connection analysis and
+// duplicate detection after an accept read them instead of embedding the same
+// title + summary again (fix list leftover, 2026-10-03: /api/nodes/analyze
+// made up to four embed-v1 calls per node the accept had just embedded).
+// ---------------------------------------------------------------------------
 
-  if (error) throw new Error(`match_nodes RPC failed: ${error.message}`);
+export async function loadStoredEmbeddings(params: {
+  nodeIds: string[];
+  workspaceId: string;
+  userId: string;
+  supabase: SupabaseClient;
+}): Promise<Map<string, number[]>> {
+  const vectors = new Map<string, number[]>();
+  if (params.nodeIds.length === 0) return vectors;
+  const { data } = await params.supabase
+    .from("node_embeddings")
+    .select("node_id, embedding")
+    .eq("workspace_id", params.workspaceId)
+    .eq("user_id", params.userId)
+    .in("node_id", params.nodeIds);
+  for (const row of (data ?? []) as Array<{ node_id: string; embedding: unknown }>) {
+    const vector = parseVector(row.embedding);
+    if (vector) vectors.set(row.node_id, vector);
+  }
+  return vectors;
+}
 
-  return (data ?? []) as MatchedNode[];
+// pgvector comes back as a JSON-array string from PostgREST.
+function parseVector(raw: unknown): number[] | null {
+  try {
+    const value = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
+    return Array.isArray(value) && value.length > 0 && value.every((n) => typeof n === "number") ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
