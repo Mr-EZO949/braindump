@@ -9,7 +9,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { generateAndStoreEmbedding } from "@/lib/ai/embeddings";
+import { generateAndStoreEmbeddings } from "@/lib/ai/embeddings";
 import { scoreNodesJudgment } from "@/lib/ai/judgment";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { getImportanceLabel } from "@/lib/graph/importance";
@@ -64,24 +64,25 @@ export function newNodeRow(params: {
   };
 }
 
-// Embeds the new nodes in parallel and waits: retrieval, dedup, clustering and
-// the connection engine all read the embedding. A failed embedding never fails
-// the accept — it goes to the retry queue.
-export async function embedNewNodes(scope: IntakeScope, nodes: IntakeNode[]): Promise<void> {
-  await Promise.all(
-    nodes.map((node) =>
-      generateAndStoreEmbedding({
-        nodeId: node.id,
-        title: node.title,
-        summary: node.summary,
-        workspaceId: scope.workspaceId,
-        userId: scope.userId,
-        supabase: scope.supabase,
-      }).catch(() => {
-        // The node is accepted regardless.
-      }),
-    ),
-  );
+// Embeds the new nodes and waits: retrieval, dedup, clustering and the
+// connection engine all read the embedding. One batch call; a vector already
+// computed for the same text (`known` — a dump's dedup embedded every
+// proposal) is reused. A failed embedding never fails the accept — it goes to
+// the retry queue.
+export async function embedNewNodes(
+  scope: IntakeScope,
+  nodes: IntakeNode[],
+  known?: ReadonlyMap<string, number[]>,
+): Promise<void> {
+  await generateAndStoreEmbeddings({
+    nodes: nodes.map((node) => ({ nodeId: node.id, title: node.title, summary: node.summary })),
+    workspaceId: scope.workspaceId,
+    userId: scope.userId,
+    supabase: scope.supabase,
+    known,
+  }).catch(() => {
+    // The nodes are accepted regardless.
+  });
 }
 
 // The significance judgment for the new nodes, then one rescore that reads it.

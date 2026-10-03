@@ -9,9 +9,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const embedded: string[] = [];
 vi.mock("@/lib/ai/embeddings", () => ({
-  generateAndStoreEmbedding: vi.fn(async (params: { nodeId: string }) => {
-    embedded.push(params.nodeId);
-    return { ok: true };
+  generateAndStoreEmbeddings: vi.fn(async (params: { nodes: Array<{ nodeId: string }> }) => {
+    embedded.push(...params.nodes.map((node) => node.nodeId));
   }),
 }));
 
@@ -60,7 +59,7 @@ import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { planChange } from "@/lib/ai/tools/change";
 import { createFakeSupabase, type FakeSupabase } from "@/lib/test/fake-supabase";
 
-import { applyChangeSet } from "./change-set";
+import { applyChangeSet, type ChangeOp } from "./change-set";
 import { parseUndoSteps, undoChangeSteps } from "./change-undo";
 
 type Row = Record<string, unknown>;
@@ -68,7 +67,7 @@ type Row = Record<string, unknown>;
 const USER = "u1";
 const WS = "w1";
 
-function seed(): FakeSupabase {
+function seed(options?: Parameters<typeof createFakeSupabase>[1]): FakeSupabase {
   const node = (id: string, title: string, node_type: string): Row => ({
     id,
     user_id: USER,
@@ -106,7 +105,7 @@ function seed(): FakeSupabase {
     raw_entries: [],
     proposed_nodes: [],
     habit_completions: [],
-  });
+  }, options);
 }
 
 function ctxFor(db: FakeSupabase, extra: Record<string, unknown> = {}) {
@@ -538,5 +537,66 @@ describe("applyChangeSet intake", () => {
         (e) => e.source_node_id === health?.id && e.target_node_id === rootId && e.edge_type === "belongs_to",
       ),
     ).toBe(true);
+  });
+});
+
+describe("a long dump's change set doesn't wait on itself", () => {
+  const dump = (steps: number): ChangeOp[] => [
+    { kind: "create_node", local_ref: "n0", title: "Course project", node_type: "big_task", parent_node_id: "money" },
+    ...Array.from({ length: steps }, (_, k): ChangeOp => ({
+      kind: "create_node",
+      local_ref: `n${k + 1}`,
+      title: `Step ${k + 1}`,
+      node_type: "task",
+      parent_local_ref: "n0",
+    })),
+    { kind: "create_node", title: "Call the bank", node_type: "task" },
+  ];
+
+  it("new nodes and their parent links go in together, however many there are", async () => {
+    const small = seed();
+    const big = seed();
+    await applyChangeSet(ctxFor(small), dump(1));
+    const outcome = await applyChangeSet(ctxFor(big), dump(7));
+
+    expect(outcome.results.every((r) => r.ok)).toBe(true);
+    expect(parentOf(big, "Course project")).toBe("Money Projects");
+    expect(parentOf(big, "Step 7")).toBe("Course project");
+    expect(parentOf(big, "Call the bank")).toBe("ezo");
+    // Seven steps wait on the database as long as one does.
+    expect(big.stats.depth).toBe(small.stats.depth);
+  });
+
+  it("a node that can't be saved fails alone; the rest still go in under their parents", async () => {
+    const db = seed({ unique: { nodes: ["title"] } });
+    const outcome = await applyChangeSet(ctxFor(db), [
+      { kind: "create_node", local_ref: "n1", title: "Course project", node_type: "big_task", parent_node_id: "money" },
+      { kind: "create_node", title: "Money Projects", node_type: "area" },
+      { kind: "create_node", title: "Pick a dataset", node_type: "task", parent_local_ref: "n1" },
+    ]);
+
+    expect(outcome.results.map((r) => r.ok)).toEqual([true, false, true]);
+    expect(outcome.created.map((n) => n.title)).toEqual(["Course project", "Pick a dataset"]);
+    expect(parentOf(db, "Pick a dataset")).toBe("Course project");
+    expect(outcome.undo.map((u) => u.index)).toEqual([0, 2]);
+  });
+
+  it("links side by side go in together; the same link twice is made once", async () => {
+    const one = seed();
+    await applyChangeSet(ctxFor(one), [
+      { kind: "create_edge", source_node_id: "bugs", target_node_id: "intern", edge_type: "supports" },
+    ]);
+    const db = seed();
+    const outcome = await applyChangeSet(ctxFor(db), [
+      { kind: "create_edge", source_node_id: "bugs", target_node_id: "intern", edge_type: "supports" },
+      { kind: "create_edge", source_node_id: "money", target_node_id: "intern", edge_type: "useful_for" },
+      { kind: "create_edge", source_node_id: "bugs", target_node_id: "intern", edge_type: "supports" },
+    ]);
+
+    expect(outcome.results.every((r) => r.ok)).toBe(true);
+    expect(db.tables.edges.filter((e) => e.edge_type !== "belongs_to")).toHaveLength(2);
+    // Undo takes away each link once.
+    expect(outcome.undo.map((u) => u.index)).toEqual([0, 1]);
+    expect(db.stats.depth).toBe(one.stats.depth);
   });
 });

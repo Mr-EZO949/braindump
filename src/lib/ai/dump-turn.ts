@@ -17,6 +17,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { applyChangeSet, type ChangeContext, type ChangeOp } from "@/lib/graph/change-set";
 import type { UndoStep } from "@/lib/graph/change-undo";
+import { timed } from "@/lib/perf/timings";
 import type { DumpTurn, TurnUndo } from "@/types/ai";
 
 import { loadCalibrationStats, selectAutoApply, type AutoApplyCandidate } from "./auto-apply";
@@ -86,7 +87,7 @@ export async function applyTurnChanges(params: {
   const { now, ask } = splitByPolicy(ops, autoRefs);
   const outcome =
     now.length > 0
-      ? await applyChangeSet(ctx, now, { source: params.source })
+      ? await timed("apply.changeset", () => applyChangeSet(ctx, now, { source: params.source }))
       : { results: [], created: [], undo: [] };
 
   const refToId = new Map<string, string>();
@@ -95,6 +96,16 @@ export async function applyTurnChanges(params: {
     const node = createdByIndex.get(index);
     if (node && op.kind === "create_node" && op.local_ref) refToId.set(op.local_ref, node.id);
   });
+
+  // The ledger rows of the new nodes now point at them (Undo finds them there)
+  // — written while the card's names are read.
+  const acceptedLedger = now.flatMap((op, index) => {
+    const node = createdByIndex.get(index);
+    return op.kind === "create_node" && op.ledger_id && node && outcome.results[index]?.ok
+      ? [{ ledgerId: op.ledger_id, nodeId: node.id }]
+      : [];
+  });
+  const settling = settleLedger({ supabase, userId, workspaceId }, { accepted: acceptedLedger, rejected: [] });
 
   // Names for the card: every existing node an op mentions, in one read.
   const titleByRef = new Map<string, string>();
@@ -119,7 +130,6 @@ export async function applyTurnChanges(params: {
   const done: string[] = [];
   const links: DumpChanges["links"] = [];
   const undo: TurnUndo = { added: [], done: [], links: [] };
-  const acceptedLedger: Array<{ ledgerId: string; nodeId: string }> = [];
   now.forEach((op, index) => {
     const result = outcome.results[index];
     if (!result?.ok) {
@@ -138,7 +148,6 @@ export async function applyTurnChanges(params: {
         parent_title: nameOf(op.parent_local_ref ?? op.parent_node_id),
       });
       undo.added.push(...steps);
-      if (op.ledger_id) acceptedLedger.push({ ledgerId: op.ledger_id, nodeId: node.id });
     } else if (op.kind === "complete") {
       const title = nameOf(op.node_id);
       if (title) done.push(title);
@@ -157,7 +166,7 @@ export async function applyTurnChanges(params: {
       undo.links.push(...steps);
     }
   });
-  await settleLedger({ supabase, userId, workspaceId }, { accepted: acceptedLedger, rejected: [] });
+  await settling;
 
   // A waiting rename names its row by the title before it: once applied, the
   // node's own title is already the new one ("X: rename to X").
@@ -183,14 +192,14 @@ export async function applyDumpChanges(params: {
   const { supabase, userId, workspaceId } = ctx;
 
   // 1 · The ledger: one row per proposed node.
-  const ledger = await saveProposalRows({
+  const ledger = await timed("apply.ledger", () => saveProposalRows({
     supabase,
     rawEntryId: params.rawEntryId,
     workspaceId,
     userId,
     aiRunId: built.aiRunId,
     nodes: built.nodes,
-  });
+  }));
   if (!ledger.ok) console.warn("[dump-turn] ledger not saved — everything goes on the card:", ledger.error);
   const ledgerRows = ledger.ok ? ledger.rows : [];
   const ledgerIdByRef = new Map(ledgerRows.flatMap((row) => (row.local_ref ? [[row.local_ref, row.id] as const] : [])));
@@ -207,7 +216,8 @@ export async function applyDumpChanges(params: {
   });
 
   const changes = await applyTurnChanges({
-    ctx,
+    // New nodes reuse the embeddings the builder's dedup already made.
+    ctx: { ...ctx, embeddings: built.embeddings },
     ops,
     ledger: ledgerRows.map((row) => ({
       id: row.id,

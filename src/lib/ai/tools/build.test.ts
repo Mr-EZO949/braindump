@@ -17,7 +17,7 @@ vi.mock("@/lib/ai/extraction", async (importOriginal) => ({
     return builderResult;
   }),
 }));
-vi.mock("@/lib/ai/embeddings", () => ({ generateAndStoreEmbedding: vi.fn(async () => ({ ok: true })) }));
+vi.mock("@/lib/ai/embeddings", () => ({ generateAndStoreEmbeddings: vi.fn(async () => undefined) }));
 vi.mock("@/lib/ai/judgment", () => ({ scoreNodesJudgment: vi.fn(async () => []) }));
 vi.mock("@/lib/ai/scoring", () => ({ computeWorkspaceScores: vi.fn(async () => ({ nodeUpdates: [] })) }));
 vi.mock("@/lib/ai/clustering", () => ({ runClusteringPass: vi.fn(async () => []) }));

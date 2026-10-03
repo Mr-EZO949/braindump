@@ -58,6 +58,22 @@ function buildEmbeddingRetryDedupeKey(nodeId: string) {
   return `${EMBEDDING_RETRY_JOB_TYPE}:${nodeId}`;
 }
 
+// What a node's embedding is computed from.
+export function nodeEmbeddingText(title: string, summary: string | null): string {
+  return [title, summary].filter(Boolean).join("\n").trim();
+}
+
+function embeddingRow(params: { nodeId: string; workspaceId: string; userId: string; embeddingVector: number[] }) {
+  return {
+    node_id: params.nodeId,
+    user_id: params.userId,
+    workspace_id: params.workspaceId,
+    embedding: JSON.stringify(params.embeddingVector),
+    model: AI_MODELS.GEMINI_EMBEDDING,
+    embedded_at: new Date().toISOString(),
+  };
+}
+
 async function upsertEmbeddingVector(params: {
   nodeId: string;
   workspaceId: string;
@@ -65,21 +81,9 @@ async function upsertEmbeddingVector(params: {
   embeddingVector: number[];
   supabase: SupabaseClient;
 }): Promise<EmbedResult> {
-  const { nodeId, workspaceId, userId, embeddingVector, supabase } = params;
-
-  const { error: upsertError } = await supabase
+  const { error: upsertError } = await params.supabase
     .from("node_embeddings")
-    .upsert(
-      {
-        node_id: nodeId,
-        user_id: userId,
-        workspace_id: workspaceId,
-        embedding: JSON.stringify(embeddingVector),
-        model: AI_MODELS.GEMINI_EMBEDDING,
-        embedded_at: new Date().toISOString(),
-      },
-      { onConflict: "node_id" }
-    );
+    .upsert(embeddingRow(params), { onConflict: "node_id" });
 
   if (upsertError) {
     return { ok: false, error: upsertError.message, errorCode: "unknown" };
@@ -184,7 +188,7 @@ export async function generateAndStoreEmbedding(
   const { nodeId, title, summary, workspaceId, userId, supabase } = params;
   const allowQueue = options?.allowQueue ?? true;
 
-  const inputText = [title, summary].filter(Boolean).join("\n").trim();
+  const inputText = nodeEmbeddingText(title, summary);
   if (!inputText) {
     return { ok: false, error: "Empty input text", errorCode: "unknown" };
   }
@@ -262,6 +266,68 @@ export async function generateAndStoreEmbedding(
     embeddingVector,
     supabase,
   });
+}
+
+// ---------------------------------------------------------------------------
+// generateAndStoreEmbeddings — several nodes: vectors already computed for
+// their text (`known`, e.g. the builder's dedup embedded every proposal) are
+// stored as they are, the rest come from ONE batch call, and all of it is ONE
+// upsert. A dump's new nodes used to be one call + one log + one upsert each.
+// Whatever the batch can't do goes through generateAndStoreEmbedding (its
+// failure logging and retry queue).
+// ---------------------------------------------------------------------------
+
+export async function generateAndStoreEmbeddings(params: {
+  nodes: Array<{ nodeId: string; title: string; summary: string | null }>;
+  workspaceId: string;
+  userId: string;
+  supabase: SupabaseClient;
+  known?: ReadonlyMap<string, number[]>;
+}): Promise<void> {
+  if (!AI_FLAGS.EMBEDDING_ENABLED) return;
+  const { workspaceId, userId, supabase, known } = params;
+  const items = params.nodes.flatMap((node) => {
+    const text = nodeEmbeddingText(node.title, node.summary);
+    return text ? [{ node, text }] : [];
+  });
+  const missing = [...new Set(items.map((item) => item.text).filter((text) => !known?.has(text)))];
+  const fresh = new Map<string, number[]>();
+  if (missing.length > 0) {
+    try {
+      const vectors = await embedTexts({ texts: missing, userId, workspaceId, supabase });
+      if (vectors.length === missing.length) missing.forEach((text, i) => fresh.set(text, vectors[i]));
+    } catch {
+      // Left to the one-at-a-time path below.
+    }
+  }
+
+  const stored: typeof items = [];
+  const leftOver: typeof items = [];
+  for (const item of items) {
+    const vector = known?.get(item.text) ?? fresh.get(item.text);
+    (vector && vector.length > 0 ? stored : leftOver).push(item);
+  }
+  if (stored.length > 0) {
+    const { error } = await supabase.from("node_embeddings").upsert(
+      stored.map(({ node, text }) =>
+        embeddingRow({
+          nodeId: node.nodeId,
+          workspaceId,
+          userId,
+          embeddingVector: (known?.get(text) ?? fresh.get(text)) as number[],
+        }),
+      ),
+      { onConflict: "node_id" },
+    );
+    if (error) leftOver.push(...stored);
+  }
+  await Promise.all(
+    leftOver.map(({ node }) =>
+      generateAndStoreEmbedding({ ...node, workspaceId, userId, supabase }).catch(() => {
+        // The node is accepted regardless.
+      }),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------

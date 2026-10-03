@@ -8,6 +8,8 @@
 // Each primitive below is the only implementation of its op: a parent is set
 // by setNodeParent, a status by transitionNodeStatus.
 
+import { randomUUID } from "node:crypto";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { runClusteringPass } from "@/lib/ai/clustering";
@@ -28,6 +30,7 @@ import { NODE_TYPES } from "@/lib/graph/node-types";
 import { getStructuralSubtree } from "@/lib/graph/structure";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { localDateISO } from "@/lib/time/local-date";
+import { recordSpan, timed } from "@/lib/perf/timings";
 import type { GraphData, NodeStatus, NodeType } from "@/types/graph";
 
 export interface ChangeContext {
@@ -40,6 +43,9 @@ export interface ChangeContext {
   // of a new node's intake — the judgment call and the rescore that reads it —
   // goes there so Accept answers at once. Absent → awaited in place.
   defer?: (work: () => Promise<void>) => void;
+  // Vectors already computed for some texts (a dump's dedup) — new nodes with
+  // that text reuse them instead of being embedded again.
+  embeddings?: ReadonlyMap<string, number[]>;
 }
 
 export type ChangeOp =
@@ -207,26 +213,46 @@ function workspaceRootOnce(ctx: ChangeContext): () => Promise<string | null> {
 // Parent link for a node that was just created. No parent named → the
 // workspace root, so a new node never floats until the connection engine
 // guesses one.
-async function attachNewNode(
-  ctx: ChangeContext,
-  nodeId: string,
-  parentId: string | null,
-  rootId: () => Promise<string | null>,
-): Promise<boolean> {
-  const explicit = parentId !== null;
-  const target = parentId ?? (await rootId());
-  if (!target || target === nodeId) return false;
-  const { error } = await ctx.supabase.from("edges").insert({
+function parentLinkRow(ctx: ChangeContext, nodeId: string, parentId: string, explicit: boolean) {
+  return {
     user_id: ctx.userId,
     workspace_id: ctx.workspaceId,
     source_node_id: nodeId,
-    target_node_id: target,
+    target_node_id: parentId,
     edge_type: "belongs_to",
     status: "active",
     user_confirmed: explicit,
     explanation: explicit ? null : "Anchored to workspace.",
-  });
-  return !error;
+  };
+}
+
+// Inserts the rows in ONE request. If that fails (one bad row fails them all)
+// they go in one by one, so each still succeeds or fails on its own. The
+// error for each row, null when it went in.
+async function insertRows(
+  ctx: ChangeContext,
+  table: "nodes" | "edges",
+  rows: Array<Record<string, unknown>>,
+): Promise<Array<string | null>> {
+  if (rows.length === 0) return [];
+  const { error } = await ctx.supabase.from(table).insert(rows);
+  if (!error) return rows.map(() => null);
+  return Promise.all(rows.map(async (row) => (await ctx.supabase.from(table).insert(row)).error?.message ?? null));
+}
+
+// Which of these ids are nodes of this workspace — one read (one per id if a
+// malformed id fails the batch).
+async function workspaceNodeIds(ctx: ChangeContext, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const { data, error } = await ctx.supabase
+    .from("nodes")
+    .select("id")
+    .eq("user_id", ctx.userId)
+    .eq("workspace_id", ctx.workspaceId)
+    .in("id", ids);
+  if (!error) return new Set(((data ?? []) as Array<{ id: string }>).map((row) => row.id));
+  const found = await Promise.all(ids.map((id) => fetchWorkspaceNode(ctx, id)));
+  return new Set(found.flatMap((node) => (node ? [node.id] : [])));
 }
 
 export async function recomputeScores(ctx: ChangeContext): Promise<void> {
@@ -590,6 +616,48 @@ async function deleteSubtree(
   return error ? { ok: false, error: error.message } : { ok: true, count: doomed.length };
 }
 
+// A create_edge op's ends and type, resolved; or why it can't apply.
+function edgeOpArgs(
+  op: Extract<ChangeOp, { kind: "create_edge" }>,
+  resolveRef: (value: unknown) => string,
+): { sourceId: string; targetId: string; edgeType: string; explanation: string | null } | { error: string } {
+  const sourceId = resolveRef(op.source_node_id);
+  const targetId = resolveRef(op.target_node_id);
+  const edgeType = typeof op.edge_type === "string" ? op.edge_type.toLowerCase() : "";
+  if (!sourceId || !targetId || !VALID_EDGE_TYPES.has(edgeType)) {
+    return { error: "source, target, and valid edge_type required" };
+  }
+  if (sourceId === targetId) return { error: "source and target must differ" };
+  const explanation =
+    typeof op.explanation === "string" && op.explanation.trim() ? op.explanation.trim().slice(0, 1000) : null;
+  return { sourceId, targetId, edgeType, explanation };
+}
+
+// A link that isn't a parent link, between two nodes of this workspace. The
+// undo step when it added an edge.
+async function linkLateral(
+  ctx: ChangeContext,
+  args: { sourceId: string; targetId: string; edgeType: string; explanation: string | null },
+): Promise<{ result: OpResult; undo?: UndoStep }> {
+  const { sourceId, targetId, edgeType, explanation } = args;
+  // Both nodes must belong to this user + workspace.
+  const { data: pair } = await ctx.supabase
+    .from("nodes")
+    .select("id")
+    .in("id", [sourceId, targetId])
+    .eq("user_id", ctx.userId)
+    .eq("workspace_id", ctx.workspaceId);
+  if (!pair || pair.length < 2) {
+    return { result: { kind: "create_edge", ok: false, error: "one or both nodes not in this workspace" } };
+  }
+  const linked = await createLateralEdge(ctx, sourceId, targetId, edgeType, explanation);
+  if (!linked.ok) return { result: { kind: "create_edge", ok: false, error: linked.error } };
+  return {
+    result: { kind: "create_edge", ok: true, id: linked.edgeId },
+    ...(linked.alreadyExisted ? {} : { undo: { kind: "remove_edge" as const, edge_id: linked.edgeId } }),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // applyChangeSet
 // Creates the new nodes first (so any op can point at them by local_ref no
@@ -614,7 +682,10 @@ export async function applyChangeSet(
   let scoresStale = false;
   let anchoredAtRoot = false;
 
-  // Pass 1 — create every new node.
+  // Pass 1 — create every new node, in one insert. The ids are made here, so
+  // the parents (pass 2) can be looked up while the nodes go in.
+  let passStart = Date.now();
+  const planned: Array<{ node: CreatedNode; row: Record<string, unknown>; targetDate: string | null }> = [];
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
     if (op?.kind !== "create_node") continue;
@@ -632,10 +703,13 @@ export async function applyChangeSet(
       typeof op.target_date === "string" && ISO_DATE.test(op.target_date) ? op.target_date : null;
     const summary =
       typeof op.summary === "string" && op.summary.trim() ? op.summary.trim().slice(0, 2000) : null;
-    const { data: node, error: nodeErr } = await ctx.supabase
-      .from("nodes")
-      .insert(
-        newNodeRow({
+    const nodeId = randomUUID();
+    planned.push({
+      node: { index: i, id: nodeId, title, summary, node_type: nodeType, parentAttached: false },
+      targetDate,
+      row: {
+        id: nodeId,
+        ...newNodeRow({
           userId: ctx.userId,
           workspaceId: ctx.workspaceId,
           title,
@@ -648,33 +722,60 @@ export async function applyChangeSet(
               ? Math.max(0, Math.min(100, Math.round(op.importance_index)))
               : DEFAULT_IMPORTANCE_INDEX,
         }),
-      )
-      .select("id")
-      .single();
-    if (nodeErr || !node) {
-      results[i] = { kind: "create_node", ok: false, error: nodeErr?.message ?? "insert failed" };
-      continue;
-    }
-    const nodeId = node.id as string;
-    created.push({ index: i, id: nodeId, title, summary, node_type: nodeType, parentAttached: false });
-    undo.push({
-      index: i,
-      step: { kind: "remove_node", node_id: nodeId, ...(op.ledger_id ? { ledger_id: op.ledger_id } : {}) },
+      },
     });
     if (typeof op.local_ref === "string" && op.local_ref) localRefToId.set(op.local_ref, nodeId);
-    if (targetDate) scoresStale = true;
   }
-
-  // Pass 2 — parent links for the new nodes (root when none was given).
-  for (const node of created) {
+  const plannedIds = new Set(planned.map((p) => p.node.id));
+  const parentRefOf = (node: CreatedNode) => {
     const op = ops[node.index] as Extract<ChangeOp, { kind: "create_node" }>;
-    const parentRef = resolveRef(op.parent_node_id) || resolveRef(op.parent_local_ref);
-    let parentId: string | null = null;
-    if (parentRef && parentRef !== node.id) {
-      const parent = await fetchWorkspaceNode(ctx, parentRef);
-      parentId = parent?.id ?? null;
+    return resolveRef(op.parent_node_id) || resolveRef(op.parent_local_ref);
+  };
+  const plannedRefs = planned.map((p) => parentRefOf(p.node));
+  const [insertErrors, existingParents] = await Promise.all([
+    insertRows(ctx, "nodes", planned.map((p) => p.row)),
+    workspaceNodeIds(ctx, [...new Set(plannedRefs.filter((ref) => ref && !plannedIds.has(ref)))]),
+    // Nodes with no parent named go under the root (cached for pass 2).
+    plannedRefs.some((ref) => !ref) ? rootId() : null,
+  ]);
+  planned.forEach(({ node, targetDate }, k) => {
+    const op = ops[node.index] as Extract<ChangeOp, { kind: "create_node" }>;
+    const error = insertErrors[k];
+    if (error) {
+      results[node.index] = { kind: "create_node", ok: false, error };
+      if (op.local_ref && localRefToId.get(op.local_ref) === node.id) localRefToId.delete(op.local_ref);
+      return;
     }
-    node.parentAttached = await attachNewNode(ctx, node.id, parentId, rootId);
+    created.push(node);
+    undo.push({
+      index: node.index,
+      step: { kind: "remove_node", node_id: node.id, ...(op.ledger_id ? { ledger_id: op.ledger_id } : {}) },
+    });
+    if (targetDate) scoresStale = true;
+  });
+
+  recordSpan("cs.create nodes", passStart);
+  passStart = Date.now();
+  // Pass 2 — parent links for the new nodes (root when none was given), in
+  // one insert.
+  const createdIds = new Set(created.map((node) => node.id));
+  const parentRefs = created.map(parentRefOf);
+  const parentIds = created.map((node, k) => {
+    const ref = parentRefs[k];
+    return ref && ref !== node.id && (createdIds.has(ref) || existingParents.has(ref)) ? ref : null;
+  });
+  const root = parentIds.some((id) => id === null) ? await rootId() : null;
+  const links = created.flatMap((node, k) => {
+    const target = parentIds[k] ?? root;
+    return target && target !== node.id ? [{ k, row: parentLinkRow(ctx, node.id, target, parentIds[k] !== null) }] : [];
+  });
+  const linkErrors = await insertRows(ctx, "edges", links.map((link) => link.row));
+  links.forEach(({ k }, j) => {
+    created[k].parentAttached = linkErrors[j] === null;
+  });
+  created.forEach((node, k) => {
+    const parentRef = parentRefs[k];
+    const parentId = parentIds[k];
     if (!parentId) anchoredAtRoot = true;
     results[node.index] = {
       kind: "create_node",
@@ -686,12 +787,51 @@ export async function applyChangeSet(
           ? { detail: "created without a parent" }
           : {}),
     };
-  }
+  });
 
+  recordSpan("cs.parent links", passStart);
+  passStart = Date.now();
   // Pass 3 — everything else, in the order given.
+  // Plain links next to each other ("A helps B, C is useful for D") don't
+  // depend on one another: they go in together, not three round trips each
+  // one after another. The same link twice is made once.
+  const plainLinkRun = (from: number) => {
+    const run: Array<{ index: number; args: Exclude<ReturnType<typeof edgeOpArgs>, { error: string }> }> = [];
+    for (let j = from; j < ops.length; j++) {
+      if (results[j]) continue;
+      const next = ops[j];
+      if (next?.kind !== "create_edge") break;
+      const args = edgeOpArgs(next, resolveRef);
+      if ("error" in args || isHierarchyEdgeType(args.edgeType)) break;
+      run.push({ index: j, args });
+    }
+    return run;
+  };
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
     if (results[i]) continue;
+    const linkRun = plainLinkRun(i);
+    if (linkRun.length > 1) {
+      type Linked = { result: OpResult; undo?: UndoStep };
+      const first = new Map<string, Promise<Linked>>();
+      const outcomes = await Promise.all(
+        linkRun.map(({ args }): Promise<Linked> => {
+          const key = `${args.sourceId}|${args.targetId}|${args.edgeType}`;
+          const earlier = first.get(key);
+          if (earlier) return earlier.then(({ result }) => ({ result }));
+          const linked = linkLateral(ctx, args);
+          first.set(key, linked);
+          return linked;
+        }),
+      );
+      linkRun.forEach(({ index }, k) => {
+        results[index] = outcomes[k].result;
+        const step = outcomes[k].undo;
+        if (step) undo.push({ index, step });
+      });
+      i = linkRun[linkRun.length - 1].index;
+      continue;
+    }
     switch (op?.kind) {
       case "move": {
         const nodeId = resolveRef(op.node_id);
@@ -741,24 +881,14 @@ export async function applyChangeSet(
       }
 
       case "create_edge": {
-        const sourceId = resolveRef(op.source_node_id);
-        const targetId = resolveRef(op.target_node_id);
-        const edgeType = typeof op.edge_type === "string" ? op.edge_type.toLowerCase() : "";
-        if (!sourceId || !targetId || !VALID_EDGE_TYPES.has(edgeType)) {
-          results[i] = { kind: "create_edge", ok: false, error: "source, target, and valid edge_type required" };
+        const args = edgeOpArgs(op, resolveRef);
+        if ("error" in args) {
+          results[i] = { kind: "create_edge", ok: false, error: args.error };
           break;
         }
-        if (sourceId === targetId) {
-          results[i] = { kind: "create_edge", ok: false, error: "source and target must differ" };
-          break;
-        }
-        const explanation =
-          typeof op.explanation === "string" && op.explanation.trim()
-            ? op.explanation.trim().slice(0, 1000)
-            : null;
-        if (isHierarchyEdgeType(edgeType)) {
-          const { childId, parentId } = hierarchyPair(edgeType, sourceId, targetId);
-          const moved = await moveNode(ctx, childId, parentId, explanation);
+        if (isHierarchyEdgeType(args.edgeType)) {
+          const { childId, parentId } = hierarchyPair(args.edgeType, args.sourceId, args.targetId);
+          const moved = await moveNode(ctx, childId, parentId, args.explanation);
           if (!moved.accepted) {
             results[i] = { kind: "create_edge", ok: false, error: String(moved.error ?? "move failed") };
             break;
@@ -770,24 +900,9 @@ export async function applyChangeSet(
           results[i] = { kind: "create_edge", ok: true, detail: String(moved.message ?? "") };
           break;
         }
-        // Both nodes must belong to this user + workspace.
-        const { data: pair } = await ctx.supabase
-          .from("nodes")
-          .select("id")
-          .in("id", [sourceId, targetId])
-          .eq("user_id", ctx.userId)
-          .eq("workspace_id", ctx.workspaceId);
-        if (!pair || pair.length < 2) {
-          results[i] = { kind: "create_edge", ok: false, error: "one or both nodes not in this workspace" };
-          break;
-        }
-        const linked = await createLateralEdge(ctx, sourceId, targetId, edgeType, explanation);
-        if (linked.ok && !linked.alreadyExisted) {
-          undo.push({ index: i, step: { kind: "remove_edge", edge_id: linked.edgeId } });
-        }
-        results[i] = linked.ok
-          ? { kind: "create_edge", ok: true, id: linked.edgeId }
-          : { kind: "create_edge", ok: false, error: linked.error };
+        const linked = await linkLateral(ctx, args);
+        if (linked.undo) undo.push({ index: i, step: linked.undo });
+        results[i] = linked.result;
         break;
       }
 
@@ -886,16 +1001,17 @@ export async function applyChangeSet(
     }
   }
 
+  recordSpan("cs.other ops", passStart);
   if (created.length === 0) {
     // One score recompute for the whole set (each op skipped its own).
-    if (scoresStale) await recomputeScores(ctx);
+    if (scoresStale) await timed("cs.rescore", () => recomputeScores(ctx));
     return { results, created, undo };
   }
 
   // Intake for the new nodes — the same an accepted dump proposal gets.
   const scope = { supabase: ctx.supabase, userId: ctx.userId, workspaceId: ctx.workspaceId };
   const [, feedback] = await Promise.all([
-    embedNewNodes(scope, created),
+    timed("cs.embed", () => embedNewNodes(scope, created, ctx.embeddings)),
     ctx.supabase.from("feedback_events").insert(
       created.map((node) => ({
         user_id: ctx.userId,
@@ -922,7 +1038,7 @@ export async function applyChangeSet(
   if (ctx.defer) {
     // The reply doesn't wait for the judgment; moves, deadlines and
     // completions in the same set still resize now.
-    if (scoresStale) await recomputeScores(ctx);
+    if (scoresStale) await timed("cs.rescore", () => recomputeScores(ctx));
     ctx.defer(settle);
   } else {
     await settle();
