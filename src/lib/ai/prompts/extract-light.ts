@@ -19,6 +19,11 @@
 // v6 (2026-10-02): the user's date words are copied into date_words and the
 // server resolves them (lib/time/relative-day.ts) — on a Friday, "by friday"
 // came back as the next TUESDAY. Same resolver the priority read uses.
+// v7 (2026-10-03): a weekly fixed time (a lecture, a shift, a practice) is the
+// user's schedule, saved by the priority read as a commitment — no node. The
+// full prompt had the rule since v26; here "volleyball practice tuesdays and
+// fridays 5–7pm, stats lecture tue/thu 2–4pm" made two habit nodes next to
+// the two weekly times.
 //
 // Same output schema and the same Session block as extract.ts, so the rest of
 // the pipeline (resolution, auto-apply, completions) is unchanged. Longer
@@ -26,7 +31,7 @@
 
 import { buildExtractionVariableBlock, type ExtractionPromptParams } from "./extract";
 
-export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v6";
+export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v7";
 
 const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to the user's existing knowledge graph. Most of these updates report things the user just did, plus a few new things to do; some ask to reorganize what is already there. Keep the graph sparse: propose only what the dump clearly states.
 
@@ -48,6 +53,7 @@ const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to t
   - project — a body of work with several different parts ("internship search", "launch the beta").
   - goal — a RESULT they'll know they reached, ideally dated ("pass the calculus exam", "1450+ on the SAT", "internship in Milan by November"). Aspirations without a finish line ("get in shape", "make money") are areas.
   - habit — only with an explicit cadence ("daily", "every morning", "3× a week").
+- A FIXED time in the week set by someone else — a lecture, a lab, a work shift, a team practice, a standing meeting ("stats lecture every Tuesday and Thursday 2–4pm", "practice moved to 6pm") — is the user's SCHEDULE, saved by another step. No node for it: not a habit, task or note.
   - area — an ongoing part of life with no finish line ("Health", "Career", "Life Admin").
   - class — a course this term. idea — something they might do, not committed. note — something to remember: a person and their role, advice, a fact, a decision already made.
 - Vague fragments ("work on stuff", "idk what to do", "fix bugs" with no target) and feelings/complaints ("this feature is killing me", "everything's falling apart"): no node — at most one short, specific clarifying question that quotes the fragment.
