@@ -46,6 +46,11 @@ export interface ChangeContext {
   // Vectors already computed for some texts (a dump's dedup) — new nodes with
   // that text reuse them instead of being embedded again.
   embeddings?: ReadonlyMap<string, number[]>;
+  // The caller recomputes the scores right after this set (a dump whose
+  // priority read changes something — applyPriorityChanges rescores the whole
+  // workspace), so the set skips its own immediate recompute: one instead of
+  // two back to back. The rescore after a new node's judgment still runs.
+  rescoredByCaller?: boolean;
 }
 
 export type ChangeOp =
@@ -1004,7 +1009,7 @@ export async function applyChangeSet(
   recordSpan("cs.other ops", passStart);
   if (created.length === 0) {
     // One score recompute for the whole set (each op skipped its own).
-    if (scoresStale) await timed("cs.rescore", () => recomputeScores(ctx));
+    if (scoresStale && !ctx.rescoredByCaller) await timed("cs.rescore", () => recomputeScores(ctx));
     return { results, created, undo };
   }
 
@@ -1038,7 +1043,7 @@ export async function applyChangeSet(
   if (ctx.defer) {
     // The reply doesn't wait for the judgment; moves, deadlines and
     // completions in the same set still resize now.
-    if (scoresStale) await timed("cs.rescore", () => recomputeScores(ctx));
+    if (scoresStale && !ctx.rescoredByCaller) await timed("cs.rescore", () => recomputeScores(ctx));
     ctx.defer(settle);
   } else {
     await settle();

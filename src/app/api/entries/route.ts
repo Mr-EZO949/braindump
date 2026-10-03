@@ -784,9 +784,12 @@ async function dumpTurn(params: {
   // "did the exam, now waiting for the result" — the priority read's wait
   // beats the builder's "did" (the result isn't in).
   const statusTouched = statusTouchedIds(priorities);
+  // Priority changes recompute every score right after the change set, so
+  // the set leaves its own recompute to them (one recompute, not two).
+  const prioritiesRescore = (priorities?.changes.length ?? 0) > 0;
   const [changes, , commitmentUpdate] = await Promise.all([
     applyDumpChanges({
-      ctx: { supabase, userId, workspaceId, today, defer: (work) => after(work) },
+      ctx: { supabase, userId, workspaceId, today, defer: (work) => after(work), rescoredByCaller: prioritiesRescore },
       rawEntryId,
       built,
       completeExistingNodeIds: built.completeExistingNodeIds.filter((id) => !statusTouched.has(id)),
@@ -797,8 +800,17 @@ async function dumpTurn(params: {
   ]);
 
   // After the change set: its one score recompute then sees the new nodes
-  // too. The card is parked meanwhile.
-  const applyingPriorities = timed("priority changes", applyPriorities);
+  // too. The card is parked meanwhile. When none of them applied, the
+  // recompute the change set left to them runs here instead.
+  const applyingPriorities = timed("priority changes", async () => {
+    const update = await applyPriorities();
+    if (prioritiesRescore && !(update?.applied?.length)) {
+      await computeWorkspaceScores({ workspaceId, userId, supabase, today }).catch((err: unknown) =>
+        console.warn("[entries] score recompute failed:", err),
+      );
+    }
+    return update;
+  });
   applyingPriorities.catch(() => undefined); // awaited below
 
   // What waits for the user — parked as a pending run so the usual resume
