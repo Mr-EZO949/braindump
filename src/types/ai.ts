@@ -357,6 +357,9 @@ export interface ExtractionInput {
   rubric_cache_ttl?: "1h" | null;
   // "light": short update dumps → slim prompt on Haiku (extract-light.ts).
   variant?: "full" | "light";
+  // Streams the answer and calls this with the text so far — the builder
+  // starts its edit pass as soon as edit_requests is complete (extraction.ts).
+  on_text?: (snapshot: string) => void;
 }
 
 // What one brain dump came to (POST /api/entries, docs/unified-turn.md) — the

@@ -16,7 +16,13 @@ import { aiProvider } from "./index";
 import { AI_CONFIDENCE, AI_INGESTION, AI_MODELS } from "./config";
 import type { BuilderChange, ExtractionOutput, ProposedNode } from "@/types/ai";
 import type { ChangeOp } from "@/lib/graph/change-set";
-import { builderToOps, mergeEditPass, resolveBuilderChanges, splitRestructureSet } from "./builder-ops";
+import {
+  builderToOps,
+  mergeEditPass,
+  readStreamedEditRequests,
+  resolveBuilderChanges,
+  splitRestructureSet,
+} from "./builder-ops";
 import { buildWorkspaceProfileContext } from "./workspace-profile";
 import { retrieveRelevantNodes, type ContextNodeForPrompt } from "./retrieval";
 import { resolveProposalsAgainstGraph, type ResolutionMatch } from "./resolution";
@@ -30,6 +36,7 @@ import {
   isMalformedAIResponseError,
 } from "./errors";
 import { persistAIRun } from "./telemetry";
+import { timed } from "@/lib/perf/timings";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { looksLikeRestructure } from "@/lib/graph/dump-heuristic";
 
@@ -188,6 +195,8 @@ export interface BuilderSuccess {
   completeExistingNodeIds: string[];
   autoCompleteLocalRefs: string[];
   possibleDuplicates: Array<{ localRef: string; existingNodeId: string; existingTitle: string }>;
+  // The dedup's embeddings (text → vector), reused for the nodes it creates.
+  embeddings?: Map<string, number[]>;
 }
 
 export interface BuilderFailure {
@@ -237,10 +246,92 @@ export async function runBuilder(params: {
   // Kept for the edit pass, which retrieves again for the sentences it reads.
   let profile: Awaited<ReturnType<typeof buildWorkspaceProfileContext>> | null = null;
 
+  // The edit pass. The long prompt does not reorganize existing nodes — it
+  // quotes the sentences that ask for it (extract-v26), and those go through
+  // the short prompt here: the same call that gets a one-line restructure from
+  // chat right. Planned inside one long dump it went wrong in four runs of
+  // five (a move under a parent never created; a new project nothing was
+  // moved into). Its result joins the rest before deduplication. Logs its own
+  // run, so a pass whose result goes unused is still accounted for; null when
+  // it failed.
+  const runEditPass = async (requests: string[]): Promise<ExtractionOutput | null> => {
+    if (!profile) return null;
+    const { activeNodes, rootNodeId } = profile;
+    const editText = requests.join("\n");
+    try {
+      // Retrieved again, for these sentences only — and with what sits
+      // inside the nodes they name, since a regroup moves a node's steps too.
+      const editRetrieval = await timed("builder.edit retrieval", () =>
+        retrieveRelevantNodes({
+          supabase,
+          userId,
+          workspaceId,
+          rawText: editText,
+          nodes: activeNodes,
+          parentOf: context.parentOf,
+          rootNodeId,
+          expandChildren: true,
+        }),
+      );
+      const edit = await timed("builder.edit model (light)", () =>
+        aiProvider().extractNodes({
+          raw_text: editText,
+          workspace_id: workspaceId,
+          user_id: userId,
+          workspace_context: context.workspaceContext,
+          existing_nodes: editRetrieval.contextNodes,
+          today,
+          signal,
+          rubric_cache_ttl: null,
+          variant: "light",
+        }),
+      );
+      await persistAIRun({ supabase, userId, workspaceId, source: params.source ?? "extraction", run: edit.run });
+      console.log(
+        `[extraction] edit pass: ${requests.length} request(s) → ${edit.output.changes.length} edit(s), ${edit.output.proposed_nodes.length} new node(s)`,
+      );
+      return edit.output;
+    } catch (err) {
+      const paid = isMalformedAIResponseError(err) ? err : null;
+      await logFailedAIRun({
+        supabase,
+        userId,
+        workspaceId,
+        runType: "extract",
+        provider: "claude",
+        modelName: paid?.modelName ?? AI_MODELS.CLAUDE_SONNET,
+        promptVersion: paid?.promptVersion ?? EXTRACT_PROMPT_VERSION,
+        inputHash: hashText(editText),
+        inputTokens: paid?.inputTokens,
+        outputTokens: paid?.outputTokens,
+        latencyMs: paid?.latencyMs,
+        estimatedCost: paid?.estimatedCost,
+        status: "failed",
+        error: `Edit pass failed: ${normalizeAIError(err).message}`,
+      });
+      return null;
+    }
+  };
+  // extract-v26 writes edit_requests first, so the edit pass starts as soon as
+  // that array has streamed in — ~2 s into a ~12 s answer — instead of after
+  // the whole answer (it was 4–5 s of the wait, 2026-10-03). Same sentences,
+  // same call: the output is what the sequential pass gave.
+  type EditPass = { text: string; result: Promise<ExtractionOutput | null> };
+  let streamedRequestsRead = false;
+  // (cast: assigned in the stream callback, which TypeScript can't see)
+  let earlyEditPass = null as EditPass | null;
+  const onBuilderText = (snapshot: string) => {
+    if (streamedRequestsRead || signal?.aborted) return;
+    const requests = readStreamedEditRequests(snapshot);
+    if (!requests) return;
+    streamedRequestsRead = true;
+    if (requests.length > 0) earlyEditPass = { text: requests.join("\n"), result: runEditPass(requests) };
+  };
+
   let providerResult;
   try {
     const rubricCacheTtl = chooseRubricCacheTtl().catch(() => null);
-    const [, loadedProfile, parentOf] = await Promise.all([
+    const [, loadedProfile, parentOf] = await timed("builder.context", () => Promise.all([
       params.alongside,
       buildWorkspaceProfileContext({
         workspaceId,
@@ -249,9 +340,9 @@ export async function runBuilder(params: {
         includeAnchors: false,
       }),
       loadParentMap(supabase, workspaceId, userId),
-    ]);
+    ]));
     profile = loadedProfile;
-    const retrieval = await retrieveRelevantNodes({
+    const retrieval = await timed("builder.retrieval", () => retrieveRelevantNodes({
       supabase,
       userId,
       workspaceId,
@@ -260,7 +351,7 @@ export async function runBuilder(params: {
       parentOf,
       rootNodeId: loadedProfile.rootNodeId,
       expandChildren: params.expandChildren,
-    });
+    }));
     console.log("[extraction] retrieval", retrieval.stats);
     params.onRetrieved?.(retrieval.contextNodes);
     context = {
@@ -275,7 +366,7 @@ export async function runBuilder(params: {
       rawText.trim().length <= AI_INGESTION.LIGHT_DUMP_MAX_CHARS ? "light" : "full";
     const rubric_cache_ttl = variant === "full" ? await rubricCacheTtl : null;
 
-    providerResult = await executeWithRetry({
+    providerResult = await timed(`builder.model (${variant})`, () => executeWithRetry({
       maxRetries: AI_INGESTION.EXTRACTION_MAX_RETRIES,
       operation: () =>
         aiProvider().extractNodes({
@@ -288,6 +379,8 @@ export async function runBuilder(params: {
           signal,
           rubric_cache_ttl,
           variant,
+          // Only the long prompt quotes edit requests (extract-light has none).
+          ...(variant === "full" ? { on_text: onBuilderText } : {}),
         }),
       shouldRetry: ({ attempt, error }) => {
         // A user cancel is final — never spend another call retrying it.
@@ -329,7 +422,7 @@ export async function runBuilder(params: {
           error: `Attempt ${attempt + 1} failed: ${error.message}`,
         });
       },
-    });
+    }));
   } catch (err) {
     const normalized = normalizeAIError(err, "Extraction failed");
     const errorText = normalized.message;
@@ -367,8 +460,8 @@ export async function runBuilder(params: {
   const allActiveNodes = context.activeNodes;
   const validExistingParentIds = new Set(allActiveNodes.map((node) => node.id));
 
-  // Persist ai_run
-  const aiRunId = await persistAIRun({
+  // Persist ai_run (awaited below, while the edit pass finishes).
+  const savingRun = persistAIRun({
     supabase,
     userId,
     workspaceId,
@@ -376,70 +469,23 @@ export async function runBuilder(params: {
     run,
   });
 
-  if (!aiRunId) {
-    const errorText = "Failed to save ai_run";
-    return { ok: false, error: errorText, userMessage: errorText };
-  }
-
-  // The edit pass. The long prompt does not reorganize existing nodes — it
-  // quotes the sentences that ask for it (extract-v26), and those go through
-  // the short prompt here: the same call that gets a one-line restructure from
-  // chat right. Planned inside one long dump it went wrong in four runs of
-  // five (a move under a parent never created; a new project nothing was
-  // moved into). Its result joins the rest before deduplication.
   let editPassFailed = false;
   if (output.edit_requests.length > 0 && profile && !signal?.aborted) {
     params.onEditPass?.();
-    const editText = output.edit_requests.join("\n");
-    try {
-      // Retrieved again, for these sentences only — and with what sits
-      // inside the nodes they name, since a regroup moves a node's steps too.
-      const editRetrieval = await retrieveRelevantNodes({
-        supabase,
-        userId,
-        workspaceId,
-        rawText: editText,
-        nodes: profile.activeNodes,
-        parentOf: context.parentOf,
-        rootNodeId: profile.rootNodeId,
-        expandChildren: true,
-      });
-      const edit = await aiProvider().extractNodes({
-        raw_text: editText,
-        workspace_id: workspaceId,
-        user_id: userId,
-        workspace_context: context.workspaceContext,
-        existing_nodes: editRetrieval.contextNodes,
-        today,
-        signal,
-        rubric_cache_ttl: null,
-        variant: "light",
-      });
-      await persistAIRun({ supabase, userId, workspaceId, source: params.source ?? "extraction", run: edit.run });
-      console.log(
-        `[extraction] edit pass: ${output.edit_requests.length} request(s) → ${edit.output.changes.length} edit(s), ${edit.output.proposed_nodes.length} new node(s)`,
-      );
-      output = mergeEditPass(output, edit.output);
-    } catch (err) {
-      editPassFailed = true;
-      const paid = isMalformedAIResponseError(err) ? err : null;
-      await logFailedAIRun({
-        supabase,
-        userId,
-        workspaceId,
-        runType: "extract",
-        provider: "claude",
-        modelName: paid?.modelName ?? AI_MODELS.CLAUDE_SONNET,
-        promptVersion: paid?.promptVersion ?? EXTRACT_PROMPT_VERSION,
-        inputHash: hashText(editText),
-        inputTokens: paid?.inputTokens,
-        outputTokens: paid?.outputTokens,
-        latencyMs: paid?.latencyMs,
-        estimatedCost: paid?.estimatedCost,
-        status: "failed",
-        error: `Edit pass failed: ${normalizeAIError(err).message}`,
-      });
-    }
+    // The pass that started while the answer streamed — unless the final
+    // answer quotes other sentences (a retry), then one for these.
+    const early = earlyEditPass;
+    const edit = await timed("builder.edit pass (wait)", () =>
+      early && early.text === output.edit_requests.join("\n") ? early.result : runEditPass(output.edit_requests),
+    );
+    if (edit) output = mergeEditPass(output, edit);
+    else editPassFailed = true;
+  }
+
+  const aiRunId = await savingRun;
+  if (!aiRunId) {
+    const errorText = "Failed to save ai_run";
+    return { ok: false, error: errorText, userMessage: errorText };
   }
 
   // Title-normalization helper for dedupe — strips case, punctuation, and
@@ -511,6 +557,7 @@ export async function runBuilder(params: {
   // Same item emitted twice in THIS dump: dropped local_ref → kept local_ref.
   const droppedRefToKeptRef = new Map<string, string>();
   let possibleDuplicates: BuilderSuccess["possibleDuplicates"] = [];
+  let embeddings = new Map<string, number[]>();
   // A node's identity is its PATH (parent › title): "Choose Stack…" under
   // Gym App and under Student Tracker are two different tasks.
   const activeTitleById = new Map(allActiveNodes.map((n) => [n.id, n.title]));
@@ -518,7 +565,7 @@ export async function runBuilder(params: {
     confidentSurvivors.flatMap((n) => (n.local_ref ? [[n.local_ref, n.proposed_title] as const] : [])),
   );
   try {
-    const resolution = await resolveProposalsAgainstGraph({
+    const resolution = await timed("builder.resolution", () => resolveProposalsAgainstGraph({
       proposals: confidentSurvivors.flatMap((n) =>
         n.local_ref
           ? [
@@ -544,7 +591,8 @@ export async function runBuilder(params: {
         const parentId = context.parentOf.get(nodeId);
         return parentId ? (activeTitleById.get(parentId) ?? null) : null;
       },
-    });
+    }));
+    embeddings = resolution.vectors;
     for (const [localRef, match] of resolution.duplicates) {
       // See renamedIds above: the node it resembles is being renamed away.
       if (renamedIds.has(match.existingId)) continue;
@@ -671,6 +719,7 @@ export async function runBuilder(params: {
       ),
     ],
     possibleDuplicates,
+    embeddings,
   };
 }
 

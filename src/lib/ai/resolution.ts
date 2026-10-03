@@ -227,6 +227,8 @@ export interface ResolutionOutcome {
   // dropped local_ref → kept local_ref, for the same item emitted twice in ONE
   // dump (drop the later copy; point its references at the kept one).
   intraDuplicates: Map<string, string>;
+  // Embedded text → its vector: the new nodes reuse them (node-intake.ts).
+  vectors: Map<string, number[]>;
 }
 
 export function cosineSimilarity(a: number[], b: number[]): number {
@@ -292,19 +294,20 @@ export async function resolveProposalsAgainstGraph(params: {
     duplicates: new Map(),
     possibleDuplicates: new Map(),
     intraDuplicates: new Map(),
+    vectors: new Map(),
   };
   const { proposals } = params;
   if (proposals.length === 0) return outcome;
 
+  const texts = proposals.map((p) => [p.proposed_title, p.proposed_summary].filter(Boolean).join("\n"));
   const vectors = await embedTexts({
-    texts: proposals.map((p) =>
-      [p.proposed_title, p.proposed_summary].filter(Boolean).join("\n"),
-    ),
+    texts,
     userId: params.userId,
     workspaceId: params.workspaceId,
     supabase: params.supabase,
   });
   if (vectors.length !== proposals.length) return outcome;
+  texts.forEach((text, index) => outcome.vectors.set(text, vectors[index]));
 
   // Free: the proposals are already embedded.
   outcome.intraDuplicates = findIntraDumpDuplicates(proposals, vectors);

@@ -10,6 +10,8 @@
 import type { BuilderChange, ExtractionOutput } from "@/types/ai";
 import type { ChangeOp } from "@/lib/graph/change-set";
 
+import { normalizeEditRequests } from "./validation";
+
 export type BuilderNode = ExtractionOutput["proposed_nodes"][number];
 
 const UUID = /^[0-9a-fA-F-]{36}$/;
@@ -84,6 +86,34 @@ export function resolveBuilderChanges(params: {
 //     deduplication keeps the earlier one — the one the edits point at.
 const EDIT_REF_PREFIX = "e_";
 const MAX_MERGED_QUESTIONS = 3;
+
+// The edit_requests array read from the builder's output while it is still
+// streaming. extract-v26 writes it first, so the edit pass can start seconds
+// before the rest of the JSON is in (extraction.ts). null until the array is
+// complete — or when the output holds no such array.
+export function readStreamedEditRequests(partial: string): string[] | null {
+  const key = partial.indexOf('"edit_requests"');
+  if (key < 0) return null;
+  const open = partial.indexOf("[", key);
+  if (open < 0 || !/^"edit_requests"\s*:\s*$/.test(partial.slice(key, open))) return null;
+  let inString = false;
+  for (let i = open + 1; i < partial.length; i++) {
+    const ch = partial[i];
+    if (inString) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+    } else if (ch === "]") {
+      try {
+        return normalizeEditRequests(JSON.parse(partial.slice(open, i + 1)));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
 
 export function mergeEditPass(main: ExtractionOutput, edit: ExtractionOutput): ExtractionOutput {
   const ref = (value: string) => (UUID.test(value) ? value : `${EDIT_REF_PREFIX}${value}`);

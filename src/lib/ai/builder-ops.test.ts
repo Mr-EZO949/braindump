@@ -8,6 +8,7 @@ import type { BuilderChange, ExtractionOutput } from "@/types/ai";
 import {
   builderToOps,
   mergeEditPass,
+  readStreamedEditRequests,
   resolveBuilderChanges,
   splitRestructureSet,
   type BuilderNode,
@@ -277,5 +278,33 @@ describe("mergeEditPass — the short prompt's edits joined to the long prompt's
     expect(merged.clarifying_questions).toEqual(["Should the fixes move too?", "Which bank?"]);
     expect(merged.complete_existing_node_ids).toEqual([FIXES]);
     expect(merged.auto_complete_local_refs).toEqual(["e_n2"]);
+  });
+});
+
+describe("readStreamedEditRequests — the edit pass starts while the answer streams", () => {
+  const head = '{\n  "edit_requests": ["braindump should be its own project, with [testing] and \\"marketing\\"", "italian is personal development"';
+
+  it("waits until the array is complete", () => {
+    expect(readStreamedEditRequests('{"edit_req')).toBeNull();
+    expect(readStreamedEditRequests('{"edit_requests": ["braindump should')).toBeNull();
+    expect(readStreamedEditRequests(head)).toBeNull();
+  });
+
+  it("reads the sentences once the array closes — brackets and quotes inside them don't end it", () => {
+    expect(readStreamedEditRequests(`${head}],\n  "proposed_nodes": [{"local_ref": "n1"`)).toEqual([
+      'braindump should be its own project, with [testing] and "marketing"',
+      "italian is personal development",
+    ]);
+  });
+
+  it("an empty list is an answer (no edit pass); no list at all is not", () => {
+    expect(readStreamedEditRequests('{"edit_requests": [], "proposed_nodes": [')).toEqual([]);
+    expect(readStreamedEditRequests('{"proposed_nodes": [{"proposed_title": "Call the bank"}]')).toBeNull();
+  });
+
+  it("cleans the list the way the final validation does", () => {
+    expect(readStreamedEditRequests('{"edit_requests": ["  move X under Y ", "move X under Y", 3, ""]')).toEqual([
+      "move X under Y",
+    ]);
   });
 });

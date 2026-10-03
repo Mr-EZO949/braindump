@@ -390,28 +390,31 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
     }
   }
 
-  // edit_requests — the dump's own sentences about reorganizing existing
-  // nodes (extract-v26 quotes them instead of acting on them).
-  const editRequests: string[] = [];
-  if (Array.isArray(raw.edit_requests)) {
-    for (const entry of raw.edit_requests) {
-      if (!isString(entry)) continue;
-      const trimmed = entry.trim();
-      if (!trimmed || editRequests.includes(trimmed)) continue;
-      editRequests.push(trimmed.slice(0, MAX_EDIT_REQUEST_CHARS));
-      if (editRequests.length >= MAX_EDIT_REQUESTS) break;
-    }
-  }
-
   return {
     proposed_nodes: nodes,
     changes: [...parseBuilderChanges(raw.changes), ...linkChanges].slice(0, MAX_BUILDER_CHANGES),
-    edit_requests: editRequests,
+    edit_requests: normalizeEditRequests(raw.edit_requests),
     clarifying_questions: clarifyingQuestions,
     complete_existing_node_ids: completeExistingNodeIds,
     auto_complete_local_refs: autoCompleteLocalRefs,
     prompt_version: session.prompt_version,
   };
+}
+
+// edit_requests — the dump's own sentences about reorganizing existing nodes
+// (extract-v26 quotes them instead of acting on them). Also read from the
+// output while it streams (extraction.ts), so both see the same list.
+export function normalizeEditRequests(raw: unknown): string[] {
+  const editRequests: string[] = [];
+  if (!Array.isArray(raw)) return editRequests;
+  for (const entry of raw) {
+    if (!isString(entry)) continue;
+    const trimmed = entry.trim();
+    if (!trimmed || editRequests.includes(trimmed)) continue;
+    editRequests.push(trimmed.slice(0, MAX_EDIT_REQUEST_CHARS));
+    if (editRequests.length >= MAX_EDIT_REQUESTS) break;
+  }
+  return editRequests;
 }
 
 // ---------------------------------------------------------------------------
