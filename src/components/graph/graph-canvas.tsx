@@ -1060,25 +1060,32 @@ function createFittedView(
     restOnly,
   );
   const isMobile = width <= 768;
+  const isPhone = width <= 640;
   // On mobile the top controls overlay the canvas, so leave more vertical
   // breathing room and allow zooming out further so the whole graph fits.
   const usableWidth = Math.max(width - (isMobile ? 56 : 100), isMobile ? 300 : 360);
   const usableHeight = Math.max(height - (isMobile ? 200 : 120), 320);
   const zoom = clamp(
     Math.min(usableWidth / Math.max(bounds.width, 1), usableHeight / Math.max(bounds.height, 1)),
-    isMobile ? 0.22 : 0.68,
+    // Phone: a whole graph squeezed into 360px is unreadable dots (labels
+    // drop below 0.32), so it never starts below 0.5 — readable, one pinch
+    // from the overview.
+    isPhone ? 0.5 : isMobile ? 0.22 : 0.68,
     isMobile ? 0.62 : 1.06,
   );
   const targetX = width * 0.5;
   // Mobile: center vertically (the graph sits below the overlaid controls).
   // Desktop: bias slightly upward so the detail rail doesn't crowd it.
   const targetY = height * (isMobile ? 0.54 : 0.42);
+  const panX = targetX - width / 2 - bounds.centerX * zoom;
+  let panY = targetY - height / 2 - bounds.centerY * zoom;
+  // Phone: start at the top of the graph (the root and the first levels),
+  // just below the overlaid controls, instead of floating it mid-screen.
+  if (isPhone) {
+    panY = 112 - height / 2 - (bounds.centerY - bounds.height / 2) * zoom;
+  }
 
-  return {
-    panX: targetX - width / 2 - bounds.centerX * zoom,
-    panY: targetY - height / 2 - bounds.centerY * zoom,
-    zoom,
-  };
+  return { panX, panY, zoom };
 }
 
 function getWorldPoint(
@@ -1826,8 +1833,11 @@ export function GraphCanvas({
     }
 
     const targetZoom = clamp(Math.max(viewRef.current.zoom, 0.92), 0.72, 1.1);
-    const targetY = currentViewport.height * 0.37;
-    const targetX = currentViewport.width * 0.46;
+    // Phone: the Details sheet covers the lower ~60% (globals.css, ≤640px),
+    // so the selected node sits centred in the strip above it.
+    const isPhone = currentViewport.width <= 640;
+    const targetY = currentViewport.height * (isPhone ? 0.27 : 0.37);
+    const targetX = currentViewport.width * (isPhone ? 0.5 : 0.46);
     const nodeX = focusedNode.x ?? focusedNode.restX;
     const nodeY = focusedNode.y ?? focusedNode.restY;
     return {
@@ -2144,7 +2154,10 @@ export function GraphCanvas({
       // and snap the camera back to a global fit, undoing the user's pan/zoom.
       // Subsequent settles still respect an explicit focus (which is set
       // intentionally, e.g. by clicking a node from search).
-      if (!didSettleRefit && simulation.alpha() < 0.06) {
+      // An empty scene (before the graph loads) has nothing to fit: its
+      // "fit" was the default view, animated over 260ms — and it overwrote
+      // the real first fit that landed meanwhile (camera stuck at zoom 1).
+      if (!didSettleRefit && scene.nodes.length > 0 && simulation.alpha() < 0.06) {
         const vp = viewportRef.current;
         if (vp.width === 0 || vp.height === 0) return; // retry next tick
         didSettleRefit = true;
@@ -2362,21 +2375,26 @@ export function GraphCanvas({
     if (viewport.width === 0 || viewport.height === 0) return;
     if (scene.nodes.length === 0) return;
 
-    didFitInitialViewRef.current = true;
+    // Marked done only once the frame runs: a scene or viewport change before
+    // it cancels the frame, and the next run must still fit (it used to be
+    // marked up front, so a quick second graph update left the camera at the
+    // default zoom 1 — seen on phones).
     const frame = window.requestAnimationFrame(() => {
+      didFitInitialViewRef.current = true;
       // Fit from the DETERMINISTIC rest/pinned layout (restOnly=true), not the
       // transient d3 positions. At this point the simulation is mid-settle and
       // nodes are flung far from where they'll end up; fitting to that is the
       // root cause of the historical "centers in a random place" bug. Rest
       // positions are where the layout pulls every node, known at scene-build
       // time, so this lands the camera correctly on the first frame.
-      setView(createFittedView(scene.nodes, viewport.width, viewport.height, true));
+      // Immediate: also stops any camera animation still running.
+      animateToView(createFittedView(scene.nodes, viewport.width, viewport.height, true), true);
     });
 
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [scene, viewport.width, viewport.height]);
+  }, [animateToView, scene, viewport.width, viewport.height]);
 
   useEffect(() => {
     if (!focusNodeId) return;
