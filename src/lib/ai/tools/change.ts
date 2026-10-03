@@ -408,23 +408,23 @@ export async function planChange(input: unknown, ctx: ToolContext): Promise<Turn
 // The tool
 // ---------------------------------------------------------------------------
 
-const NODE_TYPE_FIELD =
-  "task = one sitting (email the prof, solve 5 problems). big_task = one piece of work over several sittings (write the thesis, build a site). project = several different parts. goal = a result to reach, ideally dated (pass an exam, land a job, hit a number). habit = repeats on a cadence. area = an ongoing part of life (Health, Career). class = a course. idea = might do, not committed. note = something to remember (a person, advice, a fact).";
-const REF = "UUID of an existing node, or the local_ref of a node created earlier in this same call.";
+// Descriptions are part of every chat call's cached prefix (assistant-v28,
+// fix list #19): what a field means lives here once; when to use the tool
+// lives in prompts/assistant.ts. Node types are explained there, not here.
+const REF = "Existing node id, or a local_ref from this call.";
 
 const CHANGE: ToolDefinition = {
   schema: {
     name: CHANGE_TOOL,
     description:
-      "Change the graph: add, move, rename/retype, link, unlink, mark done, archive, delete or merge nodes — one item or several in ONE call. source says whose idea it is: \"user\" when the user asked for it or told you it happened (it is applied right away, with Undo; moves, renames, archives, deletes and merges still wait on a card), \"suggestion\" when it is YOUR idea — advice, steps you came up with, a change you think would help (everything waits on a card for the user's OK). For a regroup, a new parent over existing nodes, or a long message with many items, use build_graph instead.",
+      "Change the graph — add, move, rename/retype, link, unlink, mark done, archive, delete or merge — everything the message changes in ONE call. source \"user\": applied now with Undo (moves, renames, archives, deletes and merges wait on the card). source \"suggestion\": your own idea, all of it waits. Regroups, new parents over existing nodes and long multi-item messages → build_graph.",
     input_schema: {
       type: "object",
       properties: {
         source: {
           type: "string",
           enum: ["user", "suggestion"],
-          description:
-            "user = the user's own words asked for this or said it happened (\"add X\", \"I finished Y\", \"A helps B\", \"remove the link\"). suggestion = you are proposing it and the user hasn't agreed yet.",
+          description: "user = their words asked for it or said it happened. suggestion = you propose it and they haven't agreed.",
         },
         changes: {
           type: "array",
@@ -437,19 +437,19 @@ const CHANGE: ToolDefinition = {
                 type: "string",
                 enum: [...CHANGE_KINDS],
                 description:
-                  "create_node = new node (give it a parent; a local_ref if later items point at it). move = put an EXISTING node under a new parent. update = rename / retype / new summary or deadline. create_edge = a link (required_for / supports / useful_for / related_to / inspired_by). remove_edge = take away the links between two nodes — the two ids straight from the snapshot, no lookup first: it removes whatever links them, either direction, and says so if nothing did. complete = done (a habit: done today). archive = no longer relevant (can be restored). delete_node = remove for good with everything under it — only when the user says delete. merge = node_id is a duplicate of into_node_id.",
+                  "create_node: new node (parent_node_id; local_ref if later items point at it). move: an existing node to a new parent. update: rename / retype / summary / deadline. create_edge: a link. remove_edge: removes whatever links two nodes, either direction, and says so if nothing did. complete: done (a habit: done today). archive: no longer relevant (restorable). delete_node: gone for good with everything under it. merge: node_id is a duplicate of into_node_id.",
               },
-              local_ref: { type: "string", description: 'create_node: a short id ("n1") later items in this call use for the new node.' },
+              local_ref: { type: "string", description: 'create_node: a short id ("n1") for later items in this call.' },
               title: { type: "string", description: "create_node: the title. update: the new title." },
-              node_type: { type: "string", enum: [...NODE_TYPES], description: NODE_TYPE_FIELD },
+              node_type: { type: "string", enum: [...NODE_TYPES] },
               summary: { type: "string" },
               body: { type: "string" },
               target_date: { type: "string", description: "YYYY-MM-DD. update: empty string clears it." },
               parent_node_id: { type: "string", description: `create_node: where it goes. ${REF}` },
-              node_id: { type: "string", description: `move / update / complete / archive / delete_node / merge: the node. ${REF}` },
+              node_id: { type: "string", description: REF },
               new_parent_node_id: { type: "string", description: `move: the new parent. ${REF}` },
-              source_node_id: { type: "string", description: `create_edge / remove_edge. ${REF}` },
-              target_node_id: { type: "string", description: `create_edge / remove_edge. ${REF}` },
+              source_node_id: { type: "string", description: REF },
+              target_node_id: { type: "string", description: REF },
               edge_type: { type: "string", enum: [...VALID_EDGE_TYPES].filter((t) => !isHierarchyEdgeType(t)) },
               explanation: { type: "string", description: "create_edge: one sentence why." },
               into_node_id: { type: "string", description: "merge: the node that is kept." },

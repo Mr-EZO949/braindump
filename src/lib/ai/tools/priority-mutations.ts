@@ -163,15 +163,14 @@ export const UPDATE_PRIORITIES: ToolDefinition = {
   schema: {
     name: "update_priorities",
     description:
-      "Change what matters about EXISTING nodes — their status, deadline, stakes or focus — from what the user says. All changes in one call; source \"user\" applies immediately (the user sees what moved, with an Undo), source \"suggestion\" (your own advice) waits on a card for their OK. Actions: complete (finished it) · wait (did their part, now waiting on a result/reply/decision: 'took the exam, waiting for results' — NOT complete; its open steps leave Focus) · resume (the wait is over / picking it back up) · deadline (set, move or clear target_date) · stakes (high: a lot rides on it — 'I need it for my masters'; low: 'it's pass/fail') · focus ('focus on X this week', 'X first' — fades over ~2 weeks) · deprioritize ('X can wait') · drop (cancelled, not doing it). Pass each node's exact title. Not for creating nodes.",
+      "Change what matters about EXISTING nodes — status, deadline, stakes, focus — all in one call, each with its exact title. source \"user\" applies now (the user sees what moved, with Undo); \"suggestion\" waits on a card. Actions: complete (finished) · wait (did their part, now waiting on a result or reply: 'took the exam, waiting for results' — not complete; its steps leave Focus) · resume (the wait is over) · deadline · stakes · focus ('focus on X this week' — fades over ~2 weeks) · deprioritize ('X can wait' — still on, just later) · drop (cancelled). Not for creating nodes.",
     input_schema: {
       type: "object",
       properties: {
         source: {
           type: "string",
           enum: ["user", "suggestion"],
-          description:
-            "user = the user said it (\"focus on stats this week\", \"took the exam, waiting on results\") — applies at once with Undo. suggestion = YOUR recommendation the user hasn't agreed to (they asked what to prioritize, you advise) — waits on a card for their OK.",
+          description: "user = they said it. suggestion = your advice they haven't agreed to.",
         },
         changes: {
           type: "array",
@@ -180,28 +179,19 @@ export const UPDATE_PRIORITIES: ToolDefinition = {
           items: {
             type: "object",
             properties: {
-              node_id: { type: "string", description: "UUID of an existing node" },
-              title: { type: "string", description: "The node's exact title (shown on the card)" },
+              node_id: { type: "string" },
+              title: { type: "string", description: "The node's exact title" },
               action: { type: "string", enum: [...PRIORITY_ACTIONS] },
-              stakes: { type: "string", enum: ["high", "normal", "low"], description: "action=stakes only" },
-              waiting_for: {
-                type: "string",
-                description: "action=wait only: what they're waiting on, a few words ('exam result', 'Anna's reply')",
-              },
-              check_back_on: {
-                type: "string",
-                description: "action=wait only: YYYY-MM-DD when to check back, if the user said or implied when",
-              },
-              target_date: {
-                type: "string",
-                description: "action=deadline only: YYYY-MM-DD, or empty string to clear",
-              },
+              stakes: { type: "string", enum: ["high", "normal", "low"], description: "action=stakes" },
+              waiting_for: { type: "string", description: "action=wait: what they wait on, a few words ('exam result')" },
+              check_back_on: { type: "string", description: "action=wait: YYYY-MM-DD to check back, if said or implied" },
+              target_date: { type: "string", description: "action=deadline: YYYY-MM-DD, or empty to clear" },
               date_words: {
                 type: "string",
                 description:
-                  "action=deadline or wait: the user's own words for that date, copied verbatim ('this friday', 'next tuesday', 'in 2 weeks', 'oct 20'). Always fill it when they named a day — the server resolves it exactly.",
+                  "deadline / wait: the user's own words for the date, verbatim ('this friday', 'in 2 weeks', 'oct 20'). Always fill it when they named a day — the server resolves it.",
               },
-              reason: { type: "string", description: "Optional: the user's reason in a few words" },
+              reason: { type: "string", description: "Optional: their reason in a few words" },
             },
             required: ["node_id", "title", "action"],
           },

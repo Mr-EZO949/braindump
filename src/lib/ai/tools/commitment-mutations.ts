@@ -192,15 +192,14 @@ export const SET_COMMITMENTS: ToolDefinition = {
   schema: {
     name: "set_commitments",
     description:
-      "Save, change or remove the user's FIXED weekly commitments — times they are not free: a class, lecture, lab, work shift, practice, standing meeting ('stats every weekday at 2pm', 'I work Tue/Thu 9–5', 'no more practice on fridays'). Source \"user\" applies immediately (the user sees it with an Undo); source \"suggestion\" (your idea) waits on a card. Focus and the planner then plan around this time. Not for one-off events (add_task_to_calendar) and not for habits without a fixed time.",
+      "Save, change or remove FIXED weekly busy times — a class, lecture, lab, shift, practice, standing meeting. source \"user\" applies now with Undo; \"suggestion\" waits on a card. Focus and the planner plan around them. Not for one-off events or habits without a fixed time.",
     input_schema: {
       type: "object",
       properties: {
         source: {
           type: "string",
           enum: ["user", "suggestion"],
-          description:
-            "user = the user said it (\"stats every weekday at 2pm\") — applies at once with Undo. suggestion = YOUR recommendation the user hasn't agreed to (you think they should block time) — waits on a card for their OK.",
+          description: "user = they said it. suggestion = your idea they haven't agreed to.",
         },
         changes: {
           type: "array",
@@ -210,35 +209,17 @@ export const SET_COMMITMENTS: ToolDefinition = {
             type: "object",
             properties: {
               action: { type: "string", enum: ["add", "update", "remove"] },
-              commitment_id: {
-                type: "string",
-                description:
-                  "update/remove only: the id of THAT SAME activity from the Fixed commitments list. A new activity is an add, never an update of another one.",
-              },
-              title: { type: "string", description: "Short name, e.g. 'Stats lecture', 'Café shift'" },
-              node_id: {
-                type: "string",
-                description: "Optional: UUID of the existing node it belongs to (e.g. the Stats class node)",
-              },
-              days: {
-                type: "array",
-                items: { type: "string", enum: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] },
-                description: "Weekdays it happens. 'Every day' for a class, lecture or job means mon–fri.",
-              },
-              start_time: { type: "string", description: "24h HH:MM, e.g. '14:00'" },
-              end_time: {
-                type: "string",
-                description: "24h HH:MM. Leave out if the user didn't say (defaults to 1 hour).",
-              },
+              commitment_id: { type: "string", description: "update / remove: the id of that same activity from [FIXED COMMITMENTS]" },
+              title: { type: "string", description: "Short name ('Stats lecture', 'Café shift')" },
+              node_id: { type: "string", description: "Optional: the node it belongs to (the class, the job)" },
+              days: { type: "array", items: { type: "string", enum: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] } },
+              start_time: { type: "string", description: "24h HH:MM" },
+              end_time: { type: "string", description: "24h HH:MM; leave out if not said (1 hour)" },
               until: {
                 type: "string",
-                description:
-                  "When it stops, only if the user said: their words copied verbatim ('dec 20', 'friday', 'for 6 weeks') or YYYY-MM-DD. Not said → leave it out (no end date). A vague end ('end of term') → leave it out.",
+                description: "Only if they said when it stops: their words verbatim ('dec 20', 'for 6 weeks') or YYYY-MM-DD. Vague ('end of term') → leave out.",
               },
-              from: {
-                type: "string",
-                description: "When it starts, only if it isn't running yet: the user's words ('next monday', 'oct 6') or YYYY-MM-DD",
-              },
+              from: { type: "string", description: "Only if it hasn't started: their words ('next monday') or YYYY-MM-DD" },
             },
             required: ["action"],
           },

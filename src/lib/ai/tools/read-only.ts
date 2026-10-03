@@ -74,20 +74,12 @@ const SEARCH_NODES: ToolDefinition = {
   schema: {
     name: "search_nodes",
     description:
-      "Semantic search across nodes in the current workspace. Use when the user mentions a topic and you need to find the matching nodes (by title, summary, or content). Returns up to `limit` nodes ranked by relevance. Prefer this over guessing — if the user says 'the Rust book', search for it.",
+      "Find nodes by meaning (title, summary, content) when the one they mention isn't in the snapshot. Ranked by relevance.",
     input_schema: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description: "Natural-language search query",
-        },
-        limit: {
-          type: "integer",
-          description: "Max results (default 10, max 20)",
-          minimum: 1,
-          maximum: 20,
-        },
+        query: { type: "string" },
+        limit: { type: "integer", description: "Default 10", minimum: 1, maximum: 20 },
       },
       required: ["query"],
     },
@@ -129,14 +121,11 @@ const GET_NODE: ToolDefinition = {
   schema: {
     name: "get_node",
     description:
-      "Fetch full details of a single node by id, including its connected neighbors (titles + edge types). Use after search_nodes when you need deeper context on a specific result, or when the user points at something specific.",
+      "One node in full: description, children, connections (titles + edge types), history.",
     input_schema: {
       type: "object",
       properties: {
-        id: {
-          type: "string",
-          description: "Node UUID",
-        },
+        id: { type: "string" },
       },
       required: ["id"],
     },
@@ -251,16 +240,11 @@ const GET_RECENT_ACTIVITY: ToolDefinition = {
   schema: {
     name: "get_recent_activity",
     description:
-      "List nodes whose lifecycle status changed within the last `hours` hours (completed, archived, status changes). Use when the user asks 'what have I done recently', 'what did I finish today', or to ground a reflection.",
+      "Nodes completed, archived or otherwise changed in status in the last `hours` — for \"what have I done recently\" or a reflection.",
     input_schema: {
       type: "object",
       properties: {
-        hours: {
-          type: "integer",
-          description: "Lookback window in hours (default 48, max 720)",
-          minimum: 1,
-          maximum: 720,
-        },
+        hours: { type: "integer", description: "Default 48", minimum: 1, maximum: 720 },
       },
     },
   },
@@ -334,7 +318,7 @@ const GET_WORKSPACE_SUMMARY: ToolDefinition = {
   schema: {
     name: "get_workspace_summary",
     description:
-      "Snapshot of the current workspace: total node count, breakdown by type and status, and the titles of active goals and projects. Use when the user asks what they're working on, what's in the graph, or for a broad overview.",
+      "Counts by type and status plus every active goal and project — for a broad \"what's in my graph\" beyond the snapshot.",
     input_schema: {
       type: "object",
       properties: {},
@@ -391,18 +375,12 @@ const GET_CALENDAR: ToolDefinition = {
   schema: {
     name: "get_calendar",
     description:
-      "List plan-tasks scheduled between `start_date` and `end_date` (inclusive, YYYY-MM-DD). Use when the user asks about their schedule, what's planned, or what's next. Omit the range to default to today through +7 days.",
+      "Calendar tasks between start_date and end_date (inclusive) — for schedule questions. Default: today to +7 days.",
     input_schema: {
       type: "object",
       properties: {
-        start_date: {
-          type: "string",
-          description: "Inclusive start date, YYYY-MM-DD (default: today)",
-        },
-        end_date: {
-          type: "string",
-          description: "Inclusive end date, YYYY-MM-DD (default: start_date + 7 days)",
-        },
+        start_date: { type: "string", description: "YYYY-MM-DD" },
+        end_date: { type: "string", description: "YYYY-MM-DD" },
       },
     },
   },
@@ -455,14 +433,13 @@ const RERANK_IMPORTANCE: ToolDefinition = {
   schema: {
     name: "rerank_importance",
     description:
-      "Re-judge how significant every node in the workspace is (an LLM pass), then recompute the graph-wide scores. Use this ONLY when the user explicitly asks to re-rank or re-score everything (e.g. 'rerank my graph', 'my whole situation changed, redo the importance'). For changes to specific nodes — done, waiting, a deadline, stakes, focus, can-wait — use update_priorities instead. Not for answering 'what should I work on'. Rate-limited to a few runs per day.",
+      "Re-judge every node's significance (an LLM pass) and recompute all scores — ONLY when they explicitly ask to re-rank everything ('my whole situation changed, redo the importance'). Specific nodes → update_priorities. Not for 'what should I work on'. A few runs a day.",
     input_schema: {
       type: "object",
       properties: {
         focus: {
           type: "string",
-          description:
-            "Optional one-sentence hint for what the user is prioritizing right now (e.g. 'finals week, ML class dominates'). Shapes the judgment pass without changing weights.",
+          description: "Optional: what they prioritize now, one sentence ('finals week, ML dominates')",
         },
       },
     },

@@ -63,24 +63,24 @@ const WRITE_STEPS: ToolDefinition = {
   schema: {
     name: WRITE_STEPS_TOOL,
     description:
-      "Write steps the user did NOT list — \"break X into steps\", \"subtasks for X\", \"a roadmap for X\", \"how do I start X\", \"where do I begin\". A specialist writes them for one item from its description, what is already under it and the user's words, and they show on a card as a suggestion for the user to tick. Give node_id when the item is in the graph; otherwise title (+ node_type, parent_node_id) and the item is created with its steps. Steps the user named themselves go in change (source user), not here.",
+      "Steps the user did NOT list, for one item (\"break X into steps\", \"a roadmap for X\", \"where do I start\"): a specialist writes them from its description and what is under it; they wait on a card as a suggestion. node_id when the item is in the graph; otherwise title (+ node_type, parent_node_id) creates it with its steps.",
     input_schema: {
       type: "object",
       properties: {
-        node_id: { type: "string", description: "The node to break down — its id from the snapshot or search_nodes." },
-        title: { type: "string", description: "Only when the item isn't in the graph: its title." },
-        node_type: { type: "string", enum: ["goal", "project", "big_task", "task"], description: "With title: the new item's type." },
-        parent_node_id: { type: "string", description: "With title: where the new item goes (an existing node id)." },
+        node_id: { type: "string" },
+        title: { type: "string", description: "Only for an item not in the graph" },
+        node_type: { type: "string", enum: ["goal", "project", "big_task", "task"], description: "With title" },
+        parent_node_id: { type: "string", description: "With title: where it goes" },
         shape: {
           type: "string",
           enum: [...STEP_SHAPES],
           description:
-            "steps (default) = 3–7 ordered steps. roadmap = phases with steps, when they ask for a roadmap, phases or a plan for a goal or project. next = only the first 1–3 actions (\"where do I start\", \"just the next step\").",
+            "steps (default): 3–7 ordered steps. roadmap: phases with steps (a roadmap, phases, a plan for a goal). next: only the first 1–3 actions (\"where do I start\").",
         },
         note: {
           type: "string",
           description:
-            "Usually leave out — the specialist reads the user's message itself. Only for what the message doesn't say: the breakdown the user just said yes to, or what \"deeper\" / \"smaller\" refers to.",
+            "Usually omit — the specialist reads the message. Only for what it doesn't say: the breakdown they just said yes to, what \"deeper\" refers to.",
         },
       },
     },

@@ -121,14 +121,14 @@ const BUILD_GRAPH: ToolDefinition = {
   schema: {
     name: BUILD_GRAPH_TOOL,
     description:
-      "Hand structural work to the graph builder: it reads the user's message against their existing nodes and works out every new node, parent, rename, move and link in one pass, without creating duplicates. Use it for (1) reorganizing EXISTING nodes beyond one plain move — regroup, split, 'X should be its own project with A and B in it', 'X isn't a Y thing, it's more of a Z thing but it still helps Y'; (2) a message that adds several things at once or reads like a brain dump / update — new items mixed with things done and things to change. The builder sees the user's message word for word, so do NOT restate it. The user gets ONE card listing every change and accepts once.",
+      "Hand structural work to the graph builder, which reads the user's message word for word against their nodes and plans every new node, parent, rename, move and link in one card, without duplicates. For (1) reorganizing existing nodes beyond one plain move — regroup, split, 'X should be its own project with A and B in it', 'X is more of a Z thing but still helps Y'; (2) a message that adds several things at once or reads like a brain dump / update.",
     input_schema: {
       type: "object",
       properties: {
         note: {
           type: "string",
           description:
-            "Usually leave this out. Two uses only: (1) the user's message says 'it' / 'that' / 'this one' → name the node they mean by its exact title; (2) the user just said 'yes' / 'do it' to a change you described → write that change out in full, with exact node titles. Never summarize or rephrase the user's message, and never add your own reading of what they did or want — a wrong paraphrase makes the builder change the wrong thing.",
+            "Usually omit. Only (1) which node 'it' / 'that' means, by exact title, or (2) the full change they just said 'yes' to, with exact titles. Never summarize or rephrase their message — a wrong paraphrase changes the wrong thing.",
         },
       },
     },

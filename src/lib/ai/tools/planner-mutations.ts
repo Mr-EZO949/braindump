@@ -61,33 +61,15 @@ const ADD_TASK_TO_CALENDAR: ToolDefinition = {
   schema: {
     name: "add_task_to_calendar",
     description:
-      "Schedule a task on the user's calendar for a specific date, with optional start time and duration. Optionally link the task to an existing graph node so completions flow back to the node. Requires Accept.",
+      "Put a one-off task on the user's calendar for a date, with optional start time and duration; link node_id so completing it completes the node. Waits for Accept.",
     input_schema: {
       type: "object",
       properties: {
-        title: {
-          type: "string",
-          description: "Short description of the task (max 200 chars).",
-        },
-        scheduled_date: {
-          type: "string",
-          description: "YYYY-MM-DD date. If omitted, the task is unscheduled.",
-        },
-        start_time: {
-          type: "string",
-          description: "HH:MM 24-hour start time. Optional.",
-        },
-        duration_minutes: {
-          type: "integer",
-          minimum: 5,
-          maximum: 600,
-          description: "Duration in minutes (5–600). Optional.",
-        },
-        node_id: {
-          type: "string",
-          description:
-            "Optional UUID of an existing graph node this task maps to. The node must live in the current workspace.",
-        },
+        title: { type: "string", description: "Max 200 chars" },
+        scheduled_date: { type: "string", description: "YYYY-MM-DD; omitted = unscheduled" },
+        start_time: { type: "string", description: "HH:MM 24h" },
+        duration_minutes: { type: "integer", minimum: 5, maximum: 600 },
+        node_id: { type: "string", description: "The node this task maps to" },
       },
       required: ["title"],
     },
@@ -174,19 +156,13 @@ const RESCHEDULE_TASK: ToolDefinition = {
   schema: {
     name: "reschedule_task",
     description:
-      "Move a calendar task to a different date, time, or duration. Supply only the fields you want to change. Requires Accept.",
+      "Move a calendar task to another date, time or duration — only the fields that change. Waits for Accept.",
     input_schema: {
       type: "object",
       properties: {
         task_id: { type: "string" },
-        scheduled_date: {
-          type: "string",
-          description: "YYYY-MM-DD. Pass an empty string to clear the date.",
-        },
-        start_time: {
-          type: "string",
-          description: "HH:MM 24h. Pass an empty string to clear.",
-        },
+        scheduled_date: { type: "string", description: "YYYY-MM-DD; empty string clears it" },
+        start_time: { type: "string", description: "HH:MM 24h; empty string clears it" },
         duration_minutes: { type: "integer", minimum: 5, maximum: 600 },
       },
       required: ["task_id"],
@@ -262,15 +238,12 @@ const MARK_TASK_DONE: ToolDefinition = {
   schema: {
     name: "mark_task_done",
     description:
-      "Mark a calendar task as done or not-done. Use when the user says they finished a scheduled task. Requires Accept.",
+      "Mark a calendar task done (or not done) when they say they finished it. Waits for Accept.",
     input_schema: {
       type: "object",
       properties: {
         task_id: { type: "string" },
-        done: {
-          type: "boolean",
-          description: "Target state. Defaults to true.",
-        },
+        done: { type: "boolean", description: "Default true" },
       },
       required: ["task_id"],
     },
@@ -311,29 +284,29 @@ const PLAN_DAY: ToolDefinition = {
   schema: {
     name: "plan_day",
     description:
-      "Build a time-blocked plan for the user's session from their active work items, and draft it in the Planner for review. Use when the user asks to plan their day/afternoon/next N hours, make a schedule, or time-block their work. Saved weekly commitments are planned around automatically; busy time the user names in the conversation (\"lectures 2:30–6:30 today\", \"dentist at 4\") goes in `busy` — plan right away, don't first ask whether it repeats. The plan avoids only what is saved or passed here, so never say it does otherwise. Requires Accept.",
+      "Draft a time-blocked plan from their active work in the Planner, for review. Saved weekly commitments are planned around; busy time they name for today (\"lectures 2:30–6:30\", \"dentist at 4\") goes in busy — plan right away, don't ask whether it repeats. It avoids only what is saved or passed here; never say otherwise. Waits for Accept.",
     input_schema: {
       type: "object",
       properties: {
         window: {
           type: "string",
           enum: ["1h", "2h", "day", "custom"],
-          description: "Planning window. 'day' = the rest of the user's day, from start_time (or now) to 23:00; '1h'/'2h' = short sessions; 'custom' requires custom_minutes.",
+          description: "day = from start_time (or now) to 23:00; 1h / 2h = short sessions; custom needs custom_minutes",
         },
         custom_minutes: {
           type: "integer",
           minimum: 15,
           maximum: PLAN_MAX_MINUTES,
-          description: "Total minutes from start_time — only when window is 'custom' and the user names an end (\"2:30 to 11pm\" = 510). Up to 18 hours.",
+          description: "custom only, when they name an end: minutes from start_time (\"2:30 to 11pm\" = 510)",
         },
         start_time: {
           type: "string",
-          description: "When the session starts, 24h HH:MM in the user's time, only when they say it (\"from 2:30\" → \"14:30\", \"plan my day from 8am\" → \"08:00\"). Omit to start now.",
+          description: "24h HH:MM, only when they say it (\"from 8am\" → \"08:00\"); omitted = now",
         },
         busy: {
           type: "array",
           maxItems: 8,
-          description: "Times TODAY the user said they are busy that are not saved commitments — a lecture, an appointment. 24h HH:MM.",
+          description: "Busy times today they named that aren't saved commitments, 24h HH:MM",
           items: {
             type: "object",
             properties: {
