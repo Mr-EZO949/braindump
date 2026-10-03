@@ -16,6 +16,7 @@ import { PRIORITY_MUTATION_TOOLS } from "./priority-mutations";
 import { COMMITMENT_MUTATION_TOOLS } from "./commitment-mutations";
 import { INTERACTIVE_TOOLS } from "./interactive";
 import { BUILD_GRAPH_TOOL, BUILD_TOOLS, planBuild } from "./build";
+import { planSteps, STEP_TOOLS, WRITE_STEPS_TOOL } from "./steps";
 import type { AppliedMarkerPayload } from "@/lib/chat/applied-marker";
 import type { TurnApplied } from "@/types/ai";
 
@@ -31,12 +32,14 @@ export type { ToolContext, ToolDefinition, ToolSchema, ToolHandler } from "./rea
 // card like any mutation (owner, 2026-10-02: advice stays advice until OK'd).
 // change and build_graph are PLANNED mutations: the dump policy runs before
 // the model hears back (tools/change.ts) — part applied now, part on a card.
+// write_steps is planned too: the step-writer runs, the steps wait on a card.
 const ALL_MUTATION_TOOLS: ToolDefinition[] = [
   ...CHANGE_TOOLS,
   ...BUILD_TOOLS,
+  ...STEP_TOOLS,
   ...PLANNER_MUTATION_TOOLS,
 ];
-const PLANNED_TOOLS = new Set([CHANGE_TOOL, BUILD_GRAPH_TOOL]);
+const PLANNED_TOOLS = new Set([CHANGE_TOOL, BUILD_GRAPH_TOOL, WRITE_STEPS_TOOL]);
 const DIRECT_TOOLS: ToolDefinition[] = [...PRIORITY_MUTATION_TOOLS, ...COMMITMENT_MUTATION_TOOLS];
 const REGISTRY: ToolDefinition[] = [
   ...READ_ONLY_TOOLS,
@@ -226,7 +229,11 @@ export async function runTurnTools(blocks: ToolUse[], ctx: ToolContext): Promise
       break;
     }
     const plan: TurnPlan =
-      block.name === BUILD_GRAPH_TOOL ? await planBuild(block.input, ctx) : await planChange(block.input, ctx);
+      block.name === BUILD_GRAPH_TOOL
+        ? await planBuild(block.input, ctx)
+        : block.name === WRITE_STEPS_TOOL
+          ? await planSteps(block.input, ctx)
+          : await planChange(block.input, ctx);
     if (plan.turn) turns.push(plan.turn);
     if (plan.waiting) {
       pending = { ...block, input: plan.waiting };

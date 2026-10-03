@@ -76,9 +76,9 @@ describe("looksLikePlainQuestion", () => {
 describe("routeChatMessage", () => {
   const base = { history: [], mode: "explain" as const, qaEnabled: true };
 
-  it("routes only a generated breakdown to Sonnet", () => {
-    expect(routeChatMessage({ ...base, message: "break the thesis down into steps" })).toBe("sonnet");
-    expect(routeChatMessage({ ...base, message: "give me a roadmap for the internship search" })).toBe("sonnet");
+  it("keeps a generated breakdown on Haiku — the step-writer writes the steps (fix list #7)", () => {
+    expect(routeChatMessage({ ...base, message: "break the thesis down into steps" })).toBe("haiku");
+    expect(routeChatMessage({ ...base, message: "give me a roadmap for the internship search" })).toBe("haiku");
   });
 
   it("keeps restructures and captures on Haiku — the builder does the structural work", () => {
@@ -103,30 +103,13 @@ describe("routeChatMessage", () => {
     expect(routeChatMessage({ ...base, message: "mark the gym done" })).toBe("haiku");
   });
 
-  it("keeps the follow-ups of a breakdown on Sonnet", () => {
+  it("keeps the follow-ups of a breakdown on Haiku too", () => {
     const history = [
       { role: "assistant" as const, body: "Want me to break 'Write my thesis' down into phases?" },
       { role: "user" as const, body: "yeah" },
     ];
-    expect(routeChatMessage({ ...base, history, message: "make it a bit deeper" })).toBe("sonnet");
-    expect(routeChatMessage({ ...base, history: history.slice(0, 1), message: "yeah" })).toBe("sonnet");
-  });
-
-  it("does not pin a thread to Sonnet because of a long dump or an old turn", () => {
-    const dump = {
-      role: "user" as const,
-      body: `${"i need to start making money and finish my exams. ".repeat(20)} give me a roadmap for all of it`,
-    };
-    expect(routeChatMessage({ ...base, history: [dump], message: "mark the gym done" })).toBe("haiku");
-    const old = [
-      { role: "user" as const, body: "break the ML exam down into steps" },
-      { role: "assistant" as const, body: "Done." },
-      { role: "user" as const, body: "thanks" },
-      { role: "assistant" as const, body: "Anything else?" },
-      { role: "user" as const, body: "the gym went well" },
-      { role: "assistant" as const, body: "Nice." },
-    ];
-    expect(routeChatMessage({ ...base, history: old, message: "mark the gym done" })).toBe("haiku");
+    expect(routeChatMessage({ ...base, history, message: "make it a bit deeper" })).toBe("haiku");
+    expect(routeChatMessage({ ...base, history: history.slice(0, 1), message: "yeah" })).toBe("haiku");
   });
 });
 
@@ -140,10 +123,14 @@ describe("buildHint", () => {
     ).toContain("build_graph");
   });
 
-  it("stays out of simple edits, questions and breakdowns", () => {
+  it("stays out of simple edits and questions", () => {
     expect(buildHint("mark the gym done")).toBe("");
     expect(buildHint("add a task to email the prof under Career")).toBe("");
     expect(buildHint("what should i focus on?")).toBe("");
-    expect(buildHint("break the thesis down into steps")).toBe("");
+  });
+
+  it("points a breakdown at write_steps, not build_graph", () => {
+    expect(buildHint("break the thesis down into steps")).toContain("write_steps");
+    expect(buildHint("give me a roadmap for the internship search")).not.toContain("build_graph");
   });
 });

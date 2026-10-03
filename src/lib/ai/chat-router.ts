@@ -7,16 +7,17 @@
 //            the snapshot doesn't have, so a miss here costs one tiny call, not
 //            a wrong answer.
 //   haiku  — everything else: it answers, acts through its tools, and hands
-//            structural work — a restructure, a multi-item capture — to the
-//            graph builder through build_graph (tools/build.ts), where Sonnet
-//            runs on a narrow prompt instead of carrying the whole chat turn.
-//   sonnet — only a GENERATED breakdown ("break X down", "a roadmap for Y")
-//            and its follow-ups: the steps are written by the chat model
-//            itself, so they are only as good as it is.
+//            specialist work to one focused call: a restructure or a
+//            multi-item capture to the graph builder (build_graph,
+//            tools/build.ts), steps it should write to the step-writer
+//            (write_steps, tools/steps.ts). Sonnet runs there, on a narrow
+//            prompt, instead of carrying the whole chat turn.
 //
 // Until 2026-09-30 every structural edit ran its whole turn on Sonnet
 // (looksLikeStructuralEdit): 8 of 19 chat calls and 71% of chat spend on the
 // price-test days, $0.038 + $0.014 per edit against $0.013 for the builder.
+// Until 2026-10-03 a generated breakdown did too (usesSonnet), ~$0.075 a turn
+// and its follow-ups stuck on Sonnet (fix list #7).
 //
 // The qa test is deliberately conservative: any hint of an action, a
 // commitment, completed work or data outside the snapshot keeps the turn on
@@ -26,7 +27,7 @@ import { looksLikeBrainDump, looksLikeBreakdownAsk, looksLikeRestructure } from 
 import type { AssistantMode } from "@/types/ai";
 import type { HistoryTurn } from "./chat-memory";
 
-export type ChatRoute = "qa" | "haiku" | "sonnet";
+export type ChatRoute = "qa" | "haiku";
 
 // Changes, captures, completions, commitments — anything a tool would act on.
 // Outcome words ("the exam is over", "took it", "got pushed", "pass/fail") too:
@@ -60,33 +61,14 @@ export function looksLikePlainQuestion(message: string, history: HistoryTurn[] =
   return true;
 }
 
-// A breakdown rarely fits in one message. "yeah", "do it", "make it deeper"
-// carry no breakdown word, so if one of the last few turns asked for (or
-// offered) one, the follow-up stays on Sonnet. Long turns are skipped: a full
-// brain dump can trip the heuristic on almost any wording and would pin the
-// whole thread to Sonnet.
-const BREAKDOWN_THREAD_TURNS = 4;
-const BREAKDOWN_TURN_MAX_CHARS = 600;
-
-export function inBreakdownThread(history: HistoryTurn[]): boolean {
-  return history
-    .slice(-BREAKDOWN_THREAD_TURNS)
-    .some(
-      (turn) => turn.body.length <= BREAKDOWN_TURN_MAX_CHARS && looksLikeBreakdownAsk(turn.body),
-    );
-}
-
-// Haiku, or Sonnet for a generated breakdown. The resume route asks again
-// with the original question so an Accept continues on the same model.
-export function usesSonnet(message: string, history: HistoryTurn[] = []): boolean {
-  return looksLikeBreakdownAsk(message) || inBreakdownThread(history);
-}
-
 // Not a route — a line in the (uncached) message block that points Haiku at
-// build_graph when the message reads like the builder's kind of work. The
-// model still decides: venting or a long question needs no tool at all.
+// the specialist for the message's kind of work: write_steps for steps it
+// should come up with, build_graph for a restructure or a dump. The model
+// still decides: venting or a long question needs no tool at all.
 export function buildHint(message: string): string {
-  if (looksLikeBreakdownAsk(message)) return "";
+  if (looksLikeBreakdownAsk(message)) {
+    return "[Hint: steps the user didn't list (a breakdown, a roadmap) → write_steps writes them for the node, as a card.]";
+  }
   return looksLikeRestructure(message) || looksLikeBrainDump(message)
     ? "[Hint: if this message adds several things or reorganizes existing nodes (not just venting or a question), build_graph handles all of it in one card.]"
     : "";
@@ -98,7 +80,6 @@ export function routeChatMessage(params: {
   mode: AssistantMode;
   qaEnabled: boolean;
 }): ChatRoute {
-  if (usesSonnet(params.message, params.history)) return "sonnet";
   if (
     params.qaEnabled &&
     params.mode !== "transform" &&

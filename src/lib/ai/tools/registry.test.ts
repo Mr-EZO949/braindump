@@ -40,6 +40,12 @@ describe("tool registry classification", () => {
     expect(isMutationTool("change")).toBe(true);
   });
 
+  it("write_steps is a planned mutation: its steps wait on a card (fix list #7)", () => {
+    expect(getToolSchemas().some((s) => s.name === "write_steps")).toBe(true);
+    expect(isMutationTool("write_steps")).toBe(true);
+    expect(isPausingTool("write_steps")).toBe(true);
+  });
+
   it("set_commitments is a direct tool: registered, applies without a pause", () => {
     expect(getToolSchemas().some((s) => s.name === "set_commitments")).toBe(true);
     expect(isDirectTool("set_commitments")).toBe(true);

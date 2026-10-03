@@ -36,7 +36,7 @@ import { persistAIRun, recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { getToolSchemas, runTurnTools } from "@/lib/ai/tools";
-import { answerStillOwed, looksMultiStep } from "@/lib/ai/tools/confirmations";
+import { answerStillOwed, looksMultiStep, needsStepAfterChange } from "@/lib/ai/tools/confirmations";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
 import { encodeTurnMarker } from "@/lib/chat/turn-marker";
 import { buildHistoryMessages, sanitizeHistory, type HistoryTurn } from "@/lib/ai/chat-memory";
@@ -151,8 +151,8 @@ export async function POST(req: NextRequest) {
   // Model routing (chat-router.ts): plain questions → Gemini Flash-Lite with no
   // tools (it hands back to Claude when the turn needs an action or a lookup);
   // everything else → Haiku, which hands structural work (a restructure, a
-  // multi-item capture) to the graph builder through build_graph; only a
-  // generated breakdown still runs its turn on Sonnet.
+  // multi-item capture) to the graph builder through build_graph and steps
+  // to write to the step-writer through write_steps.
   const geminiKey = process.env.GEMINI_API_KEY;
   const chatRoute = routeChatMessage({
     message,
@@ -160,8 +160,7 @@ export async function POST(req: NextRequest) {
     mode: resolvedMode,
     qaEnabled: !!geminiKey && process.env.CHAT_QA_GEMINI !== "off",
   });
-  const assistantModel =
-    chatRoute === "sonnet" ? AI_MODELS.CLAUDE_SONNET : AI_MODELS.CLAUDE_HAIKU;
+  const assistantModel = AI_MODELS.CLAUDE_HAIKU;
 
   // ---------------------------------------------------------------------------
   // Verify workspace belongs to user
@@ -529,24 +528,15 @@ export async function POST(req: NextRequest) {
           // while re-sending the whole prompt). Failures and multi-step asks
           // still go back to the model.
           const lone = turn.results.length === 1 && turn.applied.length === 1 ? turn.applied[0] : null;
-          if (
-            lone &&
-            lone.failed.length === 0 &&
-            !looksMultiStep(message) &&
-            assistantModel === AI_MODELS.CLAUDE_HAIKU
-          ) {
+          if (lone && lone.failed.length === 0 && !looksMultiStep(message)) {
             break;
           }
           // The same for a change the user stated that applied in full: the
-          // turn card lists it, with Undo — "Done" would only repeat it.
+          // turn card lists it, with Undo — "Done" would only repeat it. One
+          // change call carries every graph change of the message, so only a
+          // step it can't carry (scheduling the new item) needs the model again.
           const loneTurn = turn.results.length === 1 && turn.turns.length === 1 ? turn.results[0] : null;
-          if (
-            loneTurn &&
-            !loneTurn.is_error &&
-            !looksMultiStep(message) &&
-            !answerStillOwed(message, fullText) &&
-            assistantModel === AI_MODELS.CLAUDE_HAIKU
-          ) {
+          if (loneTurn && !loneTurn.is_error && !needsStepAfterChange(message) && !answerStillOwed(message, fullText)) {
             break;
           }
 

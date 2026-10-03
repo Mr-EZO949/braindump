@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { actionSucceeded, answerStillOwed, confirmationFor, looksMultiStep } from "./confirmations";
+import { actionSucceeded, answerStillOwed, confirmationFor, looksMultiStep, needsStepAfterChange } from "./confirmations";
 
 describe("confirmationFor", () => {
   it("uses the tool's own message when it has one", () => {
@@ -66,5 +66,14 @@ describe("answerStillOwed — a question waiting behind the card", () => {
       ),
     ).toBe(false);
     expect(answerStillOwed("did my skincare and stretching today", "")).toBe(false);
+  });
+});
+
+describe("needsStepAfterChange", () => {
+  it("only a step the change call can't carry needs the model again", () => {
+    expect(needsStepAfterChange("finally updated my cv, and add a task to email the TA about the ML dataset")).toBe(false);
+    expect(needsStepAfterChange("mark the gym done and also add a task to buy protein")).toBe(false);
+    expect(needsStepAfterChange("add a task to call the bank and schedule it for friday")).toBe(true);
+    expect(needsStepAfterChange("add the essay, then put it on my calendar")).toBe(true);
   });
 });

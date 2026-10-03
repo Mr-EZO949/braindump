@@ -437,7 +437,7 @@ const CHANGE: ToolDefinition = {
                 type: "string",
                 enum: [...CHANGE_KINDS],
                 description:
-                  "create_node = new node (give it a parent; a local_ref if later items point at it). move = put an EXISTING node under a new parent. update = rename / retype / new summary or deadline. create_edge = a link (required_for / supports / useful_for / related_to / inspired_by). remove_edge = take away the links between two nodes. complete = done (a habit: done today). archive = no longer relevant (can be restored). delete_node = remove for good with everything under it — only when the user says delete. merge = node_id is a duplicate of into_node_id.",
+                  "create_node = new node (give it a parent; a local_ref if later items point at it). move = put an EXISTING node under a new parent. update = rename / retype / new summary or deadline. create_edge = a link (required_for / supports / useful_for / related_to / inspired_by). remove_edge = take away the links between two nodes — the two ids straight from the snapshot, no lookup first: it removes whatever links them, either direction, and says so if nothing did. complete = done (a habit: done today). archive = no longer relevant (can be restored). delete_node = remove for good with everything under it — only when the user says delete. merge = node_id is a duplicate of into_node_id.",
               },
               local_ref: { type: "string", description: 'create_node: a short id ("n1") later items in this call use for the new node.' },
               title: { type: "string", description: "create_node: the title. update: the new title." },

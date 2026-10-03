@@ -50,21 +50,18 @@ import {
   type DeferredToolUse,
 } from "@/lib/ai/tools";
 import { applyBuildPlan, BUILD_GRAPH_TOOL, type BuildPlanInput } from "@/lib/ai/tools/build";
-import { CHANGE_TOOL } from "@/lib/ai/tools/change";
 import { settleCardLedger } from "@/lib/ai/dump-turn";
 import { selectOps } from "@/lib/ai/turn-policy";
 import type { ChangeOp } from "@/lib/graph/change-set";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
+import { CHANGE_SET_TOOLS } from "@/lib/chat/change-describe";
 import { encodeTurnMarker, encodeUndoMarker } from "@/lib/chat/turn-marker";
 import { resolveChoice } from "@/lib/ai/tools/interactive";
 import { actionSucceeded, answerStillOwed, confirmationFor, looksMultiStep } from "@/lib/ai/tools/confirmations";
-import { usesSonnet } from "@/lib/ai/chat-router";
 import type { AssistantMode } from "@/types/ai";
 
 const MAX_TOOL_ROUNDS = 6;
 const TOOL_RESULT_MAX_CHARS = 2000;
-// Tools whose card is a list of change-set ops the user can accept row by row.
-const CHANGE_SET_TOOLS = new Set([BUILD_GRAPH_TOOL, CHANGE_TOOL]);
 
 // An accepted change set's result: its undo steps go to the browser (the
 // card's Undo), the rest to the model.
@@ -94,10 +91,10 @@ function truncateToolContent(
   });
 }
 
-// The original user question, dug out of the persisted message history so the
-// resume turn can pick the same model tier the initial turn would (Haiku for
-// chat, Sonnet for graph edits). Skips tool_result-only user turns and strips
-// the "User question:" preamble the chat route wraps the message in.
+// The original user question, dug out of the persisted message history (for
+// the tools' ctx and the no-model reply checks). Skips tool_result-only user
+// turns and strips the "User question:" preamble the chat route wraps the
+// message in.
 // Everything the paused turn wrote since the user's message (every round:
 // text, a lookup, more text, the card).
 function lastAssistantText(messages: MessageParam[]): string {
@@ -229,11 +226,13 @@ export async function POST(req: NextRequest) {
   };
 
   // A change set a BRAIN DUMP asked for (api/entries puts the builder's edits
-  // on a card). The thread behind it is a stand-in, not a conversation — no
-  // model ever continues it: Accept applies the set, Reject drops it.
+  // on a card), or steps from the Generate steps button (api/nodes/
+  // suggest-steps). The thread behind it is a stand-in, not a conversation —
+  // no model ever continues it: Accept applies the set, Reject drops it.
+  const standInOrigin = (run.pending_tool_input as { origin?: unknown } | null)?.origin;
   if (
-    run.pending_tool_name === BUILD_GRAPH_TOOL &&
-    (run.pending_tool_input as { origin?: unknown } | null)?.origin === "dump"
+    CHANGE_SET_TOOLS.has(run.pending_tool_name as string) &&
+    (standInOrigin === "dump" || standInOrigin === "steps")
   ) {
     await supabase.from("pending_chat_runs").delete().eq("id", run.id);
     const plan = (run.pending_tool_input ?? {}) as Partial<BuildPlanInput>;
@@ -245,7 +244,10 @@ export async function POST(req: NextRequest) {
     let reply = "OK — left as it is.";
     let applied: Array<{ ok: boolean; id?: string }> = [];
     if (chosen.length > 0) {
-      const result = await applyBuildPlan({ ...plan, changes: chosen, origin: "dump" }, toolCtx);
+      const result = await applyBuildPlan(
+        { ...plan, changes: chosen, origin: standInOrigin === "steps" ? "steps" : "dump" },
+        toolCtx,
+      );
       applied = Array.isArray(result.results) ? (result.results as typeof applied) : [];
       const { content, undo } = splitUndo(JSON.stringify(result));
       // The accepted rows get their own Undo on the card (the marker first).
@@ -268,12 +270,9 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Match the initial turn's model tier (chat-router.ts): a generated
-  // breakdown continues on Sonnet, everything else on Haiku. Derived from the
-  // original user question in the persisted history.
-  const assistantModel = usesSonnet(lastUserQuestion(messages))
-    ? AI_MODELS.CLAUDE_SONNET
-    : AI_MODELS.CLAUDE_HAIKU;
+  // Chat runs on Haiku (chat-router.ts) — a breakdown's steps are written by
+  // the step-writer inside write_steps, not by the chat model.
+  const assistantModel = AI_MODELS.CLAUDE_HAIKU;
 
   // ---------------------------------------------------------------------------
   // Build the tool_result batch for the paused assistant turn.
@@ -427,11 +426,9 @@ export async function POST(req: NextRequest) {
   await supabase.from("pending_chat_runs").delete().eq("id", run.id);
 
   // A simple, single action that succeeded needs no follow-up model call —
-  // it would only say "Done" while re-sending the whole prompt. Structural
-  // (Sonnet) threads, multi-step asks, anything queued behind it, and
-  // failures still go back to the model so it can continue, re-propose or
-  // explain. plan_day is a
-  // single action even though it runs on the Sonnet tier.
+  // it would only say "Done" while re-sending the whole prompt. Multi-step
+  // asks, anything queued behind it, and failures still go back to the model
+  // so it can continue, re-propose or explain.
   if (
     decision === "accept" &&
     acceptedResult &&
@@ -439,8 +436,7 @@ export async function POST(req: NextRequest) {
     deferred.every((d) => d.result && isDirectTool(d.name)) &&
     actionSucceeded(acceptedResult.content, acceptedResult.isError) &&
     !looksMultiStep(lastUserQuestion(messages)) &&
-    !answerStillOwed(lastUserQuestion(messages), lastAssistantText(messages)) &&
-    (assistantModel === AI_MODELS.CLAUDE_HAIKU || run.pending_tool_name === "plan_day")
+    !answerStillOwed(lastUserQuestion(messages), lastAssistantText(messages))
   ) {
     return new Response(prefix + confirmationFor(run.pending_tool_name as string, acceptedResult.content), {
       headers: {

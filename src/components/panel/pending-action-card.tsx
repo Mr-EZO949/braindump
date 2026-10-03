@@ -7,7 +7,7 @@
 import { useMemo } from "react";
 
 import { ChangeChecklist, useChangeSelection } from "@/components/panel/change-checklist";
-import { isChangeList, namerFor, type ChangeOpView } from "@/lib/chat/change-describe";
+import { CHANGE_SET_TOOLS, isChangeList, namerFor, type ChangeOpView } from "@/lib/chat/change-describe";
 import { describePriorityChange, parsePriorityChanges } from "@/lib/graph/priority-changes";
 import type { PendingAction } from "@/types/chat";
 
@@ -34,7 +34,6 @@ const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
   mark_task_done: { verb: "Mark done", noun: "task" },
 };
 
-const CHANGE_SET_TOOLS = new Set(["change", "build_graph"]);
 
 // A suggested direct-tool call, in words: one line per change.
 function suggestionLines(action: PendingAction): string[] | null {

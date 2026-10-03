@@ -42,10 +42,9 @@ const ADVICE_OPENER =
   /^(how (do|to|can|should|would)|how's|what('s| is| are| would)|why |when should|where should|is it|are there|should i|do you think|what do you think|thoughts on|any (advice|tips|ideas))/;
 
 // Does the message ask the assistant to GENERATE a breakdown — steps, a
-// roadmap, phases the user did not list? That is the one kind of chat turn
-// that still runs on Sonnet (chat-router.ts): the steps are only as good as
-// the model that writes them. Everything else structural goes to the graph
-// builder through the build_graph tool (docs/unified-turn.md).
+// roadmap, phases the user did not list? Never a route: it hints the chat
+// model toward write_steps (chat-router.ts buildHint), where one focused
+// Sonnet call writes the steps (lib/ai/step-writer.ts).
 //
 // Deliberately NOT gated on "?": asks are often polite questions ("can you
 // break this down?"). Only advice/how-to openers bail.

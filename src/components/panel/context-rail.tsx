@@ -14,16 +14,13 @@ import { AppliedActionCard } from "@/components/panel/applied-action-card";
 import { TurnCard, turnHasCard } from "@/components/panel/turn-card";
 import { ConnectionsCard } from "@/components/panel/connections-card";
 import { DumpProgressLabel, type DumpProgressState } from "@/components/ui/dump-progress";
-import { isChangeList } from "@/lib/chat/change-describe";
+import { CHANGE_SET_TOOLS, isChangeList } from "@/lib/chat/change-describe";
 
-// A change set's card (change, build_graph) shows inside the turn card; any
-// other card of the same turn (a question, a suggestion) shows under it.
+// A change set's card (change, build_graph, write_steps) shows inside the
+// turn card; any other card of the same turn (a question, a suggestion) shows
+// under it.
 function isChangeSetCard(action: PendingAction | undefined): action is PendingAction {
-  return (
-    !!action &&
-    (action.toolName === "change" || action.toolName === "build_graph") &&
-    isChangeList(action.toolInput.changes)
-  );
+  return !!action && CHANGE_SET_TOOLS.has(action.toolName) && isChangeList(action.toolInput.changes);
 }
 import { HabitStreak } from "@/components/panel/habit-streak";
 import { NodeSchedule } from "@/components/panel/node-schedule";

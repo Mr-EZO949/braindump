@@ -6,12 +6,13 @@ import { applyChangeSet, type ChangeOp } from "@/lib/graph/change-set";
 import type { ToolContext } from "./read-only";
 
 // What the card shows and the handler applies. `origin: "dump"` marks a set a
-// brain dump asked for (api/entries) — its Accept never goes back to a model.
+// brain dump asked for (api/entries), `"steps"` the Generate steps button's
+// (api/nodes/suggest-steps) — their Accept never goes back to a model.
 export interface BuildPlanInput {
   changes: ChangeOp[];
   questions?: string[];
   notes?: string[];
-  origin?: "chat" | "dump";
+  origin?: "chat" | "dump" | "steps";
   // The assistant's own idea (change with source "suggestion"): the card
   // says so, and nothing in it was asked for.
   suggested?: boolean;

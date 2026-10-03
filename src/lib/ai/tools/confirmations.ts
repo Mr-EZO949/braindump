@@ -42,6 +42,16 @@ export function looksMultiStep(userMessage: string): boolean {
     /\band (then |also )?(schedule|add|create|mark|move|set|put|link|connect|rename|archive|delete|remove|plan|make|complete|reschedule)\b/.test(t);
 }
 
+// After a change set that applied in full: does the message also ask for a
+// step the change call can't carry — scheduling, a plan, a reminder — which
+// needs its result (the new node's id)? "finally updated my cv, and add a task
+// to email the TA" is ONE change call; the follow-up round looksMultiStep asked
+// for only wrote a line after the card and re-sent the prompt (eval,
+// assistant-v27: 29K input tokens instead of 15K).
+export function needsStepAfterChange(userMessage: string): boolean {
+  return /\b(schedul\w*|reschedul\w*|calendar|plan|time-?block\w*|remind\w*)\b/i.test(userMessage);
+}
+
 // Did the user ask something the reply before the card hasn't answered yet?
 // The prompt says to answer first and put the card last (assistant-v25); when
 // the model instead only announced the action ("Mark X done first.") and meant

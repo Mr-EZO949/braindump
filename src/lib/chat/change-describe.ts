@@ -27,6 +27,10 @@ export type ChangeOpView = {
 
 export type NameOf = (ref: unknown) => string;
 
+// The tools whose card is a change set, row by row (change, build_graph, and
+// write_steps — the step-writer's suggested steps). Client and server share it.
+export const CHANGE_SET_TOOLS: ReadonlySet<string> = new Set(["change", "build_graph", "write_steps"]);
+
 export function isChangeList(value: unknown): value is ChangeOpView[] {
   return Array.isArray(value) && value.every((v) => typeof v === "object" && v !== null);
 }
