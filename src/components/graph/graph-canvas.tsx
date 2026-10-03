@@ -18,6 +18,7 @@ import type {
 } from "d3-force";
 
 import { getImportanceIndex } from "@/lib/graph/importance";
+import { glideProgress, retidyFromPrevious } from "@/lib/graph/retidy";
 import {
   buildPrimaryStructuralTree,
   findStructuralCycleBreaks,
@@ -1663,7 +1664,6 @@ export function GraphCanvas({
   const suppressInitialFocusAnimationRef = useRef(suppressInitialFocusAnimation);
   const lastHandledFocusRequestRef = useRef(focusRequestKey);
   const nodesRef = useRef<GraphNode[]>([]);
-  const lastLayoutKeyRef = useRef(layoutKey);
   const dragStateRef = useRef<DragState | null>(null);
   const panStateRef = useRef<PanState | null>(null);
   const pinchStateRef = useRef<PinchState | null>(null);
@@ -1738,69 +1738,37 @@ export function GraphCanvas({
   const scene = useMemo(() => {
     const nextLayout = buildGraphLayout(graphData);
 
-    // When layoutKey changes, skip position restore — recompute from scratch.
-    // eslint-disable-next-line react-hooks/refs
-    const freshLayout = layoutKey !== lastLayoutKeyRef.current;
-    lastLayoutKeyRef.current = layoutKey;
-
-    if (!freshLayout) {
-      // Restore settled positions from the previous simulation BEFORE React
-      // renders. This must happen here (in useMemo) rather than in useEffect,
-      // because useEffect runs after the browser has already painted — causing
-      // a visible one-frame jump to the new layout positions.
-      //
-      // We also restore restX/restY so the forceX/forceY forces continue
-      // pulling nodes toward where they already are, preventing the sim from
-      // animating existing nodes to new layout positions every time graphData
-      // changes (archive, mark done, toggle filters, etc.).
-      //
-      // Reading nodesRef (a ref, not a dep) is intentional: we want the
-      // previous sim's settled positions without adding a reactive dependency.
-      // eslint-disable-next-line react-hooks/refs
-      const prevById = new Map(nodesRef.current.map((n) => [n.id, n]));
-      const freshById = new Map(nextLayout.nodes.map((n) => [n.id, n]));
-      // Structural parent per node (belongs_to: source = child, target = parent).
-      const parentByChild = new Map<string, string>();
-      for (const edge of graphData.edges) {
-        if (edge.edge_type === "belongs_to") {
-          parentByChild.set(edge.source_node_id, edge.target_node_id);
-        }
+    // Every change — a dump, a chat change, a rescore, Reset layout — draws the
+    // fresh tree layout, the tidy one. Until 10-03 only Reset layout did: any
+    // other update kept each node's OLD resting place and squeezed new nodes in
+    // beside their parents, so the graph drifted into a tangle until Reset was
+    // pressed. The fresh layout is shifted into the frame already on screen and
+    // each node starts where it is drawn now, then glides to its place (the
+    // "glide" force in the simulation effect). This runs here, before paint,
+    // so the first frame matches the last one.
+    //
+    // Reading nodesRef (a ref, not a dep) is intentional: we want the previous
+    // sim's positions without adding a reactive dependency. layoutKey (Reset
+    // layout) only has to rebuild the scene; it takes the same path.
+    // Structural parent per node (belongs_to: source = child, target = parent).
+    const parentByChild = new Map<string, string>();
+    for (const edge of graphData.edges) {
+      if (edge.edge_type === "belongs_to") {
+        parentByChild.set(edge.source_node_id, edge.target_node_id);
       }
-      nextLayout.nodes.forEach((node) => {
-        if (node.manual_position) return; // fx/fy already pinned
-        const prev = prevById.get(node.id);
-        if (prev?.x != null && prev?.y != null) {
-          node.x = prev.x;
-          node.y = prev.y;
-          // Preserve rest positions so forces don't pull to new layout
-          node.restX = prev.restX;
-          node.restY = prev.restY;
-          return;
-        }
-        // Newly-added node. buildGraphLayout re-centres the whole coordinate
-        // frame every time (subtree widths + component centering shift), so the
-        // fresh absolute position is in a DIFFERENT frame than the restored
-        // existing nodes — which is why a new node used to land displaced and
-        // only snapped right after "reset layout". Anchor it beside its parent's
-        // CURRENT position instead, keeping only the fresh layout's relative
-        // offset. The collide force then eases it in among its siblings.
-        const parentId = parentByChild.get(node.id);
-        const parentPrev = parentId ? prevById.get(parentId) : undefined;
-        const parentFresh = parentId ? freshById.get(parentId) : undefined;
-        if (parentPrev?.x != null && parentPrev?.y != null && parentFresh) {
-          const anchorX = parentPrev.restX ?? parentPrev.x;
-          const anchorY = parentPrev.restY ?? parentPrev.y;
-          node.restX = anchorX + (node.restX - parentFresh.restX);
-          node.restY = anchorY + (node.restY - parentFresh.restY);
-          node.x = node.restX;
-          node.y = node.restY;
-        }
-      });
     }
+    const glideFrom = retidyFromPrevious(
+      nextLayout.nodes,
+      // eslint-disable-next-line react-hooks/refs
+      nodesRef.current,
+      parentByChild,
+    );
 
     const nodeMap = new Map(nextLayout.nodes.map((node) => [node.id, node]));
 
     return {
+      glideFrom,
+      layoutKey,
       links: nextLayout.links.map((link) => ({
         ...link,
         source: nodeMap.get(link.source_node_id) ?? link.source_node_id,
@@ -1808,7 +1776,7 @@ export function GraphCanvas({
       })),
       nodes: nextLayout.nodes,
     };
-  }, [graphData, layoutKey]); // nodesRef, lastLayoutKeyRef intentionally omitted — refs
+  }, [graphData, layoutKey]); // nodesRef intentionally omitted — a ref
 
   const searchMatches = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -2112,6 +2080,39 @@ export function GraphCanvas({
       .alphaDecay(isMobileSim ? 0.2 : 0.12)
       .alphaMin(isMobileSim ? 0.05 : 0.02)
       .alphaTarget(0);
+
+    // Auto-tidy glide: a node the fresh layout moved travels from where it was
+    // drawn to its tidy place over a fixed number of ticks — done before the
+    // sim cools (desktop ≈22 ticks to alpha 0.06, mobile ≈13), so the end state
+    // is the tidy layout, not a half-settled one. Registered last, so it
+    // overrides the other forces for those nodes. Pins the user made stay put;
+    // the selection freeze (__autoPinned) carries its pins along.
+    const glideFrom = scene.glideFrom;
+    if (glideFrom.size > 0) {
+      const glideTicks = isMobileSim ? 11 : 20;
+      // d3 keeps (1 - velocityDecay) of vx per tick: x += vx * keep.
+      const keep = 1 - (isMobileSim ? 0.78 : 0.72);
+      let glideTick = 0;
+      simulation.force("glide", () => {
+        if (glideTick >= glideTicks) return;
+        glideTick += 1;
+        const progress = glideProgress(glideTick, glideTicks);
+        scene.nodes.forEach((node) => {
+          const from = glideFrom.get(node.id);
+          if (!from) return;
+          const targetX = lerp(from.x, node.restX, progress);
+          const targetY = lerp(from.y, node.restY, progress);
+          if (node.__autoPinned) {
+            node.fx = targetX;
+            node.fy = targetY;
+            return;
+          }
+          if (node.fx != null || node.fy != null) return;
+          node.vx = (targetX - (node.x ?? targetX)) / keep;
+          node.vy = (targetY - (node.y ?? targetY)) / keep;
+        });
+      });
+    }
 
     let didSettleRefit = false;
 
