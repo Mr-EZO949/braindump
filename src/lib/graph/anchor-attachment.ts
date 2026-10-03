@@ -1,5 +1,4 @@
-import { ALLOWED_CHILDREN } from "@/lib/graph/node-types";
-import type { NodeType, WorkspaceProfileAreaType } from "@/types/graph";
+import type { WorkspaceProfileAreaType } from "@/types/graph";
 
 type Domain =
   | "academic"
@@ -13,19 +12,6 @@ type Domain =
 interface GoalCandidate {
   id: string;
   title: string;
-}
-
-interface ExistingNodeCandidate {
-  id: string;
-  title: string;
-  summary: string | null;
-  node_type: NodeType;
-}
-
-interface ChildNodeCandidate {
-  title: string;
-  summary: string | null;
-  node_type: NodeType;
 }
 
 const DOMAIN_KEYWORDS: Record<Domain, string[]> = {
@@ -124,15 +110,6 @@ const DOMAIN_KEYWORDS: Record<Domain, string[]> = {
   personal: ["personal", "family", "home", "systems", "life"],
 };
 
-const ROOT_TITLES = new Set([
-  "success",
-  "personal freedom",
-  "life direction",
-  "general",
-  "personal",
-  "growth",
-]);
-
 function normalize(text: string | null | undefined) {
   return (text ?? "").toLowerCase().replace(/[^a-z0-9\s]/g, " ");
 }
@@ -178,10 +155,6 @@ function overlapScore(childText: string, parentText: string) {
   });
 
   return Math.min(score, 4);
-}
-
-export function isGenericRootTitle(title: string) {
-  return ROOT_TITLES.has(normalize(title).trim());
 }
 
 export function pickGoalForArea(params: {
@@ -246,104 +219,4 @@ export function pickGoalForArea(params: {
   }
 
   return best.goalId;
-}
-
-export function pickExistingParentForNode(params: {
-  child: ChildNodeCandidate;
-  existingNodes: ExistingNodeCandidate[];
-}) {
-  const childText = `${params.child.title}\n${params.child.summary ?? ""}`;
-  const childDomains = inferDomainsFromText(childText);
-  const normalizedChildTitle = normalize(params.child.title);
-
-  const ranked = params.existingNodes
-    // A guessed parent must be able to hold the child (node-types.ts). Without
-    // this a new class "Statistics Midterm" was put under the big task
-    // "Italian Crash Course" — the word "course" outscored everything.
-    .filter((candidate) => ALLOWED_CHILDREN[candidate.node_type]?.has(params.child.node_type))
-    .map((candidate) => {
-      const parentText = `${candidate.title}\n${candidate.summary ?? ""}`;
-      const normalizedParentTitle = normalize(candidate.title);
-      let score = overlapScore(childText, parentText);
-
-      childDomains.forEach((domain) => {
-        score += keywordScore(normalizedParentTitle, domain) * 2;
-      });
-
-      if (params.child.node_type === "class") {
-        if (/semester|course|courses|academics|study/.test(normalizedParentTitle)) {
-          score += 7;
-        }
-        if (/student|honor|gpa|school/.test(normalizedParentTitle)) {
-          score += 4;
-        }
-      }
-
-      if (
-        params.child.node_type === "task" &&
-        /gym|journal|sleep|skincare/.test(normalizedChildTitle) &&
-        /habit|health|wellness|routine/.test(normalizedParentTitle)
-      ) {
-        score += 6;
-      }
-
-      if (
-        /semester|course|courses|midterm|exam|prof|reu|honor|gpa|student|school/.test(
-          normalizedChildTitle,
-        ) &&
-        /student|academic|academics|semester|course|courses|study|honor/.test(
-          normalizedParentTitle,
-        )
-      ) {
-        score += 6;
-      }
-
-      if (
-        /rent|parking|gift|birthday|renew|pay/.test(normalizedChildTitle) &&
-        /admin|life/.test(normalizedParentTitle)
-      ) {
-        score += 6;
-      }
-
-      if (
-        /project|prototype|feature|launch|marketing|pricing|billing|beta/.test(
-          normalizedChildTitle,
-        ) &&
-        /project|product|build|launch|business|startup|saas|marketing/.test(
-          normalizedParentTitle,
-        )
-      ) {
-        score += 5;
-      }
-
-      if (candidate.node_type === "goal") {
-        score += 1;
-      }
-
-      if (candidate.node_type === "area" || candidate.node_type === "project") {
-        score += 1;
-      }
-
-      if (isGenericRootTitle(candidate.title)) {
-        score -= 8;
-      }
-
-      return { id: candidate.id, score };
-    })
-    .sort((candidateA, candidateB) => candidateB.score - candidateA.score);
-
-  if (ranked.length === 0) {
-    return null;
-  }
-
-  const [best, second] = ranked;
-  if (best.score < 6) {
-    return null;
-  }
-
-  if (second && best.score - second.score < 2) {
-    return null;
-  }
-
-  return best.id;
 }

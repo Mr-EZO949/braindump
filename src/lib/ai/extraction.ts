@@ -20,10 +20,6 @@ import { builderToOps, mergeEditPass, resolveBuilderChanges, splitRestructureSet
 import { buildWorkspaceProfileContext } from "./workspace-profile";
 import { retrieveRelevantNodes, type ContextNodeForPrompt } from "./retrieval";
 import { resolveProposalsAgainstGraph, type ResolutionMatch } from "./resolution";
-import {
-  isGenericRootTitle,
-  pickExistingParentForNode,
-} from "@/lib/graph/anchor-attachment";
 import { EXTRACT_PROMPT_VERSION } from "./prompts/extract";
 import {
   executeWithRetry,
@@ -96,60 +92,6 @@ function isMissingColumnError(message: string | undefined, columnName: string) {
 
   const normalized = message.toLowerCase();
   return normalized.includes("column") && normalized.includes(columnName.toLowerCase());
-}
-
-function enrichExistingParentAssignments(
-  nodes: ExtractionOutput["proposed_nodes"],
-  existingNodes: Array<{
-    id: string;
-    title: string;
-    summary: string | null;
-    node_type: ExtractionOutput["proposed_nodes"][number]["proposed_node_type"];
-  }>,
-) {
-  if (existingNodes.length === 0) {
-    return nodes;
-  }
-
-  const existingNodeMap = new Map(existingNodes.map((node) => [node.id, node]));
-
-  return nodes.map((node) => {
-    if (node.primary_parent_local_ref) {
-      return node;
-    }
-
-    const currentParent = node.existing_parent_node_id
-      ? existingNodeMap.get(node.existing_parent_node_id)
-      : null;
-    const shouldReevaluate =
-      !currentParent || isGenericRootTitle(currentParent.title);
-
-    if (!shouldReevaluate) {
-      return node;
-    }
-
-    const suggestedParentId = pickExistingParentForNode({
-      child: {
-        title: node.proposed_title,
-        summary: node.proposed_summary,
-        node_type: node.proposed_node_type,
-      },
-      existingNodes,
-    });
-
-    if (!suggestedParentId) {
-      return node;
-    }
-
-    if (suggestedParentId === node.existing_parent_node_id) {
-      return node;
-    }
-
-    return {
-      ...node,
-      existing_parent_node_id: suggestedParentId,
-    };
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -658,11 +600,12 @@ export async function runBuilder(params: {
     if (existingId) completeExistingNodeIds.add(existingId);
   }
 
-  // enrich first (attaches parent-less nodes to a likely existing anchor), then
-  // apply duplicate re-homing LAST so it takes precedence over enrich's guess,
-  // and validate every existing-parent reference against the full node set.
+  // Duplicate re-homing, and every existing-parent reference validated against
+  // the full node set. The parents are the model's: a keyword guesser that
+  // re-homed the nodes it left at the top level put "Machine Learning
+  // Project" under "Money Projects" for the shared word (removed 2026-10-03).
   const qualifiedNodes = rehomeResolvedProposals({
-    nodes: enrichExistingParentAssignments(resolvedSurvivors, context.promptNodes),
+    nodes: resolvedSurvivors,
     droppedProposals: confidentSurvivors.filter((n) => isDropped(n.local_ref)),
     droppedRefToExistingId,
     droppedRefToKeptRef,
