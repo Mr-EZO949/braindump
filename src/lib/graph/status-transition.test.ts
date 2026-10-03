@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { transitionNodeStatus } from "./status-transition";
+import { createFakeSupabase } from "@/lib/test/fake-supabase";
+import { logHabitCompletion, transitionNodeStatus } from "./status-transition";
 
 // Minimal chainable Supabase stand-in: every builder method records itself and
 // returns the chain; maybeSingle() resolves to the given node row. Enough to
@@ -54,6 +55,7 @@ describe("transitionNodeStatus — habit semantics (#13)", () => {
       nodeId: "habit-1",
       status: "active",
       loggedOn: "2026-09-28",
+      alreadyLogged: false,
     });
 
     // Stored as the user's own check-in: the column's check constraint only
@@ -85,6 +87,20 @@ describe("transitionNodeStatus — habit semantics (#13)", () => {
     });
 
     expect(result.kind).toBe("error");
+  });
+});
+
+describe("logHabitCompletion", () => {
+  it("says whether the day was already ticked, so an Undo leaves an earlier check-in alone (#16)", async () => {
+    const db = createFakeSupabase({
+      habit_completions: [{ id: "hc-1", user_id: "user-1", node_id: "gym", completed_on: "2026-10-03", source: "manual" }],
+    });
+    const log = (nodeId: string) =>
+      logHabitCompletion({ supabase: db.client, userId: "user-1", nodeId, date: "2026-10-03", source: "chat" });
+
+    expect(await log("gym")).toEqual({ error: null, alreadyLogged: true });
+    expect(await log("skincare")).toEqual({ error: null, alreadyLogged: false });
+    expect(db.tables.habit_completions.map((r) => r.node_id)).toEqual(["gym", "skincare"]);
   });
 });
 

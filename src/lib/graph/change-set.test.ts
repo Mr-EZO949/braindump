@@ -54,6 +54,7 @@ vi.mock("@/lib/graph/status-transition", () => ({
 }));
 
 import { dispatchTool } from "@/lib/ai/tools";
+import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { planChange } from "@/lib/ai/tools/change";
 import { createFakeSupabase, type FakeSupabase } from "@/lib/test/fake-supabase";
 
@@ -318,6 +319,28 @@ describe("Undo puts each change back", () => {
     transitions.length = 0;
     await undoAll(db, outcome.undo.map((u) => u.step));
     expect(transitions).toEqual([{ nodeId: "bugs", newStatus: "active" }]);
+  });
+
+  it("a habit check-in is taken back — but not one the user had already made today", async () => {
+    const db = seed();
+    const habitLogged = (alreadyLogged: boolean) => ({
+      kind: "habit_logged" as const,
+      nodeId: "gym",
+      status: "active" as const,
+      loggedOn: "2026-09-30",
+      alreadyLogged,
+    });
+
+    vi.mocked(transitionNodeStatus).mockResolvedValueOnce(habitLogged(false));
+    const fresh = await applyChangeSet(ctxFor(db), [{ kind: "complete", node_id: "gym" }]);
+    expect(fresh.results[0]).toMatchObject({ ok: true, detail: "habit_logged" });
+    expect(fresh.undo.map((u) => u.step)).toEqual([{ kind: "unlog_habit", node_id: "gym", date: "2026-09-30" }]);
+
+    // Ticked by hand this morning: the chat card's Undo must not remove that.
+    vi.mocked(transitionNodeStatus).mockResolvedValueOnce(habitLogged(true));
+    const again = await applyChangeSet(ctxFor(db), [{ kind: "complete", node_id: "gym" }]);
+    expect(again.results[0]).toMatchObject({ ok: true, detail: "habit_logged" });
+    expect(again.undo).toEqual([]);
   });
 
   it("a link added is taken away; a link removed comes back", async () => {

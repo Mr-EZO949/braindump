@@ -864,7 +864,8 @@ export async function applyChangeSet(
               ...(outcome.autoCompletedNodeIds.length > 0 ? { also: outcome.autoCompletedNodeIds } : {}),
             },
           });
-        } else if (outcome.kind === "habit_logged") {
+        } else if (outcome.kind === "habit_logged" && !outcome.alreadyLogged) {
+          // Ticked earlier today (by hand): this call added nothing to undo.
           undo.push({ index: i, step: { kind: "unlog_habit", node_id: nodeId, date: outcome.loggedOn } });
         }
         results[i] = {

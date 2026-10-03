@@ -66,6 +66,8 @@ export type HabitCompletionSource = "manual" | "chat" | "dump" | "plan_task";
 // as the user's own check-in. Until 2026-10-02 chat and dumps wrote 'chat' /
 // 'dump', the check constraint rejected every row, and the error was dropped
 // while the reply said "marked done".
+// alreadyLogged: the day was ticked before this call — the ignored duplicate
+// comes back as no row. An Undo of this call must leave that check-in alone.
 export async function logHabitCompletion(params: {
   supabase: SupabaseClient;
   userId: string;
@@ -73,8 +75,8 @@ export async function logHabitCompletion(params: {
   // The USER's local date (YYYY-MM-DD). Never derive this from UTC.
   date: string;
   source: HabitCompletionSource;
-}): Promise<{ error: string | null }> {
-  const { error } = await params.supabase
+}): Promise<{ error: string | null; alreadyLogged: boolean }> {
+  const { data, error } = await params.supabase
     .from("habit_completions")
     .upsert(
       {
@@ -84,8 +86,9 @@ export async function logHabitCompletion(params: {
         source: params.source === "plan_task" ? "plan_task" : "manual",
       },
       { onConflict: "node_id,completed_on", ignoreDuplicates: true },
-    );
-  return { error: error?.message ?? null };
+    )
+    .select("id");
+  return { error: error?.message ?? null, alreadyLogged: !error && Array.isArray(data) && data.length === 0 };
 }
 
 type WorkspaceNodeRow = {
@@ -208,7 +211,8 @@ async function restoreArchivedNodeEdges(params: {
 export type TransitionResult =
   | { kind: "error"; httpStatus: number; error: string }
   // Habit "completed": today's completion logged, node stays in its status.
-  | { kind: "habit_logged"; nodeId: string; status: NodeStatus; loggedOn: string }
+  // alreadyLogged: the day was ticked before — nothing new was written.
+  | { kind: "habit_logged"; nodeId: string; status: NodeStatus; loggedOn: string; alreadyLogged: boolean }
   | { kind: "unchanged"; nodeId: string; status: NodeStatus }
   | {
       kind: "changed";
@@ -265,7 +269,7 @@ export async function transitionNodeStatus(params: {
       source: params.habitSource ?? "manual",
     });
     if (logged.error) return { kind: "error", httpStatus: 500, error: logged.error };
-    return { kind: "habit_logged", nodeId, status: previousStatus, loggedOn: today };
+    return { kind: "habit_logged", nodeId, status: previousStatus, loggedOn: today, alreadyLogged: logged.alreadyLogged };
   }
 
   if (previousStatus === newStatus) {

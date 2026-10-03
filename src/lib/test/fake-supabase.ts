@@ -99,7 +99,9 @@ export function createFakeSupabase(
         for (const raw of incoming) {
           const existing = rows.find((r) => conflictCols.every((c) => r[c] === raw[c]));
           if (existing) {
-            if (!state.upsertOptions?.ignoreDuplicates) Object.assign(existing, raw);
+            // ON CONFLICT DO NOTHING returns no row for the ignored duplicate.
+            if (state.upsertOptions?.ignoreDuplicates) continue;
+            Object.assign(existing, raw);
             result.push(existing);
           } else {
             const row = { id: `${state.table}-${++idCounter}`, ...raw };
