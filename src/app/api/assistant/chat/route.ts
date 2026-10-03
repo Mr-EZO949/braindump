@@ -30,6 +30,7 @@ import {
 } from "@/lib/ai/config";
 import { buildHint, routeChatMessage } from "@/lib/ai/chat-router";
 import { ASSISTANT_QA_PROMPT_VERSION, buildQASystemPrompt, streamQAAnswer } from "@/lib/ai/gemini-chat";
+import { autoAddEnabled } from "@/lib/ai/auto-apply";
 import { checkAIRunRateLimit } from "@/lib/ai/rate-limit";
 import { hashText, normalizeAIError } from "@/lib/ai/errors";
 import { persistAIRun, recordClaudeRun } from "@/lib/ai/telemetry";
@@ -119,15 +120,12 @@ export async function POST(req: NextRequest) {
     selected_node_id = null,
     mode = "explain",
     history: rawHistory,
-    auto_apply,
   } = body as {
     message: string;
     workspace_id: string;
     selected_node_id?: string | null;
     mode?: string;
     history?: unknown;
-    // The "Auto-add confident items" preference — same as a dump's.
-    auto_apply?: boolean;
   };
 
   const history = sanitizeHistory(rawHistory);
@@ -315,7 +313,8 @@ export async function POST(req: NextRequest) {
     today: todayISO,
     userMessage: message.trim(),
     signal: toolAbort.signal,
-    autoApply: auto_apply !== false,
+    // The user's "Add confident items without asking" switch — same as a dump's.
+    autoApply: autoAddEnabled(user),
   };
 
   // The graph snapshot rides in the system prompt, where every turn of the

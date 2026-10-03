@@ -1,26 +1,25 @@
 // Client side of calibrated auto-apply (policy: src/lib/ai/auto-apply.ts).
-// Kept out of app-shell so the dump flow only wires three calls:
-// read the preference, accept the auto-apply set, and undo it.
+// Kept out of app-shell: the settings switch, accepting the auto-apply set,
+// and undoing it.
 
+import { AUTO_ADD_SETTING, autoAddEnabled } from "@/lib/ai/auto-apply";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { Edge, Node } from "@/types/graph";
 
-const PREFERENCE_KEY = "braindump:auto-apply";
-
-// "Auto-add confident items" — on unless the user turned it off.
-export function readAutoApplyPreference(): boolean {
-  try {
-    return window.localStorage.getItem(PREFERENCE_KEY) !== "off";
-  } catch {
-    return true;
-  }
+// "Add confident items without asking" (settings panel). The server reads it
+// from the user's auth metadata on every dump / chat turn (autoAddEnabled).
+export async function readAutoAddSetting(): Promise<boolean> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) return true;
+  const { data } = await supabase.auth.getUser();
+  return autoAddEnabled(data.user);
 }
 
-export function writeAutoApplyPreference(enabled: boolean): void {
-  try {
-    window.localStorage.setItem(PREFERENCE_KEY, enabled ? "on" : "off");
-  } catch {
-    /* ignore — preference just won't persist */
-  }
+export async function saveAutoAddSetting(enabled: boolean): Promise<boolean> {
+  const supabase = getSupabaseBrowserClient();
+  if (!supabase) return false;
+  const { error } = await supabase.auth.updateUser({ data: { [AUTO_ADD_SETTING]: enabled } });
+  return !error;
 }
 
 export interface AcceptedBatch {

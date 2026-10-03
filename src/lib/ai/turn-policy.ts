@@ -9,6 +9,9 @@
 //               the calibration holds back · everything that belongs to a
 //               reorganization
 //
+// With the user's "Add confident items without asking" switch off (settings;
+// auto-apply.ts autoAddEnabled) nothing applies by itself: everything waits.
+//
 // A reorganization is reviewed as ONE unit: the new parent it moves things
 // under, that parent's other new children, and the links to the nodes it
 // touches all wait with the moves — never an empty new project sitting in the
@@ -41,7 +44,10 @@ export function splitByPolicy(
   ops: ChangeOp[],
   // local_refs of new nodes cleared to apply without asking.
   autoCreateRefs: ReadonlySet<string>,
+  // The user's "Add confident items without asking" switch.
+  autoApply = true,
 ): { now: ChangeOp[]; ask: ChangeOp[] } {
+  if (!autoApply) return { now: [], ask: [...ops] };
   const creates = new Map<string, CreateOp>();
   for (const op of ops) {
     const ref = createRef(op);

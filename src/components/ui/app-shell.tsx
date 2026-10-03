@@ -110,11 +110,7 @@ import type { CreateNodeInput, Edge, GraphData, Node, NodeType, Workspace } from
 import { addDaysISO, localDateISO } from "@/lib/time/local-date";
 import { todayIsoDate } from "@/lib/planner/auto-schedule";
 import { clientDayHints } from "@/lib/habits/streak";
-import {
-  acceptProposalsNow,
-  readAutoApplyPreference,
-  undoAutoApplied,
-} from "@/lib/graph/auto-apply-client";
+import { acceptProposalsNow, undoAutoApplied } from "@/lib/graph/auto-apply-client";
 import { AutoApplyNotice } from "@/components/ui/auto-apply-notice";
 import type { DumpTurn, ProposedNode } from "@/types/ai";
 
@@ -1691,8 +1687,6 @@ export function AppShell({ initialUser }: AppShellProps) {
           workspace_id: targetWorkspaceId,
           selected_node_id: nextScope.kind === "node" ? nextScope.node.id : null,
           history,
-          // Same preference as the Brain Dump box: confident new items apply at once.
-          auto_apply: readAutoApplyPreference(),
         }),
         signal: abortCtrl.signal,
       });
@@ -1781,7 +1775,6 @@ export function AppShell({ initialUser }: AppShellProps) {
           decision,
           choice,
           ...(decision === "accept" && acceptedIndexes ? { accepted_indexes: acceptedIndexes } : {}),
-          auto_apply: readAutoApplyPreference(),
         }),
         signal: abortCtrl.signal,
       });
@@ -3081,7 +3074,6 @@ export function AppShell({ initialUser }: AppShellProps) {
         body: JSON.stringify({
           raw_text: trimmed,
           workspace_id: targetWorkspaceId,
-          auto_apply: readAutoApplyPreference(),
           history,
           stream: true,
         }),
@@ -3127,7 +3119,6 @@ export function AppShell({ initialUser }: AppShellProps) {
         body: JSON.stringify({
           raw_text: trimmed,
           workspace_id: targetWorkspaceId,
-          auto_apply: readAutoApplyPreference(),
           stream: true,
           ...(retryEntryId ? { retry_entry_id: retryEntryId } : {}),
         }),

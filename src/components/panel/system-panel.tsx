@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 
 import { InstallAppButton } from "@/components/pwa/install-app-button";
 import { PushToggleButton } from "@/components/pwa/push-toggle-button";
+import { readAutoAddSetting, saveAutoAddSetting } from "@/lib/graph/auto-apply-client";
 
 type Theme = "dark" | "light";
 
@@ -81,6 +82,10 @@ export function SystemPanel({
   const [personalDeadlines, setPersonalDeadlines] = useState("");
   const [personalLoading, setPersonalLoading] = useState(false);
   const [personalError, setPersonalError] = useState<string | null>(null);
+  // "Add confident items without asking" — per user (auth metadata), read by
+  // the server on every dump and chat turn. null until loaded.
+  const [autoAdd, setAutoAdd] = useState<boolean | null>(null);
+  const [autoAddError, setAutoAddError] = useState(false);
   // The pre-paint script in layout.tsx already applied the correct theme to
   // <html>. The apply-effect below must skip its first run so it doesn't
   // overwrite that with the SSR default before we've synced.
@@ -177,6 +182,35 @@ export function SystemPanel({
       cancelled = true;
     };
   }, [open]);
+
+  // Load the auto-add switch when the panel opens.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setAutoAddError(false);
+    readAutoAddSetting()
+      .then((on) => {
+        if (!cancelled) setAutoAdd(on);
+      })
+      .catch(() => {
+        if (!cancelled) setAutoAdd(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const toggleAutoAdd = async () => {
+    if (autoAdd === null) return;
+    const next = !autoAdd;
+    setAutoAdd(next);
+    setAutoAddError(false);
+    const saved = await saveAutoAddSetting(next).catch(() => false);
+    if (!saved) {
+      setAutoAdd(!next);
+      setAutoAddError(true);
+    }
+  };
 
   // Load dump-usage counters when the panel opens (#12).
   useEffect(() => {
@@ -704,6 +738,39 @@ export function SystemPanel({
               Delete account
             </button>
           )}
+        </div>
+
+        <div className="sp-divider" />
+
+        {/* Brain dump & chat — the auto-add switch (lib/ai/auto-apply.ts). */}
+        <div className="px-5 py-4">
+          <p className="sp-section-label">Brain dump &amp; chat</p>
+          <div className="sp-switch-row">
+            <span className="sp-switch-text">
+              <span className="sp-switch-label" id="sp-auto-add-label">
+                Add confident items without asking
+              </span>
+              <span className="sp-switch-hint" id="sp-auto-add-hint">
+                {autoAdd === false
+                  ? "Off: everything a dump or chat changes waits on its card for your OK."
+                  : "New items you usually keep, things you finished and links go straight in, with Undo."}
+              </span>
+            </span>
+            <button
+              aria-checked={autoAdd !== false}
+              aria-describedby="sp-auto-add-hint"
+              aria-labelledby="sp-auto-add-label"
+              className="sp-switch"
+              data-on={autoAdd !== false || undefined}
+              disabled={autoAdd === null}
+              onClick={() => void toggleAutoAdd()}
+              role="switch"
+              type="button"
+            >
+              <span className="sp-switch-knob" aria-hidden="true" />
+            </button>
+          </div>
+          {autoAddError ? <p className="sp-error">Couldn&apos;t save that. Try again.</p> : null}
         </div>
 
         <div className="sp-divider" />

@@ -19,6 +19,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { CONTAINER_TYPES } from "@/lib/graph/node-types";
 
+// The user's "Add confident items without asking" switch (settings panel).
+// Kept in Supabase auth user_metadata — no table, no migration — and read by
+// the routes from the user they already load (getUser() returns it fresh).
+// Absent = on; off → a turn's whole change set waits on the card.
+export const AUTO_ADD_SETTING = "auto_add_confident";
+
+export function autoAddEnabled(
+  user: { user_metadata?: Record<string, unknown> | null } | null | undefined,
+): boolean {
+  return user?.user_metadata?.[AUTO_ADD_SETTING] !== false;
+}
+
 export type RiskClass = `${"leaf" | "objective"}/${"parented" | "top"}/${"hi" | "lo"}`;
 
 export interface ClassStats {

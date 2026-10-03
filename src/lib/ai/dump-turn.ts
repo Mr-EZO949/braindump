@@ -64,7 +64,7 @@ export async function applyTurnChanges(params: {
   ledger: Array<AutoApplyCandidate>;
   // Ledger rows that must wait whatever the calibration says (possible duplicates).
   held: ReadonlySet<string>;
-  // The user's "Auto-add confident items" preference.
+  // The user's "Add confident items without asking" switch (off → all waits).
   autoApply: boolean;
   source: "chat" | "dump";
 }): Promise<Omit<DumpChanges, "notes">> {
@@ -84,7 +84,7 @@ export async function applyTurnChanges(params: {
   }
 
   // 2 · Apply what is safe; the rest waits.
-  const { now, ask } = splitByPolicy(ops, autoRefs);
+  const { now, ask } = splitByPolicy(ops, autoRefs, params.autoApply);
   const outcome =
     now.length > 0
       ? await timed("apply.changeset", () => applyChangeSet(ctx, now, { source: params.source }))
@@ -184,7 +184,7 @@ export async function applyDumpChanges(params: {
   built: BuilderSuccess;
   // Completions the priority read did not overrule ("did it, now waiting").
   completeExistingNodeIds: string[];
-  // The user's "Auto-add confident items" preference.
+  // The user's "Add confident items without asking" switch (off → all waits).
   autoApply: boolean;
   source?: "chat" | "dump";
 }): Promise<DumpChanges> {

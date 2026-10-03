@@ -12,7 +12,7 @@ import { readDumpReply } from "@/lib/ai/dump-reply";
 import type { DumpStage } from "@/lib/chat/dump-stream";
 import { sanitizeHistory, type HistoryTurn } from "@/lib/ai/chat-memory";
 import { looksLikeRestructure } from "@/lib/graph/dump-heuristic";
-import { loadCalibrationStats, selectAutoApply } from "@/lib/ai/auto-apply";
+import { autoAddEnabled, loadCalibrationStats, selectAutoApply } from "@/lib/ai/auto-apply";
 import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { readDumpPriorities, statusTouchedIds, type DumpPriorityRead } from "@/lib/ai/dump-priorities";
@@ -143,7 +143,6 @@ export async function POST(req: NextRequest) {
     workspace_id,
     source_type = "brain_dump",
     default_parent_node_id,
-    auto_apply = true,
     history: rawHistory,
     stream = false,
     retry_entry_id,
@@ -157,8 +156,6 @@ export async function POST(req: NextRequest) {
     // by the "suggest steps" flow so the generated subtasks anchor under
     // the source node instead of falling back to the workspace root.
     default_parent_node_id?: string | null;
-    // The user's "Auto-add confident items" preference (default on).
-    auto_apply?: boolean;
     // A dump typed in the chat composer: the conversation so far, for the reply.
     history?: unknown;
     // Answer in NDJSON: a line per stage, then the result (lib/chat/dump-stream.ts).
@@ -293,7 +290,8 @@ export async function POST(req: NextRequest) {
       workspaceId: workspace_id,
       rawEntryId: rawEntry.id as string,
       text: trimmed,
-      autoApply: auto_apply !== false,
+      // The user's "Add confident items without asking" switch (settings).
+      autoApply: autoAddEnabled(user),
       history: sanitizeHistory(rawHistory),
     };
     // One log line per dump: where its time went (lib/perf/timings.ts).
@@ -623,7 +621,7 @@ export async function POST(req: NextRequest) {
   // normal review route and offers a one-tap Undo. Best-effort — on any error
   // everything simply goes to review, as before.
   let autoApplyProposalIds: string[] = [];
-  if (auto_apply !== false && result.proposedNodes.length > 0) {
+  if (autoAddEnabled(user) && result.proposedNodes.length > 0) {
     try {
       const stats = await loadCalibrationStats(supabase, user.id);
       autoApplyProposalIds = selectAutoApply({

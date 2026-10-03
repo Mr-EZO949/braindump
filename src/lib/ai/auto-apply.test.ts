@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTO_ADD_SETTING,
   AUTO_APPLY_THRESHOLD,
+  autoAddEnabled,
   posteriorAcceptRate,
   riskClassOf,
   selectAutoApply,
@@ -20,6 +22,17 @@ const candidate = (
   proposed_node_type: "task",
   extraction_confidence: 0.9,
   ...overrides,
+});
+
+describe("autoAddEnabled", () => {
+  it("is on unless the user turned it off", () => {
+    expect(autoAddEnabled(null)).toBe(true);
+    expect(autoAddEnabled({})).toBe(true);
+    expect(autoAddEnabled({ user_metadata: null })).toBe(true);
+    expect(autoAddEnabled({ user_metadata: { full_name: "Ezo" } })).toBe(true);
+    expect(autoAddEnabled({ user_metadata: { [AUTO_ADD_SETTING]: true } })).toBe(true);
+    expect(autoAddEnabled({ user_metadata: { [AUTO_ADD_SETTING]: false } })).toBe(false);
+  });
 });
 
 describe("posteriorAcceptRate", () => {

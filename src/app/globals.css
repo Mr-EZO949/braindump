@@ -4125,6 +4125,82 @@ input[type="search"]::-webkit-search-results-decoration {
   color: var(--color-text-secondary);
 }
 
+/* On/off switch (SystemPanel — "Add confident items without asking") */
+.sp-switch-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.sp-switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sp-switch-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.sp-switch-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.sp-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 20px;
+  margin-top: 1px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--color-text-muted) 45%, transparent);
+  border-radius: 999px;
+  background: var(--color-bg-surface-hover);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast),
+    border-color var(--motion-fast);
+}
+
+.sp-switch[data-on] {
+  border-color: var(--color-accent-primary);
+  background: var(--color-accent-primary);
+}
+
+.sp-switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sp-switch:focus-visible {
+  outline: 2px solid var(--color-accent-primary);
+  outline-offset: 2px;
+}
+
+.sp-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--color-text-muted);
+  transition:
+    transform var(--motion-fast),
+    background-color var(--motion-fast);
+}
+
+.sp-switch[data-on] .sp-switch-knob {
+  transform: translateX(14px);
+  background: #fff;
+}
+
 .sp-menu-btn--danger:hover:not(:disabled) {
   color: #e05a5a;
 }

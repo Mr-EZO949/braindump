@@ -66,6 +66,12 @@ describe("splitByPolicy", () => {
     expect(splitByPolicy(ops, new Set()).ask).toHaveLength(2);
     expect(splitByPolicy(ops, new Set(["n1"])).now).toHaveLength(2);
   });
+
+  it("with the auto-add switch off, everything waits — completions and links too", () => {
+    const { now, ask } = splitByPolicy(MIXED, new Set(["n1", "n2", "n3", "n4", "n5"]), false);
+    expect(now).toEqual([]);
+    expect(ask).toEqual(MIXED);
+  });
 });
 
 describe("resolveRefs", () => {

@@ -34,6 +34,7 @@ import {
   AI_TEMPERATURE,
   claudeRequestTuning,
 } from "@/lib/ai/config";
+import { autoAddEnabled } from "@/lib/ai/auto-apply";
 import { normalizeAIError } from "@/lib/ai/errors";
 import { recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
@@ -156,11 +157,10 @@ export async function POST(req: NextRequest) {
     return new Response("Invalid JSON body", { status: 400 });
   }
 
-  const { run_id, decision, choice, accepted_indexes, auto_apply } = body as {
+  const { run_id, decision, choice, accepted_indexes } = body as {
     run_id?: string;
     decision?: string;
     choice?: string;
-    auto_apply?: boolean;
     // A change-set card accepted in part: the positions of the rows the user
     // kept. Absent → all of them.
     accepted_indexes?: unknown;
@@ -222,7 +222,7 @@ export async function POST(req: NextRequest) {
     defer: (work: () => Promise<void>) => after(work),
     // For a build_graph the model proposes later in this same turn.
     userMessage: lastUserQuestion(messages),
-    autoApply: auto_apply !== false,
+    autoApply: autoAddEnabled(user),
   };
 
   // A change set a BRAIN DUMP asked for (api/entries puts the builder's edits
