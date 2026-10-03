@@ -159,7 +159,14 @@ export async function applyTurnChanges(params: {
   });
   await settleLedger({ supabase, userId, workspaceId }, { accepted: acceptedLedger, rejected: [] });
 
-  return { added, done, links, undo, waiting: resolveRefs(ask, refToId) };
+  // A waiting rename names its row by the title before it: once applied, the
+  // node's own title is already the new one ("X: rename to X").
+  const waiting = ask.map((op): ChangeOp => {
+    if (op.kind !== "update" || !op.title || op.before_title) return op;
+    const before = titleByRef.get(op.node_id);
+    return before ? { ...op, before_title: before } : op;
+  });
+  return { added, done, links, undo, waiting: resolveRefs(waiting, refToId) };
 }
 
 export async function applyDumpChanges(params: {

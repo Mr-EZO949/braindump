@@ -53,7 +53,9 @@ vi.mock("@/lib/graph/status-transition", () => ({
   }),
 }));
 
+import { applyTurnChanges } from "@/lib/ai/dump-turn";
 import { dispatchTool } from "@/lib/ai/tools";
+import { describeChange, namerFor } from "@/lib/chat/change-describe";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { planChange } from "@/lib/ai/tools/change";
 import { createFakeSupabase, type FakeSupabase } from "@/lib/test/fake-supabase";
@@ -280,6 +282,27 @@ describe("chat's change tool: what the user said applies, the rest waits", () =>
     expect(String(result.error)).toContain("1 of 2");
     expect(parentOf(db, "Test & Market BrainDump")).toBe("Money Projects");
     expect(byTitle(db, "Fix the bugs")).toBeDefined();
+  });
+});
+
+describe("a dump's or build_graph's waiting rows", () => {
+  it("a rename keeps its old title, so the row still reads right after Apply (#10)", async () => {
+    const db = seed();
+    const changes = await applyTurnChanges({
+      ctx: ctxFor(db),
+      ops: [{ kind: "update", node_id: "fused", title: "Test BrainDump" }],
+      ledger: [],
+      held: new Set(),
+      autoApply: false,
+      source: "dump",
+    });
+    expect(changes.waiting).toEqual([
+      { kind: "update", node_id: "fused", title: "Test BrainDump", before_title: "Test & Market BrainDump" },
+    ]);
+
+    // Applied: the graph now calls the node by its new title.
+    const nameOf = namerFor(changes.waiting, new Map([["fused", "Test BrainDump"]]));
+    expect(describeChange(changes.waiting[0], nameOf)).toBe('Test & Market BrainDump: rename to "Test BrainDump"');
   });
 });
 
