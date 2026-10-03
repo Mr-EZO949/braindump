@@ -4915,7 +4915,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         {brainDumpOpen ? (
           <motion.div
             key="brain-dump"
-            className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
+            className="brain-dump-anchor fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             initial={{ opacity: 0 }}
@@ -4943,7 +4943,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         ) : (
           <motion.div
             key="dock"
-            className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2"
+            className="mode-dock-anchor fixed bottom-6 left-1/2 z-40 -translate-x-1/2"
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             initial={{ opacity: 0 }}
@@ -4951,7 +4951,14 @@ export function AppShell({ initialUser }: AppShellProps) {
           >
             <ModeDock
               mode={appMode}
-              onSetMode={setAppMode}
+              onSetMode={(mode) => {
+                setAppMode(mode);
+                // Phone: the panel is a sheet over the whole view — a tap on
+                // the tab bar means "show me that view", so it steps aside.
+                if (window.matchMedia("(max-width: 640px)").matches) {
+                  setRightPanelOpen(false);
+                }
+              }}
               onOpenBrainDump={() => {
                 setBrainDumpError(null);
                 setBrainDumpFailedEntryId(null);

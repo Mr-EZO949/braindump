@@ -17647,3 +17647,285 @@ button.change-row:disabled {
     opacity: 0.55;
   }
 }
+
+/* ─── Phone layout (≤ 640px) — fix list #17 "mobile view design" ─────────
+ * Everything here sits inside phone/tablet media queries, so desktop is
+ * untouched. Tablet (641–768px) keeps the rules above (full-screen rail,
+ * scrolling dock); a phone gets a bottom tab bar, a Details bottom sheet and
+ * one-row graph filters. */
+
+/* Dock labels: the short form only shows on a phone. */
+.mode-dock-label-short {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  /* The install strip sat on top of the top bar (logo, workspace switcher,
+     panel toggle) until dismissed. Inside the app it now sits just below it. */
+  body:has(.app-topbar) .install-banner {
+    top: calc(64px + env(safe-area-inset-top, 0px));
+    padding-top: 0 !important;
+  }
+
+  /* The "N items look ready" nudge must not float over an open panel or
+     sheet (it sits above them in z-order). */
+  body:has(.context-rail-responsive[data-open="true"]) .freeze-nudge,
+  body:has(.graph-create-overlay-open) .freeze-nudge,
+  body:has(.system-panel[aria-hidden="false"]) .freeze-nudge {
+    display: none;
+  }
+
+  /* Full-width account panel: opaque (the view behind showed through). */
+  .system-panel {
+    background-color: var(--color-bg-surface);
+  }
+}
+
+:root[data-theme="light"] .install-banner {
+  border-color: var(--color-border-subtle);
+  background: rgba(251, 249, 245, 0.96);
+}
+
+@media (max-width: 640px) {
+  /* ── Bottom tab bar ── every mode and action fits at 360px, Brain Dump and
+     Focus included (they used to scroll off the right edge). */
+  .mode-dock-anchor {
+    left: 8px;
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    translate: none;
+  }
+
+  .mode-dock-wrapper {
+    align-items: stretch;
+  }
+
+  .mode-dock {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 2px 1px;
+    max-width: none;
+    overflow: visible;
+    padding: 3px;
+    border-radius: 16px;
+  }
+
+  /* Expanded Lists: Todos / Habits / Roadmap move to their own row above. */
+  .mode-dock::before {
+    content: "";
+    flex-basis: 100%;
+    height: 0;
+  }
+
+  .mode-dock-subbtn {
+    order: -1;
+  }
+
+  .mode-dock-sep,
+  .mode-dock-lists-chevron {
+    display: none;
+  }
+
+  .mode-dock > .mode-dock-btn:not(.mode-dock-subbtn),
+  .mode-dock > .mode-dock-action {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 46px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    padding: 6px 1px 5px;
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+
+  .mode-dock-subbtn {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 11.5px;
+  }
+
+  .mode-dock-label-full {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .mode-dock-label-short {
+    display: inline;
+  }
+
+  .mode-dock-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mode-dock-notice {
+    white-space: normal;
+    max-width: calc(100vw - 32px);
+  }
+
+  /* Brain Dump card: same bottom edge as the tab bar. */
+  .brain-dump-anchor {
+    bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Done / archived shelf: just above the tab bar. */
+  .history-shelf-anchor {
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ── Graph controls ── search on top, then ONE row: type chips scrolling
+     sideways + the Done toggle (they took four rows and half the graph). */
+  .graph-controls-responsive {
+    right: 12px;
+    pointer-events: none;
+  }
+
+  .graph-stage-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    max-width: none;
+  }
+
+  .graph-stage-controls > * {
+    pointer-events: auto;
+  }
+
+  .graph-stage-controls > .graph-search-control {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .type-explorer {
+    flex-wrap: nowrap;
+    max-width: none;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .type-explorer::-webkit-scrollbar {
+    display: none;
+  }
+
+  .type-explorer > * {
+    flex-shrink: 0;
+  }
+
+  /* ── "N items look ready" nudge: text above the buttons, above the bar. */
+  .freeze-nudge {
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    width: calc(100vw - 24px);
+    max-width: none;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .freeze-nudge-text {
+    flex: 1 1 100%;
+  }
+
+  .freeze-nudge-actions {
+    margin-left: 0;
+  }
+
+  /* ── Details = a bottom sheet over the graph, so the node you tapped stays
+     in view above it; Chat keeps the full height (messages + keyboard). */
+  .context-rail-responsive[data-open="false"] {
+    transform: translateY(100%);
+  }
+
+  .context-rail-responsive[data-tab="details"] {
+    top: 40dvh !important;
+    border-top: 1px solid var(--color-border-subtle);
+    border-radius: 18px 18px 0 0;
+    overflow: hidden;
+    box-shadow: 0 -18px 40px rgba(0, 0, 0, 0.32);
+  }
+
+  /* The panel's own header row ("Panel ×") is a sheet grabber now. */
+  .context-rail-responsive aside > .flex > .border-b {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .context-rail-responsive aside > .flex > .border-b > .md-up-hidden {
+    margin-bottom: 8px;
+  }
+
+  /* ── Lists ── less side padding, room for the tab bar at the bottom. */
+  /* Bottom padding clears the tab bar, two rows tall when Lists is open. */
+  .habits-view {
+    padding: 18px 14px 136px;
+  }
+
+  .todos-view {
+    padding-bottom: 136px;
+  }
+
+  .habit-card {
+    padding: 12px;
+  }
+
+  .habit-strip {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .habit-strip-num {
+    width: 34px;
+    height: 34px;
+  }
+
+  .habits-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .roadmap-view {
+    padding: 20px 14px 136px;
+  }
+
+  .assistant-planner {
+    padding-bottom: 136px;
+  }
+
+  /* Account panel: its last rows (theme, sign out) scroll clear of the bar. */
+  .system-panel > div {
+    padding-bottom: 140px;
+  }
+
+  /* ── Edit mode ── the pencil already shows the mode; "New node" is a +. */
+  .graph-edit-mode-chip {
+    display: none;
+  }
+
+  .graph-create-trigger > span {
+    display: none;
+  }
+
+  .graph-create-trigger {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  /* Create / edit sheet: full width, ends above the tab bar. */
+  .graph-create-sheet-shell {
+    align-items: flex-end;
+    /* Below the graph toolbar (it stays on top), above the tab bar. */
+    padding: 58px 10px calc(74px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .graph-create-sheet {
+    width: 100%;
+    max-height: 100%;
+    border-radius: 20px;
+  }
+}

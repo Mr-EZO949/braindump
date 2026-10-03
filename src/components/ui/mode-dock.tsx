@@ -48,6 +48,21 @@ function nextSundayLabel(now = new Date()): string {
   return target.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
 }
 
+// A dock label. On a phone the dock is a bottom tab bar with ~42px per item,
+// so a long label shows a short form there; the full one stays for screen
+// readers. On wider screens the short form is display:none (see globals.css).
+function DockLabel({ full, short }: { full: string; short?: string }) {
+  if (!short) return <span className="mode-dock-label">{full}</span>;
+  return (
+    <>
+      <span className="mode-dock-label mode-dock-label-full">{full}</span>
+      <span aria-hidden="true" className="mode-dock-label mode-dock-label-short">
+        {short}
+      </span>
+    </>
+  );
+}
+
 const SUB_BTN_TRANSITION = { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const };
 
 const LISTS_EXPANDED_KEY = "dock.listsExpanded";
@@ -155,7 +170,7 @@ export function ModeDock({
           type="button"
         >
           <NetworkIcon className="h-[13px] w-[13px]" />
-          Graph
+          <DockLabel full="Graph" />
         </button>
 
         <button
@@ -167,7 +182,7 @@ export function ModeDock({
           type="button"
         >
           <SparklesIcon className="h-[13px] w-[13px]" />
-          Planner
+          <DockLabel full="Planner" />
         </button>
 
         <button
@@ -182,7 +197,7 @@ export function ModeDock({
           title={listsExpanded ? "Hide Lists row" : "Show Lists row"}
         >
           <ListIcon className="h-[13px] w-[13px]" />
-          Lists
+          <DockLabel full="Lists" />
           <ChevronDownIcon
             className="mode-dock-lists-chevron h-[11px] w-[11px]"
             data-open={listsExpanded}
@@ -207,7 +222,7 @@ export function ModeDock({
                 style={{ overflow: "hidden", whiteSpace: "nowrap" }}
               >
                 <CheckSquareIcon className="h-[12px] w-[12px]" />
-                Todos
+                <DockLabel full="Todos" />
               </motion.button>
               <motion.button
                 key="habits"
@@ -224,7 +239,7 @@ export function ModeDock({
                 style={{ overflow: "hidden", whiteSpace: "nowrap" }}
               >
                 <FlameIcon className="h-[12px] w-[12px]" />
-                Habits
+                <DockLabel full="Habits" />
               </motion.button>
               <motion.button
                 key="roadmap"
@@ -241,7 +256,7 @@ export function ModeDock({
                 style={{ overflow: "hidden", whiteSpace: "nowrap" }}
               >
                 <RoadmapIcon className="h-[12px] w-[12px]" />
-                Roadmap
+                <DockLabel full="Roadmap" />
               </motion.button>
             </>
           ) : null}
@@ -257,7 +272,7 @@ export function ModeDock({
           title="Pomodoro focus timer"
         >
           <TimerIcon className="h-[13px] w-[13px]" />
-          Pomodoro
+          <DockLabel full="Pomodoro" short="Timer" />
         </button>
 
         <div className="mode-dock-sep" aria-hidden="true" />
@@ -275,7 +290,7 @@ export function ModeDock({
           ) : (
             <ChartBarIcon className="h-[12px] w-[12px]" />
           )}
-          Weekly Review
+          <DockLabel full="Weekly Review" short="Review" />
         </button>
 
         <button
@@ -286,7 +301,7 @@ export function ModeDock({
           title="View past brain dumps"
         >
           <ListIcon className="h-[12px] w-[12px]" />
-          History
+          <DockLabel full="History" />
         </button>
 
         <div className="mode-dock-sep" aria-hidden="true" />
@@ -299,7 +314,7 @@ export function ModeDock({
           title="Capture anything on your mind"
         >
           <BoltIcon className="h-[13px] w-[13px]" />
-          Brain Dump
+          <DockLabel full="Brain Dump" short="Dump" />
         </button>
 
         <button
@@ -315,7 +330,7 @@ export function ModeDock({
           title="Focus: today's top priorities, summary, and quick add to planner"
         >
           <TargetIcon className="h-[13px] w-[13px]" />
-          Focus
+          <DockLabel full="Focus" />
         </button>
       </div>
     </div>

@@ -296,6 +296,7 @@ export function ContextRail({
       }`}
       style={{ width: open ? railWidth : 28 }}
       data-open={open ? "true" : "false"}
+      data-tab={activeTab}
       data-tour="context-rail"
     >
       <button

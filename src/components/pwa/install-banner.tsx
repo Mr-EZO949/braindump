@@ -47,7 +47,7 @@ export function InstallBanner() {
 
   return (
     <div
-      className="fixed inset-x-0 top-0 z-50 border-b border-[rgba(255,255,255,0.08)] bg-[rgba(11,11,13,0.95)] backdrop-blur-md"
+      className="install-banner fixed inset-x-0 top-0 z-50 border-b border-[rgba(255,255,255,0.08)] bg-[rgba(11,11,13,0.95)] backdrop-blur-md"
       style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
       role="region"
       aria-label="Install BrainDump"
