@@ -1,6 +1,6 @@
 // Inline confirmation card for a paused assistant mutation.
 // Renders under the assistant bubble when the chat stream surfaces a
-// <<BRAINDUMP_PAUSE>>...<</BRAINDUMP_PAUSE>> marker. Accept/Reject both POST
+// <<BRAINDUMP_PAUSE>>...<</BRAINDUMP_PAUSE>> marker. Apply/Skip both POST
 // to /api/assistant/chat/resume; the streaming response from that endpoint
 // is threaded back into the same assistant message by the caller.
 
@@ -18,7 +18,7 @@ interface PendingActionCardProps {
   onResolve: (decision: "accept" | "reject" | "choice", choice?: string, acceptedIndexes?: number[]) => void;
   // Node id → title, so the card names nodes instead of showing UUIDs.
   nodeTitles?: ReadonlyMap<string, string>;
-  // After Accept: puts the accepted rows back (action.undo).
+  // After Apply: puts the applied rows back (action.undo).
   onUndo?: () => void;
 }
 
@@ -82,7 +82,7 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles, onU
   );
   const selection = useChangeSelection(changeOps);
 
-  // ask_choice renders as a forced-choice question rather than an Accept/Reject
+  // ask_choice renders as a forced-choice question rather than an Apply/Skip
   // mutation card. The picked option resumes the loop as the tool result.
   if (action.toolName === "ask_choice") {
     const question =
@@ -233,9 +233,9 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles, onU
             >
               {selection.accepted.length === changes.length
                 ? changes.length === 1
-                  ? "Accept"
-                  : `Accept all ${changes.length}`
-                : `Accept ${selection.accepted.length} of ${changes.length}`}
+                  ? "Apply"
+                  : `Apply all ${changes.length}`
+                : `Apply ${selection.accepted.length} of ${changes.length}`}
             </button>
           ) : (
             <button
@@ -244,7 +244,7 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles, onU
               disabled={disabled}
               type="button"
             >
-              Accept
+              Apply
             </button>
           )}
           <button
@@ -253,7 +253,7 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles, onU
             disabled={disabled}
             type="button"
           >
-            Reject
+            Skip
           </button>
         </div>
       ) : null}
@@ -265,7 +265,8 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles, onU
       ) : null}
       {accepted ? (
         <div className="pending-action-status pending-action-status-accepted">
-          {action.undoStatus === "undone" ? "Put back" : "Accepted"}
+          {/* The same words as the turn card's waiting section. */}
+          {action.undoStatus === "undone" ? "Put back" : "Applied"}
           {action.undo && action.undo.length > 0 && onUndo && action.undoStatus !== "undone" ? (
             action.undoStatus === "undoing" ? (
               <span className="applied-card-busy"> · Undoing…</span>
@@ -278,7 +279,7 @@ export function PendingActionCard({ action, disabled, onResolve, nodeTitles, onU
         </div>
       ) : null}
       {rejected ? (
-        <div className="pending-action-status pending-action-status-rejected">Declined</div>
+        <div className="pending-action-status pending-action-status-rejected">Left as it was</div>
       ) : null}
       {errored ? (
         <div className="pending-action-status pending-action-status-error">
