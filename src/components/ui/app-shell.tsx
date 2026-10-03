@@ -3130,13 +3130,17 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
-  const handleBrainDumpSubmit = async () => {
+  // A fresh dump, or (retryEntryId) the failed one again: the same one turn —
+  // reply, card, progress. Until 2026-10-03 a retry opened the old review
+  // modal and dropped any reorganization the dump asked for.
+  const handleBrainDumpSubmit = async (retryEntryId?: string) => {
     const trimmed = brainDumpValue.trim();
     // Use the workspace captured at open time, not the current selection.
     const targetWorkspaceId = brainDumpWorkspaceId ?? selectedWorkspaceId;
-    if (!trimmed || brainDumpSubmitting || !targetWorkspaceId) return;
+    if ((!trimmed && !retryEntryId) || brainDumpSubmitting || !targetWorkspaceId) return;
 
     setBrainDumpSubmitting(true);
+    if (retryEntryId) setBrainDumpRetrying(true);
     setBrainDumpError(null);
     setBrainDumpFailedEntryId(null);
     const startedAt = Date.now();
@@ -3150,6 +3154,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           workspace_id: targetWorkspaceId,
           auto_apply: readAutoApplyPreference(),
           stream: true,
+          ...(retryEntryId ? { retry_entry_id: retryEntryId } : {}),
         }),
       });
       const read = await readDumpResponse<{
@@ -3182,61 +3187,14 @@ export function AppShell({ initialUser }: AppShellProps) {
       );
     } finally {
       setBrainDumpSubmitting(false);
+      setBrainDumpRetrying(false);
       setDumpProgress(null);
     }
   };
 
   const handleBrainDumpRetry = async () => {
-    if (!brainDumpFailedEntryId || brainDumpRetrying) {
-      return;
-    }
-
-    setBrainDumpRetrying(true);
-    setBrainDumpError(null);
-    try {
-      const res = await fetch(`/api/entries/${brainDumpFailedEntryId}/retry`, {
-        method: "POST",
-      });
-      const data = await res.json() as {
-        proposed_nodes?: ProposedNode[];
-        clarifying_questions?: string[];
-        suggested_areas?: Array<{ title: string; area_type: string }>;
-        raw_entry_id?: string;
-        error?: string;
-      };
-
-      if (!res.ok && res.status !== 207) {
-        setBrainDumpError(data.error ?? "Retry failed.");
-        return;
-      }
-      if (res.status === 207) {
-        setBrainDumpError(data.error ?? "Retry failed.");
-        setBrainDumpFailedEntryId(data.raw_entry_id ?? brainDumpFailedEntryId);
-        return;
-      }
-
-      const retriedDumpText = brainDumpValue.trim();
-      setBrainDumpValue("");
-      setBrainDumpOpen(false);
-      setBrainDumpError(null);
-      setBrainDumpFailedEntryId(null);
-      const nodes = data.proposed_nodes ?? [];
-      const questions = data.clarifying_questions ?? [];
-      if (nodes.length > 0 || questions.length > 0) {
-        setProposedNodes(nodes);
-        setClarifyingQuestions(questions);
-        setSuggestedAreas(data.suggested_areas ?? []);
-        setLastDumpRawText(retriedDumpText);
-        // Retry doesn't echo the dump into chat, so let the clarifying flow
-        // echo it exactly once (#11).
-        dumpInChatRef.current = false;
-        setProposedReviewOpen(true);
-      }
-    } catch (err) {
-      setBrainDumpError(err instanceof Error ? err.message : "Retry failed.");
-    } finally {
-      setBrainDumpRetrying(false);
-    }
+    if (!brainDumpFailedEntryId || brainDumpRetrying) return;
+    await handleBrainDumpSubmit(brainDumpFailedEntryId);
   };
 
   // Create the life-area branches the user selected in the review modal. Runs

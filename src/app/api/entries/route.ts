@@ -144,6 +144,7 @@ export async function POST(req: NextRequest) {
     auto_apply = true,
     history: rawHistory,
     stream = false,
+    retry_entry_id,
   } = body as {
     raw_text: string;
     workspace_id: string;
@@ -160,10 +161,37 @@ export async function POST(req: NextRequest) {
     history?: unknown;
     // Answer in NDJSON: a line per stage, then the result (lib/chat/dump-stream.ts).
     stream?: boolean;
+    // A failed dump's raw_entries id: run it again, from its saved text.
+    retry_entry_id?: string;
   };
 
+  // A retry takes the failed entry back up — the same turn as a fresh dump.
+  let retryEntry: { id: string; raw_text: string } | null = null;
+  if (typeof retry_entry_id === "string") {
+    const { data: failed } = await supabase
+      .from("raw_entries")
+      .select("id, raw_text, status, retry_count")
+      .eq("id", retry_entry_id)
+      .eq("user_id", user.id)
+      .eq("workspace_id", workspace_id)
+      .maybeSingle();
+    if (!failed) {
+      return NextResponse.json({ error: "Raw entry not found" }, { status: 404 });
+    }
+    if (failed.status === "processing") {
+      return NextResponse.json({ error: "Extraction is already in progress" }, { status: 409 });
+    }
+    if (((failed.retry_count as number) ?? 0) >= AI_INGESTION.EXTRACTION_MAX_RETRIES) {
+      return NextResponse.json(
+        { error: `Max retries (${AI_INGESTION.EXTRACTION_MAX_RETRIES}) reached for this dump.` },
+        { status: 429 },
+      );
+    }
+    retryEntry = { id: failed.id as string, raw_text: failed.raw_text as string };
+  }
+
   // Empty input guard
-  const trimmed = raw_text.trim();
+  const trimmed = (retryEntry?.raw_text ?? raw_text).trim();
   if (!trimmed) {
     return NextResponse.json({ error: "raw_text is empty" }, { status: 400 });
   }
@@ -217,19 +245,21 @@ export async function POST(req: NextRequest) {
   if (!rl.allowed) return rateLimitResponse(rl);
 
   // ---------------------------------------------------------------------------
-  // Save raw_entry
+  // Save raw_entry (a retry already has one)
   // ---------------------------------------------------------------------------
-  const { data: rawEntry, error: rawError } = await supabase
-    .from("raw_entries")
-    .insert({
-      user_id: user.id,
-      workspace_id,
-      raw_text: trimmed,
-      source_type,
-      status: "pending",
-    })
-    .select("id")
-    .single();
+  const { data: rawEntry, error: rawError } = retryEntry
+    ? { data: { id: retryEntry.id }, error: null }
+    : await supabase
+        .from("raw_entries")
+        .insert({
+          user_id: user.id,
+          workspace_id,
+          raw_text: trimmed,
+          source_type,
+          status: "pending",
+        })
+        .select("id")
+        .single();
 
   if (rawError || !rawEntry) {
     return NextResponse.json(
@@ -429,7 +459,7 @@ export async function POST(req: NextRequest) {
         raw_entry_id: rawEntry.id,
         status: "failed",
         error: result.error,
-        message: "Extraction failed. You can retry via POST /api/entries/:id/retry",
+        message: "Extraction failed. Retry with POST /api/entries and retry_entry_id.",
         priority_update: priorityUpdate(applied),
         commitment_update: commitmentUpdate,
       },
@@ -732,7 +762,7 @@ async function dumpTurn(params: {
         raw_entry_id: rawEntryId,
         status: "failed",
         error: built.userMessage,
-        message: "Extraction failed. You can retry via POST /api/entries/:id/retry",
+        message: "Extraction failed. Retry with POST /api/entries and retry_entry_id.",
         priority_update: await applyPriorities(),
         commitment_update: commitmentUpdate,
       },

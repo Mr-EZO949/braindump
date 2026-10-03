@@ -312,7 +312,8 @@ Each phase ships on its own and is testable from `testing-journal.md`.
      route), and deleting the chooser.
    - **Not covered:** the HTTP routes and the browser (the local allowlist blocks the test
      user) — the chat turns were assembled exactly as the route does and the tool calls run
-     through `runTurnTools`; `/api/entries/[id]/retry` ignores a dump's restructure.
+     through `runTurnTools`. (A retried dump ignored its restructure until 2026-10-03; it now
+     runs the same turn — `POST /api/entries` with `retry_entry_id`.)
 3. **One thread, one card** — ✅ built 2026-10-01 → 02 (no migration; `extract-v26`,
    `extract-light-v6`, `dump-priorities-v3`, `dump-reply-v3`). Live notes and the driver:
    `docs/unified-turn-handoff.md`.
