@@ -11,9 +11,9 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ denied?: string }>;
+  searchParams: Promise<{ denied?: string; error?: string | string[] }>;
 }) {
-  const { denied } = await searchParams;
+  const { denied, error } = await searchParams;
   const supabase = await getSupabaseServerClient();
   const {
     data: { user },
@@ -64,7 +64,7 @@ export default async function LoginPage({
               ) : null}
             </div>
 
-            <LoginForm />
+            <LoginForm initialError={typeof error === "string" && error ? error.slice(0, 300) : null} />
           </div>
         </section>
         <div className={styles.authSpacer} aria-hidden />

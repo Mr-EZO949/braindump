@@ -4,9 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import styles from "@/components/auth/auth-experience.module.css";
+import { enabledOAuthProviders, oauthRedirectUrl, type OAuthProvider } from "@/lib/auth/oauth";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-
-type OAuthProvider = "google";
 
 function GoogleIcon() {
   return (
@@ -35,26 +34,35 @@ function GoogleIcon() {
   );
 }
 
-// Adding a provider later (Apple, GitHub, Microsoft, …) is a one-line addition
-// here, once it's enabled in the Supabase dashboard. Add the matching id to the
-// OAuthProvider union above. Apple/Microsoft are omitted for now (heavier config:
-// Apple needs a paid developer account).
-const OAUTH_PROVIDERS: ReadonlyArray<{
-  id: OAuthProvider;
-  label: string;
-  icon: React.ReactNode;
-}> = [
-  { id: "google", label: "Continue with Google", icon: <GoogleIcon /> },
-];
+function AppleIcon() {
+  return (
+    <svg aria-hidden="true" height="18" viewBox="0 0 24 24" width="18">
+      <path
+        d="M16.37 12.6c-.02-2.17 1.78-3.22 1.86-3.27-1.01-1.48-2.59-1.69-3.15-1.71-1.34-.14-2.62.79-3.3.79-.68 0-1.73-.77-2.84-.75-1.46.02-2.81.85-3.56 2.16-1.52 2.63-.39 6.53 1.09 8.67.72 1.05 1.58 2.22 2.71 2.18 1.09-.04 1.5-.7 2.82-.7 1.31 0 1.69.7 2.84.68 1.17-.02 1.92-1.07 2.63-2.12.83-1.21 1.17-2.39 1.19-2.45-.03-.01-2.28-.87-2.29-3.48ZM14.2 6.22c.6-.73 1.01-1.74.9-2.75-.87.04-1.92.58-2.54 1.31-.56.64-1.05 1.67-.92 2.66.97.08 1.96-.49 2.56-1.22Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
 
-export function LoginForm() {
+// A provider shows only when its NEXT_PUBLIC_AUTH_* flag is on (lib/auth/oauth.ts)
+// — set it once the provider is enabled in Supabase (docs/auth-oauth.md).
+const PROVIDER_BUTTONS: Record<OAuthProvider, { label: string; icon: React.ReactNode }> = {
+  google: { label: "Continue with Google", icon: <GoogleIcon /> },
+  apple: { label: "Continue with Apple", icon: <AppleIcon /> },
+};
+const OAUTH_PROVIDERS = enabledOAuthProviders().map((id) => ({ id, ...PROVIDER_BUTTONS[id] }));
+
+// initialError: a failed or cancelled OAuth sign-in comes back as
+// /login?error=... (the callback redirects server-side); the page passes it in.
+export function LoginForm({ initialError = null }: { initialError?: string | null }) {
   const router = useRouter();
   const supabase = getSupabaseBrowserClient();
   const [authMode, setAuthMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(initialError);
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [pendingConfirmEmail, setPendingConfirmEmail] = useState<string | null>(null);
@@ -67,17 +75,10 @@ export function LoginForm() {
   // the same tick can both clear the disabled guard before React re-renders.
   const resendInFlightRef = useRef(false);
 
-  // A failed/cancelled OAuth bounces to /login?error=... — surface it (the
-  // callback redirects server-side, so this form mounts fresh with the param).
+  // Shown once: drop ?error= from the address so a reload doesn't repeat it.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const err = params.get("error");
-    if (err) {
-      setErrorMessage(err);
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-  }, []);
+    if (initialError) window.history.replaceState({}, "", window.location.pathname);
+  }, [initialError]);
 
   const isSignUp = authMode === "sign-up";
 
@@ -95,7 +96,7 @@ export function LoginForm() {
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: oauthRedirectUrl(window.location.origin) },
     });
 
     // On success the browser is redirected away, so this only runs on failure.
@@ -226,26 +227,30 @@ export function LoginForm() {
         </button>
       </div>
 
-      <div className={styles.oauthRow}>
-        {OAUTH_PROVIDERS.map((provider) => (
-          <button
-            className={styles.oauthButton}
-            disabled={oauthPending !== null}
-            key={provider.id}
-            onClick={() => handleOAuth(provider.id)}
-            type="button"
-          >
-            <span className={styles.oauthIcon}>{provider.icon}</span>
-            <span>
-              {oauthPending === provider.id ? "Redirecting..." : provider.label}
-            </span>
-          </button>
-        ))}
-      </div>
+      {OAUTH_PROVIDERS.length > 0 ? (
+        <>
+          <div className={styles.oauthRow}>
+            {OAUTH_PROVIDERS.map((provider) => (
+              <button
+                className={styles.oauthButton}
+                disabled={oauthPending !== null}
+                key={provider.id}
+                onClick={() => handleOAuth(provider.id)}
+                type="button"
+              >
+                <span className={styles.oauthIcon}>{provider.icon}</span>
+                <span>
+                  {oauthPending === provider.id ? "Redirecting..." : provider.label}
+                </span>
+              </button>
+            ))}
+          </div>
 
-      <div className={styles.orDivider}>
-        <span>or</span>
-      </div>
+          <div className={styles.orDivider}>
+            <span>or</span>
+          </div>
+        </>
+      ) : null}
 
       <form className={styles.form} onSubmit={handleSubmit}>
         <div className={styles.formGrid}>
