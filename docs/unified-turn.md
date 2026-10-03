@@ -369,9 +369,14 @@ Each phase ships on its own and is testable from `testing-journal.md`.
    - Checked: unit tests (fake DB) for the policy, the ops and every undo step;
      `scripts/test-change-tool.ts` (gitignored) on the real DB, 22/22; 8-message prompt eval
      ($0.165); 3 chat turns in the browser.
-   - **Still open:** the breakdown as a builder mode (the last Sonnet chat route); the
-     composer's dump classifier (a dump typed in chat still takes the dump turn — same policy
-     and card now, so the split no longer shows).
+   - **Breakdowns — done 2026-10-03** (fix list #7, #8), as a step-writer rather than a builder
+     mode: `write_steps` (`lib/ai/tools/steps.ts`) hands the node to `lib/ai/step-writer.ts`,
+     ONE focused call (`steps-v1`; Sonnet, Haiku for the next 1–3 steps) that sees the node,
+     its parent, what's under it and the user's words, and returns create ops on a Suggested
+     card. The Details panel's Generate steps uses the same call and parks the card in a fresh
+     thread (`pending_chat_runs`, origin `"steps"`). Chat no longer has a Sonnet route.
+   - **Still open:** the composer's dump classifier (a dump typed in chat still takes the dump
+     turn — same policy and card now, so the split no longer shows).
 5. **Server follow-ups + staged streaming.** Connections as a follow-up card (done in
    phase 3, client-triggered). **Stages built 2026-10-02 for dumps:** with `stream: true`
    `/api/entries` answers in NDJSON — `reading` → `building` (retrieval done, the builder
