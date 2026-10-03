@@ -18,6 +18,9 @@
   --color-border-subtle: rgba(255, 255, 255, 0.05);
   --color-border-faint: rgba(255, 255, 255, 0.035);
   --color-accent-primary: #d53a47;
+  /* Red TEXT (links, small labels). Same red on the dark theme; the light
+     theme darkens it, because #d53a47 on cream is ~4.0:1 — under WCAG AA. */
+  --color-accent-text: #d53a47;
   --color-accent-primary-hover: #e14654;
   --color-accent-primary-active: #bd313f;
   --color-accent-soft: rgba(213, 58, 71, 0.15);
@@ -51,14 +54,19 @@
   --color-text-muted: #756b62;
   --color-border-subtle: #d8cfc3;
   --color-border-faint: #e7dfd5;
-  --color-accent-primary: #b82d3e;
-  --color-accent-primary-hover: #a52134;
-  --color-accent-primary-active: #8f1d2e;
-  --color-accent-soft: rgba(184, 45, 62, 0.09);
-  --color-accent-glow: rgba(184, 45, 62, 0.13);
+  /* The brand red, as on the dark theme (fix list #12 — it was #b82d3e). */
+  --color-accent-primary: #d53a47;
+  /* Small red text only: #b22f3c is ≥4.6:1 on every light surface (cream
+     #f2efe9 5.4, stage #e3ddd0 4.6, white 6.2). Fills, borders and white-on-red
+     buttons (4.6:1) keep the brand red. */
+  --color-accent-text: #b22f3c;
+  --color-accent-primary-hover: #c0303e;
+  --color-accent-primary-active: #a92b38;
+  --color-accent-soft: rgba(213, 58, 71, 0.09);
+  --color-accent-glow: rgba(213, 58, 71, 0.13);
   --shadow-shell: 0 12px 32px rgba(69, 45, 34, 0.09), 0 2px 5px rgba(69, 45, 34, 0.04);
   --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.88);
-  --shadow-focus: 0 0 0 3px rgba(184, 45, 62, 0.14);
+  --shadow-focus: 0 0 0 3px rgba(213, 58, 71, 0.16);
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -2367,7 +2375,7 @@ input[type="search"]::-webkit-search-results-decoration {
 .da-complete:hover {
   border-color: var(--color-accent-primary);
   background: var(--color-accent-soft);
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 .da-complete:disabled {
   opacity: 0.5;
@@ -2425,7 +2433,7 @@ input[type="search"]::-webkit-search-results-decoration {
   flex: none;
   width: 18px;
   height: 18px;
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 .da-suggest-card span {
   display: grid;
@@ -2498,7 +2506,7 @@ input[type="search"]::-webkit-search-results-decoration {
   flex: 1;
 }
 .da-utility--archive:hover {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 .da-utility--archive {
   color: var(--color-text-muted);
@@ -3413,7 +3421,7 @@ input[type="search"]::-webkit-search-results-decoration {
   color: var(--color-text);
 }
 .sp-usage-cell--big .sp-usage-count {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 .sp-usage-label {
   font-size: 12px;
@@ -3527,7 +3535,7 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .sp-goal-remove:hover {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 
 .sp-goal-add {
@@ -3542,7 +3550,7 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .sp-error {
   font-size: 11px;
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
   margin: 0 0 10px;
 }
 
@@ -3654,7 +3662,7 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .sp-profile-btn:hover .sp-profile-btn-arrow {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
   transform: translateX(2px);
 }
 
@@ -3934,7 +3942,7 @@ input[type="search"]::-webkit-search-results-decoration {
   gap: 3px;
   font-size: 12px;
   font-weight: 560;
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
   transition: color var(--motion-fast);
 }
 
@@ -4010,7 +4018,7 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .sp-plan-card--pro .sp-plan-card-tag {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 
 .sp-plan-card-price {
@@ -4053,7 +4061,7 @@ input[type="search"]::-webkit-search-results-decoration {
   content: "→";
   position: absolute;
   left: 0;
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 
 .sp-plan-upgrade {
@@ -6430,7 +6438,7 @@ input[type="search"]::-webkit-search-results-decoration {
 
 .history-shelf-restore:hover {
   border-color: var(--color-accent-primary);
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 
 .history-shelf-empty {
@@ -7377,7 +7385,7 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .brain-dump-action-btn-active {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 
 .brain-dump-rec-dot {
@@ -7525,7 +7533,7 @@ input[type="search"]::-webkit-search-results-decoration {
   border-color: rgba(224, 167, 94, 0.3);
 }
 .prn-size-badge--big {
-  color: #d53a47;
+  color: var(--color-accent-text);
   background: rgba(213, 58, 71, 0.14);
   border-color: rgba(213, 58, 71, 0.4);
 }
@@ -7798,7 +7806,7 @@ input[type="search"]::-webkit-search-results-decoration {
   height: 18px;
   border-radius: 50%;
   background: rgba(213, 58, 71, 0.16);
-  color: #d53a47;
+  color: var(--color-accent-text);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
@@ -7841,7 +7849,7 @@ input[type="search"]::-webkit-search-results-decoration {
   border-radius: 999px;
   border: 1px solid rgba(213, 58, 71, 0.35);
   background: transparent;
-  color: #d53a47;
+  color: var(--color-accent-text);
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
@@ -7908,7 +7916,7 @@ input[type="search"]::-webkit-search-results-decoration {
   border-radius: 6px;
   border: 1px solid rgba(213, 58, 71, 0.32);
   background: rgba(213, 58, 71, 0.12);
-  color: #d53a47;
+  color: var(--color-accent-text);
   font-size: 14px;
   cursor: pointer;
   transition: background var(--motion-fast), border-color var(--motion-fast), opacity var(--motion-fast);
@@ -7940,7 +7948,7 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .prn-question-answer-arrow {
-  color: #d53a47;
+  color: var(--color-accent-text);
   font-style: normal;
   font-weight: 700;
 }
@@ -8075,7 +8083,7 @@ input[type="search"]::-webkit-search-results-decoration {
   height: 40px;
   border-radius: 50%;
   background: rgba(213, 58, 71, 0.10);
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 
 .step-suggest-body {
@@ -8416,7 +8424,7 @@ input[type="search"]::-webkit-search-results-decoration {
   transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
 }
 .auto-apply-notice-undo:hover {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
   border-color: var(--color-accent-primary);
   background: rgba(213, 58, 71, 0.08);
 }
@@ -8446,7 +8454,7 @@ input[type="search"]::-webkit-search-results-decoration {
   transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
 }
 .ai-status-cancel:hover {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
   border-color: var(--color-accent-primary);
   background: rgba(213, 58, 71, 0.08);
 }
@@ -10211,7 +10219,7 @@ input[type="search"]::-webkit-search-results-decoration {
 }
 
 .timeline-fixed-del:hover {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
   background: var(--color-accent-soft);
 }
 
@@ -10536,7 +10544,7 @@ input[type="search"]::-webkit-search-results-decoration {
 .chat-starter-prompt::after {
   content: "→";
   font-size: 13px;
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
   opacity: 0;
   transform: translateX(-4px);
   transition:
@@ -12768,7 +12776,7 @@ input[type="search"]::-webkit-search-results-decoration {
 /* Light theme: ground the title in the accent so the empty canvas still
    reads as "yours" against the brighter surface. */
 :root[data-theme="light"] .graph-empty-state-title {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 
 /* Plan view */
@@ -15518,7 +15526,7 @@ body:has(.app-shell[data-app-mode="graph"]) {
 }
 
 .todo-section[data-tone="overdue"] .todo-section-title {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 
 .todo-section-type {
@@ -15725,7 +15733,7 @@ body:has(.app-shell[data-app-mode="graph"]) {
 }
 
 .todo-due[data-tone="overdue"] {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
   background: var(--color-accent-soft);
 }
 
@@ -16519,7 +16527,7 @@ body:has(.app-shell[data-app-mode="graph"]) {
   padding: 2px 0;
   font-size: 11.5px;
   font-weight: 600;
-  color: #d53a47;
+  color: var(--color-accent-text);
   cursor: pointer;
 }
 .dump-history-more:hover {
@@ -16811,7 +16819,7 @@ body:has(.app-shell[data-app-mode="graph"]) {
   transition: color var(--motion-fast);
 }
 .freeze-nudge-dismiss:hover {
-  color: var(--color-accent-primary);
+  color: var(--color-accent-text);
 }
 
 /* Focus button glow — pulls the indecisive user to their priority list, and

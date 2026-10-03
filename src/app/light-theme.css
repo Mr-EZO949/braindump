@@ -18,7 +18,7 @@
 }
 
 :root[data-theme="light"] :is(button, a, input, textarea, select):focus-visible {
-  outline: 2px solid rgba(184, 45, 62, 0.65);
+  outline: 2px solid rgba(213, 58, 71, 0.65);
   outline-offset: 2px;
 }
 
@@ -83,7 +83,7 @@
   color: #fff;
   background: var(--color-accent-primary);
   border-color: var(--color-accent-primary);
-  box-shadow: 0 4px 12px rgba(184, 45, 62, 0.2);
+  box-shadow: 0 4px 12px rgba(213, 58, 71, 0.2);
 }
 
 :root[data-theme="light"] .mode-dock-action.mode-dock-call:hover {
@@ -140,7 +140,7 @@
 :root[data-theme="light"] .graph-canvas-ambient {
   background: radial-gradient(
     290px circle at var(--graph-cursor-x) var(--graph-cursor-y),
-    rgba(184, 45, 62, 0.075),
+    rgba(213, 58, 71, 0.075),
     transparent 75%
   );
 }
@@ -170,7 +170,7 @@
 
 :root[data-theme="light"] .graph-edit-toggle-active {
   background: #f6e7e4;
-  border-color: rgba(184, 45, 62, 0.38);
+  border-color: rgba(213, 58, 71, 0.38);
   color: #922838;
 }
 
@@ -208,7 +208,7 @@
 
 :root[data-theme="light"] .type-explorer-chip[data-active="true"] {
   background: #f3e5e2;
-  border-color: rgba(184, 45, 62, 0.32);
+  border-color: rgba(213, 58, 71, 0.32);
   color: #922838;
 }
 
@@ -327,7 +327,7 @@
   background: var(--color-accent-primary);
   color: #fff;
   border-color: var(--color-accent-primary);
-  box-shadow: 0 4px 12px rgba(184, 45, 62, 0.2);
+  box-shadow: 0 4px 12px rgba(213, 58, 71, 0.2);
 }
 
 :root[data-theme="light"] .shell-button.shell-button-primary {
@@ -391,7 +391,7 @@
 :root[data-theme="light"] .detail-action-pill--danger {
   background: #fff7f5;
   border-color: #e4c5c2;
-  color: #a52134;
+  color: var(--color-accent-text);
 }
 
 :root[data-theme="light"] .da-suggest-card {
@@ -559,7 +559,7 @@
 }
 
 :root[data-theme="light"] .graph-create-preview-wash {
-  background: linear-gradient(135deg, rgba(184, 45, 62, 0.08), transparent 70%);
+  background: linear-gradient(135deg, rgba(213, 58, 71, 0.08), transparent 70%);
 }
 
 :root[data-theme="light"]
@@ -618,7 +618,7 @@
 
 :root[data-theme="light"] .graph-connection-action-danger,
 :root[data-theme="light"] .graph-create-danger-trigger {
-  color: #a52134;
+  color: var(--color-accent-text);
 }
 
 :root[data-theme="light"] .graph-create-danger-panel {
@@ -637,14 +637,14 @@
   background: var(--color-accent-primary);
   border-color: var(--color-accent-primary);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(184, 45, 62, 0.2);
+  box-shadow: 0 4px 12px rgba(213, 58, 71, 0.2);
 }
 
 :root[data-theme="light"] .graph-create-primary:hover,
 :root[data-theme="light"] .graph-create-danger-confirm:hover {
   background: var(--color-accent-primary-hover);
   border-color: var(--color-accent-primary-hover);
-  box-shadow: 0 6px 16px rgba(184, 45, 62, 0.23);
+  box-shadow: 0 6px 16px rgba(213, 58, 71, 0.23);
 }
 
 :root[data-theme="light"] .graph-create-actions {
@@ -657,7 +657,7 @@
 /* Lists and planning share the same paper card hierarchy. */
 :root[data-theme="light"] .lists-bg::before {
   background:
-    radial-gradient(55vw 55vh at -10% 110%, rgba(184, 45, 62, 0.055), transparent 70%),
+    radial-gradient(55vw 55vh at -10% 110%, rgba(213, 58, 71, 0.055), transparent 70%),
     radial-gradient(46vw 46vh at 110% -10%, rgba(176, 127, 89, 0.07), transparent 68%);
 }
 
@@ -819,13 +819,13 @@
 :root[data-theme="light"] .lockin-hero {
   background: linear-gradient(135deg, #fbeae7, #fff7f3 63%, #fffdfa);
   border-color: #e6bdbb;
-  box-shadow: 0 10px 25px rgba(184, 45, 62, 0.08);
+  box-shadow: 0 10px 25px rgba(213, 58, 71, 0.08);
 }
 
 :root[data-theme="light"] .lockin-hero:hover {
   background: linear-gradient(135deg, #f8e0dc, #fff3ef 70%);
   border-color: #ce8e92;
-  box-shadow: 0 14px 28px rgba(184, 45, 62, 0.12);
+  box-shadow: 0 14px 28px rgba(213, 58, 71, 0.12);
 }
 
 :root[data-theme="light"] .lockin-backup:hover,
