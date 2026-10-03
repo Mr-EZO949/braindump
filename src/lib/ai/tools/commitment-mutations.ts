@@ -14,9 +14,11 @@ import {
   type Commitment,
 } from "@/lib/planner/commitments";
 import {
+  COMMITMENT_SOURCES,
   parseCommitmentChanges,
   type CommitmentChange,
   type CommitmentFields,
+  type CommitmentSource,
   type CommitmentUndo,
 } from "@/lib/planner/commitment-changes";
 import { localDateISO } from "@/lib/time/local-date";
@@ -120,6 +122,16 @@ export async function applyCommitmentChanges(ctx: ToolContext, input: unknown, s
   });
 
   const byId = new Map(existing.map((c) => [c.id, c]));
+  // Who saved the ones about to change or go, for the Undo to put back.
+  const touched = changes.flatMap((c) => (c.action === "add" ? [] : [c.commitment_id]));
+  const sourceById = new Map<string, CommitmentSource>();
+  if (touched.length > 0) {
+    const { data } = await ctx.supabase.from("commitments").select("id, source").eq("user_id", ctx.userId).in("id", touched);
+    for (const row of (data ?? []) as Array<{ id: string; source: unknown }>) {
+      const saved = COMMITMENT_SOURCES.find((s) => s === row.source);
+      if (saved) sourceById.set(row.id, saved);
+    }
+  }
   const outcomes: Outcome[] = [];
   for (const change of changes) outcomes.push(await applyOne(ctx, change, byId, source));
 
@@ -131,7 +143,12 @@ export async function applyCommitmentChanges(ctx: ToolContext, input: unknown, s
 
   const undo: CommitmentUndo = {
     created: applied.filter((o) => o.action === "add").map((o) => o.commitment.id),
-    before: applied.filter((o) => o.action !== "add").map((o) => byId.get(o.commitment.id)!),
+    before: applied
+      .filter((o) => o.action !== "add")
+      .map((o) => {
+        const saved = sourceById.get(o.commitment.id);
+        return { ...byId.get(o.commitment.id)!, ...(saved ? { source: saved } : {}) };
+      }),
   };
   const detail = (o: Extract<Outcome, { ok: true }>) =>
     o.action === "remove" ? "Removed" : describeCommitment(o.commitment, today);
@@ -166,7 +183,7 @@ export async function undoCommitmentChanges(ctx: ToolContext, undo: CommitmentUn
     if (error) errors.push(error.message);
   }
   for (const before of undo.before) {
-    const { id, ...fields } = before;
+    const { id, source, ...fields } = before;
     const { data, error } = await ctx.supabase
       .from("commitments")
       .update(toRow(fields))
@@ -181,7 +198,7 @@ export async function undoCommitmentChanges(ctx: ToolContext, undo: CommitmentUn
     if ((data ?? []).length === 0) {
       const { error: insertError } = await ctx.supabase
         .from("commitments")
-        .insert({ id, ...toRow(fields), user_id: ctx.userId, workspace_id: ctx.workspaceId, source: "chat" });
+        .insert({ id, ...toRow(fields), user_id: ctx.userId, workspace_id: ctx.workspaceId, source: source ?? "chat" });
       if (insertError) errors.push(insertError.message);
     }
   }

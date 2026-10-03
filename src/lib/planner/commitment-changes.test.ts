@@ -148,4 +148,11 @@ describe("parseCommitmentUndo", () => {
     expect(parseCommitmentUndo({ created: [], before: [{ ...practice, end_time: "16:00" }] }).ok).toBe(false);
     expect(parseCommitmentUndo({}).ok).toBe(false);
   });
+
+  it("keeps who saved a commitment, so Undo of a removal puts it back as theirs", () => {
+    const fromDump = { ...practice, source: "dump" as const };
+    expect(parseCommitmentUndo({ created: [], before: [fromDump] })).toEqual({ ok: true, undo: { created: [], before: [fromDump] } });
+    const forged = parseCommitmentUndo({ created: [], before: [{ ...practice, source: "admin" }] });
+    expect(forged.ok && forged.undo.before[0]).toEqual(practice);
+  });
 });

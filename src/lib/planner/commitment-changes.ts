@@ -285,9 +285,15 @@ export const COMMITMENT_ACTION_GLYPH: Record<CommitmentAction, string> = {
 // set_commitments applies at once; the browser keeps this snapshot and sends
 // it back on Undo: delete what was added, put back what was changed/removed.
 
+// Who saved a commitment (the commitments.source column).
+export const COMMITMENT_SOURCES = ["chat", "dump", "manual", "import"] as const;
+export type CommitmentSource = (typeof COMMITMENT_SOURCES)[number];
+
 export interface CommitmentUndo {
   created: string[];
-  before: Commitment[];
+  // `source`: who saved it — an Undo that puts back a removed commitment
+  // restores that, not "chat" (it used to).
+  before: Array<Commitment & { source?: CommitmentSource }>;
 }
 
 export function parseCommitmentUndo(
@@ -300,7 +306,7 @@ export function parseCommitmentUndo(
   if (created.length > MAX_CHANGES || before.length > MAX_CHANGES) return { ok: false, error: "undo snapshot too large" };
   if (!created.every((id) => typeof id === "string" && UUID_RE.test(id))) return { ok: false, error: "bad commitment id" };
 
-  const rows: Commitment[] = [];
+  const rows: CommitmentUndo["before"] = [];
   for (const item of before) {
     const row = (item ?? {}) as Record<string, unknown>;
     const id = str(row.id);
@@ -318,6 +324,7 @@ export function parseCommitmentUndo(
     if ((nodeId !== null && !UUID_RE.test(nodeId)) || startsOn === undefined || endsOn === undefined) {
       return { ok: false, error: "bad commitment in undo" };
     }
+    const source = COMMITMENT_SOURCES.find((s) => s === row.source);
     rows.push({
       id,
       title,
@@ -327,6 +334,7 @@ export function parseCommitmentUndo(
       end_time: minutesToTime(end),
       starts_on: startsOn,
       ends_on: endsOn,
+      ...(source ? { source } : {}),
     });
   }
   return { ok: true, undo: { created: created as string[], before: rows } };
