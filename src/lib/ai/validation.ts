@@ -487,7 +487,19 @@ export function validateEdgeInferenceOutput(
 
 const VALID_BLOCK_TYPES = new Set(["focus", "admin", "break", "buffer"]);
 
-export function validatePlanOutput(raw: unknown, totalMinutes?: number): PlanOutput {
+const normalizeTitle = (title: string) => title.toLowerCase().replace(/[^a-z0-9à-ÿ]+/g, " ").trim();
+
+/**
+ * `busyTitles`: the fixed commitments inside the session. An unlinked block
+ * with one of their titles only restates busy time — on a 15-hour day with a
+ * lecture, Sonnet wrote a 4-hour "Stats lecture" placeholder that used up the
+ * free minutes, and every block after it (dinner, the evening) was dropped.
+ */
+export function validatePlanOutput(
+  raw: unknown,
+  totalMinutes?: number,
+  busyTitles: string[] = [],
+): PlanOutput {
   if (!isObject(raw)) throw new Error("Plan output must be an object");
   if (!Array.isArray(raw.blocks))
     throw new Error("Plan output missing blocks array");
@@ -516,15 +528,18 @@ export function validatePlanOutput(raw: unknown, totalMinutes?: number): PlanOut
     };
   });
 
+  const busy = new Set(busyTitles.map(normalizeTitle).filter(Boolean));
+  const planned = parsed.filter((block) => !(block.node_id === null && busy.has(normalizeTitle(block.title))));
+
   // Re-sequence so blocks NEVER overlap or overflow. The LLM uses start_offset
   // as an intended ORDER but sometimes collides blocks (e.g. a break and a
   // buffer both at offset 50 in a 1h plan) or overruns the window. Sort by the
   // intended start, then pack contiguously from 0, trimming/dropping anything
   // that won't fit the session window. Result: gap-free, overlap-free, in-window.
-  parsed.sort((a, b) => a.start_offset - b.start_offset);
-  const blocks: typeof parsed = [];
+  planned.sort((a, b) => a.start_offset - b.start_offset);
+  const blocks: typeof planned = [];
   let cursor = 0;
-  for (const block of parsed) {
+  for (const block of planned) {
     let durationMinutes = block.duration_minutes;
     if (typeof totalMinutes === "number" && totalMinutes > 0) {
       const room = totalMinutes - cursor;

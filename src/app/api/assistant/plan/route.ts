@@ -17,7 +17,8 @@ import { checkAIRunRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
 import { buildPlannerCandidates } from "@/lib/ai/planner";
 import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
 import { AI_MODELS, AI_RATE_LIMITS } from "@/lib/ai/config";
-import { PLAN_PROMPT_VERSION, planWindowMinutes } from "@/lib/ai/prompts/plan";
+import { PLAN_PROMPT_VERSION } from "@/lib/ai/prompts/plan";
+import { PLAN_MAX_MINUTES, planWindowMinutes } from "@/lib/planner/plan-window";
 import { busyOn, sessionBusyNote, timeToMinutes } from "@/lib/planner/commitments";
 import { isISODate } from "@/lib/time/local-date";
 import {
@@ -115,9 +116,9 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (custom_minutes > 600) {
+    if (custom_minutes > PLAN_MAX_MINUTES) {
       return NextResponse.json(
-        { error: "custom_minutes must not exceed 600" },
+        { error: `A plan can be at most ${PLAN_MAX_MINUTES / 60} hours.` },
         { status: 400 },
       );
     }
@@ -162,15 +163,13 @@ export async function POST(req: NextRequest) {
 
   const { candidates, manual_items, preference_hints, commitments } = candidateBundle;
 
+  // A day runs from the session start to 23:00 (lib/planner/plan-window.ts).
   // A class inside the session: the planner fills only the free stretches.
   const sessionStartMinute = timeToMinutes(session_start);
+  const sessionMinutes = planWindowMinutes(resolvedWindow, custom_minutes, sessionStartMinute);
   const busy =
     isISODate(session_date) && sessionStartMinute !== null
-      ? sessionBusyNote(
-          busyOn(commitments, session_date),
-          sessionStartMinute,
-          planWindowMinutes(resolvedWindow, custom_minutes),
-        )
+      ? sessionBusyNote(busyOn(commitments, session_date), sessionStartMinute, sessionMinutes)
       : null;
 
   if (candidates.length === 0) {
@@ -213,6 +212,8 @@ export async function POST(req: NextRequest) {
     planResult = await provider.buildPlan({
       planning_window: resolvedWindow,
       custom_minutes: resolvedWindow === "custom" ? custom_minutes : null,
+      session_minutes: sessionMinutes,
+      session_start_minute: sessionStartMinute,
       candidate_nodes: candidates.map((c) => ({
         id: c.id,
         title: c.title,

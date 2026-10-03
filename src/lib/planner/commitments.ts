@@ -181,7 +181,7 @@ export function sessionBusyNote(
   busy: BusyInterval[],
   start: number,
   length: number,
-): { free_minutes: number; lines: string[] } | null {
+): { free_minutes: number; lines: string[]; titles: string[] } | null {
   const end = start + length;
   const inside = busyWithin(busy, start, end);
   if (inside.length === 0) return null;
@@ -197,9 +197,11 @@ export function sessionBusyNote(
       stretches.length > 0
         ? `Plan only the free time, ${freeMinutes} minutes, in these stretches: ${stretches
             .map((s) => `${span(s)} (${s.end - s.start} min)`)
-            .join(", ")}. List blocks in time order; none may cross into busy time.`
+            .join(", ")}. List blocks in time order; none may cross into busy time, and the busy time gets NO block — not even a placeholder.`
         : "There is no free time in this session.",
     ],
+    // A block that only restates one of these is dropped (validatePlanOutput).
+    titles: [...new Set(inside.map((b) => b.title))],
   };
 }
 

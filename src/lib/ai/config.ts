@@ -153,6 +153,12 @@ export const AI_TOKEN_BUDGETS = {
   EXTRACTION: 4_000,
 } as const;
 
+// The plan call's output cap — a truncation guard, billed only for what's
+// written. A whole waking day (up to 18 h, ~30–40 blocks) can need ~4–5K
+// tokens on Sonnet 5's tokenizer; 6,144 left too little margin. Stays under
+// the SDK's non-streaming limit (~21K).
+export const PLAN_MAX_OUTPUT_TOKENS = 16_000;
+
 // ---------------------------------------------------------------------------
 // Cost estimates (USD per 1M tokens)
 // Used for tracking; update when pricing changes.

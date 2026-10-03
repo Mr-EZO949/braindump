@@ -83,6 +83,23 @@ describe("validatePlanOutput", () => {
     }
   });
 
+  it("drops a block that only restates busy time, so later blocks keep their minutes", () => {
+    // 15-hour day, 660 free minutes: Sonnet wrote a 4-hour "Stats lecture"
+    // placeholder and everything after it was cut (e2e 2026-10-03).
+    const out = validatePlanOutput(
+      planRaw([
+        block({ title: "Study", start_offset: 0, duration_minutes: 360 }),
+        block({ title: "Stats Lecture", start_offset: 360, duration_minutes: 120 }),
+        block({ title: "Dinner", start_offset: 480, duration_minutes: 60, block_type: "break" }),
+        block({ title: "Stats lecture", node_id: "n1", start_offset: 540, duration_minutes: 60 }),
+      ]),
+      660,
+      ["Stats lecture"],
+    );
+    // The linked block is real work on the class — it stays.
+    expect(out.blocks.map((b) => b.title)).toEqual(["Study", "Dinner", "Stats lecture"]);
+  });
+
   it("does not clamp when no window is given (back-compat)", () => {
     expect(
       validatePlanOutput(planRaw([block({ duration_minutes: 120 })])).blocks[0].duration_minutes,

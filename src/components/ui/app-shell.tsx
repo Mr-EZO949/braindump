@@ -358,7 +358,12 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [draftPlanRefreshKey, setDraftPlanRefreshKey] = useState(0);
   // That plan_day's start time and the busy time named in chat, so Accept in
   // the Planner lays the blocks where the plan was made for.
-  const [draftPlanHint, setDraftPlanHint] = useState<{ startTime: unknown; busy: unknown } | null>(null);
+  const [draftPlanHint, setDraftPlanHint] = useState<{
+    startTime: unknown;
+    busy: unknown;
+    window: unknown;
+    acceptedAt: number;
+  } | null>(null);
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
   const [proposedNodesSubmitting, setProposedNodesSubmitting] = useState(false);
@@ -1738,6 +1743,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (!action || action.status !== "awaiting") return;
 
     const targetWorkspaceId = selectedWorkspaceId;
+    // When the server runs an accepted plan_day: a plan with no start time
+    // starts then, and the Planner lands it there.
+    const acceptedAt = Date.now();
 
     chatSendingRef.current = true;
     // As in submitMessage: everything after taking the lock is inside
@@ -1843,7 +1851,12 @@ export function AppShell({ initialUser }: AppShellProps) {
         // into its review UI so the user actually sees what was generated (#6).
         if (action.toolName === "plan_day") {
           setAppMode("assistant");
-          setDraftPlanHint({ startTime: action.toolInput?.start_time, busy: action.toolInput?.busy });
+          setDraftPlanHint({
+            startTime: action.toolInput?.start_time,
+            busy: action.toolInput?.busy,
+            window: action.toolInput?.window,
+            acceptedAt,
+          });
           setDraftPlanRefreshKey((v) => v + 1);
         }
       }

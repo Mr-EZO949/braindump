@@ -8,7 +8,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Commitment } from "@/lib/planner/commitments";
 
 let commitments: Commitment[] = [];
-const planCalls: Array<{ busy: { free_minutes: number; lines: string[] } | null }> = [];
+type PlanCall = {
+  busy: { free_minutes: number; lines: string[] } | null;
+  session_minutes?: number | null;
+  session_start_minute?: number | null;
+};
+const planCalls: PlanCall[] = [];
+let planError: Error | null = null;
 
 vi.mock("../planner", () => ({
   buildPlannerCandidates: vi.fn(async () => ({
@@ -18,8 +24,9 @@ vi.mock("../planner", () => ({
 }));
 vi.mock("../index", () => ({
   aiProvider: () => ({
-    buildPlan: vi.fn(async (input: { busy: { free_minutes: number; lines: string[] } | null }) => {
-      planCalls.push({ busy: input.busy });
+    buildPlan: vi.fn(async (input: PlanCall) => {
+      planCalls.push(input);
+      if (planError) throw planError;
       return {
         output: { blocks: [{ node_id: "n1", title: "ML project", start_offset: 0, duration_minutes: 90, block_type: "focus" }] },
         run: { provider: "claude", model_name: "m", input_tokens: 1, output_tokens: 1, latency_ms: 1, estimated_cost: 0 },
@@ -33,6 +40,7 @@ vi.mock("@/lib/time/request-date", () => ({ getRequestTimeZone: vi.fn(async () =
 
 import { createFakeSupabase } from "@/lib/test/fake-supabase";
 
+import { MalformedAIResponseError, PLAN_CUT_OFF_MESSAGE } from "../errors";
 import { PLANNER_MUTATION_TOOLS } from "./planner-mutations";
 
 const PLAN_DAY = PLANNER_MUTATION_TOOLS.find((t) => t.schema.name === "plan_day")!;
@@ -46,6 +54,7 @@ function ctx() {
 beforeEach(() => {
   commitments = [];
   planCalls.length = 0;
+  planError = null;
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(`${WED}T12:10:00Z`));
 });
@@ -91,5 +100,57 @@ describe("plan_day — busy time", () => {
   it("nothing busy → no note, and bad busy rows are ignored", async () => {
     await PLAN_DAY.handler({ window: "1h", busy: [{ start: "25:00", end: "26:00" }, "x"] }, ctx());
     expect(planCalls[0].busy).toBeNull();
+  });
+});
+
+describe("plan_day — the whole day (owner 10-03: ~15 h from when I'm awake)", () => {
+  it("\"plan my day from 8am\" plans 08:00–23:00", async () => {
+    const result = (await PLAN_DAY.handler({ window: "day", start_time: "08:00" }, ctx())) as {
+      message: string;
+    };
+    expect(planCalls[0].session_minutes).toBe(900);
+    expect(planCalls[0].session_start_minute).toBe(8 * 60);
+    expect(result.message).toContain("day plan for 08:00–23:00");
+  });
+
+  it("\"plan my day\" runs from now to 23:00, around a class", async () => {
+    commitments = [
+      {
+        id: "c1",
+        title: "Stats",
+        node_id: null,
+        days: [3],
+        start_time: "14:00:00",
+        end_time: "16:00:00",
+        starts_on: null,
+        ends_on: null,
+      },
+    ];
+    const result = (await PLAN_DAY.handler({ window: "day" }, ctx())) as { message: string };
+    // now 12:10 → 12:30–23:00 = 630 min, Stats takes 120 of them.
+    expect(planCalls[0].session_minutes).toBe(630);
+    expect(planCalls[0].busy?.free_minutes).toBe(510);
+    expect(result.message).toContain("12:30–23:00");
+    expect(result.message).toContain("around Stats 14:00–16:00");
+  });
+
+  it("a custom window can run 18 hours", async () => {
+    await PLAN_DAY.handler({ window: "custom", custom_minutes: 2000, start_time: "05:00" }, ctx());
+    expect(planCalls[0].session_minutes).toBe(18 * 60);
+  });
+
+  it("a plan cut off at the output cap says so", async () => {
+    planError = new MalformedAIResponseError({
+      message: "Plan answer cut off at max_tokens",
+      rawOutput: "{\"blocks\": [",
+      runType: "plan",
+      provider: "claude",
+      modelName: "m",
+      promptVersion: "plan-v7",
+      truncated: true,
+    });
+    const result = (await PLAN_DAY.handler({ window: "day" }, ctx())) as { accepted: boolean; error: string };
+    expect(result.accepted).toBe(false);
+    expect(result.error).toBe(PLAN_CUT_OFF_MESSAGE);
   });
 });

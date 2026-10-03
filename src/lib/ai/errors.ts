@@ -34,6 +34,8 @@ interface MalformedAIResponseErrorParams {
   outputTokens?: number | null;
   latencyMs?: number | null;
   estimatedCost?: number | null;
+  /** The answer hit max_tokens — cut off, not wrong. */
+  truncated?: boolean;
   cause?: unknown;
 }
 
@@ -49,6 +51,7 @@ export class MalformedAIResponseError extends Error {
   readonly outputTokens: number | null;
   readonly latencyMs: number | null;
   readonly estimatedCost: number | null;
+  readonly truncated: boolean;
 
   constructor(params: MalformedAIResponseErrorParams) {
     super(params.message, { cause: params.cause });
@@ -64,6 +67,7 @@ export class MalformedAIResponseError extends Error {
     this.outputTokens = params.outputTokens ?? null;
     this.latencyMs = params.latencyMs ?? null;
     this.estimatedCost = params.estimatedCost ?? null;
+    this.truncated = params.truncated ?? false;
   }
 }
 
@@ -89,13 +93,21 @@ export function hashText(input: string): string {
   return createHash("sha256").update(input).digest("hex").slice(0, 16);
 }
 
+/** What the user reads when a plan's answer ran out of room. */
+export const PLAN_CUT_OFF_MESSAGE =
+  "This plan was too long to finish in one go. Try a shorter window — or plan the morning now and the rest later.";
+
 export function normalizeAIError(error: unknown, fallbackMessage = "AI request failed"): NormalizedAIError {
   if (isMalformedAIResponseError(error)) {
     return {
       code: "malformed_output",
       message: error.message,
-      retryable: true,
-      userMessage: "The AI returned an invalid response. Please retry.",
+      retryable: !error.truncated,
+      userMessage: error.truncated
+        ? error.runType === "plan"
+          ? PLAN_CUT_OFF_MESSAGE
+          : "The AI's answer was too long and got cut off. Try a shorter request."
+        : "The AI returned an invalid response. Please retry.",
     };
   }
 

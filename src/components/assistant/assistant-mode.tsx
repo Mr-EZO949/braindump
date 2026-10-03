@@ -25,10 +25,12 @@ import {
   layoutAroundBusy,
   loadActiveCommitments,
   minutesToTime,
+  nextSessionStartMinute,
   oneOffBusy,
   type BusyInterval,
   type Commitment,
 } from "@/lib/planner/commitments";
+import { DAY_PLAN_START_MINUTE, planWindowMinutes } from "@/lib/planner/plan-window";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -226,14 +228,28 @@ function getPlanTaskAnchorMinutes(
   // An explicit clock start ("At a time") always wins over the window default.
   const explicitStartMinutes = parseTimeToMinutes(startTime ?? null);
 
+  // Default: now (rounded) today; another day starts 09:00, a day plan 08:00
+  // (it runs to 23:00 — lib/planner/plan-window.ts).
   const preferredStartMinutes =
     explicitStartMinutes !== null
       ? explicitStartMinutes
-      : planningWindow === "day"
-        ? DEFAULT_DAY_PLAN_START_MINUTES
+      : planningWindow === "day" && date !== toDateString(new Date())
+        ? DAY_PLAN_START_MINUTE
         : parseTimeToMinutes(getDefaultStartTime(date)) ?? DEFAULT_DAY_PLAN_START_MINUTES;
 
   return clampTaskStartMinutes(preferredStartMinutes, totalMinutes);
+}
+
+/** Where a plan starts and how long it runs; a day plan's length follows from its start. */
+function getPlanSession(
+  planningWindow: PlanningWindow,
+  date: string,
+  customMinutes: number | null,
+  startTime: string | null,
+): { start: number; minutes: number } {
+  const preferred = getPlanTaskAnchorMinutes(planningWindow, date, TIMELINE_MIN_DURATION_MINUTES, startTime);
+  const minutes = planWindowMinutes(planningWindow, customMinutes, preferred);
+  return { start: clampTaskStartMinutes(preferred, minutes), minutes };
 }
 
 function createTaskDraft(task?: Partial<PlanTask> | null, fallbackDate?: string | null): TaskDraft {
@@ -1293,9 +1309,10 @@ type AssistantModeProps = {
   // applies it with correct local-time scheduling). Fixes: chat "generated a
   // schedule" but nothing shows on the planner (journal #6).
   draftPlanRefreshKey?: number;
-  // The accepted plan_day's start_time ("HH:MM") and the busy time named in
-  // chat (oneOffBusy) — the server planned the free time around them.
-  draftPlanHint?: { startTime: unknown; busy: unknown } | null;
+  // The accepted plan_day's start_time ("HH:MM"), the busy time named in
+  // chat (oneOffBusy), its window and when it was accepted (a plan with no
+  // start time starts then) — the server planned the free time around them.
+  draftPlanHint?: { startTime: unknown; busy: unknown; window: unknown; acceptedAt: number } | null;
   onAskInChat?: (message: string) => void;
   // Called after the planner toggles a task that has a linked graph node,
   // so app-shell can mirror the new status into its local graphData state
@@ -1563,7 +1580,15 @@ export function AssistantMode({
   useEffect(() => {
     if (draftPlanRefreshKey === undefined || draftPlanRefreshKey === 0) return;
     const startTime = typeof draftPlanHint?.startTime === "string" ? draftPlanHint.startTime : "";
-    planStartTimeRef.current = isValidTimeString(startTime) ? startTime : null;
+    // A day with no start time began when chat's card was accepted (the
+    // server's "now"), whenever the Planner's Accept comes.
+    const isDay = !["1h", "2h", "custom"].includes(String(draftPlanHint?.window ?? "day"));
+    const acceptedAt = draftPlanHint ? new Date(draftPlanHint.acceptedAt) : null;
+    planStartTimeRef.current = isValidTimeString(startTime)
+      ? startTime
+      : isDay && acceptedAt
+        ? minutesToTime(nextSessionStartMinute(getCurrentTimeOfDayMinutes(acceptedAt)))
+        : null;
     planOneOffBusyRef.current = oneOffBusy(draftPlanHint?.busy);
     void loadLatestDraftPlan().catch(() => {
       // ignore — the draft stays in the DB; the user can re-open the planner
@@ -1923,11 +1948,11 @@ export function AssistantMode({
     // Where Accept will put this plan — the server plans around the fixed
     // commitments inside it (docs/commitments.md).
     const sessionDate = selectedDate || today;
-    const windowMinutes =
-      window === "1h" ? 60 : window === "2h" ? 120 : window === "day" ? 480 : Math.max(15, custom_minutes ?? 60);
     const sessionStart = formatMinutesToTaskTime(
-      getPlanTaskAnchorMinutes(window, sessionDate, windowMinutes, planStartTimeRef.current),
+      getPlanSession(window, sessionDate, custom_minutes, planStartTimeRef.current).start,
     );
+    // A day plan lands where it was planned, however long the review takes.
+    if (window === "day") planStartTimeRef.current = sessionStart;
 
     try {
       const res = await fetch("/api/assistant/plan", {

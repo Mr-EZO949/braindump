@@ -54,6 +54,7 @@ import {
   buildPlanPromptParts,
   PLAN_PROMPT_VERSION,
 } from "./prompts/plan";
+import { describeSessionSpan, planWindowMinutes } from "@/lib/planner/plan-window";
 import {
   buildMergeCheckPromptParts,
   MERGE_CHECK_PROMPT_VERSION,
@@ -552,15 +553,9 @@ export class GeminiProvider implements AIProvider {
   // -------------------------------------------------------------------------
 
   async buildPlan(input: PlanInput): Promise<AIProviderResult<PlanOutput>> {
-    const windowMinutes: Record<string, number> = {
-      "1h": 60,
-      "2h": 120,
-      day: 480,
-    };
     const totalMinutes =
-      input.planning_window === "custom"
-        ? Math.max(15, Math.min(600, Math.round(input.custom_minutes ?? 60)))
-        : windowMinutes[input.planning_window] ?? 60;
+      input.session_minutes ??
+      planWindowMinutes(input.planning_window, input.custom_minutes, input.session_start_minute);
     // A class inside the session: plan the free time only (see claude.ts).
     const planMinutes = input.busy ? Math.max(15, input.busy.free_minutes) : totalMinutes;
 
@@ -570,6 +565,10 @@ export class GeminiProvider implements AIProvider {
       candidate_nodes: input.candidate_nodes,
       workspace_context: input.workspace_context,
       busy_lines: input.busy?.lines,
+      session_span:
+        typeof input.session_start_minute === "number"
+          ? describeSessionSpan(input.session_start_minute, totalMinutes)
+          : null,
     });
     const fullPrompt = `${rubricBlock}\n\n${variableBlock}`;
 
@@ -598,7 +597,7 @@ export class GeminiProvider implements AIProvider {
     let output: PlanOutput;
     try {
       const parsed = JSON.parse(text);
-      output = validatePlanOutput(parsed, planMinutes);
+      output = validatePlanOutput(parsed, planMinutes, input.busy?.titles);
     } catch (error) {
       throw malformedResponse({
         message: error instanceof Error ? error.message : "Plan output was malformed",

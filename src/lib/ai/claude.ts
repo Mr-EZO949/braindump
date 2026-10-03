@@ -20,7 +20,7 @@ import type {
   MergeCheckOutput,
   AIRun,
 } from "@/types/ai";
-import { AI_MODELS, AI_TEMPERATURE, claudeRequestTuning } from "./config";
+import { AI_MODELS, AI_TEMPERATURE, PLAN_MAX_OUTPUT_TOKENS, claudeRequestTuning } from "./config";
 import { MalformedAIResponseError } from "./errors";
 import {
   addUsage,
@@ -48,6 +48,7 @@ import {
   ASSISTANT_PROMPT_VERSION,
 } from "./prompts/assistant";
 import { buildPlanPrompt, PLAN_OUTPUT_SCHEMA, PLAN_PROMPT_VERSION } from "./prompts/plan";
+import { describeSessionSpan, planWindowMinutes } from "@/lib/planner/plan-window";
 import { buildMergeCheckPrompt, MERGE_CHECK_PROMPT_VERSION } from "./prompts/merge-check";
 
 // ---------------------------------------------------------------------------
@@ -108,6 +109,7 @@ function malformedResponse(params: {
   outputTokens: number | null;
   latencyMs: number;
   estimatedCost: number | null;
+  truncated?: boolean;
   cause: unknown;
 }): MalformedAIResponseError {
   return new MalformedAIResponseError({
@@ -123,6 +125,7 @@ function malformedResponse(params: {
     outputTokens: params.outputTokens,
     latencyMs: params.latencyMs,
     estimatedCost: params.estimatedCost,
+    truncated: params.truncated,
     cause: params.cause,
   });
 }
@@ -401,16 +404,10 @@ export class ClaudeProvider {
   // -------------------------------------------------------------------------
 
   async buildPlan(input: PlanInput): Promise<AIProviderResult<PlanOutput>> {
+    // A day runs from its start to 23:00, up to 18 h (lib/planner/plan-window.ts).
     const totalMinutes =
-      input.planning_window === "1h"
-        ? 60
-        : input.planning_window === "2h"
-          ? 120
-          : input.planning_window === "day"
-            ? 480
-            : input.planning_window === "custom"
-              ? Math.max(15, Math.min(600, Math.round(input.custom_minutes ?? 60)))
-              : 60;
+      input.session_minutes ??
+      planWindowMinutes(input.planning_window, input.custom_minutes, input.session_start_minute);
     // A class inside the session: plan (and pick the model for) the free time only.
     const planMinutes = input.busy ? Math.max(15, input.busy.free_minutes) : totalMinutes;
 
@@ -420,13 +417,19 @@ export class ClaudeProvider {
       candidate_nodes: input.candidate_nodes,
       workspace_context: input.workspace_context,
       busy_lines: input.busy?.lines,
+      session_span:
+        typeof input.session_start_minute === "number"
+          ? describeSessionSpan(input.session_start_minute, totalMinutes)
+          : null,
     });
 
-    // Short sessions (≤3h) plan on Haiku with the JSON schema ENFORCED — the
-    // schema removes the malformed output that originally ruled Haiku out, and
-    // in the 2026-09-28 eval its 2h plans matched Sonnet's at ~40% of the cost.
-    // Full days stay on Sonnet: Haiku left ~2.5h of an 8h day empty and dropped
-    // every habit. If the Haiku attempt still fails, the retry uses Sonnet.
+    // Short sessions (≤3h) plan on Haiku — in the 2026-09-28 eval its 2h plans
+    // matched Sonnet's at ~40% of the cost. Full days stay on Sonnet: Haiku
+    // left ~2.5h of an 8h day empty and dropped every habit. Both run with the
+    // JSON schema ENFORCED (it removed the malformed output that once ruled
+    // Haiku out; on Sonnet since 2026-10-03, when a 15-hour plan's first answer
+    // failed and the retry paid the whole call again). A failed attempt is
+    // retried once, on Sonnet.
     let plannerModel: string =
       planMinutes <= 180 ? AI_MODELS.CLAUDE_HAIKU : AI_MODELS.CLAUDE_SONNET;
     const run = baseRun("plan", PLAN_PROMPT_VERSION, prompt, plannerModel);
@@ -437,19 +440,16 @@ export class ClaudeProvider {
     let estimatedCost = 0; // priced per attempt — a retry may switch model
     let output: PlanOutput | null = null;
     let lastError: unknown;
+    let truncated = false;
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (attempt > 0) plannerModel = AI_MODELS.CLAUDE_SONNET;
-      const enforceSchema = plannerModel === AI_MODELS.CLAUDE_HAIKU;
       const response = await this.client.messages.create({
         model: plannerModel,
-        ...(enforceSchema
-          ? { output_config: { format: { type: "json_schema" as const, schema: PLAN_OUTPUT_SCHEMA } } }
-          : {}),
-        // Headroom for Sonnet 5's tokenizer (~30% more tokens for the same
-        // text) — a fuller day-plan JSON could otherwise brush the old cap.
-        // Pure truncation guard; the model stops at end_turn when done.
-        max_tokens: 6144,
+        output_config: { format: { type: "json_schema" as const, schema: PLAN_OUTPUT_SCHEMA } },
+        // Room for a whole waking day; a truncation guard, the model stops
+        // at end_turn when done.
+        max_tokens: PLAN_MAX_OUTPUT_TOKENS,
         ...claudeRequestTuning(plannerModel, AI_TEMPERATURE.PLANNER),
         system: "You always respond with valid JSON only. No markdown code blocks, no extra text — just the raw JSON object.",
         messages: [{ role: "user", content: prompt }],
@@ -458,13 +458,24 @@ export class ClaudeProvider {
       const attemptUsage = readClaudeUsage(response.usage);
       usage = addUsage(usage, attemptUsage);
       estimatedCost += claudeCostUSD(plannerModel, attemptUsage);
+      // Cut off at the cap: the JSON is unfinished, and a retry with the same
+      // room would be cut off too — say so instead of "invalid response".
+      if (response.stop_reason === "max_tokens") {
+        truncated = true;
+        lastError = new Error(`Plan answer cut off at max_tokens (${PLAN_MAX_OUTPUT_TOKENS})`);
+        break;
+      }
       try {
         const parsed = JSON.parse(extractJson(text));
         // Packed into the free minutes; the Planner lays them around the busy time on Accept.
-        output = validatePlanOutput(parsed, planMinutes);
+        output = validatePlanOutput(parsed, planMinutes, input.busy?.titles);
         break;
       } catch (error) {
         lastError = error;
+        console.warn(
+          `[plan] attempt ${attempt + 1} on ${plannerModel} failed (${response.stop_reason}):`,
+          error instanceof Error ? error.message : error,
+        );
       }
     }
 
@@ -485,6 +496,7 @@ export class ClaudeProvider {
         outputTokens,
         latencyMs,
         estimatedCost,
+        truncated,
         cause: lastError,
       });
     }

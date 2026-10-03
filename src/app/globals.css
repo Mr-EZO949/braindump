@@ -12442,6 +12442,10 @@ input[type="search"]::-webkit-search-results-decoration {
   color: var(--color-text-muted);
 }
 
+.planner-day-hint {
+  margin: 2px 0 0;
+}
+
 /* Generate button */
 .planner-generate-btn {
   width: 100%;

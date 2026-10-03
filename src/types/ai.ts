@@ -503,8 +503,13 @@ export interface AssistantOutput {
 export interface PlanInput {
   planning_window: PlanningWindow;
   // Total minutes to fill when planning_window === "custom". Clamped to
-  // 15–600 by the provider; ignored for the fixed 1h/2h/day windows.
+  // 15 min–18 h by the provider; ignored for the fixed 1h/2h/day windows.
   custom_minutes?: number | null;
+  // The session's length and start as the caller resolved them
+  // (lib/planner/plan-window.ts) — a day plan runs from its start to 23:00.
+  // Without them the provider falls back to planWindowMinutes(window, custom).
+  session_minutes?: number | null;
+  session_start_minute?: number | null;
   candidate_nodes: Array<{
     id: string;
     title: string;
@@ -515,7 +520,7 @@ export interface PlanInput {
   workspace_context?: string;
   // Fixed commitments inside the session (docs/commitments.md): only the free
   // minutes get planned, and the Session block says where the gaps are.
-  busy?: { free_minutes: number; lines: string[] } | null;
+  busy?: { free_minutes: number; lines: string[]; titles?: string[] } | null;
 }
 
 export interface PlanOutput {

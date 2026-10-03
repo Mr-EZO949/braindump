@@ -8,8 +8,14 @@ import type { ToolContext, ToolDefinition } from "./read-only";
 import { buildPlannerCandidates } from "../planner";
 import { aiProvider } from "../index";
 import { persistAIRun } from "../telemetry";
-import { PLAN_PROMPT_VERSION, planWindowMinutes } from "../prompts/plan";
-import { DAY_START_MINUTE } from "@/lib/planner/auto-schedule";
+import { PLAN_PROMPT_VERSION } from "../prompts/plan";
+import { normalizeAIError, PLAN_CUT_OFF_MESSAGE } from "../errors";
+import {
+  PLAN_MAX_MINUTES,
+  clampPlanMinutes,
+  describeSessionSpan,
+  planWindowMinutes,
+} from "@/lib/planner/plan-window";
 import {
   busyOn,
   busyWithin,
@@ -312,17 +318,17 @@ const PLAN_DAY: ToolDefinition = {
         window: {
           type: "string",
           enum: ["1h", "2h", "day", "custom"],
-          description: "Planning window. 'day' = full day; '1h'/'2h' = short sessions; 'custom' requires custom_minutes.",
+          description: "Planning window. 'day' = the rest of the user's day, from start_time (or now) to 23:00; '1h'/'2h' = short sessions; 'custom' requires custom_minutes.",
         },
         custom_minutes: {
           type: "integer",
           minimum: 15,
-          maximum: 600,
-          description: "Total minutes from start_time — only when window is 'custom' (\"2:30 to 11pm\" = 510).",
+          maximum: PLAN_MAX_MINUTES,
+          description: "Total minutes from start_time — only when window is 'custom' and the user names an end (\"2:30 to 11pm\" = 510). Up to 18 hours.",
         },
         start_time: {
           type: "string",
-          description: "When the session starts, 24h HH:MM in the user's time, only when they say it (\"from 2:30\" → \"14:30\"). Omit to start now (a full day starts 09:00).",
+          description: "When the session starts, 24h HH:MM in the user's time, only when they say it (\"from 2:30\" → \"14:30\", \"plan my day from 8am\" → \"08:00\"). Omit to start now.",
         },
         busy: {
           type: "array",
@@ -352,10 +358,7 @@ const PLAN_DAY: ToolDefinition = {
     const window = (["1h", "2h", "day", "custom"].includes(args.window ?? "")
       ? args.window
       : "day") as "1h" | "2h" | "day" | "custom";
-    const customMinutes =
-      window === "custom"
-        ? Math.max(15, Math.min(600, Math.round(args.custom_minutes ?? 60)))
-        : null;
+    const customMinutes = window === "custom" ? clampPlanMinutes(args.custom_minutes ?? 60) : null;
 
     const bundle = await buildPlannerCandidates({
       workspaceId: ctx.workspaceId,
@@ -369,17 +372,16 @@ const PLAN_DAY: ToolDefinition = {
 
     // Plan only the free time of the session: today's saved commitments plus
     // the busy time the user named in chat. The session starts where Accept
-    // will put it in the Planner — the user's start_time, else 09:00 for a
-    // full day and "now" (rounded as the Planner rounds) for the rest. Until
-    // 2026-10-02 only a full day saw commitments and nothing could say "I have
-    // lectures 2:30–6:30 today", so "schedule 2:30–11pm" filled the lectures.
+    // will put it in the Planner — the user's start_time, else "now" (rounded
+    // as the Planner rounds); a day runs on to 23:00 (lib/planner/plan-window).
+    // Until 2026-10-02 only a full day saw commitments and nothing could say
+    // "I have lectures 2:30–6:30 today", so "schedule 2:30–11pm" filled the
+    // lectures; until 2026-10-03 a day was 09:00–17:00.
     const today = ctx.today ?? localDateISO(new Date(), null);
     const startMinute =
       timeToMinutes(args.start_time) ??
-      (window === "day"
-        ? DAY_START_MINUTE
-        : nextSessionStartMinute(localMinuteOfDay(new Date(), await getRequestTimeZone())));
-    const sessionMinutes = planWindowMinutes(window, customMinutes);
+      nextSessionStartMinute(localMinuteOfDay(new Date(), await getRequestTimeZone()));
+    const sessionMinutes = planWindowMinutes(window, customMinutes, startMinute);
     const busyToday = [...busyOn(bundle.commitments, today), ...oneOffBusy(args.busy)].sort(
       (a, b) => a.start - b.start,
     );
@@ -393,6 +395,8 @@ const PLAN_DAY: ToolDefinition = {
       planResult = await aiProvider().buildPlan({
         planning_window: window,
         custom_minutes: customMinutes,
+        session_minutes: sessionMinutes,
+        session_start_minute: startMinute,
         candidate_nodes: bundle.candidates.map((c) => ({
           id: c.id,
           title: c.title,
@@ -403,8 +407,12 @@ const PLAN_DAY: ToolDefinition = {
         })),
         busy,
       });
-    } catch {
-      return { accepted: false, error: "Couldn't build the plan right now — try again in a moment." };
+    } catch (err) {
+      const cutOff = normalizeAIError(err).userMessage === PLAN_CUT_OFF_MESSAGE;
+      return {
+        accepted: false,
+        error: cutOff ? PLAN_CUT_OFF_MESSAGE : "Couldn't build the plan right now — try again in a moment.",
+      };
     }
     const { output, run: runMeta } = planResult;
 
@@ -464,7 +472,10 @@ const PLAN_DAY: ToolDefinition = {
       accepted: true,
       planning_window: window,
       block_count: output.blocks.length,
-      message: `Drafted a ${window === "day" ? "full-day" : window} plan with ${output.blocks.length} blocks${
+      message: `Drafted a ${window === "day" ? "day " : window === "custom" ? "" : `${window} `}plan for ${describeSessionSpan(
+        startMinute,
+        sessionMinutes,
+      )} with ${output.blocks.length} blocks${
         plannedAround.length > 0 ? `, around ${plannedAround.join(", ")}` : ""
       }. Open the Planner to review and adjust.`,
     };

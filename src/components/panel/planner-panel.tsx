@@ -24,6 +24,7 @@ import {
 import { useState } from "react";
 
 import { GripVerticalIcon } from "@/components/ui/icons";
+import { DAY_PLAN_END_MINUTE, PLAN_MAX_MINUTES, PLAN_MIN_MINUTES } from "@/lib/planner/plan-window";
 import type { PlanBlock, PlanSession, PlanningWindow } from "@/types/ai";
 import type { GraphData } from "@/types/graph";
 
@@ -53,7 +54,7 @@ export type GeneratePlanOptions = {
   window: PlanningWindow;
   // "HH:MM" to anchor the plan at a specific clock time, or null = start now.
   start_time: string | null;
-  // Total minutes when window === "custom" (clamped 15–600); null otherwise.
+  // Total minutes when window === "custom" (clamped 15 min–18 h); null otherwise.
   custom_minutes: number | null;
 };
 
@@ -84,8 +85,9 @@ const WINDOW_OPTIONS: { value: PlanningWindow; label: string }[] = [
   { value: "custom", label: "Custom" },
 ];
 
-const CUSTOM_MINUTES_MIN = 15;
-const CUSTOM_MINUTES_MAX = 600;
+const CUSTOM_MINUTES_MIN = PLAN_MIN_MINUTES;
+const CUSTOM_MINUTES_MAX = PLAN_MAX_MINUTES;
+const DAY_END_LABEL = `${String(Math.floor(DAY_PLAN_END_MINUTE / 60)).padStart(2, "0")}:${String(DAY_PLAN_END_MINUTE % 60).padStart(2, "0")}`;
 const CUSTOM_MINUTES_DEFAULT = 90;
 
 function clampCustomMinutes(value: number): number {
@@ -340,8 +342,12 @@ export function PlannerPanel({
                 value={customMinutes}
               />
               <span className="planner-config-unit">min</span>
-              <span className="planner-config-hint">{CUSTOM_MINUTES_MIN}–{CUSTOM_MINUTES_MAX}</span>
+              <span className="planner-config-hint">
+                {CUSTOM_MINUTES_MIN} min–{CUSTOM_MINUTES_MAX / 60} h
+              </span>
             </div>
+          ) : selectedWindow === "day" ? (
+            <p className="planner-config-hint planner-day-hint">Plans until {DAY_END_LABEL}</p>
           ) : null}
         </div>
 

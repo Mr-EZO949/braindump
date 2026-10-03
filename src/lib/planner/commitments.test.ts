@@ -96,6 +96,7 @@ describe("planning around busy time", () => {
     expect(note?.free_minutes).toBe(180);
     expect(note?.lines[0]).toContain("Stats lecture 14:00–15:00");
     expect(note?.lines[1]).toContain("13:00–14:00 (60 min), 15:00–17:00 (120 min)");
+    expect(note?.titles).toEqual(["Stats lecture"]);
     expect(sessionBusyNote(busyOn([stats], WED), h(9), 120)).toBeNull();
   });
 
