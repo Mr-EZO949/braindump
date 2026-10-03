@@ -1256,44 +1256,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     setRightPanelOpen(false);
   }, [filteredGraphData.nodes, selectedNodeId]);
 
-  const handleExtractNodes = async (
-    nodesContent: string,
-    wsId: string,
-    options?: { defaultParentNodeId?: string },
-  ) => {
-    try {
-      const entryRes = await fetch("/api/entries", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          raw_text: nodesContent,
-          workspace_id: wsId,
-          source_type: "assistant_save",
-          default_parent_node_id: options?.defaultParentNodeId ?? null,
-        }),
-      });
-      const entryData = await entryRes.json() as {
-        proposed_nodes?: ProposedNode[];
-        clarifying_questions?: string[];
-        suggested_areas?: Array<{ title: string; area_type: string }>;
-      };
-      const nodes = entryData.proposed_nodes ?? [];
-      const questions = entryData.clarifying_questions ?? [];
-      if (entryRes.ok && (nodes.length > 0 || questions.length > 0)) {
-        setProposedNodes(nodes);
-        setClarifyingQuestions(questions);
-        setSuggestedAreas(entryData.suggested_areas ?? []);
-        setLastDumpRawText(nodesContent);
-        // This path doesn't echo the dump into chat, so let the clarifying
-        // flow echo it exactly once (#11).
-        dumpInChatRef.current = false;
-        setProposedReviewOpen(true);
-      }
-    } catch {
-      // Extraction failed silently
-    }
-  };
-
   // After a priority change (already applied server-side): reload the graph so
   // node sizes follow the new scores, and pulse the nodes that moved.
   const refreshAfterPriorityChange = async (workspaceId: string, nodeIds: string[]) => {
@@ -3415,48 +3377,70 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
-  // Manual roadmap-suggestion for a single node from the details panel.
-  // Fires regardless of node type or whether it already has children —
-  // user-initiated re-prompt for finer breakdown is intentional here.
-  // Feeds the AI's text back through the standard extraction pipeline so
-  // the user reviews each proposed step before it lands in the graph.
+  // Generated steps land as ONE Suggested card in a fresh chat thread, the
+  // way a dump's changes do (fix list #8): the step-writer makes one call per
+  // item (api/nodes/suggest-steps), nothing changes until Apply. Until
+  // 2026-10-03 its text went through a second extraction into the old review
+  // modal.
+  const requestSteps = async (
+    nodes: Array<{ id: string }>,
+    mode: "light" | "full",
+    instructions: string | undefined,
+    signal: AbortSignal,
+  ) => {
+    const workspaceId = selectedWorkspaceId;
+    if (!workspaceId || nodes.length === 0) return;
+    const res = await fetch("/api/nodes/suggest-steps", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        node_ids: nodes.map((n) => n.id),
+        workspace_id: workspaceId,
+        mode,
+        instructions,
+      }),
+      signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      label?: string;
+      error?: string;
+      pending_action?: { run_id: string; tool_use_id: string; tool_name: string; tool_input: Record<string, unknown> };
+    };
+    if (signal.aborted) return;
+    const title = graphData.nodes.find((n) => n.id === nodes[0].id)?.title ?? "this";
+    await applyDumpTurn(
+      data.label ?? `Steps for “${title}”`,
+      {
+        reply: res.ok && data.pending_action ? null : (data.error ?? "Couldn't write steps right now — try again."),
+        added: [],
+        done: [],
+        links: [],
+        questions: [],
+      },
+      { pending_action: res.ok ? (data.pending_action ?? null) : null },
+      workspaceId,
+      false,
+    );
+  };
+
+  // Quick steps / AI roadmap for one node from the details panel. Fires
+  // regardless of node type or whether it already has children — a re-prompt
+  // for a finer breakdown is intentional here.
   const handleSuggestStepsForNode = async (
     nodeId: string,
     mode: "light" | "full" = "full",
     instructions?: string,
   ) => {
     if (!selectedWorkspaceId || stepSuggestionLoading) return;
-    const node = graphData.nodes.find((n) => n.id === nodeId);
-    if (!node) return;
+    if (!graphData.nodes.some((n) => n.id === nodeId)) return;
 
     const abort = new AbortController();
     stepSuggestAbortRef.current = abort;
     setStepSuggestionLoading(true);
     try {
-      const res = await fetch("/api/nodes/suggest-steps", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: node.title,
-          summary: node.summary,
-          node_type: node.node_type,
-          workspace_id: selectedWorkspaceId,
-          mode,
-          instructions,
-        }),
-        signal: abort.signal,
-      });
-      if (!res.ok) return;
-      const data = (await res.json()) as { steps_text?: string };
-      if (data.steps_text && !abort.signal.aborted) {
-        // Pin the generated steps under the source node so they don't
-        // float to the workspace root.
-        await handleExtractNodes(data.steps_text, selectedWorkspaceId, {
-          defaultParentNodeId: nodeId,
-        });
-      }
+      await requestSteps([{ id: nodeId }], mode, instructions, abort.signal);
     } catch {
-      // Aborted or failed — silent (the user cancelled, or we surface elsewhere).
+      // Aborted or failed — silent (the user cancelled, or the network dropped).
     } finally {
       if (stepSuggestAbortRef.current === abort) stepSuggestAbortRef.current = null;
       setStepSuggestionLoading(false);
@@ -3497,50 +3481,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     setStepSuggestionOpen(false);
 
     try {
-      // Step suggestions for different nodes are independent. Generate them
-      // three at a time so selecting several nodes doesn't add every model
-      // round-trip end-to-end. Keep extraction serial because it updates one
-      // shared proposal-review surface.
-      const generated: Array<{ nodeId: string; stepsText: string }> = [];
-      const batchSize = 3;
-      for (let i = 0; i < selectedNodes.length; i += batchSize) {
-        if (abort.signal.aborted) break;
-        const batch = selectedNodes.slice(i, i + batchSize);
-        const results = await Promise.all(
-          batch.map(async (node) => {
-            try {
-              const res = await fetch("/api/nodes/suggest-steps", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  title: node.title,
-                  summary: node.summary,
-                  node_type: node.node_type,
-                  workspace_id: selectedWorkspaceId,
-                }),
-                signal: abort.signal,
-              });
-              if (!res.ok) return null;
-              const data = (await res.json()) as { steps_text?: string };
-              return data.steps_text ? { nodeId: node.id, stepsText: data.steps_text } : null;
-            } catch {
-              return null;
-            }
-          }),
-        );
-        generated.push(
-          ...results.filter(
-            (result): result is { nodeId: string; stepsText: string } => result !== null,
-          ),
-        );
-      }
-
-      for (const result of generated) {
-        if (abort.signal.aborted) break;
-        await handleExtractNodes(result.stepsText, selectedWorkspaceId, {
-          defaultParentNodeId: result.nodeId,
-        });
-      }
+      // One request: the server writes every item's steps in parallel and
+      // puts them on ONE card.
+      await requestSteps(selectedNodes, "full", undefined, abort.signal);
     } catch {
       // Step generation failed silently
     } finally {

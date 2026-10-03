@@ -1,86 +1,35 @@
-// POST /api/nodes/suggest-steps
-// Given an accepted goal, project or big task, uses the LLM to suggest
-// actionable sub-tasks/steps. Returns brain-dump-style text that the client feeds into
-// the extraction pipeline via /api/entries.
+// POST /api/nodes/suggest-steps — the Details panel's Quick steps / AI roadmap,
+// and the "N items look ready for a next step" picker.
+//
+// ONE model call per item: the step-writer (lib/ai/step-writer.ts) — the same
+// one chat's write_steps uses, so the button and "break X into steps" in chat
+// write the same steps. Quick steps = the next 1–3 actions on Haiku; AI
+// roadmap = phases + steps on Sonnet. Until 2026-10-03 Haiku wrote
+// brain-dump text that a second (Sonnet) extraction turned into proposals for
+// the old review modal (fix list #8).
+//
+// The steps aren't applied: they wait as ONE Suggested card, parked like a
+// dump's waiting changes (pending_chat_runs, origin "steps"), which the client
+// shows in a fresh chat thread. Accept goes through the usual resume endpoint
+// and no model ever continues that thread.
 
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+
+import { writeSteps, type StepShape } from "@/lib/ai/step-writer";
+import type { BuildPlanInput } from "@/lib/ai/tools/apply-plan";
+import { WRITE_STEPS_TOOL } from "@/lib/ai/tools/steps";
+import type { ChangeOp } from "@/lib/graph/change-set";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import Anthropic from "@anthropic-ai/sdk";
-import { AI_MODELS, AI_TEMPERATURE, claudeRequestTuning } from "@/lib/ai/config";
-import { recordClaudeRun } from "@/lib/ai/telemetry";
-import { readClaudeUsage } from "@/lib/ai/usage";
-import { NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
+import { getRequestToday } from "@/lib/time/request-date";
 
-// Light mode's output contract — a flat list of immediate next actions.
-const OUTPUT_FORMAT = `Output format — write as a brain dump that the extraction engine can parse:
+const MAX_NODES = 8;
+const MAX_INSTRUCTIONS_CHARS = 500;
+// The card sits in the thread; a chat card's 15 minutes is too short.
+const CARD_TTL_MS = 24 * 60 * 60 * 1000;
 
-Under "[parent title]":
-- Task: [step title]. [summary]
-- Task: [step title]. [summary]
-...
-
-Only output the brain dump text. No preamble, no explanation, no markdown.`;
-
-// Full mode's output contract — a two-level TREE (phases → tasks) so the
-// roadmap reads as structure the user can navigate, not a flat wall of tasks.
-// The nesting (a "Under [phase]:" block per phase) is what the extraction
-// engine turns into sub-parents beneath the goal. Each phase is one stage with
-// a finish line, so it's labelled — and extracted as — a big task.
-const OUTPUT_FORMAT_GROUPED = `Output format — write as a brain dump the extraction engine parses into a TREE. Group the steps under 2–4 short PHASES (logical stages, in order). Each phase is its own heading with its tasks nested under it:
-
-Under "[parent title]":
-- Big task: [phase name]. [one line — what this phase covers]
-- Big task: [phase name]. [one line]
-
-Under "[phase name]":
-- Task: [step title]. [summary]
-- Task: [step title]. [summary]
-
-Under "[phase name]":
-- Task: [step title]. [summary]
-- Task: [step title]. [summary]
-
-Give every phase its own "Under [phase name]:" block. Keep it to 2–4 phases, 2–4 tasks each. Only output the brain dump text. No preamble, no explanation, no markdown.`;
-
-// Full roadmap — the whole breakdown, grouped into phases.
-const STEP_SYSTEM_PROMPT_FULL = `You are a task-breakdown assistant for BrainDump, a graph-based planning tool.
-
-Given a goal, project or big task, generate 4–8 concrete, actionable steps — and ORGANIZE them into 2–4 short phases so the result is a high-level tree, not a flat list. Each step is a task that can be checked off in one sitting; each phase is a stage with its own finish line that groups related tasks.
-
-Rules:
-- Read the Description for the CURRENT state — what is already done, in progress, or live. Do NOT propose steps for work that's already complete; start from where things actually stand, not from scratch. (If a survey is described as "already live", don't suggest designing or launching it — pick up at analysis/write-up.)
-- If the Description names a blocker — waiting on a person, a decision, or input that isn't ready — make the unblocking action an EARLY step and sequence the rest after it.
-- Tailor every step to THIS specific situation. Never output a generic textbook sequence that ignores the Description.
-- Phases should be natural stages for THIS goal, named for the deliverable that finishes them ("Collect the survey data", "Build the MVP", "Launch the beta") — not generic "Prep" or "Phase 1/2/3". Order them so earlier phases unblock later ones.
-- Put each task under the phase it belongs to. Every phase must hold at least one task.
-- If the workspace's other active items are listed, do NOT propose steps that duplicate them, and sequence your steps around their deadlines and dependencies — if a step must happen before or is blocked by another item, order it accordingly and say so in its summary.
-- Be specific and practical, not generic. "Take a full-length SAT practice test" is better than "Practice".
-- DIRECT WORK, NOT PLANNING-TO-PLAN. Every step must be the actual work that moves this forward — not another layer of organizing it. Do NOT propose steps like "make a study plan", "create a schedule", "outline your approach", "research how to start", "gather resources", "figure out what to do", "break this into tasks". The user came here to be told what to DO, not to plan the plan. (The only exception: a genuine one-time unblock the Description names, e.g. "get the syllabus" when nothing can start without it.)
-- For learning / studying / courses, steps are concrete DOSES of the real material: "Watch lecture 3", "Solve 5 practice problems from chapter 2", "Finish the next unstudied topic", "Re-derive the key proof", "Do last year's midterm". Not "review the material" or "study more".
-- Include a mix of immediate quick-wins and longer tasks.
-- Keep titles short (under 60 characters) but descriptive.
-- Include a one-sentence summary for each step explaining why it matters or what it involves.
-
-${OUTPUT_FORMAT_GROUPED}`;
-
-// Light — just enough to get unstuck. For paralysis relief, not planning.
-const STEP_SYSTEM_PROMPT_LIGHT = `You are a task-breakdown assistant for BrainDump, a tool for people who get stuck starting things.
-
-Given a goal, project or big task, generate ONLY the 1–3 most immediate, concrete next actions — the smallest things the user can do right now to get moving. This is not a full plan; it's the first push past the blank page.
-
-Rules:
-- Each step must be doable in one short sitting. "Open a new doc and write the title" beats "Draft the report".
-- DIRECT WORK, NOT PLANNING-TO-PLAN. The next action is the real work, never another layer of organizing it. Never propose "make a study plan", "create a schedule", "outline your approach", "research how to start", "figure out where to begin". For studying, that means "Watch lecture 1", "Solve 5 problems", "Finish the next topic" — not "review the material" or "plan your study".
-- Pick the true first step(s) — what literally has to happen before anything else.
-- Keep titles short (under 60 characters) and concrete.
-- One-sentence summary each.
-
-${OUTPUT_FORMAT}`;
-
-// Count the "- Task:" lines the model produced. Used to decide whether the
-// cheap Haiku pass returned a usable breakdown or something too thin to ship.
-function countSteps(text: string): number {
-  return text.split("\n").filter((l) => /^\s*-\s*Task:/i.test(l)).length;
+function namesOf(titles: string[]): string {
+  const quoted = titles.map((t) => `“${t}”`);
+  return quoted.length <= 2 ? quoted.join(" and ") : `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -88,11 +37,9 @@ export async function POST(req: NextRequest) {
   if (!supabase) {
     return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
   }
-
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -103,137 +50,98 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-
-  const { title, summary, node_type, workspace_id, mode, instructions } = body as {
-    title: string;
-    summary: string | null;
-    node_type: string;
-    workspace_id: string;
-    mode?: "light" | "full";
-    instructions?: string;
+  const { node_ids, workspace_id, mode, instructions } = body as {
+    node_ids?: unknown;
+    workspace_id?: unknown;
+    mode?: unknown;
+    instructions?: unknown;
   };
-  const stepMode = mode === "light" ? "light" : "full";
-  // Optional user directions to steer the breakdown. Capped so a pasted essay
-  // can't blow the 800-token budget.
-  const cleanInstructions =
-    typeof instructions === "string" ? instructions.trim().slice(0, 500) : "";
-
-  if (!title || !workspace_id) {
-    return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  const ids = Array.isArray(node_ids)
+    ? [...new Set(node_ids.filter((id): id is string => typeof id === "string" && id.length > 0))].slice(0, MAX_NODES)
+    : [];
+  if (ids.length === 0 || typeof workspace_id !== "string" || !workspace_id) {
+    return NextResponse.json({ error: "node_ids and workspace_id are required" }, { status: 400 });
   }
+  const shape: StepShape = mode === "light" ? "next" : "roadmap";
+  // The user's directions for this breakdown, from the Details panel.
+  const words = typeof instructions === "string" ? instructions.trim().slice(0, MAX_INSTRUCTIONS_CHARS) : "";
 
-  // Accept any node type — the user explicitly asked for a breakdown, so
-  // even a "task" or "idea" gets its own roadmap (a task that gains steps
-  // becomes a big task). The model's output lands in the standard review
-  // queue regardless.
-  const parentType = normalizeNodeType(node_type, "project");
-  const parentLabel = NODE_TYPE_INFO[parentType].label;
-
-  // Verify workspace ownership, and load workspace context so the breakdown
-  // fits the bigger picture: sequence around real deadlines/dependencies and
-  // don't duplicate work that already exists. One round trip — the context
-  // read is scoped to this user either way.
-  const [{ data: workspace }, { data: wsNodes }] = await Promise.all([
-    supabase
-      .from("workspaces")
-      .select("id")
-      .eq("id", workspace_id)
-      .eq("user_id", user.id)
-      .single(),
-    supabase
-      .from("nodes")
-      .select("title, node_type, target_date")
-      .eq("workspace_id", workspace_id)
-      .eq("user_id", user.id)
-      .eq("status", "active")
-      .order("target_date", { ascending: true, nullsFirst: false })
-      .limit(40),
-  ]);
-
+  const { data: workspace } = await supabase
+    .from("workspaces")
+    .select("id")
+    .eq("id", workspace_id)
+    .eq("user_id", user.id)
+    .single();
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
   }
 
-  const claudeKey = process.env.ANTHROPIC_API_KEY;
-  if (!claudeKey) {
-    return NextResponse.json({ error: "AI not configured" }, { status: 500 });
-  }
-  const contextBlock =
-    wsNodes && wsNodes.length > 0
-      ? `\n\nOther active items already in this workspace — do NOT duplicate these, and sequence your steps around their deadlines and dependencies:\n${wsNodes
-          .map((n) => `- [${n.node_type}] ${n.title}${n.target_date ? ` (due ${n.target_date})` : ""}`)
-          .join("\n")}`
-      : "";
-
-  const client = new Anthropic({ apiKey: claudeKey });
-  const usageScope = { supabase, userId: user.id, workspaceId: workspace_id };
-  const userPrompt =
-    (summary ? `${parentLabel}: "${title}"\nDescription: ${summary}` : `${parentLabel}: "${title}"`) +
-    (cleanInstructions
-      ? `\n\nUser's directions for this breakdown (follow these): ${cleanInstructions}`
-      : "") +
-    contextBlock;
-
-  // Full = a deep roadmap for any type (phases, each a big task, with steps
-  // under them — a big task can hold phases); light = the next 1–3 steps.
-  const systemPrompt =
-    stepMode === "light" ? STEP_SYSTEM_PROMPT_LIGHT : STEP_SYSTEM_PROMPT_FULL;
-  // Light wants 1–3 steps, so a single step is a valid result — only escalate
-  // if it came back empty. Full wants a real roadmap, so <2 steps is too thin.
-  const minSteps = stepMode === "light" ? 1 : 2;
-
-  async function generate(model: string): Promise<string> {
-    const startedAt = Date.now();
-    const response = await client.messages.create(
-      {
-        model,
-        // Headroom for Sonnet 5's tokenizer (~30% more tokens) plus grouped
-        // breakdowns that emit several sections. Pure truncation guard — the
-        // model stops at end_turn once the steps are complete.
-        max_tokens: 1600,
-        ...claudeRequestTuning(model, AI_TEMPERATURE.PLANNER),
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-      },
-      // Forward the request's abort signal so a client cancel (#5) actually
-      // stops the upstream model call instead of billing for output nobody sees.
-      { signal: req.signal },
-    );
-    after(() =>
-      recordClaudeRun({
-        scope: usageScope,
+  const today = await getRequestToday();
+  const written = await Promise.all(
+    ids.map((nodeId, i) =>
+      writeSteps({
+        supabase,
+        userId: user.id,
+        workspaceId: workspace_id,
+        today,
+        target: { node_id: nodeId },
+        shape,
+        words,
+        // A client cancel stops the model call instead of billing for it.
+        signal: req.signal,
         source: "suggest-steps",
-        model,
-        promptVersion: `suggest-steps-v2:${stepMode}`,
-        usage: readClaudeUsage(response.usage),
-        latencyMs: Date.now() - startedAt,
+        refPrefix: ids.length > 1 ? `s${i + 1}_` : "",
       }),
+    ),
+  );
+  const ok = written.flatMap((w) => (w.ok ? [w] : []));
+  if (ok.length === 0) {
+    const failed = written.find((w) => !w.ok);
+    return NextResponse.json(
+      { error: failed && !failed.ok ? failed.error : "No steps generated" },
+      { status: req.signal.aborted ? 499 : 502 },
     );
-    const textBlock = response.content.find((b) => b.type === "text");
-    return textBlock?.text?.trim() ?? "";
+  }
+  const changes: ChangeOp[] = ok.flatMap((w) => w.ops);
+  const label = `${shape === "next" ? "Next steps for" : "A roadmap for"} ${namesOf(ok.map((w) => w.title))}${words ? ` — ${words}` : ""}`;
+
+  // Parked like a dump's waiting changes: the resume endpoint applies the
+  // rows the user keeps; nothing else continues this thread.
+  const toolUseId = `steps_${crypto.randomUUID()}`;
+  const toolInput: BuildPlanInput = { changes, origin: "steps", suggested: true };
+  const { data: runRow, error: runError } = await supabase
+    .from("pending_chat_runs")
+    .insert({
+      user_id: user.id,
+      workspace_id,
+      selected_node_id: ids.length === 1 ? ids[0] : null,
+      mode: "explain",
+      messages: [
+        { role: "user", content: [{ type: "text", text: `User question: ${label}` }] },
+        { role: "assistant", content: [{ type: "tool_use", id: toolUseId, name: WRITE_STEPS_TOOL, input: {} }] },
+      ],
+      pending_tool_use_id: toolUseId,
+      pending_tool_name: WRITE_STEPS_TOOL,
+      pending_tool_input: toolInput,
+      expires_at: new Date(Date.now() + CARD_TTL_MS).toISOString(),
+    })
+    .select("id")
+    .single();
+  if (runError || !runRow) {
+    console.warn("[suggest-steps] could not park the steps card:", runError?.message);
+    return NextResponse.json({ error: "Could not prepare the steps card." }, { status: 500 });
   }
 
-  try {
-    // Haiku first — most breakdowns are routine and don't need Sonnet's
-    // depth. Escalate to Sonnet only when Haiku comes back too thin. A Sonnet
-    // throw rides the outer catch → 502.
-    let model: string = AI_MODELS.CLAUDE_HAIKU;
-    let stepsText = await generate(model);
-    let escalated = false;
-
-    if (countSteps(stepsText) < minSteps) {
-      model = AI_MODELS.CLAUDE_SONNET;
-      stepsText = await generate(model);
-      escalated = true;
-    }
-
-    if (!stepsText) {
-      return NextResponse.json({ error: "No steps generated" }, { status: 502 });
-    }
-
-    console.log("[suggest-steps]", { mode: stepMode, model, escalated, steps: countSteps(stepsText) });
-    return NextResponse.json({ steps_text: stepsText });
-  } catch {
-    return NextResponse.json({ error: "AI generation failed" }, { status: 502 });
-  }
+  console.log("[suggest-steps]", { shape, nodes: ids.length, written: ok.length, ops: changes.length });
+  return NextResponse.json({
+    label,
+    // Items it couldn't write steps for (the rest are on the card).
+    skipped: written.flatMap((w) => (w.ok ? [] : [w.error])),
+    pending_action: {
+      run_id: runRow.id as string,
+      tool_use_id: toolUseId,
+      tool_name: WRITE_STEPS_TOOL,
+      tool_input: toolInput,
+    },
+  });
 }
