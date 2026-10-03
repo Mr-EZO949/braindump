@@ -142,7 +142,6 @@ export async function POST(req: NextRequest) {
     raw_text,
     workspace_id,
     source_type = "brain_dump",
-    default_parent_node_id,
     history: rawHistory,
     stream = false,
     retry_entry_id,
@@ -150,12 +149,6 @@ export async function POST(req: NextRequest) {
     raw_text: string;
     workspace_id: string;
     source_type?: string;
-    // Optional: when set, any extracted proposal that has no parent
-    // assignment (neither existing_parent_node_id nor a primary_parent_local_ref
-    // pointing at a same-dump sibling) gets this node as its parent. Used
-    // by the "suggest steps" flow so the generated subtasks anchor under
-    // the source node instead of falling back to the workspace root.
-    default_parent_node_id?: string | null;
     // A dump typed in the chat composer: the conversation so far, for the reply.
     history?: unknown;
     // Answer in NDJSON: a line per stage, then the result (lib/chat/dump-stream.ts).
@@ -280,9 +273,10 @@ export async function POST(req: NextRequest) {
   }
 
   // The user's own dump (typed or spoken) is ONE turn: one change set, one
-  // reply, one card (docs/unified-turn.md). Generated steps (suggest-steps sets
-  // default_parent_node_id) and the legacy chat save keep the review flow below.
-  if (!default_parent_node_id && (source_type === "brain_dump" || source_type === "voice")) {
+  // reply, one card (docs/unified-turn.md). The legacy chat save keeps the
+  // review flow below. (Generated steps used to come through here too, with a
+  // default_parent_node_id; they have their own step-writer since 2026-10-03.)
+  if (source_type === "brain_dump" || source_type === "voice") {
     const turnParams = {
       req,
       supabase,
@@ -334,22 +328,20 @@ export async function POST(req: NextRequest) {
   // extraction — doing so made it emit the induced area AND its own parent for
   // the same domain, leaving empty area shells. Instead we infer areas in
   // PARALLEL (cheap Haiku, no added latency) purely to offer as optional review
-  // chips for domains the dump didn't structure. Skipped for suggest-steps
-  // roadmaps (default_parent_node_id set) — those already have a home — and
-  // for a workspace that already has its branches: there the chips only
+  // chips for domains the dump didn't structure. Skipped for a workspace
+  // that already has its branches: there the chips only
   // offered duplicates or strays (a short update saying "braindump should be
   // its own project" got a root-level "Braindump Project" chip next to the
   // existing Money Projects branch, 2026-09-30).
   const wantAreaSuggestions =
-    !default_parent_node_id &&
     (await countTopLevelBranches(supabase, user.id, workspace_id)) < AI_INGESTION.AREA_CHIPS_MAX_BRANCHES;
   const today = await getRequestToday();
   // Dump → priorities (lib/ai/dump-priorities.ts): once retrieval knows which
   // existing nodes this dump is about, a small Haiku read pulls out "waiting
   // for the result" / "moved to Friday" / "I need it for my masters" — in
   // parallel with extraction. Only for the user's own dumps (the chat <nodes>
-  // save and suggest-steps paths don't show the result).
-  const wantPriorities = !default_parent_node_id && source_type !== "assistant_save";
+  // save doesn't show the result).
+  const wantPriorities = source_type !== "assistant_save";
   let priorityRead: Promise<DumpPriorityRead | null> = Promise.resolve(null);
   const [result, areaResult] = await Promise.all([
     runExtraction({
@@ -383,29 +375,6 @@ export async function POST(req: NextRequest) {
         })
       : Promise.resolve({ suggested_areas: [], suggestion_error: null }),
   ]);
-
-  // Apply the default-parent override (e.g. from suggest-steps). Any
-  // extracted proposal that ended up parent-less gets pinned under the
-  // caller-supplied node. Mirrors the bootstrap orphan-anchor pattern.
-  if (default_parent_node_id && result.ok) {
-    await supabase
-      .from("proposed_nodes")
-      .update({ existing_parent_node_id: default_parent_node_id })
-      .eq("raw_entry_id", rawEntry.id)
-      .eq("workspace_id", workspace_id)
-      .eq("user_id", user.id)
-      .is("existing_parent_node_id", null)
-      .is("primary_parent_local_ref", null);
-    // Refresh the returned proposals so the client sees the parent set.
-    const { data: refreshed } = await supabase
-      .from("proposed_nodes")
-      .select("*")
-      .eq("raw_entry_id", rawEntry.id)
-      .order("local_ref", { ascending: true });
-    if (refreshed) {
-      result.proposedNodes = refreshed as typeof result.proposedNodes;
-    }
-  }
 
   // Life-area chips help ONLY when extraction produced a FLAT result — a loose
   // dump with no parent/child structure that needs grouping. When extraction
@@ -558,7 +527,7 @@ export async function POST(req: NextRequest) {
     tool_name: string;
     tool_input: BuildPlanInput;
   } | null = null;
-  if (result.restructure.length > 0 && !default_parent_node_id) {
+  if (result.restructure.length > 0) {
     const toolUseId = `dump_${rawEntry.id}`;
     const toolInput: BuildPlanInput = { changes: result.restructure, origin: "dump" };
     const { data: runRow, error: runError } = await supabase
