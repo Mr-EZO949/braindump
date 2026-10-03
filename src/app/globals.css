@@ -16537,6 +16537,27 @@ body:has(.app-shell[data-app-mode="graph"]) {
 :root[data-theme="light"] .dump-history-item-text {
   color: rgba(26, 22, 19, 0.82);
 }
+/* The rest of the modal was white-on-paper in the light theme (an empty
+   white box: kicker, close, "No brain dumps yet" and dates all invisible). */
+:root[data-theme="light"] .dump-history-header {
+  border-bottom-color: var(--color-border-faint);
+}
+:root[data-theme="light"] .dump-history-kicker,
+:root[data-theme="light"] .dump-history-close {
+  color: var(--color-text-tertiary);
+}
+:root[data-theme="light"] .dump-history-close:hover {
+  background: rgba(40, 35, 31, 0.06);
+  color: var(--color-text-primary);
+}
+:root[data-theme="light"] .dump-history-empty,
+:root[data-theme="light"] .dump-history-when {
+  color: var(--color-text-muted);
+}
+:root[data-theme="light"] .dump-history-item {
+  border-color: var(--color-border-faint);
+  background: rgba(255, 255, 255, 0.6);
+}
 
 /* ── Bootstrap wizard step 2: AI-suggested life-areas ─────────────────── */
 .bootstrap-areas {
