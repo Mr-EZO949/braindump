@@ -13,6 +13,10 @@ describe("looksLikePlainQuestion", () => {
     "which deadline is closest?",
     "ugh why do i keep avoiding the thesis?",
     "explain why the ML exam matters",
+    // fix list #19: the paralysis question with a day in it
+    "what should i focus on today?",
+    "what's the one thing i should do tonight?",
+    "which deadline matters most this week?",
   ])("sends %j to Q&A", (message) => {
     expect(looksLikePlainQuestion(message)).toBe(true);
   });
@@ -28,6 +32,9 @@ describe("looksLikePlainQuestion", () => {
     "can you break the thesis down?",
     // data the snapshot doesn't have
     "what's on my calendar?",
+    "what's on my calendar today?",
+    "what's planned for tomorrow?",
+    "what's my schedule this week?",
     "what did i get done this week?",
     "what's in my Foundation & Diagnostics project?",
     "is the italian stuff connected to the internship?",

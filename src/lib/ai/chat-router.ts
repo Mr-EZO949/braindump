@@ -38,8 +38,12 @@ const ACTION =
 
 // Data the snapshot doesn't carry: the calendar, recent activity, and the
 // graph's structure (it lists nodes, not their children or connections).
+// "today" / "this week" alone are not on this list (fix list #19): "what
+// should I focus on today?" is the plain paralysis question, answered from the
+// snapshot's ranking and due dates; Gemini hands off when it needs the
+// calendar ("what's on my calendar today?" stays here through "calendar").
 const NEEDS_LOOKUP =
-  /\b(calendar|schedule|today|tonight|tomorrow|yesterday|this week|last week|next week|this month|recent(ly)?|history|when did|did i|have i|what have i|streak|what'?s (in|under|inside)|children|subtasks?|under it|connected|connection|linked|related|relate|depends?|blocking|blocked)\b/i;
+  /\b(calendar|schedule|agenda|planned|yesterday|last week|recent(ly)?|history|when did|did i|have i|what have i|streak|what'?s (in|under|inside)|children|subtasks?|under it|connected|connection|linked|related|relate|depends?|blocking|blocked)\b/i;
 
 // "How do I learn X?" invites a roadmap the full assistant would propose as nodes.
 const HOW_TO = /\bhow (do|should|can|would|could) i\b/i;
