@@ -17,6 +17,7 @@ import { COMMITMENT_MUTATION_TOOLS } from "./commitment-mutations";
 import { INTERACTIVE_TOOLS } from "./interactive";
 import { BUILD_GRAPH_TOOL, BUILD_TOOLS, planBuild } from "./build";
 import { planSteps, STEP_TOOLS, WRITE_STEPS_TOOL } from "./steps";
+import { actionSucceeded, looksMultiStep } from "./confirmations";
 import type { AppliedMarkerPayload } from "@/lib/chat/applied-marker";
 import type { TurnApplied } from "@/types/ai";
 
@@ -274,3 +275,39 @@ export async function runTurnTools(blocks: ToolUse[], ctx: ToolContext): Promise
   return { pending, turns, deferred, applied, results: [] };
 }
 
+
+// After a turn's tool calls ran and nothing waits for the user: is every call
+// already on screen as a card? Then a follow-up model call would only say
+// "Done" while re-sending the whole prompt (eval 2026-10-03: "did the gym and
+// finished my CV — stats or internship?" took a second round, 30K input
+// tokens, to add a line after the cards). A planned change (change,
+// build_graph, write_steps) counts when it applied without leaving anything
+// out; a direct tool when it applied in full. A lookup's result, a failure or
+// a change nothing showed for is for the model to read. A direct change
+// alone may be step one of "X is done, then add Y" (looksMultiStep). The
+// caller still checks what the cards can't carry (needsStepAfterChange) and
+// an answer the reply still owes (answerStillOwed).
+export function turnNeedsNoFollowUp(turn: TurnTools, message: string): boolean {
+  if (turn.pending || turn.results.length === 0) return false;
+  for (const result of turn.results) {
+    if (!actionSucceeded(result.content, result.is_error)) return false;
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(result.content) as Record<string, unknown>;
+    } catch {
+      return false;
+    }
+    if (PLANNED_TOOLS.has(result.name)) {
+      if (parsed.left_out) return false;
+      continue;
+    }
+    if (isDirectTool(result.name)) {
+      const failed = Array.isArray(parsed.failed) ? parsed.failed.length : 0;
+      const applied = Array.isArray(parsed.applied) ? parsed.applied.length : 0;
+      if (failed > 0 || applied === 0) return false;
+      continue;
+    }
+    return false;
+  }
+  return turn.turns.length > 0 || !looksMultiStep(message);
+}

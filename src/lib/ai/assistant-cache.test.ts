@@ -64,9 +64,9 @@ describe("withCacheBreakpoints", () => {
 });
 
 describe("cachedSystem", () => {
-  it("caches the static prompt for an hour and the graph context for 5 minutes", () => {
+  it("caches the static prompt and the graph context for 5 minutes by default (fix list #19)", () => {
     const blocks = cachedSystem("rules", "graph");
-    expect(blocks.map((b) => b.cache_control)).toEqual([{ type: "ephemeral", ttl: "1h" }, { type: "ephemeral" }]);
+    expect(blocks.map((b) => b.cache_control)).toEqual([{ type: "ephemeral" }, { type: "ephemeral" }]);
   });
 
   it("omits an empty graph context", () => {

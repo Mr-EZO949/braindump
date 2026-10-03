@@ -290,6 +290,24 @@ export const AI_JOBS = {
 export const AI_ASSISTANT = {
   // Hours to include recently completed nodes in assistant context
   COMPLETED_NODE_CONTEXT_WINDOW_HOURS: 48,
+  // Chat prompt cache (assistant-cache.ts, fix list #19). The static block —
+  // system prompt + tool schemas, ~8K tokens — is written at 1.25× for 5
+  // minutes or 2× for an hour; every read refreshes the timer. The owner's
+  // chat gaps (ai_runs 9/25–10/01, 47 gaps): 87% under 5 min, 4% 5–60 min,
+  // 9% over 2 h (a new session) → 5 minutes is cheaper per session. The
+  // block is the same for every user (same mode and day), so once ~10 users
+  // chat daily (≳0.5 sessions an hour app-wide) one user's call keeps it warm
+  // for the next, and the hour wins: set CHAT_STATIC_CACHE_TTL=1h then.
+  STATIC_CACHE_TTL: (process.env.CHAT_STATIC_CACHE_TTL === "1h" ? "1h" : "5m") as "5m" | "1h",
+  // Importance in the chat snapshot is shown in steps of this size, so a
+  // re-score's ±1 jitter doesn't change the cached bytes (context.ts).
+  SNAPSHOT_IMPORTANCE_STEP: 5,
+  // Snapshot pin (snapshot-pin.ts): reuse the snapshot sent last while
+  // Anthropic still caches it (5 min from its last read; a margin for the
+  // request's own time), plus the lines that changed since — until those
+  // outgrow this share of the snapshot.
+  SNAPSHOT_PIN_TTL_MS: 270_000,
+  SNAPSHOT_PIN_MAX_DELTA_SHARE: 0.35,
 } as const;
 
 // ---------------------------------------------------------------------------

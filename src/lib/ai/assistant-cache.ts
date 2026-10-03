@@ -2,10 +2,13 @@
 //
 // Anthropic allows 4 cache breakpoints per request, over the prefix order
 // tools → system → messages:
-//   1. static system  1h — tools + the mode/date system prompt; identical for
-//                          every user in that mode, so shared app-wide
+//   1. static system  5m — tools + the mode/date system prompt; identical for
+//                          every user in that mode, so shared app-wide. 5m or
+//                          1h by AI_ASSISTANT.STATIC_CACHE_TTL (config.ts says
+//                          when the hour pays off)
 //   2. graph context  5m — the user's graph snapshot (byte-stable until the
-//                          graph changes), re-read by every turn of a thread
+//                          graph changes; snapshot-pin.ts keeps it stable
+//                          across a burst), re-read by every turn of a thread
 //   3. history end    5m — turn N+1 re-reads turn N's history at 0.1× and only
 //                          pays to write the newest exchange (chat-memory.ts
 //                          keeps that prefix stable)
@@ -13,6 +16,10 @@
 //                          everything up to round k-1 instead of re-paying it
 // 1h entries must come before 5m ones, which this order satisfies. Tools carry
 // no breakpoint of their own — they sit inside breakpoint 1's prefix.
+//
+// Until 2026-10-03 the static block was always 1h: written at 2× at the first
+// message of every chat session (~$0.026 for 13K tokens), though the owner's
+// gaps between messages are under 5 minutes 87% of the time (fix list #19).
 
 import type {
   ContentBlockParam,
@@ -20,11 +27,14 @@ import type {
   TextBlockParam,
 } from "@anthropic-ai/sdk/resources/messages";
 
-const LONG = { type: "ephemeral", ttl: "1h" } as const;
+import { AI_ASSISTANT } from "./config";
+
+const STATIC =
+  AI_ASSISTANT.STATIC_CACHE_TTL === "1h" ? ({ type: "ephemeral", ttl: "1h" } as const) : ({ type: "ephemeral" } as const);
 const SHORT = { type: "ephemeral" } as const;
 
 export function cachedSystem(staticPrompt: string, graphContext?: string): TextBlockParam[] {
-  const blocks: TextBlockParam[] = [{ type: "text", text: staticPrompt, cache_control: LONG }];
+  const blocks: TextBlockParam[] = [{ type: "text", text: staticPrompt, cache_control: STATIC }];
   if (graphContext?.trim()) blocks.push({ type: "text", text: graphContext, cache_control: SHORT });
   return blocks;
 }

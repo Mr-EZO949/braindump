@@ -36,8 +36,9 @@ import { hashText, normalizeAIError } from "@/lib/ai/errors";
 import { persistAIRun, recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
-import { getToolSchemas, runTurnTools } from "@/lib/ai/tools";
-import { answerStillOwed, looksMultiStep, needsStepAfterChange } from "@/lib/ai/tools/confirmations";
+import { pinSnapshot, snapshotText } from "@/lib/ai/snapshot-pin";
+import { getToolSchemas, runTurnTools, turnNeedsNoFollowUp } from "@/lib/ai/tools";
+import { answerStillOwed, needsStepAfterChange } from "@/lib/ai/tools/confirmations";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
 import { encodeTurnMarker } from "@/lib/chat/turn-marker";
 import { buildHistoryMessages, sanitizeHistory, type HistoryTurn } from "@/lib/ai/chat-memory";
@@ -280,13 +281,17 @@ export async function POST(req: NextRequest) {
     history.length === 0
       ? await getTemporalFlag(supabase, user.id, workspace_id, selected_node_id ?? null)
       : "";
-  const { contextBlock, messageBlock } = buildAssistantUserPromptParts({
+  const promptParts = {
     message: message.trim(),
-    context: ctx.contextString,
-    scope: ctx.scopeLabel,
     temporalFlag,
     relevantExtras: ctx.relevantExtras,
     hint: buildHint(message),
+  };
+  // The fresh snapshot — Gemini's (plain questions) and the hash.
+  const { contextBlock, messageBlock } = buildAssistantUserPromptParts({
+    ...promptParts,
+    context: ctx.contextString,
+    scope: ctx.scopeLabel,
   });
   // Persisted hash still uses the full prompt string so telemetry matches old rows.
   const userPromptForHash = `${contextBlock}\n\n${messageBlock}`;
@@ -318,17 +323,34 @@ export async function POST(req: NextRequest) {
   };
 
   // The graph snapshot rides in the system prompt, where every turn of the
-  // thread re-reads it from cache instead of re-sending it.
-  const systemPromptBlocks = cachedSystem(systemPrompt, contextBlock);
-
-  // Conversation state — the thread's recent turns verbatim, then the current
-  // turn (per-message extras + the user's message).
-  const priorMessages = buildHistoryMessages(history);
-  const historyEnd = priorMessages.length > 0 ? priorMessages.length - 1 : null;
-  const messages: MessageParam[] = [
-    ...priorMessages,
-    { role: "user", content: [{ type: "text", text: messageBlock }] },
-  ];
+  // thread re-reads it from cache instead of re-sending it. Claude gets the
+  // snapshot it got last while that is still cached, plus what changed since
+  // (snapshot-pin.ts) — picked only once the turn is Claude's, so a Gemini
+  // answer doesn't keep a pin alive that Anthropic's cache has dropped.
+  const claudeTurn = () => {
+    const snap = pinSnapshot({
+      key: `${user.id}:${workspace_id}`,
+      prefixKey: `${ASSISTANT_PROMPT_VERSION}:${resolvedMode}:${todayISO}`,
+      fresh: { scope: ctx.scopeLabel, items: ctx.items },
+    });
+    const parts = buildAssistantUserPromptParts({
+      ...promptParts,
+      context: snapshotText(snap.items),
+      scope: snap.scope,
+      snapshotDelta: snap.delta,
+    });
+    // Conversation state — the thread's recent turns verbatim, then the
+    // current turn (snapshot changes, per-message extras, the message).
+    const priorMessages = buildHistoryMessages(history);
+    return {
+      systemPromptBlocks: cachedSystem(systemPrompt, parts.contextBlock),
+      historyEnd: priorMessages.length > 0 ? priorMessages.length - 1 : null,
+      messages: [
+        ...priorMessages,
+        { role: "user", content: [{ type: "text", text: parts.messageBlock }] },
+      ] as MessageParam[],
+    };
+  };
 
   const start = Date.now();
 
@@ -402,6 +424,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      const { systemPromptBlocks, historyEnd, messages } = claudeTurn();
       try {
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           if (aborted) break;
@@ -522,20 +545,16 @@ export async function POST(req: NextRequest) {
 
           messages.push({ role: "user", content: toolResults });
 
-          // The applied card IS the reply: a lone, fully applied priority
-          // change needs no follow-up model call (it would only say "Done"
-          // while re-sending the whole prompt). Failures and multi-step asks
-          // still go back to the model.
-          const lone = turn.results.length === 1 && turn.applied.length === 1 ? turn.applied[0] : null;
-          if (lone && lone.failed.length === 0 && !looksMultiStep(message)) {
-            break;
-          }
-          // The same for a change the user stated that applied in full: the
-          // turn card lists it, with Undo — "Done" would only repeat it. One
-          // change call carries every graph change of the message, so only a
-          // step it can't carry (scheduling the new item) needs the model again.
-          const loneTurn = turn.results.length === 1 && turn.turns.length === 1 ? turn.results[0] : null;
-          if (loneTurn && !loneTurn.is_error && !needsStepAfterChange(message) && !answerStillOwed(message, fullText)) {
+          // The cards ARE the reply: when every call landed as a card (a
+          // change set, an applied priority / weekly-time change) a follow-up
+          // model call would only say "Done" while re-sending the whole
+          // prompt. Failures, lookups, a step the calls can't carry
+          // (scheduling the new item) and an answer still owed go back to it.
+          if (
+            turnNeedsNoFollowUp(turn, message) &&
+            !needsStepAfterChange(message) &&
+            !answerStillOwed(message, fullText)
+          ) {
             break;
           }
 

@@ -7,6 +7,7 @@ import {
   isMutationTool,
   isReadOnlyTool,
   isInteractiveTool,
+  turnNeedsNoFollowUp,
 } from "./index";
 
 describe("tool registry classification", () => {
@@ -68,5 +69,37 @@ describe("tool registry classification", () => {
     expect(schema?.input_schema.required).toEqual(
       expect.arrayContaining(["question", "options"]),
     );
+  });
+});
+
+describe("turnNeedsNoFollowUp (fix list #19)", () => {
+  const result = (name: string, content: Record<string, unknown>, is_error = false) => ({
+    name,
+    tool_use_id: name,
+    content: JSON.stringify(content),
+    is_error,
+  });
+  const card = { added: [], done: [{ node_id: "n", title: "Gym" }], links: [], questions: [] };
+  const turn = (results: ReturnType<typeof result>[], turns = [card], pending = null) =>
+    ({ pending, turns, deferred: [], applied: [], results }) as unknown as Parameters<typeof turnNeedsNoFollowUp>[0];
+  const changed = result("change", { accepted: true, applied: 2 });
+  const priorities = result("update_priorities", { accepted: true, applied: [{ title: "Stats" }], failed: [] });
+
+  it("a change and a priority update that both landed need no second round", () => {
+    expect(turnNeedsNoFollowUp(turn([changed, priorities]), "did the gym — stats or internship?")).toBe(true);
+  });
+
+  it("a lookup, a failure or something left out goes back to the model", () => {
+    expect(turnNeedsNoFollowUp(turn([changed, result("search_nodes", { results: [] })]), "x")).toBe(false);
+    expect(turnNeedsNoFollowUp(turn([result("change", { accepted: false, error: "Not in this workspace" })]), "x")).toBe(false);
+    expect(turnNeedsNoFollowUp(turn([result("change", { accepted: true, left_out: ["changes[1]"] })]), "x")).toBe(false);
+    expect(
+      turnNeedsNoFollowUp(turn([result("update_priorities", { accepted: true, applied: [{}], failed: [{}] })], []), "x"),
+    ).toBe(false);
+  });
+
+  it("a lone direct change may be step one of a multi-step ask", () => {
+    expect(turnNeedsNoFollowUp(turn([priorities], []), "stats is done")).toBe(true);
+    expect(turnNeedsNoFollowUp(turn([priorities], []), "stats is done, then add the essay")).toBe(false);
   });
 });

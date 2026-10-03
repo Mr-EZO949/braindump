@@ -16,6 +16,16 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+// The importance shown to the model, in steps of SNAPSHOT_IMPORTANCE_STEP.
+// One graph change re-normalizes the scores and moved ~15 of 35 lines by a
+// point (measured 2026-10-03) — noise to the model, but every changed byte
+// re-writes the cached snapshot. Steps of 5 keep the lines stable, and the
+// order still follows the exact score.
+export function shownImportance(score: number): number {
+  const step = AI_ASSISTANT.SNAPSHOT_IMPORTANCE_STEP;
+  return Math.min(100, Math.max(0, Math.round(score / step) * step));
+}
+
 function truncateToTokens(text: string, maxTokens: number): string {
   const maxChars = maxTokens * 4;
   if (text.length <= maxChars) return text;
@@ -39,6 +49,9 @@ export interface AssembledContext {
   // Byte-stable for a given graph state (no message-dependent ordering), so the
   // chat route can prompt-cache it across a thread's turns.
   contextString: string;
+  // The parts of contextString, in order (joined by a blank line) — the chat
+  // route diffs them against the snapshot it sent last (snapshot-pin.ts).
+  items: Array<{ id: string; text: string }>;
   // Nodes that match THIS message but aren't in the overview above — the only
   // per-message part, sent fresh with the message.
   relevantExtras: string;
@@ -216,7 +229,7 @@ export async function buildAssistantContext(params: {
         `Title: ${sel.title}`,
         `ID: ${sel.id}`,
         `Type: ${sel.node_type}`,
-        `Importance: ${sel.importance}${sel.current_importance_score != null ? ` (importance ${Math.round(sel.current_importance_score)}/100)` : ""}`,
+        `Importance: ${sel.importance}${sel.current_importance_score != null ? ` (importance ${shownImportance(sel.current_importance_score)}/100)` : ""}`,
         `Status: ${statusLabel(sel)}`,
         sel.target_date ? `Due: ${sel.target_date}` : null,
         sel.stakes != null && sel.stakes !== 0 ? `Stakes: ${stakesLevel(sel.stakes)}` : null,
@@ -314,7 +327,7 @@ export async function buildAssistantContext(params: {
       summarySnippet,
       // "importance N/100", not "score": on an exam node a bare "score: 78"
       // read as the user's grade (assistant-v21 eval).
-      `importance ${Math.round(score)}/100, status: ${statusLabel(node)}${node.target_date ? `, due: ${node.target_date}` : ""}${node.stakes != null && node.stakes !== 0 ? `, stakes: ${stakesLevel(node.stakes)}` : ""}`,
+      `importance ${shownImportance(score)}/100, status: ${statusLabel(node)}${node.target_date ? `, due: ${node.target_date}` : ""}${node.stakes != null && node.stakes !== 0 ? `, stakes: ${stakesLevel(node.stakes)}` : ""}`,
       `id: ${node.id}`,
     ].filter(Boolean);
     const text = parts.join(" — ");
@@ -426,6 +439,7 @@ export async function buildAssistantContext(params: {
 
   return {
     contextString,
+    items: included.map((i) => ({ id: i.id, text: i.text })),
     relevantExtras,
     itemsIncluded: included.length,
     itemsTruncated: truncatedCount,
