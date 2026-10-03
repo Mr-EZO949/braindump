@@ -16,6 +16,16 @@ const block = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("validatePlanOutput", () => {
+  it("a break block carries no node (fix list leftover, 2026-10-03)", () => {
+    const out = validatePlanOutput(
+      planRaw([
+        { title: "Lunch", start_offset: 0, duration_minutes: 45, block_type: "break", node_id: "n-1", reason: "placeholder removed" },
+        { title: "Fixes", start_offset: 45, duration_minutes: 60, block_type: "focus", node_id: "n-1" },
+      ]),
+    );
+    expect(out.blocks.map((b) => b.node_id)).toEqual([null, "n-1"]);
+  });
+
   it("accepts a well-formed block and defaults node_id/reason", () => {
     const out = validatePlanOutput(
       planRaw([{ title: "T", start_offset: 0, duration_minutes: 30, block_type: "focus" }]),

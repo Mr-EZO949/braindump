@@ -518,7 +518,10 @@ export function validatePlanOutput(
       throw new Error(`blocks[${i}] invalid block_type: ${b.block_type}`);
 
     return {
-      node_id: isString(b.node_id) ? (b.node_id as string) : null,
+      // A break is time off, never work on a node: in a live "plan my day
+      // from 8am" (2026-10-03) a Lunch break came back tied to a task, shown
+      // as "task · BrainDump Future Fixes & Features".
+      node_id: b.block_type !== "break" && isString(b.node_id) ? (b.node_id as string) : null,
       title: (b.title as string).trim(),
       start_offset: Math.max(0, b.start_offset as number),
       duration_minutes: Math.max(1, Math.round(b.duration_minutes as number)),
