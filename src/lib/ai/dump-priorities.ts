@@ -27,6 +27,11 @@ import { readClaudeUsage } from "./usage";
 // Completions stay with extraction (tuned: habits log, progress ≠ done).
 const DUMP_ACTIONS = new Set<PriorityAction>(["wait", "resume", "deadline", "stakes", "focus", "deprioritize", "drop"]);
 const STATUS_ACTIONS = new Set<string>(["wait", "resume", "drop"]);
+// A weight or a window comes only from the user's own words (owner,
+// 2026-10-02): the row quotes them in "said", and a quote that isn't in the
+// dump is a read of the user's tone — dropped (fix list #5).
+const SAID_ACTIONS = new Set<string>(["stakes", "focus", "deprioritize"]);
+const MIN_SAID_CHARS = 4;
 const MAX_NODES = 40;
 const MAX_DUMP_CHARS = 4000;
 const MAX_OUTPUT_TOKENS = 500;
@@ -58,6 +63,23 @@ export function mentionsWeeklyTime(dump: string): boolean {
 
 function str(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+// Lowercase, straight quotes, single spaces, no edge punctuation — so a quote
+// matches the dump however the model spaced or punctuated it.
+function normalizeWords(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u02bc]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\s+/g, " ")
+    .replace(/^[\s"'.,!?…-]+|[\s"'.,!?…-]+$/g, "")
+    .trim();
+}
+
+export function saidInDump(said: string, dump: string): boolean {
+  const quote = normalizeWords(said);
+  return quote.length >= MIN_SAID_CHARS && normalizeWords(dump).includes(quote);
 }
 
 function parseJson(text: string): { changes?: unknown; commitments?: unknown; unclear?: unknown } | null {
@@ -126,13 +148,15 @@ function commitmentRows(
  * Model text → validated changes. Rows are checked one at a time so one bad
  * row (unknown ref, a date that doesn't resolve) never sinks the rest; a wait
  * whose check-back words don't resolve keeps the wait without the date. At
- * most one status move and one of each action per node.
+ * most one status move and one of each action per node. With the dump given,
+ * a stakes / focus / deprioritize row must quote the user's words for it.
  */
 export function parseDumpPriorityResponse(
   text: string,
   nodes: RefNode[],
   today: string,
   commitments: RefCommitment[] = [],
+  dump?: string,
 ): DumpPriorityRead {
   const parsed = parseJson(text);
   if (!parsed) return { changes: [], commitments: [], unclear: [] };
@@ -178,11 +202,13 @@ export function parseDumpPriorityResponse(
     if (action === "resume" && node.status !== undefined && node.status !== "paused") continue;
     if (seen.has(`${node.id}:${action}`)) continue;
     if (STATUS_ACTIONS.has(action) && statusMoved.has(node.id)) continue;
+    if (dump !== undefined && SAID_ACTIONS.has(action) && !saidInDump(str(row.said), dump)) continue;
 
     const words = str(row.date_words);
     const change: Record<string, unknown> = { node_id: node.id, title: node.title, action };
     if (action === "wait") change.waiting_for = str(row.waiting_for) || "an update";
-    if (action === "stakes") change.stakes = str(row.stakes);
+    // Haiku sometimes names the field "level" (eval, dump-priorities-v4).
+    if (action === "stakes") change.stakes = str(row.stakes) || str(row.level);
     if (action === "deadline") {
       // A deadline must come from the user's words; unresolvable → ask instead.
       if (!words) continue;
@@ -236,7 +262,7 @@ export async function readDumpPriorities(params: {
   if (!apiKey || !params.dump.trim() || (ids.length === 0 && !namesTime)) return null;
 
   try {
-    const [nodesResult, active] = await Promise.all([
+    const [nodesResult, active, workspace] = await Promise.all([
       ids.length > 0
         ? params.supabase
             .from("nodes")
@@ -246,7 +272,16 @@ export async function readDumpPriorities(params: {
             .in("id", ids)
         : Promise.resolve({ data: [] }),
       loadActiveCommitments(params.supabase, params.userId, params.today),
+      params.supabase
+        .from("workspaces")
+        .select("bootstrap_root_node_id")
+        .eq("id", params.workspaceId)
+        .eq("user_id", params.userId)
+        .maybeSingle(),
     ]);
+    // The workspace root is never what a priority fact is about: "everything
+    // else can wait" came back as deprioritize on it (eval, v4).
+    const rootId = (workspace.data as { bootstrap_root_node_id?: string | null } | null)?.bootstrap_root_node_id ?? null;
     const rows = ((nodesResult.data ?? []) as Array<{
       id: string;
       title: string;
@@ -254,7 +289,7 @@ export async function readDumpPriorities(params: {
       status: string | null;
       target_date: string | null;
       stakes: number | null;
-    }>).filter((n) => n.status !== "completed" && n.status !== "archived");
+    }>).filter((n) => n.status !== "completed" && n.status !== "archived" && n.id !== rootId);
     if (rows.length === 0 && !namesTime) return null;
 
     const nodes = rows.map((n, i) => ({ ...n, ref: `n${i + 1}` }));
@@ -296,7 +331,7 @@ export async function readDumpPriorities(params: {
       inputHash: hashText(params.dump),
     });
     if (cutOff) return null;
-    return parseDumpPriorityResponse(text, nodes, params.today, commitments);
+    return parseDumpPriorityResponse(text, nodes, params.today, commitments, params.dump);
   } catch (err) {
     console.warn("[dump-priorities] read failed (non-fatal):", err instanceof Error ? err.message : err);
     return null;

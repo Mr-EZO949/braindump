@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mentionsWeeklyTime, parseDumpPriorityResponse, statusTouchedIds } from "./dump-priorities";
+import { mentionsWeeklyTime, parseDumpPriorityResponse, saidInDump, statusTouchedIds } from "./dump-priorities";
 
 const TODAY = "2026-10-07"; // a Wednesday
 const nodes = [
@@ -197,3 +197,61 @@ describe("parseDumpPriorityResponse — questions name items, not refs", () => {
   });
 });
 
+
+describe("parseDumpPriorityResponse — stakes and focus only from the user's words (fix list #5)", () => {
+  const read = (rows: unknown[], dump: string) =>
+    parseDumpPriorityResponse(JSON.stringify({ changes: rows, unclear: [] }), nodes, TODAY, [], dump).changes;
+
+  it("keeps a weight the dump says, quoted however the model spaced it", () => {
+    const dump = "ugh the masters app.  I NEED this for my masters, honestly. focus on stats this week";
+    expect(
+      read(
+        [
+          { ref: "n3", action: "stakes", stakes: "high", said: "I need this for my masters" },
+          { ref: "n1", action: "focus", said: "“focus on stats this week”" },
+        ],
+        dump,
+      ).map((c) => c.action),
+    ).toEqual(["stakes", "focus"]);
+  });
+
+  it("reads stakes written as 'level' (eval, dump-priorities-v4)", () => {
+    const dump = "the internship is the one that matters, my whole masters application depends on getting it";
+    expect(
+      read([{ ref: "n3", action: "stakes", level: "high", said: "my whole masters application depends on getting it" }], dump),
+    ).toEqual([{ node_id: "masters", title: "Masters application", action: "stakes", stakes: "high" }]);
+  });
+
+  it("drops a weight read from tone: no quote, or words the user never wrote", () => {
+    const dump = "so stressed about the masters application, i keep thinking about it and can't sleep";
+    expect(
+      read(
+        [
+          { ref: "n3", action: "stakes", stakes: "high" },
+          { ref: "n3", action: "focus", said: "this matters most right now" },
+          { ref: "n1", action: "deprioritize", said: "ok" },
+        ],
+        dump,
+      ),
+    ).toEqual([]);
+  });
+
+  it("leaves waits, deadlines and drops alone — they need no quote", () => {
+    const dump = "took the stats final, waiting for results. psych moved to friday";
+    expect(
+      read(
+        [
+          { ref: "n1", action: "wait", waiting_for: "results" },
+          { ref: "n2", action: "deadline", date_words: "friday" },
+        ],
+        dump,
+      ).map((c) => c.action),
+    ).toEqual(["wait", "deadline"]);
+  });
+
+  it("saidInDump ignores case, curly quotes and edge punctuation, not the words", () => {
+    expect(saidInDump("“It’s pass/fail.”", "honestly it's pass/fail so whatever")).toBe(true);
+    expect(saidInDump("it is pass/fail", "honestly it's pass/fail so whatever")).toBe(false);
+    expect(saidInDump("so", "so stressed")).toBe(false);
+  });
+});

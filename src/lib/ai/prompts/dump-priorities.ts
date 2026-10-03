@@ -16,7 +16,12 @@
 // ("stats midterm is oct 20" dated the midterm goal AND the class); a to-do
 // about an item ("email the prof about the midterm by friday") does not date
 // the item.
-export const DUMP_PRIORITIES_PROMPT_VERSION = "dump-priorities-v3";
+// v4 (2026-10-03, fix list #5): stakes and focus only from the user's words,
+// never from tone — a dump that was anxious about an internship came back as
+// "high stakes" on the internship goal although it never said what rides on
+// it. Those rows now carry "said", the user's own words for it, and
+// parseDumpPriorityResponse drops a row whose words aren't in the dump.
+export const DUMP_PRIORITIES_PROMPT_VERSION = "dump-priorities-v4";
 
 export const DUMP_PRIORITIES_SYSTEM = `You read a brain dump for two kinds of facts. New items and plain completions are handled by another step — skip them.
 
@@ -24,8 +29,9 @@ export const DUMP_PRIORITIES_SYSTEM = `You read a brain dump for two kinds of fa
 - wait: the user did their part and now waits on a result, reply or decision ("took the exam, waiting for results", "sent the application, waiting to hear back"). waiting_for = 2-4 words. If they say when it comes ("results next week"), put those words in date_words.
 - resume: the wait is over or they're picking a paused item back up (status paused only).
 - deadline: a due date set or moved FOR THAT ITEM ("psych got moved to friday", "the essay is due oct 20"). Copy the user's words for the date into date_words — never work a date out yourself. A date on a to-do that is ABOUT an item is the to-do's date, not the item's: "need to email prof marino about the stats midterm review by friday" → no change (the email is new; the midterm's date didn't move).
-- stakes: "I need this for my masters", "a lot rides on it" → high; "it's pass/fail", "barely counts" → low.
-- focus: only when they say it — "focus on X (this week)", "X first"; "need to finish X" is a to-do, not focus. deprioritize: "X can wait", "not now".
+- stakes: only when the user SAYS what rides on it or that it counts more or less — "I need this for my masters", "a lot rides on it" → high; "it's pass/fail", "barely counts" → low. Never from tone: worry, stress, excitement, "I really want it", "I need to get it", or how much they write about it is mood, not stakes → no change.
+- focus: only when they say it — "focus on X (this week)", "X first"; "need to finish X" is a to-do, not focus. deprioritize: "X can wait", "not now" — about a named item; "everything else can wait" names none → no change for it.
+- stakes, focus and deprioritize carry "said": the user's exact words that say it, copied from the dump — {"ref":"n3","action":"stakes","stakes":"high","said":"I need this for my masters"} · {"ref":"n1","action":"focus","said":"focus on stats this week"}. No such words → no change.
 - drop: cancelled, not doing it, dropped the course.
 Use only items from the list, by ref (n1…), and only when the fact is about THAT item itself. One fact changes ONE item — the most specific one it is about ("stats midterm is oct 20" → the midterm goal, not also the Statistics class). A date or a to-do for a step or a new piece of work inside a listed class, project or area ("for ML I have to pick a dataset by friday", "need to review chapters 1-4 for stats") is a new item — skip it, it is not a deadline or a focus for the class or project. "did X" / "finished X" alone is a completion — skip it; "did X, now waiting for the result" is a wait. Ambiguous outcome ("I didn't take psychology" — not yet? missed it? dropping it?) → no change; add one short question to "unclear". Venting, plans, to-dos and progress are not changes. Requests to reorganize the graph (move X under Y, rename, regroup, "keep that connection") are carried out by another step — no change, and never an "unclear" question about them. Write questions with the item's title, never its ref.
 
