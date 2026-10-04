@@ -8,6 +8,7 @@ import {
   isReadOnlyTool,
   isInteractiveTool,
   turnNeedsNoFollowUp,
+  asChangeOp,
 } from "./index";
 
 describe("tool registry classification", () => {
@@ -101,5 +102,26 @@ describe("turnNeedsNoFollowUp (fix list #19)", () => {
   it("a lone direct change may be step one of a multi-step ask", () => {
     expect(turnNeedsNoFollowUp(turn([priorities], []), "stats is done")).toBe(true);
     expect(turnNeedsNoFollowUp(turn([priorities], []), "stats is done, then add the essay")).toBe(false);
+  });
+});
+
+describe("asChangeOp", () => {
+  it("a change op called as a tool becomes that op inside change", () => {
+    expect(asChangeOp({ id: "t", name: "remove_edge", input: { source_node_id: "a", target_node_id: "b" } })).toEqual({
+      id: "t",
+      name: "change",
+      input: { source: "suggestion", changes: [{ kind: "remove_edge", source_node_id: "a", target_node_id: "b" }] },
+    });
+    expect(asChangeOp({ id: "t", name: "complete", input: { source: "user", node_id: "n" } }).input).toEqual({
+      source: "user",
+      changes: [{ kind: "complete", node_id: "n" }],
+    });
+  });
+
+  it("leaves real tools and unknown names alone", () => {
+    const real = { id: "t", name: "change", input: {} };
+    expect(asChangeOp(real)).toBe(real);
+    const unknown = { id: "t", name: "teleport", input: {} };
+    expect(asChangeOp(unknown)).toBe(unknown);
   });
 });

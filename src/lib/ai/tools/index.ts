@@ -11,6 +11,7 @@
 
 import { READ_ONLY_TOOLS, type ToolContext, type ToolDefinition } from "./read-only";
 import { CHANGE_TOOL, CHANGE_TOOLS, planChange, type TurnPlan } from "./change";
+import { CHANGE_KINDS } from "@/lib/graph/change-set";
 import { PLANNER_MUTATION_TOOLS } from "./planner-mutations";
 import { PRIORITY_MUTATION_TOOLS } from "./priority-mutations";
 import { COMMITMENT_MUTATION_TOOLS } from "./commitment-mutations";
@@ -224,7 +225,7 @@ export async function runTurnTools(modelBlocks: ToolUse[], ctx: ToolContext): Pr
   const turns: TurnApplied[] = [];
   let pending: ToolUse | null = null;
   const blocks: ToolUse[] = [];
-  for (const block of modelBlocks) blocks.push(await separateAdvice(block, ctx, applied));
+  for (const block of modelBlocks) blocks.push(await separateAdvice(asChangeOp(block), ctx, applied));
 
   for (const block of blocks) {
     if (!isPausingTool(block.name, block.input)) continue;
@@ -333,4 +334,18 @@ async function separateAdvice(block: ToolUse, ctx: ToolContext, applied: Applied
     if (ran.applied) applied.push(ran.applied);
   }
   return { ...block, input: { ...input, source: "suggestion", changes: changes.filter((_, i) => advice.has(i)) } };
+}
+
+// A change op called as if it were a tool ("remove_edge" with the two ids —
+// Haiku did it once, 2026-10-04) is that op inside a change call, instead of
+// an "Unknown tool" error and a second model round. Without a source it is
+// treated as a suggestion, like a change call without one (planChange).
+export function asChangeOp(block: ToolUse): ToolUse {
+  if (BY_NAME.has(block.name) || !(CHANGE_KINDS as readonly string[]).includes(block.name)) return block;
+  const { source, ...op } = (block.input ?? {}) as Record<string, unknown>;
+  return {
+    ...block,
+    name: CHANGE_TOOL,
+    input: { source: source === "user" ? "user" : "suggestion", changes: [{ kind: block.name, ...op }] },
+  };
 }
