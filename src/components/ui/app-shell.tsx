@@ -60,19 +60,15 @@ import {
   findChildlessProjects,
   looksLikeBrainDump,
 } from "@/lib/graph/dump-heuristic";
-import { getImportanceIndex, getImportanceLabel } from "@/lib/graph/importance";
 import {
   buildEdgePayloadFromSelection,
-  isEdgeHiddenInUi,
   visibleEdgeRelationOptions,
-  getEdgeRelationOptionIdForSelection,
   type EdgeRelationOptionId,
 } from "@/lib/graph/relationships";
 import {
   buildPrimaryStructuralTree,
   getStructuralSubtreeFromIndexes,
 } from "@/lib/graph/structure";
-import { isLiveEdge, pickEdgesToRestore } from "@/lib/graph/archive-edges";
 import { setNodeParent } from "@/lib/graph/hierarchy";
 import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
@@ -81,21 +77,60 @@ import { TopCommandBar } from "@/components/ui/top-command-bar";
 import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
 import {
   appliedActionFromPayload,
-  appliedActionNote,
   appliedUndoEndpoint,
   createAppliedMarkerParser,
   isCommitmentAction,
   type AppliedMarkerPayload,
 } from "@/lib/chat/applied-marker";
-import { connectionsNote, turnNote } from "@/lib/chat/turn-note";
+import { chatHistoryForModel, dumpHistoryForEntries, mergeTurnCards } from "@/lib/chat/thread-history";
+import { readChatHistory, readChatSessionId, writeChatHistory, writeChatSessionId } from "@/lib/chat/thread-storage";
+import { bootstrapSummaryText, dumpSummaryText, roadmapOfferText } from "@/lib/chat/dump-summary";
 import { createTurnMarkerParser, createUndoMarkerParser, turnCardFromApplied } from "@/lib/chat/turn-marker";
 import { readDumpResponse } from "@/lib/chat/dump-stream";
 import type { DumpProgressState } from "@/components/ui/dump-progress";
 import { classifyTaskSize } from "@/lib/ai/sizing";
 import { needsNextAction } from "@/lib/graph/next-action";
-import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { computeWorkProgress } from "@/lib/graph/work-progress";
-import { NODE_TYPE_INFO, NODE_TYPES, normalizeNodeType } from "@/lib/graph/node-types";
+import {
+  RECENT_COMPLETION_WINDOW_MS,
+  countNodeTypes,
+  hashGraphContent,
+  indexIncidentEdges,
+  nodeConnections,
+  parentContextTitle,
+  shelvedCompletedNodes,
+  visibleGraph,
+} from "@/lib/graph/visible-graph";
+import {
+  checkNodeDraft,
+  createDraftFromNode,
+  defaultCreateNodeDraft,
+  editedNodeFields,
+  newNodeRow,
+} from "@/lib/graph/node-draft";
+import {
+  buildAnalysisNotice,
+  connectionsCardFromEdges,
+  normalizeNodeIds,
+  type AINotice,
+  type AnalysisResponse,
+} from "@/lib/graph/connection-analysis";
+import {
+  placeAcceptedNodes,
+  stepCandidates,
+  withMergedNode,
+  withoutNodes,
+  withReviewedEdges,
+  type ScoreUpdate,
+} from "@/lib/graph/graph-patches";
+import {
+  applyOptimisticStatus,
+  mergeServerStatus,
+  planStatusChange,
+  revertOptimisticStatus,
+  type StatusResponse,
+} from "@/lib/graph/status-optimistic";
+import { isWeeklyReflectionAvailable } from "@/lib/time/weekly-unlock";
 import type {
   AppliedAction,
   RailTab,
@@ -107,7 +142,7 @@ import type {
   TurnCardData,
   TurnSection,
 } from "@/types/chat";
-import type { CreateNodeInput, Edge, GraphData, Node, NodeType, Workspace } from "@/types/graph";
+import type { CreateNodeInput, Edge, GraphData, Node, Workspace } from "@/types/graph";
 import { addDaysISO, localDateISO } from "@/lib/time/local-date";
 import { todayIsoDate } from "@/lib/planner/auto-schedule";
 import { clientDayHints } from "@/lib/habits/streak";
@@ -124,207 +159,10 @@ type AppShellProps = {
   initialUser: AuthUserState;
 };
 
-type AnalysisResponse = {
-  proposed_edges?: ProposedEdgeWithNodes[];
-  merge_candidates?: MergeCandidate[];
-  proposed?: number;
-  skipped?: number;
-  failed?: number;
-  failed_node_ids?: string[];
-  warning?: string;
-  error?: string;
-};
-
-type AINotice = {
-  tone: "warning" | "error";
-  message: string;
-};
-
-const defaultCreateNodeDraft: CreateNodeInput = {
-  custom_type: "",
-  importance_index: 58,
-  manual_weight: null,
-  node_type: "task",
-  raw_text: "",
-  summary: "",
-  body: "",
-  title: "",
-  target_date: "",
-};
-
-// One palette for every surface (src/lib/graph/node-colors.ts).
-const nodeColorByType = NODE_COLOR_BY_TYPE;
-
-// Every current type opens in the sheet as itself; a legacy value (e.g. an
-// old "concept" row) opens as its v2 equivalent.
-const baseEditableNodeTypes = new Set<CreateNodeInput["node_type"]>(NODE_TYPES);
-
-// How long a completed node stays on the graph board before moving to the
-// completed shelf (#17: keep the win visible, without months of clutter).
-const RECENT_COMPLETION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-
-// 32-bit FNV-1a over the fields that change what the user would see: node
-// identity/status/edit time/deadline/score and edge identity/status. Cheap
-// (one pass over a few KB) and collision-safe enough for a cache key.
-function hashGraphContent(nodes: Node[], edges: Edge[]): string {
-  let hash = 0x811c9dc5;
-  const feed = (value: string) => {
-    for (let i = 0; i < value.length; i++) {
-      hash ^= value.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193);
-    }
-  };
-  for (const n of nodes) {
-    feed(
-      `${n.id}|${n.status ?? ""}|${n.updated_at ?? ""}|${n.target_date ?? ""}|${
-        n.current_importance_score ?? ""
-      };`,
-    );
-  }
-  for (const e of edges) {
-    feed(`${e.id}|${e.status ?? ""};`);
-  }
-  return `${nodes.length}:${edges.length}:${(hash >>> 0).toString(36)}`;
-}
-
-function isRecentCompletion(node: Node, cutoffMs: number): boolean {
-  if (!node.completed_at) return false;
-  const completedMs = Date.parse(node.completed_at);
-  return Number.isFinite(completedMs) && completedMs >= cutoffMs;
-}
-
-function formatNodeTypeLabel(nodeType: string) {
-  return NODE_TYPE_INFO[normalizeNodeType(nodeType)].label;
-}
-
-function createDraftFromNode(node: Node): CreateNodeInput {
-  const resolvedType = normalizeNodeType(node.node_type.toLowerCase(), node.node_type as NodeType);
-  const nodeType = baseEditableNodeTypes.has(resolvedType as CreateNodeInput["node_type"])
-    ? (resolvedType as Exclude<CreateNodeInput["node_type"], "custom">)
-    : "custom";
-
-  return {
-    custom_type: nodeType === "custom" ? node.node_type : "",
-    importance_index: getImportanceIndex(node),
-    manual_weight: typeof node.manual_weight === "number" ? node.manual_weight : null,
-    node_type: nodeType,
-    raw_text: node.raw_text ?? "",
-    summary: node.summary ?? "",
-    body: node.body ?? "",
-    title: node.title,
-    target_date: typeof node.target_date === "string" ? node.target_date : "",
-  };
-}
-
-const CHAT_HISTORY_MAX = 200;
 // How long a node pulses after its priority changed, and how far "Still
 // waiting" on a Focus check-back pushes the next check (ranking v2).
 const PRIORITY_PULSE_MS = 2600;
 const CHECK_BACK_SNOOZE_DAYS = 7;
-
-function getChatHistoryKey(userId: string | null, workspaceId: string | null): string | null {
-  if (!userId || !workspaceId) return null;
-  return `brain-dump:chat-history:${userId}:${workspaceId}`;
-}
-
-function readChatHistory(
-  userId: string | null,
-  workspaceId: string | null,
-): ChatMessage[] {
-  if (typeof window === "undefined") return [];
-  const key = getChatHistoryKey(userId, workspaceId);
-  if (!key) return [];
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeChatHistory(
-  userId: string | null,
-  workspaceId: string | null,
-  messages: ChatMessage[],
-): void {
-  if (typeof window === "undefined") return;
-  const key = getChatHistoryKey(userId, workspaceId);
-  if (!key) return;
-  try {
-    const trimmed = messages.slice(-CHAT_HISTORY_MAX);
-    window.localStorage.setItem(key, JSON.stringify(trimmed));
-  } catch {
-    // Ignore storage failures — chat still works in memory.
-  }
-}
-
-// Weekly reflection unlocks on Sunday (JS Date.getDay() === 0). For dev/QA,
-// localStorage flag `dev:unlock-weekly=1` overrides the check.
-function isWeeklyReflectionAvailable(now = new Date()): boolean {
-  if (typeof window !== "undefined") {
-    try {
-      if (window.localStorage.getItem("dev:unlock-weekly") === "1") return true;
-    } catch {
-      // ignore
-    }
-  }
-  return now.getDay() === 0;
-}
-
-function getChatSessionIdKey(userId: string | null, workspaceId: string | null): string | null {
-  if (!userId || !workspaceId) return null;
-  return `brain-dump:chat-session-id:${userId}:${workspaceId}`;
-}
-
-function readChatSessionId(userId: string | null, workspaceId: string | null): string | null {
-  if (typeof window === "undefined") return null;
-  const key = getChatSessionIdKey(userId, workspaceId);
-  if (!key) return null;
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function writeChatSessionId(
-  userId: string | null,
-  workspaceId: string | null,
-  sessionId: string | null,
-): void {
-  if (typeof window === "undefined") return;
-  const key = getChatSessionIdKey(userId, workspaceId);
-  if (!key) return;
-  try {
-    if (sessionId) window.localStorage.setItem(key, sessionId);
-    else window.localStorage.removeItem(key);
-  } catch {
-    // Ignore storage failures.
-  }
-}
-
-function buildAnalysisNotice(result: AnalysisResponse): AINotice | null {
-  if (result.warning && result.warning.trim()) {
-    return {
-      tone: "warning",
-      message: result.warning.trim(),
-    };
-  }
-
-  if (result.failed && result.failed > 0) {
-    return {
-      tone: "warning",
-      message:
-        result.proposed_edges && result.proposed_edges.length > 0
-          ? `Some connection checks failed (${result.failed}), but partial results are still shown.`
-          : `Connection analysis failed for ${result.failed} item${result.failed === 1 ? "" : "s"}. Retry when ready.`,
-    };
-  }
-
-  return null;
-}
 
 export function AppShell({ initialUser }: AppShellProps) {
   const router = useRouter();
@@ -577,42 +415,20 @@ export function AppShell({ initialUser }: AppShellProps) {
   // Build graph lookups once per data change. Selection and details-panel
   // rendering are frequent; repeatedly scanning every node and edge there made
   // opening a node progressively slower as a workspace grew.
-  const graphIndexes = useMemo(() => {
-    const nodesById = new Map(graphData.nodes.map((node) => [node.id, node]));
-    const incidentEdgesByNode = new Map<string, Edge[]>();
-    for (const edge of graphData.edges) {
-      for (const nodeId of [edge.source_node_id, edge.target_node_id]) {
-        const incident = incidentEdgesByNode.get(nodeId) ?? [];
-        incident.push(edge);
-        incidentEdgesByNode.set(nodeId, incident);
-      }
-    }
-    return {
+  const graphIndexes = useMemo(
+    () => ({
       ...buildPrimaryStructuralTree(graphData),
-      incidentEdgesByNode,
-      nodesById,
-    };
-  }, [graphData]);
+      ...indexIncidentEdges(graphData),
+    }),
+    [graphData],
+  );
 
   const selectedNode = useMemo(
     () => buildChatNodeContext(graphData, selectedNodeId, graphIndexes),
     [graphData, graphIndexes, selectedNodeId],
   );
 
-  const nodeTypeCounts = useMemo(() => {
-    const bucket = new Map<string, number>();
-    for (const node of graphData.nodes) {
-      if (node.status === "archived" || node.status === "completed") continue;
-      bucket.set(node.node_type, (bucket.get(node.node_type) ?? 0) + 1);
-    }
-    return Array.from(bucket.entries())
-      .map(([type, count]) => ({
-        type: type as NodeType,
-        label: formatNodeTypeLabel(type),
-        count,
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [graphData.nodes]);
+  const nodeTypeCounts = useMemo(() => countNodeTypes(graphData.nodes), [graphData.nodes]);
 
   const nodeTypeTotalCount = useMemo(
     () => nodeTypeCounts.reduce((sum, item) => sum + item.count, 0),
@@ -639,12 +455,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   // Completed nodes that are NOT on the board (all of them when "Hide done" is
   // on, otherwise the ones older than the recency window) — the shelf lists these.
   const completedNodes = useMemo(
-    () =>
-      graphData.nodes.filter(
-        (node) =>
-          node.status === "completed" &&
-          (hideCompleted || !isRecentCompletion(node, recentCompletionCutoffMs)),
-      ),
+    () => shelvedCompletedNodes(graphData.nodes, hideCompleted, recentCompletionCutoffMs),
     [graphData.nodes, hideCompleted, recentCompletionCutoffMs],
   );
 
@@ -703,47 +514,10 @@ export function AppShell({ initialUser }: AppShellProps) {
   // hides completed nodes, so it's computed from the full graph.
   const workProgressByNode = useMemo(() => computeWorkProgress(graphData), [graphData]);
 
-  const filteredGraphData = useMemo(() => {
-    const nodes = graphData.nodes.filter((node) => {
-      // Archived nodes have orphaned edges, so they live in the grouped
-      // History shelf rather than floating loose on the canvas.
-      if (node.status === "archived") {
-        return false;
-      }
-
-      // Completed nodes: on the board only while recent (and "Hide done" is off);
-      // everything else lives in the Done section of History.
-      if (
-        node.status === "completed" &&
-        (hideCompleted || !isRecentCompletion(node, recentCompletionCutoffMs))
-      ) {
-        return false;
-      }
-
-      if (nodeTypeFilter !== "all" && node.node_type !== nodeTypeFilter) {
-        return false;
-      }
-
-      return true;
-    });
-    const visibleNodeIds = new Set(nodes.map((node) => node.id));
-
-    return {
-      nodes,
-      edges: graphData.edges.filter(
-        (edge) =>
-          !isEdgeHiddenInUi(edge.edge_type) &&
-          edge.status !== "orphaned" &&
-          visibleNodeIds.has(edge.source_node_id) &&
-          visibleNodeIds.has(edge.target_node_id),
-      ),
-    };
-  }, [
-    graphData,
-    hideCompleted,
-    nodeTypeFilter,
-    recentCompletionCutoffMs,
-  ]);
+  const filteredGraphData = useMemo(
+    () => visibleGraph(graphData, { hideCompleted, nodeTypeFilter, recentCompletionCutoffMs }),
+    [graphData, hideCompleted, nodeTypeFilter, recentCompletionCutoffMs],
+  );
 
   const selectedNodeRecord = useMemo(
     () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -775,40 +549,10 @@ export function AppShell({ initialUser }: AppShellProps) {
     [graphData.nodes, selectedNodeId],
   );
 
-  const selectedNodeConnections = useMemo(() => {
-    if (!selectedNodeId) {
-      return [];
-    }
-    return (graphIndexes.incidentEdgesByNode.get(selectedNodeId) ?? [])
-      .flatMap((edge) => {
-        if (isEdgeHiddenInUi(edge.edge_type)) {
-          return [];
-        }
-
-        if (edge.source_node_id !== selectedNodeId && edge.target_node_id !== selectedNodeId) {
-          return [];
-        }
-
-        const linkedNodeId =
-          edge.source_node_id === selectedNodeId ? edge.target_node_id : edge.source_node_id;
-        const linkedNode = graphIndexes.nodesById.get(linkedNodeId);
-
-        if (!linkedNode) {
-          return [];
-        }
-
-        return [
-          {
-            edgeId: edge.id,
-            nodeId: linkedNode.id,
-            nodeType: linkedNode.node_type,
-            relationId: getEdgeRelationOptionIdForSelection(edge, selectedNodeId),
-            title: linkedNode.title,
-          },
-        ];
-      })
-      .sort((connectionA, connectionB) => connectionA.title.localeCompare(connectionB.title));
-  }, [graphIndexes, selectedNodeId]);
+  const selectedNodeConnections = useMemo(
+    () => nodeConnections(selectedNodeId, graphIndexes),
+    [graphIndexes, selectedNodeId],
+  );
 
   const defaultChatScope = useMemo(
     () =>
@@ -1525,22 +1269,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           if (m.id !== assistantMsgId) return m;
           if (!m.turn) return { ...m, turn: card };
           // A second change in the same reply: one card, sections joined.
-          const undo = m.turn.undo ?? { added: [], done: [], links: [] };
-          return {
-            ...m,
-            turn: {
-              ...m.turn,
-              added: [...m.turn.added, ...card.added],
-              done: [...m.turn.done, ...card.done],
-              links: [...m.turn.links, ...card.links],
-              questions: [...m.turn.questions, ...card.questions],
-              undo: {
-                added: [...undo.added, ...(card.undo?.added ?? [])],
-                done: [...undo.done, ...(card.undo?.done ?? [])],
-                links: [...undo.links, ...(card.undo?.links ?? [])],
-              },
-            },
-          };
+          return { ...m, turn: mergeTurnCards(m.turn, card) };
         }),
       );
     };
@@ -1670,26 +1399,8 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       setChatLoading(true);
 
-      // Prior turns in this thread — send as plain {role, body} so the server
-      // can compress old ones if the history gets long.
-      // An applied priority card has no text of its own — its note tells the
-      // model what already changed (or that the user undid it).
-      const historyNodeTitles = new Map(graphData.nodes.map((n) => [n.id, n.title]));
-      const history = chatMessages
-        .filter((m) => m.status !== "error")
-        .map((m) => ({
-          role: m.role,
-          // A brain dump's card has no text either: its note lists what was
-          // added, finished, linked, asked and what still waits (turn-note.ts).
-          body: m.connections
-            ? connectionsNote(m.connections)
-            : m.turn
-            ? `${m.body ?? ""}\n\n${turnNote(m, historyNodeTitles)}`.trim()
-            : m.appliedAction
-              ? `${m.body ?? ""}\n\n${appliedActionNote(m.appliedAction)}`.trim()
-              : (m.body ?? ""),
-        }))
-        .filter((m) => m.body.trim().length > 0);
+      // Prior turns in this thread — a card's note stands in for its text.
+      const history = chatHistoryForModel(chatMessages, new Map(graphData.nodes.map((n) => [n.id, n.title])));
 
       chatAbortRef.current = abortCtrl;
 
@@ -2145,51 +1856,18 @@ export function AppShell({ initialUser }: AppShellProps) {
       return;
     }
 
-    const title = createNodeDraft.title.trim();
-    const resolvedNodeType =
-      createNodeDraft.node_type === "custom"
-        ? createNodeDraft.custom_type.trim()
-        : createNodeDraft.node_type;
-
-    if (title.length === 0) {
-      setCreateNodeError("Title is required.");
-      return;
-    }
-
-    if (resolvedNodeType.length === 0) {
-      setCreateNodeError("Choose a node type or enter a custom type.");
+    const checked = checkNodeDraft(createNodeDraft);
+    if (!checked.ok) {
+      setCreateNodeError(checked.error);
       return;
     }
 
     setCreateNodeSubmitting(true);
     setCreateNodeError(null);
 
-    const trimmedTargetDate = createNodeDraft.target_date.trim();
-    const targetDate =
-      trimmedTargetDate.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(trimmedTargetDate)
-        ? trimmedTargetDate
-        : null;
-
-    const payload = {
-      color:
-        createNodeDraft.node_type === "custom"
-          ? nodeColorByType.note
-          : nodeColorByType[createNodeDraft.node_type],
-      importance: getImportanceLabel(createNodeDraft.importance_index),
-      importance_index: createNodeDraft.importance_index,
-      node_type: resolvedNodeType as Node["node_type"],
-      raw_text: createNodeDraft.raw_text.trim() || null,
-      summary: createNodeDraft.summary.trim() || null,
-      body: createNodeDraft.body.trim() || null,
-      title,
-      target_date: targetDate,
-      user_id: authUser.id,
-      workspace_id: selectedWorkspaceId,
-    };
-
     const { data, error } = await supabase
       .from("nodes")
-      .insert(payload)
+      .insert(newNodeRow(createNodeDraft, checked, { userId: authUser.id, workspaceId: selectedWorkspaceId }))
       .select("*")
       .single();
 
@@ -2244,7 +1922,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     // Sizing layer: only second-guess plain tasks. If the user explicitly
     // created a project/goal/etc., take it at face value. Runs after the
     // node is already on screen so the common (task) path has zero delay.
-    if (resolvedNodeType === "task") {
+    if (checked.nodeType === "task") {
       void maybeOfferBreakdown(createdNode);
     }
   };
@@ -2310,54 +1988,18 @@ export function AppShell({ initialUser }: AppShellProps) {
       return;
     }
 
-    const title = editNodeDraft.title.trim();
-    const resolvedNodeType =
-      editNodeDraft.node_type === "custom"
-        ? editNodeDraft.custom_type.trim()
-        : editNodeDraft.node_type;
-
-    if (title.length === 0) {
-      setEditNodeError("Title is required.");
-      return;
-    }
-
-    if (resolvedNodeType.length === 0) {
-      setEditNodeError("Choose a node type or enter a custom type.");
+    const checked = checkNodeDraft(editNodeDraft);
+    if (!checked.ok) {
+      setEditNodeError(checked.error);
       return;
     }
 
     setEditNodeSubmitting(true);
     setEditNodeError(null);
 
-    const trimmedTargetDate = editNodeDraft.target_date.trim();
-    const targetDate =
-      trimmedTargetDate.length === 0
-        ? null
-        : /^\d{4}-\d{2}-\d{2}$/.test(trimmedTargetDate)
-          ? trimmedTargetDate
-          : null;
-
-    const payload = {
-      color:
-        editNodeDraft.node_type === "custom"
-          ? nodeColorByType.note
-          : nodeColorByType[editNodeDraft.node_type],
-      importance: getImportanceLabel(editNodeDraft.importance_index),
-      importance_index: editNodeDraft.importance_index,
-      manual_weight: editNodeDraft.manual_weight,
-      manual_weight_set_at:
-        editNodeDraft.manual_weight == null ? null : new Date().toISOString(),
-      node_type: resolvedNodeType as Node["node_type"],
-      summary: editNodeDraft.summary.trim() || null,
-      body: editNodeDraft.body.trim() || null,
-      target_date: targetDate,
-      title,
-      updated_at: new Date().toISOString(),
-    };
-
     const { data, error } = await supabase
       .from("nodes")
-      .update(payload)
+      .update(editedNodeFields(editNodeDraft, checked))
       .eq("id", selectedNodeRecord.id)
       .eq("user_id", authUser.id)
       .eq("workspace_id", selectedWorkspaceId)
@@ -2930,31 +2572,15 @@ export function AppShell({ initialUser }: AppShellProps) {
     const restructure = data.pending_action ?? null;
 
     const buildSummary = (appliedCount: number, reviewCount: number) =>
-      [
-        appliedCount > 0
-          ? `I added ${appliedCount} item${appliedCount === 1 ? "" : "s"} to your graph${
-              reviewCount > 0
-                ? ` — ${reviewCount} ${reviewCount === 1 ? "needs" : "need"} a quick look in the panel that just opened.`
-                : "."
-            }`
-          : reviewCount > 0
-            ? `I analyzed your dump and proposed ${reviewCount} node${reviewCount === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
-            : priorityAction
-              ? "Nothing new to add — I updated what matters instead:"
-              : commitmentAction || restructure
-                ? "Nothing new to add to the graph."
-                : "I went through your dump but didn't find anything new worth proposing.",
-        completedTitles.length > 0
-          ? `I also marked ${completedTitles.length} existing item${completedTitles.length === 1 ? "" : "s"} done: ${completedTitles.slice(0, 3).join(", ")}${completedTitles.length > 3 ? "…" : ""}.`
-          : null,
-        questions.length > 0
-          ? `I have ${questions.length} quick clarifying question${questions.length === 1 ? "" : "s"} — answer inline when ready.`
-          : null,
-        priorityAction && appliedCount + reviewCount > 0 ? "I also updated what matters:" : null,
-        unclear.length > 0 ? `One thing I didn't change — ${unclear[0]} Tell me here and I'll update it.` : null,
-      ]
-        .filter(Boolean)
-        .join(" ");
+      dumpSummaryText({
+        appliedCount,
+        reviewCount,
+        completedTitles,
+        questionCount: questions.length,
+        priorityChanged: Boolean(priorityAction),
+        otherChange: Boolean(commitmentAction || restructure),
+        unclear,
+      });
 
     const nowIso = new Date().toISOString();
     const summaryId = `chat-extract-${Math.random().toString(36).slice(2, 10)}`;
@@ -3074,13 +2700,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       showToast("Couldn't undo — those items may have changed.");
       return;
     }
-    setGraphData((prev) => ({
-      ...prev,
-      nodes: prev.nodes.filter((n) => !removedIds.has(n.id)),
-      edges: prev.edges.filter(
-        (e) => !removedIds.has(e.source_node_id) && !removedIds.has(e.target_node_id),
-      ),
-    }));
+    setGraphData((prev) => withoutNodes(prev, removedIds));
     showToast(`Removed ${removedIds.size} item${removedIds.size === 1 ? "" : "s"}.`);
   };
 
@@ -3092,10 +2712,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     const targetWorkspaceId = selectedWorkspaceId;
     if (!trimmed || !targetWorkspaceId || chatSendingRef.current) return;
     chatSendingRef.current = true;
-    const history = chatMessages
-      .filter((m) => m.status !== "error" && m.body.trim().length > 0)
-      .slice(-6)
-      .map((m) => ({ role: m.role, body: m.body.slice(0, 600) }));
+    const history = dumpHistoryForEntries(chatMessages);
     setRightPanelOpen(true);
     setActiveRailTab("chat");
     setChatMessages((prev) => [...prev, createUserChatMessage(trimmed)]);
@@ -3240,52 +2857,14 @@ export function AppShell({ initialUser }: AppShellProps) {
   // offer a roadmap for any project that landed with no steps. Shared by the
   // review modal and calibrated auto-apply so both behave identically.
   const mergeAcceptedIntoGraph = (nodes: Node[], acceptedEdges: Edge[]) => {
-    const attachedNodeIds = new Set(
-      acceptedEdges
-        .filter((edge) => edge.edge_type === "belongs_to" || edge.edge_type === "required_for")
-        .map((edge) => edge.source_node_id),
-    );
-
     // Cluster new nodes near the viewport center instead of scattering them.
-    // Viewport center in graph coords = (-panX/zoom, -panY/zoom).
-    const zoom = cameraView?.zoom ?? 1;
-    const panX = cameraView?.panX ?? 0;
-    const panY = cameraView?.panY ?? 0;
-    const cx = -panX / zoom;
-    const cy = -panY / zoom;
-
-    const SPACING = 220; // graph units between nodes
-    const unattachedNodes = nodes.filter((node) => !attachedNodeIds.has(node.id));
-    const cols = Math.max(1, Math.ceil(Math.sqrt(unattachedNodes.length || 1)));
-    const startX = cx - ((cols - 1) * SPACING) / 2;
-    const startY = cy - (Math.ceil((unattachedNodes.length || 1) / cols) - 1) * SPACING / 2;
-    let unattachedIndex = 0;
-
-    const positioned = nodes.map((node) => {
-      if (attachedNodeIds.has(node.id)) {
-        if (authUser?.id && selectedWorkspaceId) {
-          removeLocalNodePosition(authUser.id, selectedWorkspaceId, node.id);
-        }
-
-        return {
-          ...node,
-          manual_position: false,
-          position_x: null,
-          position_y: null,
-        };
+    const { positioned, stored } = placeAcceptedNodes(nodes, acceptedEdges, cameraView);
+    if (authUser?.id && selectedWorkspaceId) {
+      for (const { nodeId, position } of stored) {
+        if (position) persistLocalNodePosition(authUser.id, selectedWorkspaceId, nodeId, position);
+        else removeLocalNodePosition(authUser.id, selectedWorkspaceId, nodeId);
       }
-
-      const col = unattachedIndex % cols;
-      const row = Math.floor(unattachedIndex / cols);
-      unattachedIndex += 1;
-
-      const px = Math.round(startX + col * SPACING);
-      const py = Math.round(startY + row * SPACING);
-      if (authUser?.id && selectedWorkspaceId) {
-        persistLocalNodePosition(authUser.id, selectedWorkspaceId, node.id, { x: px, y: py });
-      }
-      return { ...node, position_x: px, position_y: py, manual_position: true };
-    });
+    }
 
     setGraphData((prev) => ({
       ...prev,
@@ -3307,16 +2886,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     );
     if (childless.length > 0) {
       childless.forEach((p) => roadmapPromptedRef.current.add(p.id));
-      const names = childless.slice(0, 3).map((p) => `"${p.title}"`);
-      const extra = childless.length - names.length;
-      const nameList =
-        names.length === 1
-          ? names[0]
-          : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-      const body =
-        childless.length === 1
-          ? `${nameList} is a project with no steps under it yet. Want me to suggest a roadmap for it? Just say the word and I'll propose steps you can review.`
-          : `${nameList}${extra > 0 ? ` and ${extra} more` : ""} are projects with no steps under them yet. Want me to suggest a roadmap for any of them?`;
+      const body = roadmapOfferText(childless);
       setChatMessages((prev) => [
         ...prev,
         {
@@ -3392,20 +2962,10 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       // Only suggest steps for leaf nodes — anything that's already a parent
       // already has structure beneath it.
-      const acceptedEdges = (data.accepted_edges as Edge[]) ?? [];
-      const parentIds = new Set<string>();
-      for (const edge of [...graphData.edges, ...acceptedEdges]) {
-        if (edge.edge_type === "belongs_to") {
-          parentIds.add(edge.target_node_id);
-        }
-      }
-      const goalOrProjectNodes = acceptedNodes.filter(
-        (n) =>
-          (n.node_type === "goal" ||
-            n.node_type === "project" ||
-            n.node_type === "big_task" ||
-            n.node_type === "habit") &&
-          !parentIds.has(n.id),
+      const goalOrProjectNodes = stepCandidates(
+        acceptedNodes,
+        graphData.edges,
+        (data.accepted_edges as Edge[]) ?? [],
       );
 
       if (goalOrProjectNodes.length > 0) {
@@ -3775,16 +3335,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           body: "",
           createdAt: new Date().toISOString(),
           status: "ready" as const,
-          connections: {
-            status: "awaiting" as const,
-            edges: edges.map((edge) => ({
-              id: edge.id,
-              sourceTitle: edge.source_title,
-              targetTitle: edge.target_title,
-              edgeType: edge.edge_type,
-              explanation: edge.explanation || null,
-            })),
-          },
+          connections: connectionsCardFromEdges(edges),
         },
       ]);
     } else if (edges.length > 0) {
@@ -3803,9 +3354,7 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   const analyzeNodes = async (nodeIds: string[], workspaceIdOverride?: string, threadMessageId?: string) => {
     const workspaceId = workspaceIdOverride ?? selectedWorkspaceId;
-    const normalizedNodeIds = Array.from(
-      new Set(nodeIds.filter((nodeId): nodeId is string => typeof nodeId === "string" && nodeId.length > 0)),
-    );
+    const normalizedNodeIds = normalizeNodeIds(nodeIds);
 
     if (!workspaceId || normalizedNodeIds.length === 0) {
       return;
@@ -3886,25 +3435,9 @@ export function AppShell({ initialUser }: AppShellProps) {
         try { localStorage.removeItem(key); } catch {}
       }
 
-      setGraphData((prev) => ({
-        ...prev,
-        edges: [...prev.edges, ...newEdges],
-        nodes: prev.nodes.map((n) => ({
-          ...n,
-          ...(updatedNodeMap.get(n.id) ?? {}),
-          manual_position: false,
-          position_x: null,
-          position_y: null,
-        })),
-      }));
+      setGraphData((prev) => withReviewedEdges(prev, newEdges, updatedNodeMap));
     } else if (updatedNodeMap.size > 0) {
-      setGraphData((prev) => ({
-        ...prev,
-        nodes: prev.nodes.map((node) => ({
-          ...node,
-          ...(updatedNodeMap.get(node.id) ?? {}),
-        })),
-      }));
+      setGraphData((prev) => withReviewedEdges(prev, newEdges, updatedNodeMap));
     }
 
     setEdgeReviewOpen(false);
@@ -3957,119 +3490,10 @@ export function AppShell({ initialUser }: AppShellProps) {
       return;
     }
 
-    // Client mirror of the server's belongs_to cascade so the whole subtree
-    // completes/uncompletes on the SAME click instead of waiting for the
-    // round-trip (which also recomputes scores, so it can lag a beat). Anything
-    // the server doesn't confirm is rolled back when the response lands.
-    const collectBelongsToDescendants = (predicate: (n: Node) => boolean): string[] => {
-      const childrenByParent = new Map<string, string[]>();
-      for (const edge of graphData.edges) {
-        if (edge.edge_type !== "belongs_to") continue;
-        if (edge.status === "orphaned" || edge.status === "user_rejected") continue;
-        const arr = childrenByParent.get(edge.target_node_id) ?? [];
-        arr.push(edge.source_node_id);
-        childrenByParent.set(edge.target_node_id, arr);
-      }
-      const nodeById = new Map(graphData.nodes.map((n) => [n.id, n]));
-      const out: string[] = [];
-      const visited = new Set<string>();
-      const stack = [...(childrenByParent.get(nodeId) ?? [])];
-      while (stack.length > 0) {
-        const id = stack.pop();
-        if (!id || visited.has(id)) continue;
-        visited.add(id);
-        const node = nodeById.get(id);
-        if (node && predicate(node)) out.push(id);
-        for (const childId of childrenByParent.get(id) ?? []) {
-          if (!visited.has(childId)) stack.push(childId);
-        }
-      }
-      return out;
-    };
-    const cascadeStatus: Node["status"] | null =
-      status === "completed"
-        ? "completed"
-        : status === "active" && previousNode.status === "completed"
-          ? "active"
-          : null;
-    const cascadeIds =
-      cascadeStatus === "completed"
-        ? collectBelongsToDescendants((n) => n.status !== "completed" && n.status !== "archived")
-        : cascadeStatus === "active"
-          ? collectBelongsToDescendants((n) => n.status === "completed")
-          : [];
-    const cascadeIdSet = new Set(cascadeIds);
-    const affectedSnapshot = new Map(
-      graphData.nodes
-        .filter((n) => n.id === nodeId || cascadeIdSet.has(n.id))
-        .map((n) => [n.id, { status: n.status ?? null, completed_at: n.completed_at ?? null }] as const),
-    );
-
-    // Edges only change on archive / unarchive, by the server's own rules
-    // (archive-edges.ts). Snapshot them so a failed request can put them back.
-    const touchingEdges = graphData.edges.filter(
-      (e) => e.source_node_id === nodeId || e.target_node_id === nodeId,
-    );
-    const edgeStatusChanges = new Map<string, Edge["status"]>();
-    if (status === "archived") {
-      for (const e of touchingEdges) if (isLiveEdge(e)) edgeStatusChanges.set(e.id, "orphaned");
-    } else if (previousNode.status === "archived") {
-      const restoreIds = pickEdgesToRestore({
-        nodeId,
-        edges: touchingEdges,
-        statusByNodeId: new Map(graphData.nodes.map((n) => [n.id, n.status])),
-        parentedNodeIds: new Set(
-          graphData.edges
-            .filter((e) => e.edge_type === "belongs_to" && isLiveEdge(e))
-            .map((e) => e.source_node_id),
-        ),
-      });
-      for (const id of restoreIds) edgeStatusChanges.set(id, "active");
-    }
-    const edgeStatusSnapshot = new Map(
-      touchingEdges.filter((e) => edgeStatusChanges.has(e.id)).map((e) => [e.id, e.status ?? null]),
-    );
-
-    // Apply optimistic update immediately so the UI responds on first click.
-    function applyStatusLocally(
-      prev: GraphData,
-      targetStatus: Node["status"],
-      edgeStatuses: ReadonlyMap<string, Edge["status"]>,
-    ): GraphData {
-      return {
-        ...prev,
-        nodes: prev.nodes.map((n) =>
-          n.id === nodeId
-            ? {
-                ...n,
-                status: targetStatus,
-                completed_at:
-                  targetStatus === "completed" ? new Date().toISOString() : n.completed_at,
-              }
-            : n,
-        ),
-        edges:
-          edgeStatuses.size === 0
-            ? prev.edges
-            : prev.edges.map((e) =>
-                edgeStatuses.has(e.id) ? { ...e, status: edgeStatuses.get(e.id) } : e,
-              ),
-      };
-    }
-
-    setGraphData((prev) => {
-      const base = applyStatusLocally(prev, status, edgeStatusChanges);
-      if (!cascadeStatus || cascadeIds.length === 0) return base;
-      const cascadeCompletedAt = cascadeStatus === "completed" ? new Date().toISOString() : null;
-      return {
-        ...base,
-        nodes: base.nodes.map((n) =>
-          cascadeIdSet.has(n.id)
-            ? { ...n, status: cascadeStatus, completed_at: cascadeCompletedAt }
-            : n,
-        ),
-      };
-    });
+    // The node, its belongs_to subtree and (archive / restore) its edges
+    // change on the SAME click; a failed request puts them back.
+    const plan = planStatusChange(graphData, previousNode, status);
+    setGraphData((prev) => applyOptimisticStatus(prev, plan, status));
 
     const res = await fetch(`/api/nodes/${nodeId}/status`, {
       method: "PATCH",
@@ -4079,38 +3503,11 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     if (!res.ok) {
       // Revert clicked node + edges, and restore every cascaded descendant.
-      setGraphData((prev) => {
-        const reverted = applyStatusLocally(prev, previousNode.status, edgeStatusSnapshot);
-        if (affectedSnapshot.size === 0) return reverted;
-        return {
-          ...reverted,
-          nodes: reverted.nodes.map((n) => {
-            const snap = affectedSnapshot.get(n.id);
-            return snap ? { ...n, status: snap.status, completed_at: snap.completed_at } : n;
-          }),
-        };
-      });
+      setGraphData((prev) => revertOptimisticStatus(prev, plan, previousNode.status));
       return;
     }
 
-    const data = await res.json() as {
-      updated_node?: Node | null;
-      updated_nodes?: Node[];
-      auto_completed_node_ids?: string[];
-      auto_reopened_node_ids?: string[];
-      recomputed_scores?: Array<{ id: string; current_importance_score: number; importance_index: number; importance: string }>;
-      updated_task_ids?: string[];
-    };
-    const updatedNode = data.updated_node ?? null;
-    const updatedNodeMap = new Map(
-      (data.updated_nodes ?? []).map((updated) => [updated.id, updated]),
-    );
-    // Cascaded belongs_to descendants: completing a parent auto-completes its
-    // whole subtree server-side. Apply their status explicitly so the children
-    // vanish (hideCompleted) in the same frame — previously they lingered until
-    // a manual reset layout because the update didn't always land client-side.
-    const autoCompletedIds = new Set(data.auto_completed_node_ids ?? []);
-    const autoReopenedIds = new Set(data.auto_reopened_node_ids ?? []);
+    const data = (await res.json()) as StatusResponse;
     const nowIso = new Date().toISOString();
 
     // If the server cascaded any plan_tasks (linked-task auto-toggle), bump
@@ -4118,55 +3515,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (data.updated_task_ids && data.updated_task_ids.length > 0) {
       setPlannerRefreshKey((v) => v + 1);
     }
-    const scoreMap = new Map(
-      (data.recomputed_scores ?? []).map((s) => [s.id, s]),
-    );
 
     // Merge authoritative server state (scores etc.) onto the already-optimistic UI
-    setGraphData((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => {
-        const nextNodeState = updatedNodeMap.get(n.id) ?? (n.id === nodeId ? updatedNode : null);
-        const scoreUpdate = scoreMap.get(n.id);
-        const serverCascadeStatus: Node["status"] | null = autoCompletedIds.has(n.id)
-          ? "completed"
-          : autoReopenedIds.has(n.id)
-            ? "active"
-            : null;
-        // We optimistically cascaded this node but the server didn't confirm it
-        // (e.g. a child completed independently of this parent) — roll it back.
-        const rollback =
-          cascadeIdSet.has(n.id) &&
-          !serverCascadeStatus &&
-          !updatedNodeMap.has(n.id) &&
-          n.id !== nodeId
-            ? affectedSnapshot.get(n.id)
-            : undefined;
-
-        if (!nextNodeState && !scoreUpdate && !serverCascadeStatus && !rollback) {
-          return n;
-        }
-
-        return {
-          ...n,
-          ...(nextNodeState ?? {}),
-          ...(serverCascadeStatus && !nextNodeState
-            ? {
-                status: serverCascadeStatus,
-                completed_at: serverCascadeStatus === "completed" ? nowIso : null,
-              }
-            : {}),
-          ...(rollback ? { status: rollback.status, completed_at: rollback.completed_at } : {}),
-          ...(scoreUpdate
-            ? {
-                current_importance_score: scoreUpdate.current_importance_score,
-                importance_index: scoreUpdate.importance_index,
-                importance: scoreUpdate.importance as Node["importance"],
-              }
-            : {}),
-        };
-      }),
-    }));
+    setGraphData((prev) => mergeServerStatus(prev, plan, data, nowIso));
   };
 
   return (
@@ -4910,33 +4261,10 @@ export function AppShell({ initialUser }: AppShellProps) {
             })
               .then((r) => r.json() as Promise<{
                 archived_node_id?: string;
-                recomputed_scores?: Array<{ id: string; current_importance_score: number; importance_index: number; importance: string }>;
+                recomputed_scores?: ScoreUpdate[];
               }>)
               .then((data) => {
-                const scoreMap = new Map(
-                  (data.recomputed_scores ?? []).map((s) => [s.id, s]),
-                );
-                setGraphData((prev) => ({
-                  ...prev,
-                  nodes: prev.nodes
-                    .filter((n) => n.id !== data.archived_node_id)
-                    .map((n) => {
-                      const scoreUpdate = scoreMap.get(n.id);
-                      return scoreUpdate
-                        ? {
-                            ...n,
-                            current_importance_score: scoreUpdate.current_importance_score,
-                            importance_index: scoreUpdate.importance_index,
-                            importance: scoreUpdate.importance as Node["importance"],
-                          }
-                        : n;
-                    }),
-                  edges: prev.edges.filter(
-                    (e) =>
-                      e.source_node_id !== data.archived_node_id &&
-                      e.target_node_id !== data.archived_node_id,
-                  ),
-                }));
+                setGraphData((prev) => withMergedNode(prev, data.archived_node_id, data.recomputed_scores));
                 setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
               })
               .catch(() => {
@@ -5057,19 +4385,11 @@ export function AppShell({ initialUser }: AppShellProps) {
               workspaceId={selectedWorkspaceId}
               userId={authUser?.id ?? null}
               graphSignature={graphContentSignature}
-              contextFor={(nodeId) => {
+              contextFor={(nodeId) =>
                 // The step's parent, unless that's the workspace root ("in
                 // Life" says nothing).
-                const parentEdge = graphData.edges.find(
-                  (edge) =>
-                    edge.edge_type === "belongs_to" &&
-                    edge.source_node_id === nodeId &&
-                    isLiveEdge(edge),
-                );
-                if (!parentEdge) return null;
-                if (parentEdge.target_node_id === selectedWorkspace?.bootstrap_root_node_id) return null;
-                return graphData.nodes.find((node) => node.id === parentEdge.target_node_id)?.title ?? null;
-              }}
+                parentContextTitle(graphData, nodeId, selectedWorkspace?.bootstrap_root_node_id)
+              }
               onClose={() => setWhatNowOpen(false)}
               onFocusNode={(nodeId) => {
                 setAppMode("graph");
@@ -5129,20 +4449,11 @@ export function AppShell({ initialUser }: AppShellProps) {
             const extractionFailed = Boolean(handoff?.extraction_error);
             const bootstrapDumpText = handoff?.raw_text?.trim() ?? "";
             if (bootstrapDumpText) {
-              const nodeCount = handoff?.proposed_nodes?.length ?? 0;
-              const questionCount = handoff?.clarifying_questions?.length ?? 0;
-              const bootstrapSummary = extractionFailed
-                ? "I couldn't process that dump right now — your notes are saved. Try a Brain Dump again in a moment."
-                : [
-                    nodeCount > 0
-                      ? `I analyzed your first dump and proposed ${nodeCount} node${nodeCount === 1 ? "" : "s"} and their connections — review and accept them in the panel that just opened.`
-                      : "I went through your dump but didn't find anything new worth proposing yet.",
-                    questionCount > 0
-                      ? `I have ${questionCount} quick clarifying question${questionCount === 1 ? "" : "s"} — answer inline when ready.`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" ");
+              const bootstrapSummary = bootstrapSummaryText({
+                extractionFailed,
+                nodeCount: handoff?.proposed_nodes?.length ?? 0,
+                questionCount: handoff?.clarifying_questions?.length ?? 0,
+              });
               const bootstrapNowIso = new Date().toISOString();
               setChatMessages((prev) => [
                 ...prev,
