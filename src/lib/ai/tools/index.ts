@@ -18,6 +18,7 @@ import { INTERACTIVE_TOOLS } from "./interactive";
 import { BUILD_GRAPH_TOOL, BUILD_TOOLS, planBuild } from "./build";
 import { planSteps, STEP_TOOLS, WRITE_STEPS_TOOL } from "./steps";
 import { actionSucceeded, looksMultiStep } from "./confirmations";
+import { adviceRows } from "./advice-guard";
 import type { AppliedMarkerPayload } from "@/lib/chat/applied-marker";
 import type { TurnApplied } from "@/types/ai";
 
@@ -217,11 +218,13 @@ export interface TurnTools {
 //     on the result, and add these three things" must not lose the first half
 //     (it used to be auto-rejected as a second action).
 //   • Read-only calls next to a card wait for the resume, as before.
-export async function runTurnTools(blocks: ToolUse[], ctx: ToolContext): Promise<TurnTools> {
+export async function runTurnTools(modelBlocks: ToolUse[], ctx: ToolContext): Promise<TurnTools> {
   const done = new Map<string, DispatchResult>();
   const applied: AppliedMarkerPayload[] = [];
   const turns: TurnApplied[] = [];
   let pending: ToolUse | null = null;
+  const blocks: ToolUse[] = [];
+  for (const block of modelBlocks) blocks.push(await separateAdvice(block, ctx, applied));
 
   for (const block of blocks) {
     if (!isPausingTool(block.name, block.input)) continue;
@@ -310,4 +313,24 @@ export function turnNeedsNoFollowUp(turn: TurnTools, message: string): boolean {
     return false;
   }
   return turn.turns.length > 0 || !looksMultiStep(message);
+}
+
+// Advice stays advice (advice-guard.ts): an update_priorities call marked as
+// the user's that carries the assistant's answer to their question splits —
+// the rows the user stated apply now (their card, with Undo); the advice rows
+// become a suggestion that waits on a card for OK.
+async function separateAdvice(block: ToolUse, ctx: ToolContext, applied: AppliedMarkerPayload[]): Promise<ToolUse> {
+  const input = block.input as { source?: unknown; changes?: unknown } | null;
+  if (block.name !== "update_priorities" || input?.source !== "user" || !Array.isArray(input.changes) || !ctx.userMessage) {
+    return block;
+  }
+  const changes = input.changes as unknown[];
+  const advice = new Set(adviceRows(ctx.userMessage, changes as Array<{ action?: unknown }>));
+  if (advice.size === 0) return block;
+  const stated = changes.filter((_, i) => !advice.has(i));
+  if (stated.length > 0) {
+    const ran = await dispatchEager({ name: block.name, input: { ...input, changes: stated }, tool_use_id: block.id, ctx });
+    if (ran.applied) applied.push(ran.applied);
+  }
+  return { ...block, input: { ...input, source: "suggestion", changes: changes.filter((_, i) => advice.has(i)) } };
 }

@@ -487,6 +487,7 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       let usage = EMPTY_USAGE;
       let fullText = "";
+      let newTextBlock = false;
       let streamError: ReturnType<typeof normalizeAIError> | null = null;
 
       const encoder = new TextEncoder();
@@ -515,11 +516,18 @@ export async function POST(req: NextRequest) {
 
           for await (const event of currentStream) {
             if (aborted) break;
+            // A new text block (the next round's, or text after a tool call)
+            // starts a new paragraph — it used to be glued on: "…compounds.Done."
+            if (event.type === "content_block_start" && event.content_block.type === "text") {
+              newTextBlock = true;
+            }
             if (
               event.type === "content_block_delta" &&
               event.delta.type === "text_delta"
             ) {
-              const chunk = event.delta.text;
+              const chunk =
+                (newTextBlock && fullText && !/\s$/.test(fullText) ? "\n\n" : "") + event.delta.text;
+              newTextBlock = false;
               fullText += chunk;
               send(chunk);
             }
