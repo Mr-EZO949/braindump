@@ -5,15 +5,19 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { MainStage } from "@/components/graph/main-stage";
+import { useSession, type AuthUserState } from "@/components/app-shell/use-session";
+import { usePlannerSync, useShellDialogs, useShellPanels, useShellToast } from "@/components/app-shell/use-shell-ui";
+import { useGraphView } from "@/components/app-shell/use-graph-view";
+import { useWorkspaceGraph } from "@/components/app-shell/use-workspace-graph";
 import { AssistantMode as AssistantModeView } from "@/components/assistant/assistant-mode";
 import { TodosView } from "@/components/ui/todos-view";
 import { HabitsView } from "@/components/ui/habits-view";
 import { RoadmapView } from "@/components/ui/roadmap-view";
 import { PomodoroView } from "@/components/ui/pomodoro-view";
 import { SectionBackdrop } from "@/components/ui/section-backdrop";
-import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
+import { ModeDock } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
-import { clearFocusCache, prefetchFocusBrief, WhatNowDialog } from "@/components/ui/what-now-dialog";
+import { clearFocusCache, WhatNowDialog } from "@/components/ui/what-now-dialog";
 import { WeeklyReflectionModal } from "@/components/ui/weekly-reflection-modal";
 import { DumpHistoryModal } from "@/components/ui/dump-history-modal";
 import {
@@ -45,15 +49,8 @@ import {
   buildChatNodeContext,
   findFirstMatchingNode,
   loadWorkspaceGraphData,
-  loadWorkspaces,
-  persistLocalCameraView,
   persistLocalNodePosition,
-  persistLocalSelectedWorkspaceId,
-  persistLocalSelectedNode,
-  readLocalSelectedWorkspaceId,
-  readLocalGraphViewState,
   removeLocalNodePosition,
-  type LocalGraphCameraView,
 } from "@/lib/graph/data";
 
 import {
@@ -65,10 +62,6 @@ import {
   visibleEdgeRelationOptions,
   type EdgeRelationOptionId,
 } from "@/lib/graph/relationships";
-import {
-  buildPrimaryStructuralTree,
-  getStructuralSubtreeFromIndexes,
-} from "@/lib/graph/structure";
 import { setNodeParent } from "@/lib/graph/hierarchy";
 import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
@@ -89,17 +82,8 @@ import { createTurnMarkerParser, createUndoMarkerParser, turnCardFromApplied } f
 import { readDumpResponse } from "@/lib/chat/dump-stream";
 import type { DumpProgressState } from "@/components/ui/dump-progress";
 import { classifyTaskSize } from "@/lib/ai/sizing";
-import { needsNextAction } from "@/lib/graph/next-action";
-import { computeWorkProgress } from "@/lib/graph/work-progress";
 import {
-  RECENT_COMPLETION_WINDOW_MS,
-  countNodeTypes,
-  hashGraphContent,
-  indexIncidentEdges,
-  nodeConnections,
   parentContextTitle,
-  shelvedCompletedNodes,
-  visibleGraph,
 } from "@/lib/graph/visible-graph";
 import {
   checkNodeDraft,
@@ -133,7 +117,6 @@ import {
 import { isWeeklyReflectionAvailable } from "@/lib/time/weekly-unlock";
 import type {
   AppliedAction,
-  RailTab,
   ChatMessage,
   ChatScope,
   Nudge,
@@ -150,26 +133,96 @@ import { acceptProposalsNow, undoAutoApplied } from "@/lib/graph/auto-apply-clie
 import { AutoApplyNotice } from "@/components/ui/auto-apply-notice";
 import type { DumpTurn, ProposedNode } from "@/types/ai";
 
-type AuthUserState = {
-  email: string | null;
-  id: string;
-};
-
 type AppShellProps = {
   initialUser: AuthUserState;
 };
 
-// How long a node pulses after its priority changed, and how far "Still
-// waiting" on a Focus check-back pushes the next check (ranking v2).
-const PRIORITY_PULSE_MS = 2600;
+// How far "Still waiting" on a Focus check-back pushes the next check (ranking v2).
 const CHECK_BACK_SNOOZE_DAYS = 7;
 
 export function AppShell({ initialUser }: AppShellProps) {
   const router = useRouter();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
 
-  // App-level mode state
-  const [appMode, setAppMode] = useState<AppMode>("graph");
+  const panels = useShellPanels();
+  const {
+    appMode,
+    setAppMode,
+    rightPanelOpen,
+    setRightPanelOpen,
+    systemPanelOpen,
+    setSystemPanelOpen,
+    workspaceMenuOpen,
+    setWorkspaceMenuOpen,
+    activeRailTab,
+    setActiveRailTab,
+  } = panels;
+  const { whatNowOpen, setWhatNowOpen, weeklyReflectionOpen, setWeeklyReflectionOpen, dumpHistoryOpen, setDumpHistoryOpen } =
+    useShellDialogs();
+  const { toast, showToast } = useShellToast();
+  const planner = usePlannerSync();
+  const { plannerRefreshKey, draftPlanRefreshKey, setDraftPlanRefreshKey, draftPlanHint, setDraftPlanHint } = planner;
+  const session = useSession({ initialUser, supabase, router, closeSystemPanel: () => setSystemPanelOpen(false) });
+  const {
+    authUser,
+    workspaces,
+    setWorkspaces,
+    selectedWorkspaceId,
+    setSelectedWorkspaceId,
+    selectedWorkspace,
+    workspaceName,
+    signingOut,
+    deletingAccount,
+  } = session;
+  const graph = useWorkspaceGraph({
+    userId: authUser?.id ?? null,
+    workspaceId: selectedWorkspaceId,
+    workspaceRecordName: selectedWorkspace?.name ?? null,
+  });
+  const {
+    graphData,
+    setGraphData,
+    graphLoading,
+    nodeTypeCounts,
+    nodeTypeTotalCount,
+    graphContentSignature,
+    needsActionNodes,
+    workProgressByNode,
+    existingNodeTitleMap,
+    priorityPulseIds,
+    refreshAfterPriorityChange,
+    clusterRefreshKey,
+  } = graph;
+  const view = useGraphView({
+    userId: authUser?.id ?? null,
+    workspaceId: selectedWorkspaceId,
+    graph,
+    setRightPanelOpen,
+  });
+  const {
+    graphSearchValue,
+    setGraphSearchValue,
+    selectedNodeId,
+    setSelectedNodeId,
+    focusRequestKey,
+    setFocusRequestKey,
+    nodeTypeFilter,
+    setNodeTypeFilter,
+    hideCompleted,
+    setHideCompleted,
+    cameraView,
+    setCameraView,
+    suppressInitialFocusAnimation,
+    setSuppressInitialFocusAnimation,
+    completedNodes,
+    filteredGraphData,
+    selectedNode,
+    selectedNodeRecord,
+    selectedNodeDeletePlan,
+    connectableNodes,
+    selectedNodeConnections,
+  } = view;
+
   const [brainDumpOpen, setBrainDumpOpen] = useState(false);
   // Workspace captured at open time — stays fixed even if the user switches workspace mid-dump.
   const [brainDumpWorkspaceId, setBrainDumpWorkspaceId] = useState<string | null>(null);
@@ -180,25 +233,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [brainDumpRetrying, setBrainDumpRetrying] = useState(false);
   const [brainDumpError, setBrainDumpError] = useState<string | null>(null);
   const [brainDumpFailedEntryId, setBrainDumpFailedEntryId] = useState<string | null>(null);
-  const [whatNowOpen, setWhatNowOpen] = useState(false);
-  const [weeklyReflectionOpen, setWeeklyReflectionOpen] = useState(false);
-  const [dumpHistoryOpen, setDumpHistoryOpen] = useState(false);
-  // Bumped whenever the server cascades plan_tasks updates (e.g. graph
-  // completion auto-marked a linked task). The planner subscribes via prop
-  // and re-loads its tasks list when the key changes — keeps the two views
-  // in sync without a full page refresh.
-  const [plannerRefreshKey, setPlannerRefreshKey] = useState(0);
-  // Bumped when a chat `plan_day` is accepted, to pull its freshly-drafted plan
-  // into the planner's review UI (journal #6).
-  const [draftPlanRefreshKey, setDraftPlanRefreshKey] = useState(0);
-  // That plan_day's start time and the busy time named in chat, so Accept in
-  // the Planner lays the blocks where the plan was made for.
-  const [draftPlanHint, setDraftPlanHint] = useState<{
-    startTime: unknown;
-    busy: unknown;
-    window: unknown;
-    acceptedAt: number;
-  } | null>(null);
   const [proposedNodes, setProposedNodes] = useState<ProposedNode[]>([]);
   const [proposedReviewOpen, setProposedReviewOpen] = useState(false);
   const [proposedNodesSubmitting, setProposedNodesSubmitting] = useState(false);
@@ -260,24 +294,11 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [analyzingConnections, setAnalyzingConnections] = useState(false);
   const [mergeCandidates, setMergeCandidates] = useState<MergeCandidate[]>([]);
   const [aiNotice, setAiNotice] = useState<AINotice | null>(null);
-  // Bumped after a dump-review accept so the cluster-suggestion stack re-polls
-  // (the clustering pass runs server-side inside /api/proposals/nodes/review).
-  const [clusterRefreshKey, setClusterRefreshKey] = useState(0);
   const [lastAnalysisNodeIds, setLastAnalysisNodeIds] = useState<string[]>([]);
   const [lastAnalysisFailedNodeIds, setLastAnalysisFailedNodeIds] = useState<string[]>([]);
   const [lastAnalysisWorkspaceId, setLastAnalysisWorkspaceId] = useState<string | null>(null);
   const [findAllConfirmOpen, setFindAllConfirmOpen] = useState(false);
 
-  // Panel state.
-  // IMPORTANT: this must initialize to the SAME value the server renders
-  // (true) — reading window.matchMedia in the initializer makes the first
-  // client render diverge from SSR on mobile and breaks hydration. The real
-  // viewport-derived value is applied in a mount effect below, after
-  // hydration, so there is no server/client mismatch.
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const [systemPanelOpen, setSystemPanelOpen] = useState(false);
-  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
-  const [activeRailTab, setActiveRailTab] = useState<RailTab>("details");
   const [railChatInput, setRailChatInput] = useState("");
   // When a freshly-created task looks like a multi-session project, we hold it
   // here and show an inline "break it down?" chooser in the chat rail (the
@@ -290,16 +311,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   // in-thread "want a roadmap?" prompt never nags about the same project.
   const roadmapPromptedRef = useRef<Set<string>>(new Set());
 
-  // Apply the viewport-derived default for the right panel AFTER hydration.
-  // On mobile the rail should start closed; doing this in an effect (not the
-  // useState initializer) keeps the first client render identical to the
-  // server's, avoiding the hydration mismatch. Runs once on mount.
-  useEffect(() => {
-    if (window.matchMedia("(max-width: 768px)").matches) {
-      setRightPanelOpen(false);
-    }
-  }, []);
-
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   // The thread as of the last render — for async work that finishes later
@@ -311,10 +322,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [chatScope, setChatScope] = useState<ChatScope>(createWorkspaceScope("General"));
   const [chatLoading, setChatLoading] = useState(false);
   const [pendingActionBusy, setPendingActionBusy] = useState(false);
-  // Nodes whose priority just changed (chat, Focus check-back, Undo) — the
-  // graph pulses them once so the resize reads as a response.
-  const [priorityPulseIds, setPriorityPulseIds] = useState<ReadonlySet<string> | null>(null);
-  const priorityPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [nudges, setNudges] = useState<Nudge[]>([]);
   const chatAbortRef = useRef<AbortController | null>(null);
 
@@ -335,39 +342,11 @@ export function AppShell({ initialUser }: AppShellProps) {
   // that DON'T echo reset it to false so the clarifying flow echoes once.
   const dumpInChatRef = useRef(false);
 
-  // Graph state
-  const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
-  const [graphLoading, setGraphLoading] = useState(true);
-  const [graphSearchValue, setGraphSearchValue] = useState("");
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [focusRequestKey, setFocusRequestKey] = useState(0);
-  const [authUser, setAuthUser] = useState<AuthUserState | null>(initialUser);
-  const [signingOut, setSigningOut] = useState(false);
-  const [deletingAccount, setDeletingAccount] = useState(false);
   const [editMode, setEditMode] = useState(false);
-  const [nodeTypeFilter, setNodeTypeFilter] = useState("all");
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   // Focus timer — one persistent Pomodoro per workspace, backed by localStorage
   // so it survives mode/view switches and reloads. Lives at the shell so the
   // pill renders above every view.
   const focusTimer = useFocusTimer(selectedWorkspaceId);
-  // Minimal hand-rolled toast (no library). Cleared after ~3s.
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    },
-    [],
-  );
-  const [cameraView, setCameraView] = useState<LocalGraphCameraView | null>(null);
-  // initialCameraView removed — graph-canvas now always computes a fresh fitted view
-  const [pendingRestoredSelectionId, setPendingRestoredSelectionId] = useState<
-    string | null | undefined
-  >(undefined);
-  const [suppressInitialFocusAnimation, setSuppressInitialFocusAnimation] = useState(false);
-  const [viewStateHydrated, setViewStateHydrated] = useState(false);
   const [createNodeDraft, setCreateNodeDraft] = useState<CreateNodeInput | null>(null);
   const [createNodeError, setCreateNodeError] = useState<string | null>(null);
   const [createNodeSubmitting, setCreateNodeSubmitting] = useState(false);
@@ -405,89 +384,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   } | null>(null);
   const pendingAnalysisRef = useRef<{ nodeIds: string[]; workspaceId: string } | null>(null);
 
-  const selectedWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
-    [selectedWorkspaceId, workspaces],
-  );
-
-  const workspaceName = selectedWorkspace?.name ?? "General";
-
-  // Build graph lookups once per data change. Selection and details-panel
-  // rendering are frequent; repeatedly scanning every node and edge there made
-  // opening a node progressively slower as a workspace grew.
-  const graphIndexes = useMemo(
-    () => ({
-      ...buildPrimaryStructuralTree(graphData),
-      ...indexIncidentEdges(graphData),
-    }),
-    [graphData],
-  );
-
-  const selectedNode = useMemo(
-    () => buildChatNodeContext(graphData, selectedNodeId, graphIndexes),
-    [graphData, graphIndexes, selectedNodeId],
-  );
-
-  const nodeTypeCounts = useMemo(() => countNodeTypes(graphData.nodes), [graphData.nodes]);
-
-  const nodeTypeTotalCount = useMemo(
-    () => nodeTypeCounts.reduce((sum, item) => sum + item.count, 0),
-    [nodeTypeCounts],
-  );
-
-  // #17: completed nodes are SHOWN by default — a done task should stay in the
-  // graph, attached to its parent, so the user feels the satisfaction of it.
-  // But only RECENT ones: a completion stays on the board for a week, then moves
-  // to the completed shelf, so a mature graph doesn't fill up with months of
-  // done nodes (the force layout would have to place every one of them too).
-  // The filter bar's "Hide done" toggle shelves all of them.
-  const [hideCompleted, setHideCompleted] = useState(false);
-  // Coarse clock for the recency window — read once, refreshed hourly. Held in
-  // state rather than calling Date.now() during render, so the memoized
-  // filters below stay pure.
-  const [recencyNowMs, setRecencyNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setRecencyNowMs(Date.now()), 60 * 60 * 1000);
-    return () => clearInterval(timer);
-  }, []);
-  const recentCompletionCutoffMs = recencyNowMs - RECENT_COMPLETION_WINDOW_MS;
-
-  // Completed nodes that are NOT on the board (all of them when "Hide done" is
-  // on, otherwise the ones older than the recency window) — the shelf lists these.
-  const completedNodes = useMemo(
-    () => shelvedCompletedNodes(graphData.nodes, hideCompleted, recentCompletionCutoffMs),
-    [graphData.nodes, hideCompleted, recentCompletionCutoffMs],
-  );
-
-  // Content signature for caches that must invalidate on ANY meaningful graph
-  // change (the Focus brief, #9). The old key was "nodes:edges:completedCount",
-  // which missed renames, deadline edits, archiving (archived nodes stay in
-  // graphData, so counts didn't move), rescoring, and a complete+reopen pair.
-  const graphContentSignature = useMemo(
-    () => hashGraphContent(graphData.nodes, graphData.edges),
-    [graphData.nodes, graphData.edges],
-  );
-
-  // Warm the Focus brief (SQL only, $0) a moment after a workspace's graph
-  // loads, so even the first press of Focus paints at once (R1 #9). Once a
-  // brief is cached, Focus shows it instantly and refreshes behind it.
-  useEffect(() => {
-    if (graphLoading || !selectedWorkspaceId || graphData.nodes.length === 0) return;
-    const workspaceId = selectedWorkspaceId;
-    const signature = graphContentSignature;
-    const timer = window.setTimeout(() => prefetchFocusBrief(workspaceId, signature), 1200);
-    return () => window.clearTimeout(timer);
-    // Once per workspace load — later graph edits refresh Focus when it opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphLoading, selectedWorkspaceId]);
-
-  // Actionable-but-empty nodes (goal/project/class with no next step) — drives
-  // the on-load anti-freeze nudge so the user sees what's ready to map out.
-  const needsActionNodes = useMemo(
-    () => graphData.nodes.filter((n) => needsNextAction(n.id, graphData.nodes, graphData.edges)),
-    [graphData],
-  );
-
   // Once the nudge is actually visible this session, snooze it so it doesn't
   // greet the user on the next few reloads.
   useEffect(() => {
@@ -510,50 +406,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   }, [appMode, freezeNudgeAllowed, freezeNudgeDismissed, stepSuggestionOpen, needsActionNodes.length]);
 
-  // Big task / project progress counts done steps even while the canvas
-  // hides completed nodes, so it's computed from the full graph.
-  const workProgressByNode = useMemo(() => computeWorkProgress(graphData), [graphData]);
-
-  const filteredGraphData = useMemo(
-    () => visibleGraph(graphData, { hideCompleted, nodeTypeFilter, recentCompletionCutoffMs }),
-    [graphData, hideCompleted, nodeTypeFilter, recentCompletionCutoffMs],
-  );
-
-  const selectedNodeRecord = useMemo(
-    () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
-    [graphData.nodes, selectedNodeId],
-  );
-
-  const selectedNodeDeletePlan = useMemo(
-    () =>
-      selectedNodeId
-        ? getStructuralSubtreeFromIndexes(
-            selectedNodeId,
-            graphIndexes.childrenByParent,
-            graphIndexes.incidentEdgesByNode,
-          )
-        : null,
-    [graphIndexes, selectedNodeId],
-  );
-
-  const existingNodeTitleMap = useMemo(
-    () => Object.fromEntries(graphData.nodes.map((node) => [node.id, node.title])),
-    [graphData.nodes],
-  );
-
-  const connectableNodes = useMemo(
-    () =>
-      graphData.nodes
-        .filter((node) => node.id !== selectedNodeId)
-        .sort((nodeA, nodeB) => nodeA.title.localeCompare(nodeB.title)),
-    [graphData.nodes, selectedNodeId],
-  );
-
-  const selectedNodeConnections = useMemo(
-    () => nodeConnections(selectedNodeId, graphIndexes),
-    [graphIndexes, selectedNodeId],
-  );
-
   const defaultChatScope = useMemo(
     () =>
       selectedNode
@@ -562,76 +414,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     [selectedNode, workspaceName],
   );
 
+  // A newly loaded workspace may show the anti-freeze nudge again.
   useEffect(() => {
-    let active = true;
-
-    void loadWorkspaces(authUser?.id ?? null).then((nextWorkspaces) => {
-      if (!active) {
-        return;
-      }
-
-      setWorkspaces(nextWorkspaces);
-      setSelectedWorkspaceId((currentWorkspaceId) => {
-        const storedWorkspaceId = readLocalSelectedWorkspaceId(authUser?.id ?? null);
-
-        if (
-          currentWorkspaceId &&
-          nextWorkspaces.some((workspace) => workspace.id === currentWorkspaceId)
-        ) {
-          return currentWorkspaceId;
-        }
-
-        if (
-          storedWorkspaceId &&
-          nextWorkspaces.some((workspace) => workspace.id === storedWorkspaceId)
-        ) {
-          return storedWorkspaceId;
-        }
-
-        return (
-          nextWorkspaces.find((workspace) => workspace.name === "General")?.id ??
-          nextWorkspaces[0]?.id ??
-          null
-        );
-      });
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [authUser?.id]);
-
-  // Graph fetch — keyed ONLY on the two things the query actually depends on
-  // (user + workspace). Previously this also depended on the workspace NAME,
-  // its bootstrap flag, and profileIntakeState, so the whole graph re-fetched
-  // (and the force layout re-ran, freezing a half-settled tangle) every time
-  // those resolved during bootstrap. The onboarding decision moved to its own
-  // effect below, which reads the already-loaded graph. (Perf: #1)
-  useEffect(() => {
-    let active = true;
-
-    setGraphLoading(true);
     setFreezeNudgeDismissed(false);
-
-    void loadWorkspaceGraphData(
-      authUser?.id ?? null,
-      selectedWorkspaceId,
-      // workspaceName is display-only inside loadWorkspaceGraphData (not part of
-      // the query), so it's read here without being a dependency.
-      selectedWorkspace?.name ?? null,
-    ).then((nextGraphData) => {
-      if (!active) {
-        return;
-      }
-
-      setGraphData(nextGraphData);
-      setGraphLoading(false);
-    });
-
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser?.id, selectedWorkspaceId]);
 
   // Onboarding decision — runs AFTER the graph has loaded (reads the loaded
@@ -688,66 +473,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     };
   }, [authUser?.id]);
 
-  useEffect(() => {
-    if (!supabase) {
-      return;
-    }
-
-    let active = true;
-
-    void supabase.auth.getSession().then(({ data, error }) => {
-      if (!active || error) {
-        return;
-      }
-
-      const sessionUserId = data.session?.user?.id ?? null;
-      setAuthUser(
-        data.session?.user
-          ? {
-              email: data.session.user.email ?? null,
-              id: data.session.user.id,
-            }
-          : null,
-      );
-
-      // Perf: seed the selected workspace from localStorage the moment auth
-      // resolves so the graph fetch can start IN PARALLEL with loadWorkspaces,
-      // instead of waiting a full round-trip for the workspace list first.
-      // loadWorkspaces still validates/corrects this once it lands (it keeps a
-      // valid current selection), so a stale stored id just self-heals.
-      if (sessionUserId) {
-        const storedWorkspaceId = readLocalSelectedWorkspaceId(sessionUserId);
-        if (storedWorkspaceId) {
-          setSelectedWorkspaceId((prev) => prev ?? storedWorkspaceId);
-        }
-      }
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "SIGNED_OUT" || event === "TOKEN_REFRESHED" && !session) {
-        // Redirect to login when session is lost (e.g. invalid refresh token)
-        router.push("/login");
-        return;
-      }
-
-      setAuthUser(
-        session?.user
-          ? {
-              email: session.user.email ?? null,
-              id: session.user.id,
-            }
-          : null,
-      );
-    });
-
-    return () => {
-      active = false;
-      subscription.unsubscribe();
-    };
-  }, [supabase]);
-
   // Keep chat scope in sync with node selection — when the user selects a
   // different node (or deselects), update the scope so the assistant always
   // has the right context.  This also covers the empty-messages case.
@@ -756,22 +481,12 @@ export function AppShell({ initialUser }: AppShellProps) {
   }, [defaultChatScope]);
 
   useEffect(() => {
-    if (workspaces.length === 0) {
-      return;
-    }
-
-    persistLocalSelectedWorkspaceId(authUser?.id ?? null, selectedWorkspaceId);
-  }, [authUser?.id, selectedWorkspaceId, workspaces.length]);
-
-  useEffect(() => {
     // Workspace-switch reset. Keyed on selectedWorkspaceId (stable across
     // a workspace's lifetime) rather than workspaceName — the latter
     // briefly resolves from "General" → the actual name during bootstrap,
     // which would re-run this effect mid-flow and wipe any in-flight chat
     // messages (e.g. inline answers from the proposed-nodes review) that
     // hadn't been flushed to localStorage yet.
-    setSelectedNodeId(null);
-    setGraphSearchValue("");
     setRailChatInput("");
     setChatMessages(readChatHistory(authUser?.id ?? null, selectedWorkspaceId));
     const storedSessionId = readChatSessionId(authUser?.id ?? null, selectedWorkspaceId);
@@ -783,8 +498,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     setEditNodeError(null);
     setDeleteNodeConfirmOpen(false);
     setEditMode(false);
-    setNodeTypeFilter("all");
-    setCameraView(null);
     setEdgeRelationId("contains");
     setEdgeTargetId("");
     setEdgeError(null);
@@ -953,53 +666,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
-    const localViewState = readLocalGraphViewState(authUser?.id ?? null, selectedWorkspaceId);
-
-    setViewStateHydrated(false);
-    setPendingRestoredSelectionId(localViewState.selectedNodeId);
-    setSuppressInitialFocusAnimation(Boolean(localViewState.selectedNodeId));
-  }, [authUser?.id, selectedWorkspaceId]);
-
-  useEffect(() => {
-    if (graphLoading || pendingRestoredSelectionId === undefined) {
-      return;
-    }
-
-    const nextSelectedNode =
-      pendingRestoredSelectionId === null
-        ? null
-        : graphData.nodes.find((node) => node.id === pendingRestoredSelectionId) ?? null;
-
-    setSelectedNodeId(nextSelectedNode?.id ?? null);
-    setRightPanelOpen(Boolean(nextSelectedNode));
-    setPendingRestoredSelectionId(undefined);
-    setSuppressInitialFocusAnimation(false);
-    setViewStateHydrated(true);
-  }, [graphData.nodes, graphLoading, pendingRestoredSelectionId]);
-
-  useEffect(() => {
-    if (!viewStateHydrated) {
-      return;
-    }
-
-    persistLocalSelectedNode(authUser?.id ?? null, selectedWorkspaceId, selectedNodeId);
-  }, [authUser?.id, selectedNodeId, selectedWorkspaceId, viewStateHydrated]);
-
-  useEffect(() => {
-    if (!viewStateHydrated || !cameraView) {
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      persistLocalCameraView(authUser?.id ?? null, selectedWorkspaceId, cameraView);
-    }, 140);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [authUser?.id, cameraView, selectedWorkspaceId, viewStateHydrated]);
-
-  useEffect(() => {
     if (selectedNodeId && filteredGraphData.nodes.some((node) => node.id === selectedNodeId)) {
       return;
     }
@@ -1013,24 +679,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     setEditNodeError(null);
     setDeleteNodeConfirmOpen(false);
     setRightPanelOpen(false);
+    // The setters come from the shell's hooks (stable).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredGraphData.nodes, selectedNodeId]);
-
-  // After a priority change (already applied server-side): reload the graph so
-  // node sizes follow the new scores, and pulse the nodes that moved.
-  const refreshAfterPriorityChange = async (workspaceId: string, nodeIds: string[]) => {
-    if (authUser?.id) {
-      try {
-        setGraphData(
-          await loadWorkspaceGraphData(authUser.id, workspaceId, selectedWorkspace?.name ?? null),
-        );
-      } catch {
-        // The card still shows the change; the next load resizes the nodes.
-      }
-    }
-    if (priorityPulseTimerRef.current) clearTimeout(priorityPulseTimerRef.current);
-    setPriorityPulseIds(new Set(nodeIds));
-    priorityPulseTimerRef.current = setTimeout(() => setPriorityPulseIds(null), PRIORITY_PULSE_MS);
-  };
 
   // Undo on an applied priority card: the server restores exactly the fields
   // the change touched (lib/ai/tools/priority-mutations undoPriorityChanges).
@@ -1561,7 +1212,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         // tasks are now stale — bump the refresh key so AssistantMode re-fetches.
         const PLANNER_TOOLS = ["add_task_to_calendar", "reschedule_task", "mark_task_done"];
         if (action.toolName && PLANNER_TOOLS.includes(action.toolName)) {
-          setPlannerRefreshKey((v) => v + 1);
+          planner.refreshPlanner();
         }
 
         // A chat-generated plan (plan_day) is drafted server-side but invisible
@@ -1616,12 +1267,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     void submitMessage(lastUserMessage.body, false);
   };
 
-  const showToast = (message: string) => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToast(message);
-    toastTimerRef.current = setTimeout(() => setToast(null), 3000);
-  };
-
   // Start a focus session on a node. Duration = the linked plan_task's
   // duration_minutes for today if one exists, else 25m. No AI estimate call —
   // keep "Start working" free and instant (v1).
@@ -1674,7 +1319,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       .eq("done", false)
       .select("id");
     if (data && data.length > 0) {
-      setPlannerRefreshKey((v) => v + 1);
+      planner.refreshPlanner();
     }
   };
 
@@ -1843,11 +1488,6 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       return nextMode;
     });
-  };
-
-  const handleResetFilters = () => {
-    setNodeTypeFilter("all");
-    setHideCompleted(false);
   };
 
   const handleSubmitCreateNode = async () => {
@@ -2299,55 +1939,6 @@ export function AppShell({ initialUser }: AppShellProps) {
       .eq("workspace_id", selectedWorkspaceId);
   };
 
-  const handleSignOut = async () => {
-    if (!supabase || signingOut) {
-      return;
-    }
-
-    setSigningOut(true);
-
-    const { error } = await supabase.auth.signOut();
-
-    setSigningOut(false);
-
-    if (error) {
-      return;
-    }
-
-    setSystemPanelOpen(false);
-    router.replace("/login");
-  };
-
-  const handleDeleteAccount = async () => {
-    if (deletingAccount) {
-      return;
-    }
-
-    setDeletingAccount(true);
-
-    try {
-      const res = await fetch("/api/account/delete", { method: "POST" });
-
-      if (!res.ok) {
-        setDeletingAccount(false);
-        return false;
-      }
-
-      // Clear the local session, then leave. The server already removed
-      // every row this user owned via FK cascade.
-      if (supabase) {
-        await supabase.auth.signOut();
-      }
-
-      setSystemPanelOpen(false);
-      router.replace("/login");
-      return true;
-    } catch {
-      setDeletingAccount(false);
-      return false;
-    }
-  };
-
   const deleteWorkspace = async (
     workspaceId: string,
     options?: { fallbackWorkspaceId?: string | null },
@@ -2504,7 +2095,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         }
       }
       if (card.added.length > 0) {
-        setClusterRefreshKey((k) => k + 1);
+        graph.refreshClusters();
         // Links it notices land in this thread, not in a modal.
         void analyzeNodes(
           card.added.map((n) => n.id),
@@ -2656,7 +2247,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       const batch = await acceptProposalsNow(autoIds);
       if (batch && batch.acceptedNodes.length > 0) {
         appliedIds = new Set(autoIds);
-        setClusterRefreshKey((k) => k + 1);
+        graph.refreshClusters();
         mergeAcceptedIntoGraph(batch.acceptedNodes, batch.acceptedEdges);
         const createdIds = batch.acceptedNodes.map((n) => n.id);
         if (workspaceId) void analyzeNodes(createdIds, workspaceId);
@@ -2919,7 +2510,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     const data = await res.json() as { accepted_nodes?: Node[]; accepted_edges?: Edge[] };
     // The review route runs the clustering pass server-side; re-poll so any new
     // grouping suggestions surface right after accepting a dump's nodes.
-    setClusterRefreshKey((k) => k + 1);
+    graph.refreshClusters();
     if (data.accepted_nodes && data.accepted_nodes.length > 0) {
       mergeAcceptedIntoGraph(data.accepted_nodes, data.accepted_edges ?? []);
     }
@@ -3513,7 +3104,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     // If the server cascaded any plan_tasks (linked-task auto-toggle), bump
     // the planner refresh key so AssistantMode re-loads its task list.
     if (data.updated_task_ids && data.updated_task_ids.length > 0) {
-      setPlannerRefreshKey((v) => v + 1);
+      planner.refreshPlanner();
     }
 
     // Merge authoritative server state (scores etc.) onto the already-optimistic UI
@@ -3589,10 +3180,10 @@ export function AppShell({ initialUser }: AppShellProps) {
         <SystemPanel
           onClose={() => setSystemPanelOpen(false)}
           onSignOut={() => {
-            void handleSignOut();
+            void session.signOut();
           }}
           onDeleteAccount={() => {
-            void handleDeleteAccount();
+            void session.deleteAccount();
           }}
           open={systemPanelOpen}
           signingOut={signingOut}
@@ -3666,7 +3257,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 onChangeGraphTypeFilter={setNodeTypeFilter}
                 onOpenCreateNode={handleOpenCreateNode}
                 onResetEditManualWeight={handleResetManualWeight}
-                onResetGraphFilters={handleResetFilters}
+                onResetGraphFilters={view.resetFilters}
                 hideCompleted={hideCompleted}
                 completedNodes={completedNodes}
                 onSelectCompletedNode={(nodeId) => {
@@ -3778,7 +3369,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                   handleSelectNode(nodeId);
                 }}
                 onPlannerInvalidate={() => {
-                  setPlannerRefreshKey((v) => v + 1);
+                  planner.refreshPlanner();
                 }}
               />
             </motion.div>
