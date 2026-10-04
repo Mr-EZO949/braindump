@@ -24,6 +24,10 @@
 // full prompt had the rule since v26; here "volleyball practice tuesdays and
 // fridays 5–7pm, stats lecture tue/thu 2–4pm" made two habit nodes next to
 // the two weekly times.
+// v8 (2026-10-04): the user's label never sets the type. "goals for this
+// semester: get into the honors program, finish my thesis proposal, learn
+// pytorch" made "Learn PyTorch" a goal (eval fixture light-goal-heading) — the
+// same weakness extract-v27 fixes in the full prompt.
 //
 // Same output schema and the same Session block as extract.ts, so the rest of
 // the pipeline (resolution, auto-apply, completions) is unchanged. Longer
@@ -31,7 +35,7 @@
 
 import { buildExtractionVariableBlock, type ExtractionPromptParams } from "./extract";
 
-export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v7";
+export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v8";
 
 const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to the user's existing knowledge graph. Most of these updates report things the user just did, plus a few new things to do; some ask to reorganize what is already there. Keep the graph sparse: propose only what the dump clearly states.
 
@@ -52,6 +56,7 @@ const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to t
   - big_task — ONE piece of work they do or produce, over several sittings ("write the thesis", "test BrainDump", "build my portfolio site").
   - project — a body of work with several different parts ("internship search", "launch the beta").
   - goal — a RESULT they'll know they reached, ideally dated ("pass the calculus exam", "1450+ on the SAT", "internship in Milan by November"). Aspirations without a finish line ("get in shape", "make money") are areas.
+  - The user's own label never sets the type: under a heading like "goals for this semester:" type EACH item by these questions ("land the Stripe internship" → goal, "write the capstone report" → big_task, "learn Rust" → project). Finishing, writing or learning something is work, not a result.
   - habit — only with an explicit cadence ("daily", "every morning", "3× a week").
 - A FIXED time in the week set by someone else — a lecture, a lab, a work shift, a team practice, a standing meeting ("stats lecture every Tuesday and Thursday 2–4pm", "practice moved to 6pm") — is the user's SCHEDULE, saved by another step. No node for it: not a habit, task or note.
   - area — an ongoing part of life with no finish line ("Health", "Career", "Life Admin").

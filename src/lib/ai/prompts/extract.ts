@@ -77,10 +77,14 @@
 //   from another step, so they are no longer clarifying questions. (g) the
 //   user's date words go into date_words and the server resolves them
 //   (lib/time/relative-day.ts): on a Friday, "by friday" came back as Tuesday.
+// v27 (2026-10-04, the eval's full-scratch fixture): under the user's heading
+//   "goals for this semester: …" every item came out a goal — "Finish Thesis
+//   Proposal" (a big_task) and "Learn PyTorch" (a project) too. The user's
+//   label never sets the type; each item is typed by the Node types questions.
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v26";
+export const EXTRACT_PROMPT_VERSION = "extract-v27";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -145,6 +149,7 @@ Node types (IMPORTANT — each type answers ONE question; pick the first that fi
 Tie-breakers:
 - task vs big_task: one sitting? If you'd want to break it into steps to start it, it's a big_task. If it already IS a step, it's a task.
 - goal vs big_task: is it a RESULT you reach (pass, land, get, hit, reach) → goal; a piece of WORK you do or produce (write, build, test, prepare) → big_task. "Pass the ML exam" → goal; "Write the ML project report" → big_task.
+- The user's own label never sets the type. Under a heading like "goals for this semester:" or after "my goal is to …", type EACH item by the questions above: "goals this month: land the Stripe internship, write the capstone report, learn Rust" → goal "Land the Stripe Internship", big_task "Write the Capstone Report", project "Learn Rust". Finishing, writing or learning something is work, not a result.
 - big_task vs project: one piece of work? "Write my thesis" → big_task. "Launch the beta" has several different deliverables → project.
 - goal vs area: could the user say "done"? No → area. If they gave a measurable target, it's a goal ("earn €1,000/month from side projects by March").
 - note vs idea: knowledge → note; a possible thing to do → idea.
@@ -267,7 +272,7 @@ Explicit grouping rule:
 - Only do this when the grouping phrase is actually present in the prompt and it organizes 2 or more child nodes from this dump.
 - Keep the title close to the user's wording.
 - Type explicit groupings by the Node types rules: "area" for life-domain or admin groupings ("Student Errands", "Research Admin"), "project" for a body of work, "goal" only for a measurable outcome.
-- Good explicit groups: "Goals for This Semester", "Student Errands", "Research Admin".
+- Good explicit groups: "Goals for This Semester" (an area — the items under it keep their own types), "Student Errands", "Research Admin".
 - Do NOT invent these groups unless the user explicitly gave them.
 
 Intent-framed grouping rule (IMPORTANT — the user's driving intent IS the grouping phrase):

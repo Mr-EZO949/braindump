@@ -182,6 +182,21 @@ export const BUILDER_FIXTURES: BuilderFixture[] = [
     },
   },
   {
+    id: "light-goal-heading",
+    covers: "a \"goals\" heading doesn't make its items goals: a result → goal, a piece of work → big_task, a skill to learn → project",
+    prompt: "light",
+    graph: "synthetic",
+    input: "goals for this semester: get into the honors program, finish my thesis proposal, learn pytorch",
+    expect: {
+      nodes: [
+        { title: "honors", type: "goal" },
+        { title: "thesis proposal", type: "big_task" },
+        { title: "pytorch", type: ["project", "big_task"] },
+      ],
+      max_new_nodes: 4,
+    },
+  },
+  {
     id: "light-completions",
     covers: "past tense completes existing nodes (a habit too); a plan for an existing item proposes nothing",
     prompt: "light",
