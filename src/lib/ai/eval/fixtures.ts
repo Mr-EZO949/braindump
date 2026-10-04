@@ -1,676 +1,461 @@
+// Eval fixtures — synthetic data only, never a real workspace.
+//
+// What the product does today (2026-10-04), and what these check:
+//   builder  — a dump or chat's build_graph: extract-v26 for long texts,
+//              extract-light for ≤700 chars, the edit pass for the requests
+//              the long prompt quotes, node types v2 (docs/node-types.md),
+//              belongs_to parents, and the one-turn change set + policy
+//              (docs/unified-turn.md). Runner and checks: ./builder.ts.
+//   edges    — the connection engine's batched infer-edge call, read through
+//              edge-selection.ts as connection.ts does.
+//   merge    — the merge check behind merge alerts.
+//   planner  — short (Haiku) plans, incl. fixed commitments inside a session.
+// Run: `npx tsx --env-file=.env.local scripts/eval-run.ts` (or POST
+// /api/eval/run in dev). A whole run is sized to stay under ~$0.25.
+// When a prompt's behaviour changes on purpose, change the expectation here.
+
 import type { NodeType } from "@/types/graph";
-// Eval fixtures — Phase 5.6 + Phase 9
-// Manually annotated ground truth for regression testing extraction, edge inference,
-// assistant, and planner prompts.
-// Run via POST /api/eval/run (dev only).
-// Update expected values when you intentionally change prompt behavior.
+import type { PlanningWindow } from "@/types/ai";
+import type { BusyInterval } from "@/lib/planner/commitments";
 
-import type { AssistantMode } from "@/types/ai";
+// ---------------------------------------------------------------------------
+// The synthetic workspace the builder fixtures run against
+// ---------------------------------------------------------------------------
 
-export interface BrainDumpFixture {
+// The date the fixtures are written for: a Wednesday, so "by friday" is
+// 2026-10-09 and "thursday" 2026-10-08 (lib/time/relative-day.ts).
+export const EVAL_TODAY = "2026-10-07";
+
+export interface SyntheticNode {
   id: string;
-  input: string;
-  expected_nodes: Array<{
-    title_contains: string; // substring match — exact titles vary by model run
-    node_type: string;
-  }>;
-  expected_links?: Array<{
-    source_title_contains: string;
-    target_title_contains: string;
-    edge_types?: string[];
-  }>;
+  title: string;
+  node_type: NodeType;
+  summary?: string;
+  parent?: string; // id
 }
+
+const id = (n: number) => `e0000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+export const SYNTHETIC_IDS = {
+  root: id(1),
+  university: id(2),
+  stats: id(3),
+  statsMidterm: id(4),
+  problemSet4: id(5),
+  machineLearning: id(6),
+  mlProject: id(7),
+  health: id(8),
+  gym: id(9),
+  moneyProjects: id(10),
+  testMarket: id(11),
+  clothes: id(12),
+  career: id(13),
+  internship: id(14),
+  italian: id(15),
+  personalDev: id(16),
+  lifeAdmin: id(17),
+  parkingPass: id(18),
+} as const;
+
+const S = SYNTHETIC_IDS;
+
+// A student with side projects — the shape of the owner's Round 2 graph,
+// with made-up content. The root is an area (node types v2).
+export const SYNTHETIC_GRAPH: SyntheticNode[] = [
+  { id: S.root, title: "Alex", node_type: "area" },
+  { id: S.university, title: "University", node_type: "area", parent: S.root },
+  { id: S.stats, title: "Statistics 302", node_type: "class", parent: S.university, summary: "Tue/Thu lectures; midterm in November." },
+  { id: S.statsMidterm, title: "Pass the Stats 302 Midterm", node_type: "goal", parent: S.stats },
+  { id: S.problemSet4, title: "Problem Set 4", node_type: "task", parent: S.stats, summary: "Regression problems, due this week." },
+  { id: S.machineLearning, title: "Machine Learning", node_type: "class", parent: S.university },
+  { id: S.mlProject, title: "ML Course Project", node_type: "big_task", parent: S.machineLearning, summary: "Semester project: pick a dataset, write a proposal, build a model." },
+  { id: S.health, title: "Health", node_type: "area", parent: S.root },
+  { id: S.gym, title: "Go to the Gym", node_type: "habit", parent: S.health, summary: "3× a week." },
+  { id: S.moneyProjects, title: "Money Projects", node_type: "project", parent: S.root, summary: "Side projects that should bring in money." },
+  { id: S.testMarket, title: "Test & Market BrainDump", node_type: "big_task", parent: S.moneyProjects, summary: "BrainDump is my productivity app — it needs testing and marketing." },
+  { id: S.clothes, title: "Clothes Reselling", node_type: "idea", parent: S.moneyProjects, summary: "Maybe resell vintage clothes from Milan online." },
+  { id: S.career, title: "Career", node_type: "area", parent: S.root },
+  { id: S.internship, title: "Land an Internship in Milan by November", node_type: "goal", parent: S.career },
+  { id: S.italian, title: "Italian Crash Course", node_type: "big_task", parent: S.career, summary: "Get to conversational Italian for the internship." },
+  { id: S.personalDev, title: "Personal Development", node_type: "area", parent: S.root },
+  { id: S.lifeAdmin, title: "Life Admin", node_type: "area", parent: S.root },
+  { id: S.parkingPass, title: "Renew Parking Pass", node_type: "task", parent: S.lifeAdmin },
+];
+
+// ---------------------------------------------------------------------------
+// Builder fixtures
+// ---------------------------------------------------------------------------
+
+// How a check names a node:
+//   • the exact title of a SYNTHETIC_GRAPH node (any case) → that node;
+//   • anything else → a node this turn creates whose title contains it
+//     (an exact title match wins over a partial one).
+export type NodeName = string;
+
+export interface ExpectedOp {
+  kind: "create_node" | "move" | "update" | "complete" | "create_edge";
+  // A create: the new node; move / update / complete: the existing node;
+  // create_edge: either end.
+  node: NodeName;
+}
+
+export interface BuilderFixture {
+  id: string;
+  // The rules this fixture exercises, in one line.
+  covers: string;
+  // Which prompt the text must take — the runner picks by length exactly as
+  // runBuilder does (≤ AI_INGESTION.LIGHT_DUMP_MAX_CHARS → light); a unit test
+  // keeps the two in step.
+  prompt: "light" | "full";
+  // Run against SYNTHETIC_GRAPH (as if retrieval returned all of it) or an
+  // empty workspace.
+  graph: "synthetic" | "empty";
+  input: string;
+  expect: {
+    // New nodes and the types they may have.        → check "nodes"
+    nodes?: Array<{ title: NodeName; type: NodeType | NodeType[] }>;
+    // A new node's belongs_to parent (one of).        → check "parents"
+    parents?: Array<{ child: NodeName; parent: NodeName | NodeName[] }>;
+    // Links in the change set (source → target).      → check "links"
+    links?: Array<{ source: NodeName; target: NodeName; types?: string[] }>;
+    // Existing nodes the turn marks done — and nothing else. → check "completions"
+    completes?: NodeName[];
+    // Substrings of the sentences the long prompt quotes as edit requests.
+    // A full-prompt fixture without it must quote nothing. → check "edit_requests"
+    edit_requests?: string[];
+    // Moves / renames of existing nodes. Without either, the turn must not
+    // move or edit any existing node.                  → check "edits"
+    moves?: Array<{ node: NodeName; parent: NodeName }>;
+    renames?: Array<{ node: NodeName; title_contains: string }>;
+    // target_date on a new node (from the user's date words). → check "dates"
+    dates?: Array<{ title: NodeName; date: string }>;
+    // No new node whose title contains any of these; caps.  → check "no_extra"
+    absent?: string[];
+    max_new_nodes?: number;
+    max_questions?: number;
+    // How the change set splits under the turn policy, for a user whose
+    // calibration trusts every new node (so what waits is what the policy
+    // itself holds back).                               → check "policy"
+    waits?: ExpectedOp[];
+    applies?: ExpectedOp[];
+  };
+}
+
+export const BUILDER_FIXTURES: BuilderFixture[] = [
+  {
+    id: "light-types",
+    covers: "types v2 on a short dump: task / big_task / idea / note; a note under the class it is about; date words",
+    prompt: "light",
+    graph: "synthetic",
+    input:
+      "need to email the ML TA about office hours by friday. I also want to write my thesis this year — that's a big one. maybe someday a podcast about student life? and noah kim is the new TA for stats, good to remember.",
+    expect: {
+      nodes: [
+        { title: "office hours", type: "task" },
+        { title: "thesis", type: "big_task" },
+        { title: "podcast", type: "idea" },
+        { title: "noah", type: "note" },
+      ],
+      parents: [
+        { child: "noah", parent: "Statistics 302" },
+        { child: "office hours", parent: ["Machine Learning", "ML Course Project"] },
+      ],
+      dates: [{ title: "office hours", date: "2026-10-09" }],
+      max_new_nodes: 5,
+    },
+  },
+  {
+    id: "light-goal-habit",
+    covers: "goal = a result (pass the exam), big_task = work over sittings, habit = a stated cadence, attached to an existing area",
+    prompt: "light",
+    graph: "synthetic",
+    input:
+      "this semester I want to pass the linear algebra exam in january. prepping the Q4 student-club budget deck will take a few sessions. and I'm starting to run 3x a week.",
+    expect: {
+      nodes: [
+        { title: "linear algebra", type: ["goal", "class"] },
+        { title: "budget", type: "big_task" },
+        { title: "run", type: "habit" },
+      ],
+      parents: [{ child: "run", parent: "Health" }],
+      max_new_nodes: 4,
+    },
+  },
+  {
+    id: "light-completions",
+    covers: "past tense completes existing nodes (a habit too); a plan for an existing item proposes nothing",
+    prompt: "light",
+    graph: "synthetic",
+    input: "did the gym this morning!! finished problem set 4 last night. still need to renew the parking pass at some point.",
+    expect: {
+      completes: ["Go to the Gym", "Problem Set 4"],
+      absent: ["gym", "problem set", "parking"],
+      max_new_nodes: 0,
+      max_questions: 0,
+      applies: [
+        { kind: "complete", node: "Go to the Gym" },
+        { kind: "complete", node: "Problem Set 4" },
+      ],
+    },
+  },
+  {
+    id: "light-steps",
+    covers: "named steps become children of the existing big task, each with its own date; no copy of the parent",
+    prompt: "light",
+    graph: "synthetic",
+    input: "for the ML course project I have to pick a dataset by friday and then write the proposal by oct 20",
+    expect: {
+      nodes: [
+        { title: "dataset", type: "task" },
+        { title: "proposal", type: ["task", "big_task"] },
+      ],
+      parents: [
+        { child: "dataset", parent: "ML Course Project" },
+        { child: "proposal", parent: "ML Course Project" },
+      ],
+      dates: [
+        { title: "dataset", date: "2026-10-09" },
+        { title: "proposal", date: "2026-10-20" },
+      ],
+      absent: ["course project"],
+      max_new_nodes: 2,
+      applies: [
+        { kind: "create_node", node: "dataset" },
+        { kind: "create_node", node: "proposal" },
+      ],
+    },
+  },
+  {
+    id: "light-commitment",
+    covers: "a weekly fixed time is a commitment, never a node; the new item goes under the class",
+    prompt: "light",
+    graph: "synthetic",
+    input:
+      "stats lecture moved to tuesdays and thursdays 2-4pm from next week. also need to buy a graphing calculator before the midterm.",
+    expect: {
+      nodes: [{ title: "calculator", type: "task" }],
+      parents: [{ child: "calculator", parent: ["Statistics 302", "Pass the Stats 302 Midterm"] }],
+      absent: ["lecture"],
+      max_new_nodes: 1,
+    },
+  },
+  {
+    id: "light-split",
+    covers: "edit: a new project over an existing node — rename it into one part, create the other, move it in; the whole reorganization waits",
+    prompt: "light",
+    graph: "synthetic",
+    input: "BrainDump should be its own project, with testing and marketing as two separate things in it",
+    expect: {
+      nodes: [
+        { title: "BrainDump", type: "project" },
+        { title: "Market", type: ["big_task", "task"] },
+      ],
+      parents: [
+        { child: "BrainDump", parent: "Money Projects" },
+        { child: "Market", parent: "BrainDump" },
+      ],
+      moves: [{ node: "Test & Market BrainDump", parent: "BrainDump" }],
+      renames: [{ node: "Test & Market BrainDump", title_contains: "test" }],
+      max_new_nodes: 2,
+      waits: [
+        { kind: "create_node", node: "BrainDump" },
+        { kind: "create_node", node: "Market" },
+        { kind: "move", node: "Test & Market BrainDump" },
+        { kind: "update", node: "Test & Market BrainDump" },
+      ],
+    },
+  },
+  {
+    id: "light-move-link",
+    covers: "edit: move to another area and keep the old relation as a link; both wait",
+    prompt: "light",
+    graph: "synthetic",
+    input:
+      "italian is really personal development, not a career thing — but it still helps with the milan internship, so keep that connection",
+    expect: {
+      moves: [{ node: "Italian Crash Course", parent: "Personal Development" }],
+      links: [
+        {
+          source: "Italian Crash Course",
+          target: "Land an Internship in Milan by November",
+          types: ["useful_for", "supports"],
+        },
+      ],
+      max_new_nodes: 0,
+      waits: [
+        { kind: "move", node: "Italian Crash Course" },
+        { kind: "create_edge", node: "Italian Crash Course" },
+      ],
+    },
+  },
+  {
+    id: "full-mixed",
+    covers:
+      "extract-v26 on a long mixed dump: venting + a question (nothing), a habit done, a project with named parts, a stated link to an existing goal, a named list, a weekly shift (no node), a quoted edit request run by the edit pass, the last-line aside",
+    prompt: "full",
+    graph: "synthetic",
+    input:
+      "ok long one. this week was a mess, slept like 5 hours a night and the stats midterm in november stresses me out. honestly I'm exhausted and kind of behind on everything — should I just drop something? anyway. did the gym this morning at least. I'm starting a portfolio site: need to pick a template, write the about page, and add the ML course project as a case study. the portfolio is mostly for the milan internship applications. I also have to pass three exams this winter: probability, fuzzy systems and deep learning. my shift at the café is every saturday 9 to 2 now. oh and clothes reselling isn't a money project anymore, it's just me selling my old stuff — move it under life admin. also need to call the bank about the card fee at some point.",
+    expect: {
+      edit_requests: ["clothes reselling"],
+      moves: [{ node: "Clothes Reselling", parent: "Life Admin" }],
+      completes: ["Go to the Gym"],
+      nodes: [
+        { title: "portfolio", type: ["project", "big_task"] },
+        { title: "template", type: "task" },
+        { title: "about", type: "task" },
+        { title: "case study", type: ["task", "big_task"] },
+        { title: "probability", type: "goal" },
+        { title: "fuzzy", type: "goal" },
+        { title: "deep learning", type: "goal" },
+        { title: "bank", type: "task" },
+      ],
+      parents: [
+        { child: "template", parent: "portfolio" },
+        { child: "about", parent: "portfolio" },
+        { child: "case study", parent: "portfolio" },
+        { child: "probability", parent: ["University", "exam", "winter"] },
+        { child: "bank", parent: "Life Admin" },
+      ],
+      links: [
+        {
+          source: "portfolio",
+          target: "Land an Internship in Milan by November",
+          types: ["useful_for", "supports"],
+        },
+      ],
+      absent: ["exhausted", "sleep", "shift", "café", "cafe", "midterm", "gym", "clothes"],
+      max_questions: 0,
+      waits: [{ kind: "move", node: "Clothes Reselling" }],
+      applies: [
+        { kind: "complete", node: "Go to the Gym" },
+        { kind: "create_node", node: "bank" },
+      ],
+    },
+  },
+  {
+    id: "full-scratch",
+    covers:
+      "extract-v26 from an empty workspace: a class anchor, an implied project anchor, an idea, goals vs work, a stated blocker as required_for, a due date on the assignment, nothing quoted as an edit",
+    prompt: "full",
+    graph: "empty",
+    input:
+      "brain dump for the week: stats homework chapter 7 problems due thursday. ML project — need to decide between climate dataset or the healthcare one, climate seems more interesting but healthcare has cleaner data. should ask prof martinez which is more feasible for the timeline. random idea: what if I built a tool that visualizes how all my coursework connects together, like a graph of prerequisites and skills? could be a cool side project. goals for this semester: get into the honors program, finish thesis proposal, learn pytorch. the pytorch thing is blocked until I finish the linear algebra review. also I keep forgetting to submit the IRB form for the survey study, that's been on my list for three weeks. need to book a room for the study group tuesday. and I should really start the grad school application essays, deadlines are in december",
+    expect: {
+      nodes: [
+        { title: "stat", type: "class" },
+        { title: "chapter 7", type: "task" },
+        { title: "honors", type: "goal" },
+        { title: "thesis proposal", type: "big_task" },
+        { title: "pytorch", type: ["project", "big_task"] },
+        { title: "IRB", type: "task" },
+        { title: "survey", type: "project" },
+        { title: "coursework", type: "idea" },
+        { title: "study group", type: "task" },
+      ],
+      parents: [
+        { child: "chapter 7", parent: "stat" },
+        { child: "IRB", parent: "survey" },
+      ],
+      links: [{ source: "linear algebra", target: "pytorch", types: ["required_for"] }],
+      dates: [{ title: "chapter 7", date: "2026-10-08" }],
+      absent: ["tasks", "misc", "errands"],
+    },
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Edge inference fixtures — one batched call per source, like connection.ts
+// ---------------------------------------------------------------------------
 
 export interface EdgeFixture {
   id: string;
-  source_title: string;
-  source_summary: string | null;
-  target_title: string;
-  target_summary: string | null;
-  expected_related: boolean;
-  expected_edge_type?: string; // optional — some pairs have multiple valid types
+  covers: string;
+  source: { title: string; summary: string | null; node_type: NodeType; has_parent: boolean };
+  candidates: Array<{
+    id: string;
+    title: string;
+    summary: string | null;
+    node_type: NodeType;
+    // The link edge-selection.ts should propose, or null for none. `from`:
+    // which end the link starts at ("source" = source → candidate).
+    expect: { types: string[]; from: "source" | "candidate" } | null;
+  }>;
 }
 
-export interface AssistantFixture {
-  id: string;
-  mode: AssistantMode;
-  message: string;
-  context: string;
-  scope: string;
-  /** Substrings that MUST appear in the answer (case-insensitive). */
-  answer_must_contain: string[];
-  /** Substrings that must NOT appear — catches generic filler. */
-  answer_must_not_contain?: string[];
-}
+export const EDGE_FIXTURES: EdgeFixture[] = [
+  {
+    id: "edge-skill",
+    covers: "a skill is useful_for what needs it; a near-duplicate and an unrelated chore get nothing",
+    source: {
+      title: "Linear Algebra Review",
+      summary: "Vectors, matrices and eigenvalues before the ML material gets heavy.",
+      node_type: "big_task",
+      has_parent: true,
+    },
+    candidates: [
+      { id: "c-ml", title: "Machine Learning", summary: "This term's ML class.", node_type: "class", expect: { types: ["useful_for", "supports"], from: "source" } },
+      { id: "c-torch", title: "Learn PyTorch", summary: "Tutorials plus a small practice model.", node_type: "project", expect: { types: ["useful_for", "supports", "required_for"], from: "source" } },
+      { id: "c-groceries", title: "Buy Groceries", summary: "Weekly shop.", node_type: "task", expect: null },
+      { id: "c-dup", title: "Review Linear Algebra", summary: "Go over vectors and matrices again.", node_type: "task", expect: null },
+    ],
+  },
+  {
+    id: "edge-direction",
+    covers: "direction is its own field: what helps the source points at it; unrelated work and a habit get nothing",
+    source: {
+      title: "Market BrainDump",
+      summary: "Get the first 100 users for the productivity app.",
+      node_type: "big_task",
+      has_parent: true,
+    },
+    candidates: [
+      { id: "c-tiktok", title: "Faceless Productivity TikToks", summary: "Short videos about planning with ADHD.", node_type: "project", expect: { types: ["supports"], from: "candidate" } },
+      { id: "c-beta", title: "Launch the BrainDump Beta", summary: "Public beta with the first cohort of users.", node_type: "goal", expect: { types: ["supports", "useful_for"], from: "source" } },
+      { id: "c-k8s", title: "Kubernetes Cluster Setup", summary: "Multi-node cluster for the lab's servers.", node_type: "big_task", expect: null },
+      { id: "c-gym", title: "Go to the Gym", summary: "3× a week.", node_type: "habit", expect: null },
+    ],
+  },
+  {
+    id: "edge-blocker",
+    covers: "a hard blocker is required_for in the right direction (or a parentless step belongs_to its goal); helping is not blocking",
+    source: {
+      title: "Get the Student Visa",
+      summary: "Visa appointment at the consulate, needs the internship offer letter.",
+      node_type: "task",
+      has_parent: false,
+    },
+    candidates: [
+      { id: "c-move", title: "Move to Milan for the Internship", summary: "Be in Milan by November.", node_type: "goal", expect: { types: ["required_for", "belongs_to"], from: "source" } },
+      { id: "c-passport", title: "Renew Passport", summary: "Current passport expires in December.", node_type: "task", expect: { types: ["required_for"], from: "candidate" } },
+      { id: "c-italian", title: "Italian Crash Course", summary: "Conversational Italian for the internship.", node_type: "big_task", expect: null },
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Merge check fixtures — node types v2
+// ---------------------------------------------------------------------------
 
 export interface MergeFixture {
   id: string;
   node_a_title: string;
   node_a_summary: string | null;
-  node_a_type: string;
+  node_a_type: NodeType;
   node_b_title: string;
   node_b_summary: string | null;
-  node_b_type: string;
+  node_b_type: NodeType;
   /** Cosine similarity hint passed to the merge-check prompt (0–1). */
   similarity: number;
   expected_same_entity: boolean;
 }
 
-export interface PlannerFixture {
-  id: string;
-  planning_window: "1h" | "2h" | "day" | "custom";
-  total_minutes: number;
-  candidate_nodes: Array<{
-    id: string;
-    title: string;
-    summary: string | null;
-    node_type: NodeType;
-  }>;
-  /** Minimum number of blocks expected. */
-  min_blocks: number;
-  /** At least one block title must contain each of these (case-insensitive). */
-  expected_block_titles: string[];
-  /** Must include a break if session is 90+ minutes. */
-  expect_break: boolean;
-  /** Must include a buffer block. */
-  expect_buffer: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Brain dump extraction fixtures
-// ---------------------------------------------------------------------------
-
-export const BRAIN_DUMP_FIXTURES: BrainDumpFixture[] = [
-  {
-    id: "bd-01",
-    input: "Need to finish the landing page for Neurolight by Friday. Also set up the Stripe integration.",
-    expected_nodes: [
-      { title_contains: "landing page", node_type: "task" },
-      { title_contains: "Stripe", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-02",
-    input: "Want to learn neural networks. Need to brush up on linear algebra first. Have an ML internship interview coming up.",
-    expected_nodes: [
-      { title_contains: "neural", node_type: "goal" },
-      { title_contains: "linear algebra", node_type: "task" },
-      { title_contains: "interview", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-03",
-    input: "Reading Atomic Habits. Key idea: systems beat goals. Apply this to my workout routine.",
-    expected_nodes: [
-      { title_contains: "Atomic Habits", node_type: "note" },
-      { title_contains: "workout", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-04",
-    input: "Clinical Ops Copilot needs a better onboarding flow. The current one loses users at step 3. Also need to write docs for the API.",
-    expected_nodes: [
-      { title_contains: "onboarding", node_type: "task" },
-      { title_contains: "API", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-05",
-    input: "Thinking about building a SaaS for freelance ML engineers. Core features: project matching, rate calculator, contract templates.",
-    expected_nodes: [
-      { title_contains: "SaaS", node_type: "project" },
-      { title_contains: "project matching", node_type: "task" },
-      { title_contains: "rate", node_type: "task" },
-      { title_contains: "contract", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-06",
-    input: "Weekly review: completed the auth module, still blocked on payment gateway, need to schedule 1:1 with the team.",
-    expected_nodes: [
-      { title_contains: "auth", node_type: "task" },
-      { title_contains: "payment", node_type: "task" },
-      { title_contains: "1:1", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-07",
-    input: "Need to revisit the Stats 302 notes on regression before working on the ML project proposal.",
-    expected_nodes: [
-      { title_contains: "Stats 302", node_type: "class" },
-      { title_contains: "regression", node_type: "task" },
-      { title_contains: "proposal", node_type: "project" },
-    ],
-    expected_links: [
-      {
-        source_title_contains: "regression",
-        target_title_contains: "Stats 302",
-        edge_types: ["belongs_to"],
-      },
-      {
-        source_title_contains: "Stats 302",
-        target_title_contains: "proposal",
-        edge_types: ["useful_for", "supports", "prerequisite_for"],
-      },
-    ],
-  },
-  {
-    id: "bd-08",
-    input:
-      "brain dump for the week: stats homework chapter 7 problems due thursday. ML project — need to decide between climate dataset or the healthcare one, climate seems more interesting but healthcare has cleaner data. should ask prof martinez which is more feasible for the timeline. random idea: what if I built a tool that visualizes how all my coursework connects together, like a graph of prerequisites and skills? could be a cool side project. goals for this semester: get into the honors program, finish thesis proposal, learn pytorch. the pytorch thing is blocked until I finish the linear algebra review. also I keep forgetting to submit the IRB form for the survey study, that's been on my list for three weeks. need to book a room for the study group tuesday. and I should really start the grad school application essays, deadlines are in december",
-    expected_nodes: [
-      { title_contains: "stat", node_type: "class" },
-      { title_contains: "chapter 7", node_type: "task" },
-      { title_contains: "ML", node_type: "project" },
-      { title_contains: "semester", node_type: "goal" },
-      { title_contains: "survey", node_type: "project" },
-    ],
-    expected_links: [
-      {
-        source_title_contains: "chapter 7",
-        target_title_contains: "stat",
-        edge_types: ["belongs_to"],
-      },
-      {
-        source_title_contains: "linear algebra",
-        target_title_contains: "pytorch",
-        edge_types: ["required_for", "prerequisite_for"],
-      },
-      {
-        source_title_contains: "thesis",
-        target_title_contains: "honors",
-        edge_types: ["supports", "useful_for"],
-      },
-      {
-        source_title_contains: "IRB",
-        target_title_contains: "survey",
-        edge_types: ["required_for", "belongs_to"],
-      },
-    ],
-  },
-  {
-    id: "bd-09",
-    input:
-      "Under student errands I need to renew my parking pass, update my student ID, and pay the tuition installment.",
-    expected_nodes: [
-      { title_contains: "Student Errands", node_type: "area" },
-      { title_contains: "parking pass", node_type: "task" },
-      { title_contains: "student ID", node_type: "task" },
-      { title_contains: "tuition", node_type: "task" },
-    ],
-    expected_links: [
-      {
-        source_title_contains: "parking pass",
-        target_title_contains: "Student Errands",
-        edge_types: ["belongs_to"],
-      },
-      {
-        source_title_contains: "student ID",
-        target_title_contains: "Student Errands",
-        edge_types: ["belongs_to"],
-      },
-      {
-        source_title_contains: "tuition",
-        target_title_contains: "Student Errands",
-        edge_types: ["belongs_to"],
-      },
-    ],
-  },
-  // --- 16 new fixtures (Phase 15) ---
-  {
-    id: "bd-10",
-    input: "Need to track my monthly spending. Categories: rent, groceries, subscriptions. Goal is to save 20% of my income by year end.",
-    expected_nodes: [
-      { title_contains: "budget", node_type: "project" },
-      { title_contains: "subscriptions", node_type: "task" },
-      { title_contains: "save", node_type: "goal" },
-    ],
-  },
-  {
-    id: "bd-11",
-    input: "Preparing for a Google software engineering interview. Need to study dynamic programming, system design principles, and behavioral questions. Also need to refresh my data structures knowledge.",
-    expected_nodes: [
-      { title_contains: "interview", node_type: "goal" },
-      { title_contains: "dynamic programming", node_type: "task" },
-      { title_contains: "system design", node_type: "task" },
-      { title_contains: "data structures", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-12",
-    input: "Building an AI scheduling assistant for remote teams. Core features: calendar sync, conflict detection, smart rescheduling. Backend in FastAPI, frontend in Next.js. Need to nail the MVP scope first.",
-    expected_nodes: [
-      { title_contains: "scheduling", node_type: "project" },
-      { title_contains: "calendar sync", node_type: "task" },
-      { title_contains: "conflict detection", node_type: "task" },
-    ],
-    expected_links: [
-      {
-        source_title_contains: "calendar sync",
-        target_title_contains: "scheduling",
-        edge_types: ["belongs_to"],
-      },
-    ],
-  },
-  {
-    id: "bd-13",
-    input: "Dissertation progress: chapter 1 is drafted, chapter 2 needs a full literature review, need to schedule my next advisor meeting. Defending in Spring 2027.",
-    expected_nodes: [
-      { title_contains: "dissertation", node_type: "project" },
-      { title_contains: "literature review", node_type: "task" },
-      { title_contains: "advisor", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-14",
-    input: "Kitchen renovation plan: demo the old cabinets, then install new plumbing, add tile backsplash. Need to pull permits before any of the demo work starts.",
-    expected_nodes: [
-      { title_contains: "renovation", node_type: "project" },
-      { title_contains: "permit", node_type: "task" },
-      { title_contains: "plumbing", node_type: "task" },
-      { title_contains: "cabinet", node_type: "task" },
-    ],
-    expected_links: [
-      {
-        source_title_contains: "permit",
-        target_title_contains: "cabinet",
-        edge_types: ["prerequisite_for", "blocks"],
-      },
-    ],
-  },
-  {
-    id: "bd-15",
-    input: "Learning Spanish for a trip to Argentina in March. Daily Duolingo practice, watch Spanish Netflix shows, find a language exchange partner on Tandem.",
-    expected_nodes: [
-      { title_contains: "Spanish", node_type: "goal" },
-      { title_contains: "Duolingo", node_type: "task" },
-      { title_contains: "language exchange", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-16",
-    input: "Starting a tech podcast. Need to buy a microphone, set up recording software, brainstorm topics for the first 3 episodes, and find intro music.",
-    expected_nodes: [
-      { title_contains: "podcast", node_type: "project" },
-      { title_contains: "microphone", node_type: "task" },
-      { title_contains: "episode", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-17",
-    input: "Freelance project for a Shopify client: redesign the checkout flow and integrate a loyalty rewards program. Need to send the proposal first. Deadline is end of month.",
-    expected_nodes: [
-      { title_contains: "checkout", node_type: "project" },
-      { title_contains: "loyalty", node_type: "task" },
-      { title_contains: "proposal", node_type: "task" },
-    ],
-    expected_links: [
-      {
-        source_title_contains: "proposal",
-        target_title_contains: "checkout",
-        edge_types: ["prerequisite_for", "blocks"],
-      },
-    ],
-  },
-  {
-    id: "bd-18",
-    input: "Found a bug in NextAuth.js — the OAuth refresh token flow breaks after token expiry. Steps: reproduce consistently, write a failing test, fix the logic, open a PR.",
-    expected_nodes: [
-      { title_contains: "NextAuth", node_type: "project" },
-      { title_contains: "failing test", node_type: "task" },
-      { title_contains: "PR", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-19",
-    input: "Planning a trip to Japan in April. Need to book flights and hotels in Tokyo and Kyoto, get a JR Pass, and learn some basic Japanese before I go.",
-    expected_nodes: [
-      { title_contains: "Japan", node_type: "project" },
-      { title_contains: "flight", node_type: "task" },
-      { title_contains: "hotel", node_type: "task" },
-      { title_contains: "Japanese", node_type: "goal" },
-    ],
-  },
-  {
-    id: "bd-20",
-    input: "Health goals: run a 5K in under 30 minutes. Following the Couch to 5K program, 3 days per week. Also trying to sleep better by cutting screen time after 10pm.",
-    expected_nodes: [
-      { title_contains: "5K", node_type: "goal" },
-      { title_contains: "Couch to 5K", node_type: "task" },
-      { title_contains: "screen time", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-21",
-    input: "Giving a talk at ReactConf on server components. Outline: problem statement, how server components work, live demo, migration tips. Slides need to be done by Friday.",
-    expected_nodes: [
-      { title_contains: "ReactConf", node_type: "project" },
-      { title_contains: "server components", node_type: "note" },
-      { title_contains: "slides", node_type: "task" },
-      { title_contains: "demo", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-22",
-    input: "Writing a research paper on distributed consensus algorithms. Sections: intro, related work, our approach, experiments, conclusion. Submitting to OSDI 2027.",
-    expected_nodes: [
-      { title_contains: "consensus", node_type: "project" },
-      { title_contains: "related work", node_type: "task" },
-      { title_contains: "experiments", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-23",
-    input: "Q2 product roadmap: Auth team builds SSO support, Platform team ships API v2, Growth team runs an A/B test on the onboarding funnel. All streams due end of June.",
-    expected_nodes: [
-      { title_contains: "SSO", node_type: "task" },
-      { title_contains: "API v2", node_type: "task" },
-      { title_contains: "A/B test", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-24",
-    input: "Mobile app launch checklist: App Store screenshots, write a privacy policy, test push notifications, set up crash reporting with Sentry, recruit beta testers.",
-    expected_nodes: [
-      { title_contains: "launch", node_type: "project" },
-      { title_contains: "privacy policy", node_type: "task" },
-      { title_contains: "crash reporting", node_type: "task" },
-      { title_contains: "beta", node_type: "task" },
-    ],
-  },
-  {
-    id: "bd-25",
-    input: "Reading list for Q2: Designing Data-Intensive Applications, The Staff Engineer's Path, Clean Architecture. Want to apply the learnings to the current backend refactor.",
-    expected_nodes: [
-      { title_contains: "reading", node_type: "project" },
-      { title_contains: "Data-Intensive", node_type: "big_task" },
-      { title_contains: "Staff Engineer", node_type: "big_task" },
-    ],
-    expected_links: [
-      {
-        source_title_contains: "Data-Intensive",
-        target_title_contains: "refactor",
-        edge_types: ["supports", "useful_for"],
-      },
-    ],
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Edge inference fixtures
-// ---------------------------------------------------------------------------
-
-export const EDGE_FIXTURES: EdgeFixture[] = [
-  {
-    id: "edge-01",
-    source_title: "Learn Neural Networks",
-    source_summary: "Study neural network fundamentals including backpropagation and architectures.",
-    target_title: "ML Internship Interview",
-    target_summary: "Upcoming interview for a machine learning internship role.",
-    expected_related: true,
-    expected_edge_type: "useful_for",
-  },
-  {
-    id: "edge-02",
-    source_title: "Linear Algebra",
-    source_summary: "Mathematical foundation including vectors, matrices, and transformations.",
-    target_title: "Learn Neural Networks",
-    target_summary: "Study neural network fundamentals.",
-    expected_related: true,
-    expected_edge_type: "prerequisite_for",
-  },
-  {
-    id: "edge-03",
-    source_title: "Stripe Integration",
-    source_summary: "Implement payment processing using the Stripe API.",
-    target_title: "Neurolight",
-    target_summary: "AI-powered productivity app for knowledge workers.",
-    expected_related: true,
-    expected_edge_type: "belongs_to",
-  },
-  {
-    id: "edge-04",
-    source_title: "Atomic Habits",
-    source_summary: "Book about building good habits through systems rather than goals.",
-    target_title: "Workout Routine",
-    target_summary: "Regular exercise schedule and fitness goals.",
-    expected_related: true,
-    expected_edge_type: "supports",
-  },
-  {
-    id: "edge-05",
-    source_title: "Landing Page",
-    source_summary: "Marketing page for a SaaS product.",
-    target_title: "Linear Algebra",
-    target_summary: "Mathematical foundation for ML.",
-    expected_related: false,
-  },
-  {
-    id: "edge-06",
-    source_title: "ML Internship Preparation",
-    source_summary: "Project covering all prep work for an ML internship.",
-    target_title: "ML Internship Interview",
-    target_summary: "The specific interview event.",
-    expected_related: true,
-    expected_edge_type: "belongs_to",
-  },
-  {
-    id: "edge-07",
-    source_title: "API Documentation",
-    source_summary: "Writing technical docs for the REST API endpoints.",
-    target_title: "Clinical Ops Copilot",
-    target_summary: "AI assistant for clinical operations teams.",
-    expected_related: true,
-    expected_edge_type: "belongs_to",
-  },
-  {
-    id: "edge-08",
-    source_title: "Renew Student Parking Pass",
-    source_summary: "Administrative errand before the current permit expires.",
-    target_title: "Data Science Club Presentation Slides",
-    target_summary: "Slides for an upcoming student presentation next month.",
-    expected_related: false,
-  },
-  // Phase 15 additions
-  {
-    id: "edge-09",
-    source_title: "Thesis Proposal",
-    source_summary: "A formal document outlining the research plan and contributions for a PhD thesis.",
-    target_title: "Grad School Application",
-    target_summary: "Applying to PhD programs; requires statement of purpose and writing samples.",
-    expected_related: true,
-    expected_edge_type: "supports",
-  },
-  {
-    id: "edge-10",
-    source_title: "TypeScript Fundamentals",
-    source_summary: "Learning TypeScript types, interfaces, and generics.",
-    target_title: "React Native Project",
-    target_summary: "Building a cross-platform mobile app using React Native and Expo.",
-    expected_related: true,
-    expected_edge_type: "supports",
-  },
-  {
-    id: "edge-11",
-    source_title: "Buy Groceries",
-    source_summary: "Weekly grocery run for household supplies.",
-    target_title: "Kubernetes Cluster Setup",
-    target_summary: "Deploying a multi-node Kubernetes cluster for the production environment.",
-    expected_related: false,
-  },
-  {
-    id: "edge-12",
-    source_title: "Write API Documentation",
-    source_summary: "Document all REST endpoints with request/response schemas and authentication details.",
-    target_title: "Ship API v2",
-    target_summary: "Public release of the v2 API with breaking changes and new authentication flow.",
-    expected_related: true,
-    expected_edge_type: "prerequisite_for",
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Assistant fixtures — Phase 9.3
-// ---------------------------------------------------------------------------
-
-export const ASSISTANT_FIXTURES: AssistantFixture[] = [
-  {
-    id: "asst-01",
-    mode: "explain",
-    message: "Why is the ML project connected to Linear Algebra?",
-    context: `Selected node: ML Project — Building a machine learning model for climate prediction.
-Connected nodes:
-- Linear Algebra (note) — Mathematical foundation including vectors, matrices, and transformations. Edge: prerequisite_for, confidence 0.85.
-- Climate Dataset (note) — Historical weather data from NOAA. Edge: belongs_to, confidence 0.9.
-Workspace: 12 nodes, 8 edges.`,
-    scope: "node:ml-project",
-    answer_must_contain: ["linear algebra", "ml"],
-    answer_must_not_contain: ["as an AI", "I'd be happy to"],
-  },
-  {
-    id: "asst-02",
-    mode: "explain",
-    message: "What should I focus on?",
-    context: `Workspace overview: 3 active goals, 8 active tasks, 4 notes.
-Top nodes by importance:
-- Finish Thesis Proposal (task, score 82)
-- Learn PyTorch (goal, score 71)
-- Submit IRB Form (task, score 68)
-- Stats 302 Homework (task, score 65)
-Recently completed: Auth Module (2 days ago).`,
-    scope: "workspace",
-    answer_must_contain: ["thesis"],
-    answer_must_not_contain: ["as an AI", "generally speaking"],
-  },
-  {
-    id: "asst-03",
-    mode: "plan",
-    message: "What order should I tackle my tasks in?",
-    context: `Active tasks:
-- Submit IRB Form (task, score 68) — blocked by: nothing
-- Linear Algebra Review (task, score 58) — blocks: Learn PyTorch
-- Learn PyTorch (goal, score 71) — blocked by: Linear Algebra Review
-- Stats Homework Ch7 (task, score 65) — due Thursday
-Dependencies: Linear Algebra Review prerequisite_for Learn PyTorch.`,
-    scope: "workspace",
-    answer_must_contain: ["linear algebra"],
-  },
-  {
-    id: "asst-04",
-    mode: "transform",
-    message: "How can I improve my graph structure?",
-    context: `Workspace overview: 15 nodes, 6 edges.
-Issues detected:
-- 5 orphan nodes (no edges): "Random Thought", "Meeting Notes", "Book List", "Gym Schedule", "Budget Tracker"
-- 1 node with 8 children: "Life Goals"
-Top nodes: Finish Thesis (82), Career Plan (75), Health Routine (60).`,
-    scope: "workspace",
-    answer_must_contain: ["orphan"],
-  },
-  {
-    id: "asst-05",
-    mode: "explain",
-    message: "Tell me about productivity tips",
-    context: `No relevant nodes found in workspace.
-Workspace overview: 0 nodes, 0 edges.`,
-    scope: "workspace",
-    // Should acknowledge lack of context, not give generic advice
-    answer_must_contain: [],
-    answer_must_not_contain: ["pomodoro", "time management", "here are some tips"],
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Planner fixtures — Phase 9.4
-// ---------------------------------------------------------------------------
-
-export const PLANNER_FIXTURES: PlannerFixture[] = [
-  {
-    id: "plan-01",
-    planning_window: "2h",
-    total_minutes: 120,
-    candidate_nodes: [
-      { id: "p1", title: "Stats 302 Homework Ch7", summary: "Problem set due Thursday", node_type: "task" },
-      { id: "p2", title: "Linear Algebra Review", summary: "Review vectors and matrices for ML prep", node_type: "task" },
-      { id: "p3", title: "Submit IRB Form", summary: "Ethics review form for survey study, overdue", node_type: "task" },
-      { id: "p4", title: "ML Project Dataset Selection", summary: "Choose between climate and healthcare datasets", node_type: "task" },
-    ],
-    min_blocks: 4,
-    expected_block_titles: ["stats", "irb"],
-    expect_break: true,
-    expect_buffer: true,
-  },
-  {
-    id: "plan-02",
-    planning_window: "1h",
-    total_minutes: 60,
-    candidate_nodes: [
-      { id: "p5", title: "Fix Landing Page CTA", summary: "The call-to-action button needs better copy", node_type: "task" },
-      { id: "p6", title: "Stripe Webhook Setup", summary: "Handle payment success/failure events", node_type: "task" },
-    ],
-    min_blocks: 2,
-    expected_block_titles: ["landing", "stripe"],
-    expect_break: false,
-    expect_buffer: true,
-  },
-  {
-    id: "plan-03",
-    planning_window: "day",
-    total_minutes: 480,
-    candidate_nodes: [
-      { id: "p7", title: "Thesis Chapter 2 Draft", summary: "Literature review section", node_type: "task" },
-      { id: "p8", title: "TA Office Hours Prep", summary: "Prepare materials for Stats 101 section", node_type: "task" },
-      { id: "p9", title: "Gym Session", summary: "Leg day workout", node_type: "task" },
-      { id: "p10", title: "Grad School App Essays", summary: "First draft of personal statement", node_type: "task" },
-      { id: "p11", title: "Reply to Prof Martinez", summary: "Email about dataset feasibility", node_type: "task" },
-      { id: "p12", title: "Review PR for Lab Project", summary: "Code review for teammate's data pipeline changes", node_type: "task" },
-    ],
-    min_blocks: 8,
-    expected_block_titles: ["thesis", "office hours"],
-    expect_break: true,
-    expect_buffer: true,
-  },
-  // Phase 15 additions
-  {
-    id: "plan-04",
-    planning_window: "1h",
-    total_minutes: 60,
-    candidate_nodes: [
-      { id: "p13", title: "Fix OAuth Refresh Bug", summary: "Reproduce and patch the token refresh failure in NextAuth.js", node_type: "task" },
-      { id: "p14", title: "Write Failing Test", summary: "Add a regression test that demonstrates the OAuth bug", node_type: "task" },
-    ],
-    min_blocks: 2,
-    expected_block_titles: ["oauth", "test"],
-    expect_break: false,
-    expect_buffer: true,
-  },
-  {
-    id: "plan-05",
-    planning_window: "2h",
-    total_minutes: 120,
-    candidate_nodes: [
-      { id: "p15", title: "ReactConf Slides", summary: "Build slide deck for server components talk", node_type: "task" },
-      { id: "p16", title: "Live Demo Setup", summary: "Prepare a working code demo for the talk", node_type: "task" },
-      { id: "p17", title: "Submit IRB Form", summary: "Ethics review — has been pending for three weeks", node_type: "task" },
-      { id: "p18", title: "Reply to Conference Organizers", summary: "Confirm A/V requirements and session length", node_type: "task" },
-    ],
-    min_blocks: 4,
-    expected_block_titles: ["slides", "irb"],
-    expect_break: true,
-    expect_buffer: true,
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Merge suggestion fixtures — Phase 15
-// ---------------------------------------------------------------------------
-
 export const MERGE_FIXTURES: MergeFixture[] = [
   {
-    id: "merge-01",
+    id: "merge-react",
     node_a_title: "Learn React",
     node_a_summary: "Study React concepts and build practice projects.",
-    node_a_type: "goal",
+    node_a_type: "project",
     node_b_title: "React.js Study Plan",
     node_b_summary: "Structured plan for learning React including hooks, context, and routing.",
     node_b_type: "project",
@@ -678,21 +463,21 @@ export const MERGE_FIXTURES: MergeFixture[] = [
     expected_same_entity: true,
   },
   {
-    id: "merge-02",
+    id: "merge-area-vs-goal",
     node_a_title: "Financial Independence",
-    node_a_summary: "Long-term goal of achieving financial freedom through savings and investments.",
-    node_a_type: "goal",
-    node_b_title: "SaaS Revenue Goal",
-    node_b_summary: "Reach $10k MRR with the BrainDump SaaS product by Q4.",
+    node_a_summary: "Being free of money worries — savings and investments.",
+    node_a_type: "area",
+    node_b_title: "Reach $10k MRR by Q4",
+    node_b_summary: "Revenue target for the BrainDump SaaS product.",
     node_b_type: "goal",
     similarity: 0.78,
     expected_same_entity: false,
   },
   {
-    id: "merge-03",
+    id: "merge-api-docs",
     node_a_title: "Write API Documentation",
     node_a_summary: "Document all REST endpoints with request/response schemas.",
-    node_a_type: "task",
+    node_a_type: "big_task",
     node_b_title: "API Docs",
     node_b_summary: "Technical reference documentation for the public API.",
     node_b_type: "task",
@@ -700,10 +485,10 @@ export const MERGE_FIXTURES: MergeFixture[] = [
     expected_same_entity: true,
   },
   {
-    id: "merge-04",
+    id: "merge-part-of",
     node_a_title: "Build Landing Page",
     node_a_summary: "Design and implement the full marketing landing page for the product.",
-    node_a_type: "project",
+    node_a_type: "big_task",
     node_b_title: "Fix Landing Page CTA Button",
     node_b_summary: "The call-to-action button needs better copy and higher contrast styling.",
     node_b_type: "task",
@@ -711,42 +496,31 @@ export const MERGE_FIXTURES: MergeFixture[] = [
     expected_same_entity: false,
   },
   {
-    id: "merge-05",
+    id: "merge-paraphrase",
     node_a_title: "ML Project",
     node_a_summary: "Build a machine learning model for climate data prediction.",
-    node_a_type: "project",
+    node_a_type: "big_task",
     node_b_title: "Machine Learning Project",
     node_b_summary: "ML project using historical climate datasets and regression models.",
-    node_b_type: "project",
+    node_b_type: "big_task",
     similarity: 0.95,
     expected_same_entity: true,
   },
   {
-    id: "merge-06",
+    id: "merge-session-vs-habit",
     node_a_title: "Gym Session",
     node_a_summary: "Today's leg day workout at the university gym.",
     node_a_type: "task",
-    node_b_title: "Workout Routine",
-    node_b_summary: "Ongoing 3-day-per-week fitness schedule to improve strength and endurance.",
-    node_b_type: "goal",
+    node_b_title: "Go to the Gym",
+    node_b_summary: "3× a week, strength and cardio.",
+    node_b_type: "habit",
     similarity: 0.83,
     expected_same_entity: false,
   },
   {
-    id: "merge-07",
-    node_a_title: "PhD Dissertation",
-    node_a_summary: "The overarching research project culminating in a doctoral thesis.",
-    node_a_type: "project",
-    node_b_title: "Thesis Writing",
-    node_b_summary: "Writing and revising chapters of the doctoral thesis.",
-    node_b_type: "task",
-    similarity: 0.87,
-    expected_same_entity: true,
-  },
-  {
-    id: "merge-08",
+    id: "merge-errand",
     node_a_title: "Renew Parking Permit",
-    node_a_summary: "Administrative task to renew university parking pass before it expires.",
+    node_a_summary: "Renew the university parking pass before it expires.",
     node_a_type: "task",
     node_b_title: "Update Parking Pass",
     node_b_summary: "Renew the campus parking permit via the student portal.",
@@ -755,10 +529,10 @@ export const MERGE_FIXTURES: MergeFixture[] = [
     expected_same_entity: true,
   },
   {
-    id: "merge-09",
+    id: "merge-goal-vs-note",
     node_a_title: "Learn PyTorch",
-    node_a_summary: "Goal to become proficient in the PyTorch deep learning framework.",
-    node_a_type: "goal",
+    node_a_summary: "Become proficient in the PyTorch deep learning framework.",
+    node_a_type: "project",
     node_b_title: "PyTorch Tutorial",
     node_b_summary: "Official beginner tutorial covering tensors, autograd, and simple neural nets.",
     node_b_type: "note",
@@ -766,14 +540,74 @@ export const MERGE_FIXTURES: MergeFixture[] = [
     expected_same_entity: false,
   },
   {
-    id: "merge-10",
-    node_a_title: "Launch BrainDump Beta",
-    node_a_summary: "Public beta release with core graph and AI features enabled for early users.",
+    id: "merge-class-vs-goal",
+    node_a_title: "Pass Machine Learning",
+    node_a_summary: "Pass the ML exam in January.",
     node_a_type: "goal",
-    node_b_title: "Ship BrainDump MVP",
-    node_b_summary: "Deliver the minimum viable product to the first cohort of beta testers.",
-    node_b_type: "task",
-    similarity: 0.90,
-    expected_same_entity: true,
+    node_b_title: "Machine Learning",
+    node_b_summary: "This term's ML class.",
+    node_b_type: "class",
+    similarity: 0.87,
+    expected_same_entity: false,
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Planner fixtures — short sessions (Haiku), node types v2, commitments
+// ---------------------------------------------------------------------------
+
+export interface PlannerFixture {
+  id: string;
+  covers: string;
+  planning_window: PlanningWindow;
+  // The session as the plan route resolves it (lib/planner/plan-window.ts).
+  session_minutes: number;
+  session_start_minute: number;
+  // Fixed commitments inside the session (lib/planner/commitments.ts).
+  busy?: BusyInterval[];
+  candidates: Array<{
+    id: string;
+    title: string;
+    summary: string | null;
+    node_type: NodeType;
+    planning_signals?: string[];
+  }>;
+  expect: {
+    // Candidate ids that must get a block.
+    scheduled: string[];
+    // Candidate ids that must NOT get a focus block (blocked work).
+    not_scheduled?: string[];
+    expect_break: boolean;
+  };
+}
+
+export const PLANNER_FIXTURES: PlannerFixture[] = [
+  {
+    id: "plan-2h",
+    covers: "2h: the urgent items, a break, an end buffer, blocked work not booked (its unblocking message may be)",
+    planning_window: "2h",
+    session_minutes: 120,
+    session_start_minute: 9 * 60,
+    candidates: [
+      { id: "p-ps5", title: "Statistics Problem Set 5", summary: "Regression problems.", node_type: "task", planning_signals: ["due tomorrow"] },
+      { id: "p-irb", title: "Submit IRB Form", summary: "Ethics form for the survey study.", node_type: "task", planning_signals: ["overdue by 3 weeks"] },
+      { id: "p-ch2", title: "Write Thesis Chapter 2", summary: "Literature review chapter.", node_type: "big_task", planning_signals: ["blocked: waiting on the advisor's feedback on chapter 1"] },
+      { id: "p-reply", title: "Reply to Prof Martinez", summary: "Quick answer about the dataset choice.", node_type: "task" },
+    ],
+    expect: { scheduled: ["p-ps5", "p-irb"], not_scheduled: ["p-ch2"], expect_break: true },
+  },
+  {
+    id: "plan-busy",
+    covers: "a class inside the session: only the free 2h get planned, no block for the class",
+    planning_window: "custom",
+    session_minutes: 180,
+    session_start_minute: 14 * 60,
+    busy: [{ id: "b-lecture", title: "Statistics 302 Lecture", start: 15 * 60, end: 16 * 60 }],
+    candidates: [
+      { id: "p-dataset", title: "Pick a Dataset for the ML Project", summary: "Climate vs healthcare data.", node_type: "task", planning_signals: ["due Friday"] },
+      { id: "p-ch4", title: "Read Chapter 4 for Statistics", summary: "Before Thursday's lecture.", node_type: "task" },
+      { id: "p-parking", title: "Renew Parking Pass", summary: "Online, 10 minutes.", node_type: "task" },
+    ],
+    expect: { scheduled: ["p-dataset"], expect_break: true },
   },
 ];
