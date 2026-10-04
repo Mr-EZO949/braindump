@@ -1,9 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 
 import type { EdgeRelationOptionId } from "@/lib/graph/relationships";
 import { ChevronDownIcon, CloseIcon } from "@/components/ui/icons";
+import { guessNodeType } from "@/lib/graph/guess-node-type";
 import { getImportanceLabel } from "@/lib/graph/importance";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import { NODE_FAMILY_LABEL, NODE_TYPE_INFO, NODE_TYPES } from "@/lib/graph/node-types";
@@ -56,8 +64,16 @@ type SharedNodeSheetProps = {
   onResetManualWeight?: () => void;
   onSubmit: () => void;
   onUpdateConnection?: (edgeId: string, relationId: EdgeRelationOptionId) => void;
+  // Create sheet: where the new node can go (containers in this workspace).
+  parentOptions?: ParentOption[];
   showRawText?: boolean;
   submitting: boolean;
+};
+
+export type ParentOption = {
+  id: string;
+  node_type: string;
+  title: string;
 };
 
 type CreateNodeSheetProps = {
@@ -69,6 +85,7 @@ type CreateNodeSheetProps = {
   ) => void;
   onClose: () => void;
   onSubmit: () => void;
+  parentOptions?: ParentOption[];
   submitting: boolean;
 };
 
@@ -188,10 +205,17 @@ function SharedNodeSheet({
   onResetManualWeight,
   onSubmit,
   onUpdateConnection,
+  parentOptions = [],
   showRawText = true,
   submitting,
 }: SharedNodeSheetProps) {
+  const isCreate = mode === "create";
   const [typeMenuOpen, setTypeMenuOpen] = useState(false);
+  // Create: the type follows the title (guessNodeType) until the user picks
+  // one; everything past title + type + parent folds under "More details".
+  // CreateNodeSheet mounts this fresh per open, so both reset on their own.
+  const [typeTouched, setTypeTouched] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [connectionDraftOverrides, setConnectionDraftOverrides] = useState<
     Record<string, EdgeRelationOptionId>
   >({});
@@ -272,6 +296,34 @@ function SharedNodeSheet({
     return null;
   }
 
+  const canSubmit = !submitting && !deleteSubmitting && safeDraft.title.trim().length > 0;
+
+  const handleTitleChange = (value: string) => {
+    onChangeField("title", value);
+    if (isCreate && !typeTouched) {
+      onChangeField("node_type", guessNodeType(value));
+      onChangeField("custom_type", "");
+    }
+  };
+
+  // Create sheet: Enter creates. Shift+Enter and IME composition don't.
+  const handleTitleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (!isCreate || event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    if (canSubmit) onSubmit();
+  };
+
+  const pickType = (value: (typeof presetTypes)[number]["value"]) => {
+    onChangeField("node_type", value);
+    onChangeField("custom_type", "");
+    setTypeTouched(true);
+    setTypeMenuOpen(false);
+  };
+
+  const typeGuessed = isCreate && !typeTouched && safeDraft.title.trim().length > 0;
+
   return (
     <div aria-hidden={false} className="graph-create-overlay graph-create-overlay-open">
       <button
@@ -283,7 +335,23 @@ function SharedNodeSheet({
       />
 
       <div className="graph-create-sheet-shell">
-        <div className="graph-create-sheet graph-create-sheet-open">
+        <div
+          className={`graph-create-sheet graph-create-sheet-open${isCreate ? " graph-create-sheet--quick" : ""}`}
+        >
+          {isCreate ? (
+            <div className="graph-quick-header">
+              <p className="graph-create-sheet-kicker">New node</p>
+              <button
+                aria-label="Close create node"
+                className="graph-create-close graph-quick-close"
+                onClick={handleClose}
+                type="button"
+              >
+                <CloseIcon className="h-[12px] w-[12px]" />
+              </button>
+            </div>
+          ) : (
+          <>
           <div className="graph-create-sheet-header">
             <div className="min-w-0">
               <p className="graph-create-sheet-kicker">{kicker}</p>
@@ -292,7 +360,7 @@ function SharedNodeSheet({
             </div>
 
             <button
-              aria-label={`Close ${mode === "create" ? "create" : "edit"} node`}
+              aria-label="Close edit node"
               className="graph-create-close"
               onClick={handleClose}
               type="button"
@@ -328,9 +396,118 @@ function SharedNodeSheet({
               </div>
             </div>
           </div>
+          </>
+          )}
 
           <div className="graph-create-sheet-body shell-scrollbar">
             <div className="graph-create-fields">
+              {isCreate ? (
+                <div className="graph-quick-top">
+                  <input
+                    aria-label="Title"
+                    autoFocus
+                    className="graph-create-input graph-create-input-title graph-quick-title"
+                    enterKeyHint="go"
+                    onChange={(event) => handleTitleChange(event.target.value)}
+                    onKeyDown={handleTitleKeyDown}
+                    placeholder="What is it? e.g. Email the professor"
+                    type="text"
+                    value={safeDraft.title}
+                  />
+
+                  <div className="graph-quick-meta">
+                    <button
+                      aria-expanded={typeMenuOpen}
+                      aria-label={`Type: ${resolvedTypeLabel}${typeGuessed ? " (guessed)" : ""}. Change type`}
+                      className="graph-quick-type"
+                      data-open={typeMenuOpen || undefined}
+                      onClick={() => setTypeMenuOpen((current) => !current)}
+                      type="button"
+                    >
+                      <i
+                        aria-hidden="true"
+                        className="graph-type-option-dot"
+                        style={{ background: previewAccent }}
+                      />
+                      <span className="graph-quick-type-label">{resolvedTypeLabel}</span>
+                      {typeGuessed ? <span className="graph-quick-guess">guessed</span> : null}
+                      <ChevronDownIcon
+                        className={`h-[12px] w-[12px] shrink-0 transition-transform duration-200 ${
+                          typeMenuOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+
+                    {parentOptions.length > 0 ? (
+                      <label className="graph-quick-parent">
+                        <span className="graph-quick-parent-label">Under</span>
+                        <span className="graph-connection-select-shell graph-quick-parent-shell">
+                          <select
+                            aria-label="Parent"
+                            className="graph-connection-select"
+                            onChange={(event) => onChangeField("parent_id", event.target.value)}
+                            value={safeDraft.parent_id ?? ""}
+                          >
+                            <option value="">Nothing — top level</option>
+                            {parentOptions.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.title}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDownIcon className="h-[12px] w-[12px] text-[var(--color-text-muted)]" />
+                        </span>
+                      </label>
+                    ) : null}
+                  </div>
+
+                  {typeMenuOpen ? (
+                    <div className="graph-quick-types" role="group" aria-label="Node type">
+                      {presetFamilies.map((group) => (
+                        <div className="graph-quick-type-family" key={group.family}>
+                          <span className="graph-type-family-label">{group.label}</span>
+                          <div className="graph-quick-type-chips">
+                            {group.types.map((item) => (
+                              <button
+                                aria-pressed={item.value === safeDraft.node_type}
+                                className="graph-quick-type-chip"
+                                key={item.value}
+                                onClick={() => pickType(item.value)}
+                                title={item.description}
+                                type="button"
+                              >
+                                <i
+                                  aria-hidden="true"
+                                  className="graph-type-option-dot"
+                                  style={{ background: NODE_COLOR_BY_TYPE[item.value] }}
+                                />
+                                {item.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <p className="graph-quick-type-question">{activeTypeDescription}</p>
+
+                  <button
+                    aria-expanded={moreOpen}
+                    className="graph-quick-more"
+                    onClick={() => setMoreOpen((current) => !current)}
+                    type="button"
+                  >
+                    <ChevronDownIcon
+                      className={`h-[12px] w-[12px] shrink-0 transition-transform duration-200 ${
+                        moreOpen ? "rotate-180" : "-rotate-90"
+                      }`}
+                    />
+                    {moreOpen ? "Fewer details" : "More details"}
+                    <span className="graph-quick-more-hint">summary · date · importance</span>
+                  </button>
+                </div>
+              ) : (
               <label className="graph-create-field">
                 <span className="graph-create-label">Title</span>
                 <input
@@ -341,7 +518,10 @@ function SharedNodeSheet({
                   value={safeDraft.title}
                 />
               </label>
+              )}
 
+              {!isCreate || moreOpen ? (
+              <>
               <label className="graph-create-field">
                 <div className="space-y-1">
                   <span className="graph-create-label">Summary</span>
@@ -425,6 +605,7 @@ function SharedNodeSheet({
                 </label>
               ) : null}
 
+              {isCreate ? null : (
               <div className="graph-create-field">
                 <span className="graph-create-label">Type</span>
                 <div className="graph-type-select">
@@ -490,6 +671,7 @@ function SharedNodeSheet({
                   />
                 ) : null}
               </div>
+              )}
 
               <div className="graph-create-field">
                 <div className="flex items-end justify-between gap-3">
@@ -542,6 +724,8 @@ function SharedNodeSheet({
                   ) : null}
                 </div>
               </div>
+              </>
+              ) : null}
 
               {mode === "edit" ? (
                 <div className="graph-create-field">
@@ -730,6 +914,11 @@ function SharedNodeSheet({
           ) : null}
 
           <div className="graph-create-actions">
+            {isCreate ? (
+              <span className="graph-quick-hint" aria-hidden="true">
+                <kbd>↵</kbd> to create · <kbd>esc</kbd> to close
+              </span>
+            ) : null}
             {mode === "edit" ? (
               <button
                 className="graph-create-danger-trigger"
@@ -744,7 +933,7 @@ function SharedNodeSheet({
             </button>
             <button
               className="graph-create-primary"
-              disabled={submitting || deleteSubmitting || safeDraft.title.trim().length === 0}
+              disabled={!canSubmit}
               onClick={onSubmit}
               type="button"
             >
@@ -757,14 +946,19 @@ function SharedNodeSheet({
   );
 }
 
+// Quick create: title first (Enter creates), the type guessed from the title
+// and one tap to change, a parent, and everything else folded away. Mounted
+// fresh per open, so the "guessed" state and the fold start over each time.
 export function CreateNodeSheet({
   draft,
   error,
   onChangeField,
   onClose,
   onSubmit,
+  parentOptions,
   submitting,
 }: CreateNodeSheetProps) {
+  if (!draft) return null;
   return (
     <SharedNodeSheet
       draft={draft}
@@ -773,6 +967,7 @@ export function CreateNodeSheet({
       onChangeField={onChangeField}
       onClose={onClose}
       onSubmit={onSubmit}
+      parentOptions={parentOptions}
       showRawText
       submitting={submitting}
     />

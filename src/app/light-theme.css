@@ -616,6 +616,31 @@
   color: var(--light-ink);
 }
 
+:root[data-theme="light"] :is(.graph-quick-type, .graph-quick-type-chip) {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+}
+
+:root[data-theme="light"] .graph-quick-type-chip:hover {
+  background: #f2e9e0;
+  border-color: #c9b9a9;
+}
+
+:root[data-theme="light"]
+  :is(.graph-quick-type:hover, .graph-quick-type[data-open], .graph-quick-type-chip[aria-pressed="true"]) {
+  background: #fbeae7;
+  border-color: #e6bdbb;
+}
+
+:root[data-theme="light"] .graph-quick-types {
+  background: #faf6f0;
+  border-color: var(--light-line);
+}
+
+:root[data-theme="light"] .graph-quick-hint kbd {
+  background: #faf6f0;
+}
+
 :root[data-theme="light"] .graph-connection-action-danger,
 :root[data-theme="light"] .graph-create-danger-trigger {
   color: var(--color-accent-text);

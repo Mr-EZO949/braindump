@@ -73,6 +73,7 @@ import {
   getStructuralSubtreeFromIndexes,
 } from "@/lib/graph/structure";
 import { isLiveEdge, pickEdgesToRestore } from "@/lib/graph/archive-edges";
+import { setNodeParent } from "@/lib/graph/hierarchy";
 import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -2037,7 +2038,11 @@ export function AppShell({ initialUser }: AppShellProps) {
     setActiveRailTab("details");
     setRightPanelOpen(false);
     setCreateNodeError(null);
-    setCreateNodeDraft({ ...defaultCreateNodeDraft });
+    // A new node hangs under the workspace root by default, like a chat- or
+    // dump-made one; the sheet's "Under" changes it ("" = top level).
+    const rootId = selectedWorkspace?.bootstrap_root_node_id ?? "";
+    const rootLive = rootId !== "" && graphData.nodes.some((node) => node.id === rootId);
+    setCreateNodeDraft({ ...defaultCreateNodeDraft, parent_id: rootLive ? rootId : "" });
   };
 
   const handleChangeCreateNodeField = <Field extends keyof CreateNodeInput>(
@@ -2175,19 +2180,48 @@ export function AppShell({ initialUser }: AppShellProps) {
       .select("*")
       .single();
 
-    setCreateNodeSubmitting(false);
-
     if (error || !data) {
+      setCreateNodeSubmitting(false);
       setCreateNodeError(error?.message ?? "Unable to create node.");
       return;
     }
 
     const createdNode = data as Node;
 
+    // Its parent: one belongs_to edge through the one writer of parents.
+    // A failure here keeps the node (top level) rather than losing it.
+    let parentEdge: Edge | null = null;
+    const parentId = createNodeDraft.parent_id ?? "";
+    if (parentId && graphData.nodes.some((node) => node.id === parentId)) {
+      const parentResult = await setNodeParent({
+        supabase,
+        userId: authUser.id,
+        workspaceId: selectedWorkspaceId,
+        nodeId: createdNode.id,
+        parentId,
+      });
+      if (parentResult.ok) {
+        const { data: edgeRow } = await supabase
+          .from("edges")
+          .select("*")
+          .eq("source_node_id", createdNode.id)
+          .eq("target_node_id", parentId)
+          .eq("edge_type", "belongs_to")
+          .eq("status", "active")
+          .limit(1)
+          .maybeSingle();
+        parentEdge = (edgeRow as Edge | null) ?? null;
+      } else {
+        showToast(`Created "${createdNode.title}" at the top level — ${parentResult.error}.`);
+      }
+    }
+
     setGraphData((currentGraphData) => ({
       ...currentGraphData,
       nodes: [...currentGraphData.nodes, createdNode],
+      edges: parentEdge ? [...currentGraphData.edges, parentEdge] : currentGraphData.edges,
     }));
+    setCreateNodeSubmitting(false);
     setCreateNodeDraft(null);
     setCreateNodeError(null);
     setSelectedNodeId(createdNode.id);

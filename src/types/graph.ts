@@ -140,6 +140,9 @@ export interface CreateNodeInput {
   // Optional ISO date deadline (YYYY-MM-DD). Empty string = no deadline.
   // Surfaced in the create/edit form as a date picker.
   target_date: string;
+  // Create sheet only: the new node's parent ("" = top level). Written as a
+  // belongs_to edge through lib/graph/hierarchy.ts setNodeParent.
+  parent_id?: string;
 }
 
 export type WorkspaceProfileAreaType =

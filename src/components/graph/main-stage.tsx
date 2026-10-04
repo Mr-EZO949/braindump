@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { CreateNodeSheet, EditNodeSheet } from "@/components/graph/create-node-sheet";
 import { HistoryShelf } from "@/components/graph/history-shelf";
 import { TypeExplorer } from "@/components/graph/type-explorer";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import { NetworkIcon, PencilIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
 import type { LocalGraphCameraView } from "@/lib/graph/data";
+import { CONTAINER_TYPES } from "@/lib/graph/node-types";
 import type { EdgeRelationOptionId } from "@/lib/graph/relationships";
 import type { CreateNodeInput, GraphData } from "@/types/graph";
 import type { WorkProgress } from "@/lib/graph/work-progress";
@@ -169,6 +170,16 @@ export function MainStage({
 }: MainStageProps) {
   const filtersActive = graphTypeFilter !== "all";
   const isGraphEmpty = !graphLoading && graphData.nodes.length === 0;
+  // Where a new node can go: the live containers (areas, classes, goals,
+  // projects, big tasks), A→Z. Built only while the create sheet is open.
+  const createSheetOpen = createNodeDraft !== null;
+  const createParentOptions = useMemo(() => {
+    if (!createSheetOpen) return [];
+    return graphData.nodes
+      .filter((node) => CONTAINER_TYPES.has(node.node_type) && (node.status ?? "active") === "active")
+      .map((node) => ({ id: node.id, node_type: node.node_type, title: node.title }))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [createSheetOpen, graphData.nodes]);
   const visibleSelectedNodeId = graphData.nodes.some((node) => node.id === selectedNodeId)
     ? selectedNodeId
     : null;
@@ -305,6 +316,7 @@ export function MainStage({
         onChangeField={onChangeCreateNodeField}
         onClose={onCloseCreateNode}
         onSubmit={onSubmitCreateNode}
+        parentOptions={createParentOptions}
         submitting={createNodeSubmitting}
       />
 
