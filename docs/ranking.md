@@ -47,7 +47,7 @@ Every signal is deterministic — no model call when Focus opens or scores recom
 6. **Structure** — goal alignment, centrality, unmet prerequisites, blockers,
    just-unblocked (unchanged from v8).
 7. **History** (Focus only) — recently unblocked (24h), carried over from a plan
-   (3+ times → "break it down?"), done today (hidden), yesterday's cluster:
+   (dated work only; 3+ times → "break it down?"), done today (hidden), yesterday's cluster:
    momentum (+) if it has deadline pressure, rotation (−) if not; a dated cluster
    untouched for 3+ days gets a neglect bonus.
 
@@ -74,7 +74,7 @@ from v8: a task due tomorrow can now outrank an undated goal.
 type base (task 120 · big task 112 · goal 104 · habit 98 · project 70 · class 62)
 + 300 just unblocked            + 240 on the calendar within 7 days
 + 2.6 × deadline pressure       (next open step per deadline; later siblings × 0.55)
-+ 220 habit due                 + 170 carried over
++ 220 habit due                 + 170 carried over (dated work only)
 + unlocks bonus                 − prerequisite / blocker penalties
 + 60 momentum | − 130 rotation  (yesterday's cluster, with / without deadline pressure ≥ 40)
 + up to 80 neglect              (dated cluster untouched 3+ days; next step only)
@@ -94,6 +94,23 @@ order after (`diversifyHead`).
 The hero line is the first planning signal, e.g. `"Pass the Stats final" due in 5
 days · ~4 sessions left`, `Check back: waiting for exam result`, `Overdue by 15
 days — done, moved or dropped?`.
+
+**Skipped plans (2026-10-04, `lib/planner/skips.ts`).** A skip is a past day a
+node sat in the user's plan (a `plan_tasks` row) and was left undone; a day the node
+or a step inside it got done doesn't count. A skip pushes only work with a deadline
+(own or inherited): the +170 carry-over and the +240 "on your calendar" for a past
+date need one. Undated work skipped on 2+ days in 14 is **stale**: out of Focus and
+new plans, asked about in a "Does this still matter?" card (Focus, Planner) —
+still matters (count restarts, no push) · not now (`deprioritize`, Undo) · drop it
+(archive, Undo). Answers are `feedback_events` rows (`entity_type` `stale_check`).
+Habits are never asked about. No model call.
+
+**Time blocks (plans only).** A class, or a goal / project / big task with open
+steps, can get a block of time on itself in a plan, starting with its next 1–2
+open steps (`time_blocks` in `buildPlannerCandidates`, `plan-v8`). A step inside
+a planned time block is dropped from the same plan; a ticked time block marks the
+session done and never completes the node (`lib/planner/sessions.ts`). Focus stays
+one leaf step.
 
 The score refreshes on every graph event and nightly (the `node-cleanup` cron),
 because pressure moves with the calendar even when nothing is touched.
