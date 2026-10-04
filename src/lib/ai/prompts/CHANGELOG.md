@@ -123,6 +123,18 @@ Run the eval before and after a change: `npx tsx --env-file=.env.local scripts/e
 
 ---
 
+## Merge check (`merge-check.ts`)
+
+### merge-check-v3 (current) — a container and what lives in it are never one node (2026-10-04)
+- New rule: a class or area and a goal, project, big task or task inside it are never the same entity, even when the titles share words ("Linear Algebra" class holds "Pass Linear Algebra"; "Health" area holds "Run a Half-Marathon").
+- Why: the eval's first live run said the goal "Pass Machine Learning" and the class "Machine Learning" were the same (0.88). Under node types v2 the class holds that goal; merging them breaks the structure. In the app `merge.ts` already skips goal-vs-class pairs (`COMPATIBLE_TYPES`), but area-vs-goal pairs do reach the model.
+- Eval (one round): `merge-class-vs-goal` now "different" (0.98, "the class is a container, the goal lives within it"); neighbours `merge-area-vs-goal` (different, 0.95) and `merge-api-docs` (same across big_task/task, 0.94) still pass. $0.0028 for 3 calls.
+
+### merge-check-v2
+- Node types v2: older nodes may carry an earlier type for the same item.
+
+---
+
 ## Assistant (`assistant.ts`)
 
 > Note: this changelog drifted (entries jump v4 → v10; the live constant is the
