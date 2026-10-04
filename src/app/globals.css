@@ -18705,3 +18705,279 @@ button.change-row:disabled {
     border-radius: 20px;
   }
 }
+
+/* ─── Skipped plans — "Does this still matter?" (Focus + Planner) ─────────
+   Work planned and skipped on 2+ days with no deadline (lib/planner/skips.ts).
+   The check-back card's calm amber: a quick decision, not work. */
+.stale-check {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(210, 190, 110, 0.22);
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(210, 190, 110, 0.08), rgba(210, 190, 110, 0) 60%),
+    rgba(255, 255, 255, 0.02);
+  text-align: left;
+}
+
+.stale-check-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(214, 196, 124, 0.95);
+}
+
+.stale-check-pip {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgb(210, 190, 110);
+  box-shadow: 0 0 0 3px rgba(210, 190, 110, 0.16);
+}
+
+.stale-check-lede {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+}
+
+.stale-check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stale-check-item {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.stale-check-item:first-child {
+  padding-top: 2px;
+  border-top: none;
+}
+
+.stale-check-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.stale-check-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.stale-check-item[data-answered] .stale-check-title {
+  color: var(--color-text-tertiary);
+}
+
+.stale-check-days {
+  flex: none;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.stale-check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stale-check-btn {
+  padding: 6px 11px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition:
+    color var(--motion-fast),
+    border-color var(--motion-fast),
+    background var(--motion-fast),
+    box-shadow var(--motion-fast);
+}
+
+.stale-check-btn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.stale-check-btn--keep {
+  border-color: rgba(210, 190, 110, 0.32);
+  color: rgba(226, 210, 146, 0.98);
+}
+
+.stale-check-btn--keep:hover:not(:disabled) {
+  border-color: rgba(210, 190, 110, 0.5);
+  color: rgb(236, 222, 160);
+  background: rgba(210, 190, 110, 0.08);
+}
+
+.stale-check-btn:focus-visible,
+.stale-check-undo:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.stale-check-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.stale-check-done {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.stale-check-undo {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.stale-check-undo:hover {
+  color: var(--color-text-primary);
+}
+
+.stale-check-error {
+  font-size: 11px;
+  color: #d8a4a8;
+}
+
+.stale-check-more {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+/* On the Planner screen the card sits under the plan chips, before a plan is
+   generated; it keeps a readable width on the wide screen. */
+.stale-check--planner {
+  max-width: 560px;
+  margin-bottom: 18px;
+}
+
+:root[data-theme="light"] .stale-check {
+  border-color: rgba(176, 142, 40, 0.3);
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(176, 142, 40, 0.08), rgba(176, 142, 40, 0) 60%),
+    rgba(20, 20, 24, 0.012);
+}
+
+:root[data-theme="light"] .stale-check-eyebrow {
+  color: rgba(138, 108, 20, 0.95);
+}
+
+:root[data-theme="light"] .stale-check-pip {
+  background: rgb(176, 142, 40);
+  box-shadow: 0 0 0 3px rgba(176, 142, 40, 0.16);
+}
+
+:root[data-theme="light"] .stale-check-btn {
+  border-color: rgba(20, 20, 24, 0.1);
+  background: rgba(20, 20, 24, 0.02);
+}
+
+:root[data-theme="light"] .stale-check-btn:hover:not(:disabled) {
+  border-color: rgba(20, 20, 24, 0.18);
+  background: rgba(20, 20, 24, 0.05);
+}
+
+:root[data-theme="light"] .stale-check-btn--keep {
+  border-color: rgba(176, 142, 40, 0.4);
+  color: rgba(118, 90, 12, 0.98);
+}
+
+:root[data-theme="light"] .stale-check-btn--keep:hover:not(:disabled) {
+  border-color: rgba(176, 142, 40, 0.6);
+  color: rgb(98, 74, 8);
+  background: rgba(176, 142, 40, 0.08);
+}
+
+:root[data-theme="light"] .stale-check-error {
+  color: rgba(180, 36, 50, 0.95);
+}
+
+/* Planner: "Anything to fit in?" — words sent with the next plan
+   ("3h of Italian, 2h of math"); sits just under the plan chips. */
+.planner-include-input {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  margin: -12px 0 18px;
+  padding: 8px 11px;
+  font-family: inherit;
+  font-size: 12.5px;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  transition:
+    border-color var(--motion-fast),
+    background var(--motion-fast);
+}
+
+.planner-include-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.planner-include-input:focus {
+  outline: none;
+  border-color: rgba(213, 58, 71, 0.4);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="light"] .planner-include-input {
+  background: rgba(20, 20, 24, 0.02);
+  border-color: var(--color-border-subtle);
+}
+
+:root[data-theme="light"] .planner-include-input:focus {
+  border-color: rgba(213, 58, 71, 0.45);
+  background: var(--color-bg-surface-elevated);
+}
+
+@media (max-width: 640px) {
+  /* 16px: iOS doesn't zoom the page when the field takes focus. */
+  .planner-include-input {
+    font-size: 16px;
+  }
+}

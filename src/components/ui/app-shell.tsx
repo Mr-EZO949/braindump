@@ -5088,6 +5088,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 setAppMode("assistant");
               }}
               onCheckBack={handleCheckBack}
+              onGraphChanged={() => void reloadGraphAfterUndo()}
               onSelectNudge={(nudge) => {
                 setWhatNowOpen(false);
                 // No app-mode swap — the chat fires in the right rail

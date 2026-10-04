@@ -9,6 +9,7 @@ import {
   PlusIcon,
 } from "@/components/ui/icons";
 import { clearFocusCache } from "@/components/ui/what-now-dialog";
+import { StaleCheckCard } from "@/components/ui/stale-check-card";
 import {
   PlannerPanel,
   INITIAL_PLANNER_STATE,
@@ -31,6 +32,8 @@ import {
   type Commitment,
 } from "@/lib/planner/commitments";
 import { DAY_PLAN_START_MINUTE, planWindowMinutes } from "@/lib/planner/plan-window";
+import { hasOpenSteps, planTaskCompletesNode } from "@/lib/planner/sessions";
+import type { StaleItem } from "@/lib/planner/skips";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1403,6 +1406,31 @@ export function AssistantMode({
   const planStartTimeRef = useRef<string | null>(null);
   // Busy time named in chat for a chat-drafted plan (not saved commitments).
   const planOneOffBusyRef = useRef<BusyInterval[]>([]);
+  // "Anything to fit in?" — the user's words, sent with the next plan
+  // ("3h of Italian, 2h of math"); cleared once a plan is accepted or rejected.
+  const [planInclude, setPlanInclude] = useState("");
+  // "Does this still matter?" — work planned and skipped on 2+ days with no
+  // deadline; new plans leave it out until it's answered (lib/planner/skips.ts).
+  const [staleItems, setStaleItems] = useState<StaleItem[]>([]);
+  useEffect(() => {
+    if (!workspaceId) {
+      setStaleItems([]);
+      return;
+    }
+    const ac = new AbortController();
+    fetch("/api/assistant/stale-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: workspaceId, ...clientDayHints() }),
+      signal: ac.signal,
+    })
+      .then((res) => (res.ok ? res.json() : { items: [] }))
+      .then((json: { items?: StaleItem[] }) => setStaleItems(Array.isArray(json.items) ? json.items : []))
+      .catch(() => {
+        // The card is a nudge; without it, plans still leave stale work out.
+      });
+    return () => ac.abort();
+  }, [workspaceId, tasksRefreshKey]);
 
   // Set when accepting a plan for a day that already has plan-derived tasks;
   // drives the replan clarifying modal (replace / add / cancel).
@@ -1825,8 +1853,10 @@ export function AssistantMode({
 
       // Phase 10.3 — mark linked graph node as completed when task is checked off.
       // Notify the parent shell so it can update its cached graphData immediately,
-      // not just after a refetch.
-      if (task.node_id) {
+      // not just after a refetch. A block of time on a bigger thing (a class,
+      // goal, project, or a big task with steps) only marks the session done.
+      const linkedType = task.node_id ? graphData.nodes.find((n) => n.id === task.node_id)?.node_type : null;
+      if (task.node_id && planTaskCompletesNode(linkedType, hasOpenSteps(task.node_id, graphData))) {
         const nextStatus: NodeStatus = nowDone ? "completed" : "active";
         onLinkedNodeStatusChange?.(task.node_id, nextStatus);
         void fetch(`/api/nodes/${task.node_id}/status`, {
@@ -1836,7 +1866,7 @@ export function AssistantMode({
         });
       }
     },
-    [persistTasks, planTaskSelectClause, supabase, tasks, workspaceId],
+    [graphData, onLinkedNodeStatusChange, persistTasks, planTaskSelectClause, supabase, tasks, workspaceId],
   );
 
   const deleteTask = useCallback(
@@ -1965,6 +1995,7 @@ export function AssistantMode({
           ...clientDayHints(),
           session_date: sessionDate,
           session_start: sessionStart,
+          ...(planInclude.trim() ? { include: planInclude.trim() } : {}),
         }),
         signal: ac.signal,
       });
@@ -2153,6 +2184,7 @@ export function AssistantMode({
       // Switch to task view at the date these tasks were scheduled onto.
       setSelectedDate(targetDate);
       setPlannerState(INITIAL_PLANNER_STATE);
+      setPlanInclude("");
       resetPlanAccepting();
     } catch {
       setPlannerState((prev) => ({ ...prev, error: "Could not accept the plan. Try again." }));
@@ -2179,6 +2211,7 @@ export function AssistantMode({
     setReplanPrompt(null);
     setSelectedDate(targetDate);
     setPlannerState(INITIAL_PLANNER_STATE);
+    setPlanInclude("");
     resetPlanAccepting();
   };
 
@@ -2216,6 +2249,7 @@ export function AssistantMode({
         if (!res.ok) throw new Error("Reject failed");
       }
       setPlannerState(INITIAL_PLANNER_STATE);
+      setPlanInclude("");
     } catch {
       setPlannerState((prev) => ({ ...prev, error: "Could not reject the plan. Try again." }));
     }
@@ -2280,6 +2314,33 @@ export function AssistantMode({
               What&apos;s next?
             </button>
           </div>
+
+          {!plannerState.session && !plannerState.loading ? (
+            <>
+              <input
+                aria-label="Anything to fit in"
+                className="planner-include-input"
+                maxLength={200}
+                onChange={(e) => setPlanInclude(e.target.value)}
+                placeholder="Anything to fit in? e.g. 3h of Italian"
+                type="text"
+                value={planInclude}
+              />
+              {workspaceId ? (
+                <StaleCheckCard
+                  className="stale-check--planner"
+                  items={staleItems}
+                  key={workspaceId}
+                  onChanged={({ nodeId, answer, dropped }) => {
+                    clearFocusCache(workspaceId);
+                    // Dropped → archived; its Undo brings it back.
+                    if (dropped) onLinkedNodeStatusChange?.(nodeId, answer === "undo" ? "active" : "archived");
+                  }}
+                  workspaceId={workspaceId}
+                />
+              ) : null}
+            </>
+          ) : null}
 
           {taskError ? <p className="planner-error planner-error-inline">{taskError}</p> : null}
 

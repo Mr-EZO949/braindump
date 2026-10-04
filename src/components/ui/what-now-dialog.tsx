@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import { CloseIcon, TargetIcon } from "@/components/ui/icons";
+import { StaleCheckCard } from "@/components/ui/stale-check-card";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   DURATION_BY_TYPE,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/planner/auto-schedule";
 import { describeFreeTime, freeTimeInBusy, type BusyInterval } from "@/lib/planner/commitments";
 import { clientDayHints } from "@/lib/habits/streak";
+import type { StaleItem } from "@/lib/planner/skips";
 import type { NodeType } from "@/types/graph";
 import type { Nudge } from "@/types/chat";
 
@@ -34,6 +36,8 @@ type LockInData = {
   nudges: Nudge[];
   // Today's fixed commitments (class, shift) as minutes from local midnight.
   busy_today?: BusyInterval[];
+  // Planned and skipped on 2+ days, no deadline: out of `top` until answered.
+  stale_check?: StaleItem[];
 };
 
 // Focus is a $0 SQL brief, but pressing Focus still fired the endpoint on every
@@ -173,6 +177,9 @@ type WhatNowDialogProps = {
   onSelectNudge?: (nudge: Nudge) => void;
   // A waiting item whose check-back day came: one tap settles it ($0).
   onCheckBack?: (nodeId: string, decision: "done" | "still_waiting") => Promise<void>;
+  // "Does this still matter?" changed a node (can wait / dropped / undone):
+  // reload the graph so it shows.
+  onGraphChanged?: () => void;
 };
 
 // "Check back: waiting for exam result" → "Waiting for exam result" (the
@@ -199,6 +206,7 @@ export function WhatNowDialog({
   onScheduledToPlanner,
   onSelectNudge,
   onCheckBack,
+  onGraphChanged,
 }: WhatNowDialogProps) {
   const [loading, setLoading] = useState(() => !readFocusCache(workspaceId));
   const [error, setError] = useState<string | null>(null);
@@ -377,6 +385,20 @@ export function WhatNowDialog({
     setPickIndex((index) => (top.length > 0 ? (index + 1) % top.length : 0));
   };
 
+  // An answer on the "Does this still matter?" card changes the picks: fetch
+  // them again (and cache them for this graph), then let the graph reload.
+  const refreshAfterStaleAnswer = async (changedGraph: boolean) => {
+    if (!workspaceId) return;
+    try {
+      const nextData = await fetchFocusBrief(workspaceId);
+      setData(nextData);
+      writeFocusCache(workspaceId, nextData, graphSignature);
+    } catch {
+      clearFocusCache(workspaceId);
+    }
+    if (changedGraph) onGraphChanged?.();
+  };
+
   const settleCheckBack = async (decision: "done" | "still_waiting") => {
     if (!hero || !onCheckBack || checkBackBusy) return;
     setCheckBackBusy(decision);
@@ -415,6 +437,15 @@ export function WhatNowDialog({
         </button>
       </div>
 
+      {!loading && !error && workspaceId ? (
+        <StaleCheckCard
+          items={data?.stale_check ?? []}
+          key={workspaceId}
+          onChanged={({ answer }) => void refreshAfterStaleAnswer(answer !== "still_matters")}
+          workspaceId={workspaceId}
+        />
+      ) : null}
+
       {loading ? (
         /* First open with no cache: the hero's shape, not a sentence. */
         <div className="lockin-skeleton" aria-busy="true" aria-label="Finding your next step">
@@ -427,7 +458,9 @@ export function WhatNowDialog({
         <div className="lockin-state lockin-error">{error}</div>
       ) : !hero ? (
         <div className="lockin-state">
-          Nothing active yet — brain dump a goal or task first.
+          {(data?.stale_check ?? []).length > 0
+            ? "Answer the question above — then Focus has your next step."
+            : "Nothing active yet — brain dump a goal or task first."}
         </div>
       ) : (
         <>
