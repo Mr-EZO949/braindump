@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -16,6 +16,12 @@ import { useTurnCards } from "@/components/app-shell/use-turn-cards";
 import { useStepSuggestions } from "@/components/app-shell/use-step-suggestions";
 import { useProposalReview } from "@/components/app-shell/use-proposal-review";
 import { useBrainDump } from "@/components/app-shell/use-brain-dump";
+import { useNodeEditor } from "@/components/app-shell/use-node-editor";
+import { useNodeStatus } from "@/components/app-shell/use-node-status";
+import { useFocusSession } from "@/components/app-shell/use-focus-session";
+import { useFreezeNudge } from "@/components/app-shell/use-freeze-nudge";
+import { useOnboarding } from "@/components/app-shell/use-onboarding";
+import { ShellOnboarding } from "@/components/app-shell/shell-onboarding";
 import { AssistantMode as AssistantModeView } from "@/components/assistant/assistant-mode";
 import { TodosView } from "@/components/ui/todos-view";
 import { HabitsView } from "@/components/ui/habits-view";
@@ -31,29 +37,15 @@ import { ProposedNodesReview } from "@/components/ui/proposed-nodes-review";
 import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
 import { MergeAlert } from "@/components/ui/merge-alert";
 import { NudgeRibbon } from "@/components/nudges/nudge-ribbon";
-import { WorkspaceBootstrapWizard } from "@/components/ui/workspace-bootstrap-wizard";
-import { AboutYouIntake } from "@/components/ui/about-you-intake";
 import { ClusterSuggestionStack } from "@/components/clustering/cluster-suggestion-stack";
-import { WelcomeScreen, shouldShowWelcome, markWelcomeDone } from "@/components/ui/onboarding-tutorial";
-import { GuidedTour } from "@/components/ui/guided-tour";
 import { FocusTimerPill } from "@/components/ui/focus-timer-pill";
-import { useFocusTimer } from "@/hooks/use-focus-timer";
 import {
-  createWorkspaceScope,
-} from "@/lib/graph/chat";
-import {
-  findFirstMatchingNode,
   loadWorkspaceGraphData,
-  persistLocalNodePosition,
-  removeLocalNodePosition,
 } from "@/lib/graph/data";
 
 import {
-  buildEdgePayloadFromSelection,
   visibleEdgeRelationOptions,
-  type EdgeRelationOptionId,
 } from "@/lib/graph/relationships";
-import { setNodeParent } from "@/lib/graph/hierarchy";
 import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -61,33 +53,12 @@ import { TopCommandBar } from "@/components/ui/top-command-bar";
 import {
   parentContextTitle,
 } from "@/lib/graph/visible-graph";
-import {
-  checkNodeDraft,
-  createDraftFromNode,
-  defaultCreateNodeDraft,
-  editedNodeFields,
-  newNodeRow,
-} from "@/lib/graph/node-draft";
-import {
-  applyOptimisticStatus,
-  mergeServerStatus,
-  planStatusChange,
-  revertOptimisticStatus,
-  type StatusResponse,
-} from "@/lib/graph/status-optimistic";
 import { isWeeklyReflectionAvailable } from "@/lib/time/weekly-unlock";
-import type { CreateNodeInput, Edge, Node, Workspace } from "@/types/graph";
-import { addDaysISO, localDateISO } from "@/lib/time/local-date";
-import { todayIsoDate } from "@/lib/planner/auto-schedule";
-import { clientDayHints } from "@/lib/habits/streak";
 import { AutoApplyNotice } from "@/components/ui/auto-apply-notice";
 
 type AppShellProps = {
   initialUser: AuthUserState;
 };
-
-// How far "Still waiting" on a Focus check-back pushes the next check (ranking v2).
-const CHECK_BACK_SNOOZE_DAYS = 7;
 
 export function AppShell({ initialUser }: AppShellProps) {
   const router = useRouter();
@@ -115,7 +86,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   const {
     authUser,
     workspaces,
-    setWorkspaces,
     selectedWorkspaceId,
     setSelectedWorkspaceId,
     selectedWorkspace,
@@ -139,7 +109,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     workProgressByNode,
     existingNodeTitleMap,
     priorityPulseIds,
-    refreshAfterPriorityChange,
     clusterRefreshKey,
   } = graph;
   const view = useGraphView({
@@ -152,20 +121,16 @@ export function AppShell({ initialUser }: AppShellProps) {
     graphSearchValue,
     setGraphSearchValue,
     selectedNodeId,
-    setSelectedNodeId,
     focusRequestKey,
-    setFocusRequestKey,
     nodeTypeFilter,
     setNodeTypeFilter,
     hideCompleted,
     setHideCompleted,
     setCameraView,
     suppressInitialFocusAnimation,
-    setSuppressInitialFocusAnimation,
     completedNodes,
     filteredGraphData,
     selectedNode,
-    selectedNodeRecord,
     selectedNodeDeletePlan,
     connectableNodes,
     selectedNodeConnections,
@@ -247,7 +212,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     generateSteps: handleGenerateSteps,
     cancelStepSuggestion,
     dismissStepSuggestion,
-    maybeOfferBreakdown,
   } = steps;
   const proposals = useProposalReview({
     userId: authUser?.id ?? null,
@@ -298,953 +262,75 @@ export function AppShell({ initialUser }: AppShellProps) {
     retryBrainDump: handleBrainDumpRetry,
   } = dump;
 
-  // On-load anti-freeze nudge — dismissible; resets when the workspace changes.
-  const [freezeNudgeDismissed, setFreezeNudgeDismissed] = useState(false);
-  // Occasional, not every-reload: a localStorage snooze timestamp gates it.
-  // Showing it snoozes briefly; dismissing snoozes for weeks (like a "rate us").
-  const [freezeNudgeAllowed, setFreezeNudgeAllowed] = useState(false);
-  const freezeNudgeShownRef = useRef(false);
-  useEffect(() => {
-    try {
-      const until = Number(localStorage.getItem("braindump:freeze-nudge-snooze") ?? 0);
-      setFreezeNudgeAllowed(!(Number.isFinite(until) && Date.now() < until));
-    } catch {
-      setFreezeNudgeAllowed(true);
-    }
-  }, []);
-  const snoozeFreezeNudge = (days: number) => {
-    try {
-      localStorage.setItem(
-        "braindump:freeze-nudge-snooze",
-        String(Date.now() + days * 24 * 60 * 60 * 1000),
-      );
-    } catch {
-      /* localStorage unavailable — nudge just isn't throttled */
-    }
-  };
-  const [editMode, setEditMode] = useState(false);
-  // Focus timer — one persistent Pomodoro per workspace, backed by localStorage
-  // so it survives mode/view switches and reloads. Lives at the shell so the
-  // pill renders above every view.
-  const focusTimer = useFocusTimer(selectedWorkspaceId);
-  const [createNodeDraft, setCreateNodeDraft] = useState<CreateNodeInput | null>(null);
-  const [createNodeError, setCreateNodeError] = useState<string | null>(null);
-  const [createNodeSubmitting, setCreateNodeSubmitting] = useState(false);
-  const [editNodeDraft, setEditNodeDraft] = useState<CreateNodeInput | null>(null);
-  const [editNodeError, setEditNodeError] = useState<string | null>(null);
-  const [editNodeSubmitting, setEditNodeSubmitting] = useState(false);
-  const [deleteNodeConfirmOpen, setDeleteNodeConfirmOpen] = useState(false);
-  const [deleteNodeSubmitting, setDeleteNodeSubmitting] = useState(false);
-  const [edgeRelationId, setEdgeRelationId] = useState<EdgeRelationOptionId>("contains");
-  const [edgeTargetId, setEdgeTargetId] = useState("");
-  const [edgeError, setEdgeError] = useState<string | null>(null);
-  const [edgeSubmitting, setEdgeSubmitting] = useState(false);
-  const [edgeDeleteSubmittingId, setEdgeDeleteSubmittingId] = useState<string | null>(null);
-  const [edgeUpdateSubmittingId, setEdgeUpdateSubmittingId] = useState<string | null>(null);
-  // User-level "about you" intake — a one-time sign-up moment gated on
-  // profiles.intake_completed_at. "loading" until we've checked; "open" shows
-  // the intake; "done" lets the workspace onboarding (welcome/bootstrap) run.
-  const [profileIntakeState, setProfileIntakeState] = useState<"loading" | "open" | "done">(
-    "loading",
-  );
-  // Bootstrap wizard — shown when a new empty workspace is created OR loaded empty
-  const [bootstrapWorkspaceId, setBootstrapWorkspaceId] = useState<string | null>(null);
-  // Workspaces whose onboarding wizard the user "Skip for now"-ed this session.
-  // We do NOT write bootstrap_completed_at on skip, so the wizard can re-offer
-  // itself on a later still-empty load — but this set stops it from re-opening
-  // immediately when the empty-workspace effect re-runs this same session.
-  const bootstrapSkippedThisSessionRef = useRef<Set<string>>(new Set());
-  // Welcome screen — shown once per user on first login
-  const [showWelcome, setShowWelcome] = useState(false);
-  // Guided tour — shown after workspace wizard during onboarding
-  const [showTour, setShowTour] = useState(false);
-  const workspaceCreationFlowRef = useRef<{
-    previousWorkspaceId: string | null;
-    workspaceId: string;
-  } | null>(null);
-
-  // Once the nudge is actually visible this session, snooze it so it doesn't
-  // greet the user on the next few reloads.
-  useEffect(() => {
-    const visible =
-      appMode === "graph" &&
-      freezeNudgeAllowed &&
-      !freezeNudgeDismissed &&
-      !stepSuggestionOpen &&
-      needsActionNodes.length > 0;
-    if (visible && !freezeNudgeShownRef.current) {
-      freezeNudgeShownRef.current = true;
-      try {
-        localStorage.setItem(
-          "braindump:freeze-nudge-snooze",
-          String(Date.now() + 2 * 24 * 60 * 60 * 1000),
-        );
-      } catch {
-        /* ignore */
-      }
-    }
-  }, [appMode, freezeNudgeAllowed, freezeNudgeDismissed, stepSuggestionOpen, needsActionNodes.length]);
-
-  // A newly loaded workspace may show the anti-freeze nudge again.
-  useEffect(() => {
-    setFreezeNudgeDismissed(false);
-  }, [authUser?.id, selectedWorkspaceId]);
-
-  // Onboarding decision — runs AFTER the graph has loaded (reads the loaded
-  // node count) instead of re-fetching. For empty workspaces: show welcome for
-  // brand-new users, or go straight to the wizard if welcome was already seen.
-  // Held until the user-level intake is resolved so the two onboarding overlays
-  // never stack. Also held until the workspace RECORD is loaded: the workspace
-  // id is seeded from localStorage before the list arrives (parallel
-  // bootstrap), and until then `bootstrap_completed_at` reads as missing — which
-  // used to reopen the setup wizard on an empty, already-onboarded workspace.
-  const selectedWorkspaceLoaded = selectedWorkspace !== null;
-  useEffect(() => {
-    if (graphLoading || !authUser || !selectedWorkspaceId || !selectedWorkspaceLoaded) return;
-    if (graphData.nodes.length !== 0 || profileIntakeState !== "done") return;
-
-    if (shouldShowWelcome(authUser.id)) {
-      setShowWelcome(true);
-    } else if (
-      !selectedWorkspace?.bootstrap_completed_at &&
-      !bootstrapSkippedThisSessionRef.current.has(selectedWorkspaceId)
-    ) {
-      setBootstrapWorkspaceId(selectedWorkspaceId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    graphLoading,
-    graphData.nodes.length,
-    authUser?.id,
-    selectedWorkspaceId,
-    selectedWorkspaceLoaded,
-    selectedWorkspace?.bootstrap_completed_at,
-    profileIntakeState,
-  ]);
-
-  // Resolve the user-level "about you" intake once we know who's signed in.
-  // Runs before the workspace onboarding (which is gated on this). Fails soft
-  // to "done" so a profile-endpoint error (e.g. table not migrated) never traps
-  // the user behind the intake.
-  useEffect(() => {
-    if (!authUser?.id) return;
-    let cancelled = false;
-    setProfileIntakeState("loading");
-    fetch("/api/profile")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("profile fetch failed"))))
-      .then((data: { intake_completed_at?: string | null }) => {
-        if (cancelled) return;
-        setProfileIntakeState(data?.intake_completed_at ? "done" : "open");
-      })
-      .catch(() => {
-        if (!cancelled) setProfileIntakeState("done");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [authUser?.id]);
-
-  useEffect(() => {
-    // Workspace-switch reset: no sheet, draft, edit mode or connection form
-    // carries over (the thread resets in useChatThread).
-    setCreateNodeDraft(null);
-    setCreateNodeError(null);
-    setEditNodeDraft(null);
-    setEditNodeError(null);
-    setDeleteNodeConfirmOpen(false);
-    setEditMode(false);
-    setEdgeRelationId("contains");
-    setEdgeTargetId("");
-    setEdgeError(null);
-    setEdgeUpdateSubmittingId(null);
-  }, [selectedWorkspaceId]);
-
-  useEffect(() => {
-    if (selectedNodeId && filteredGraphData.nodes.some((node) => node.id === selectedNodeId)) {
-      return;
-    }
-
-    if (!selectedNodeId) {
-      return;
-    }
-
-    setSelectedNodeId(null);
-    setEditNodeDraft(null);
-    setEditNodeError(null);
-    setDeleteNodeConfirmOpen(false);
-    setRightPanelOpen(false);
-    // The setters come from the shell's hooks (stable).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredGraphData.nodes, selectedNodeId]);
-
-  // Focus's check-back card: "It's done" completes the waiting item; "Still
-  // waiting" keeps it on hold and asks again in a week. Same engine as chat's
-  // update_priorities, no model call.
-  const handleCheckBack = async (nodeId: string, decision: "done" | "still_waiting") => {
-    const workspaceId = selectedWorkspaceId;
-    if (!workspaceId) return;
-    const node = graphData.nodes.find((n) => n.id === nodeId);
-    const change =
-      decision === "done"
-        ? { node_id: nodeId, title: node?.title ?? "", action: "complete" }
-        : {
-            node_id: nodeId,
-            title: node?.title ?? "",
-            action: "wait",
-            waiting_for: node?.waiting_for ?? "an update",
-            check_back_on: addDaysISO(todayIsoDate(), CHECK_BACK_SNOOZE_DAYS),
-          };
-    const res = await fetch("/api/assistant/priorities", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspace_id: workspaceId, changes: [change], ...clientDayHints() }),
-    });
-    if (!res.ok) throw new Error("check-back failed");
-    showToast(decision === "done" ? "Done ✓" : `OK — I'll ask again next week`);
-    await refreshAfterPriorityChange(workspaceId, [nodeId]);
-  };
-
-  // Start a focus session on a node. Duration = the linked plan_task's
-  // duration_minutes for today if one exists, else 25m. No AI estimate call —
-  // keep "Start working" free and instant (v1).
-  const handleStartFocus = async (nodeId: string) => {
-    const node = graphData.nodes.find((n) => n.id === nodeId);
-    if (!node) return;
-    let durationMinutes = 25;
-    if (supabase && selectedWorkspaceId && authUser?.id) {
-      // Local date — plan_tasks.scheduled_date is the user's day, not UTC's.
-      const today = localDateISO();
-      const { data } = await supabase
-        .from("plan_tasks")
-        .select("duration_minutes")
-        .eq("user_id", authUser.id)
-        .eq("workspace_id", selectedWorkspaceId)
-        .eq("node_id", nodeId)
-        .eq("scheduled_date", today)
-        .limit(1)
-        .maybeSingle();
-      const linked = data?.duration_minutes;
-      if (typeof linked === "number" && linked > 0) durationMinutes = linked;
-    }
-    // Starting a new timer while one is already running for a different node
-    // silently replaces it — surface that so it isn't a surprise.
-    const prev = focusTimer.timer;
-    if (prev && prev.nodeId !== nodeId) {
-      showToast(`Switched focus to "${node.title}".`);
-    }
-    // Set the timer UP but PAUSED — the user presses Start when they're ready.
-    // Focus should never auto-run a countdown (testing journal #4).
-    focusTimer.start({ nodeId, title: node.title, durationMinutes, paused: true });
-  };
-
-  // Complete a focus session: stop the timer, confirm via toast, and — if a
-  // linked plan_task exists for today — mark it done and refresh the planner.
-  const handleFocusDone = async () => {
-    const active = focusTimer.timer;
-    focusTimer.stop();
-    showToast("Nice work — focus session done.");
-    if (!active || !supabase || !selectedWorkspaceId || !authUser?.id) return;
-    // Local date — plan_tasks.scheduled_date is the user's day, not UTC's.
-    const today = localDateISO();
-    const { data } = await supabase
-      .from("plan_tasks")
-      .update({ done: true })
-      .eq("user_id", authUser.id)
-      .eq("workspace_id", selectedWorkspaceId)
-      .eq("node_id", active.nodeId)
-      .eq("scheduled_date", today)
-      .eq("done", false)
-      .select("id");
-    if (data && data.length > 0) {
-      planner.refreshPlanner();
-    }
-  };
-
-  const handleSelectNode = (nodeId: string | null) => {
-    setSuppressInitialFocusAnimation(false);
-    setCreateNodeDraft(null);
-    setCreateNodeError(null);
-    setEditNodeError(null);
-    setDeleteNodeConfirmOpen(false);
-    setEdgeError(null);
-    setEdgeUpdateSubmittingId(null);
-
-    if (!nodeId) {
-      setSelectedNodeId(null);
-      setEditNodeDraft(null);
-      setEdgeTargetId("");
-      return;
-    }
-
-    const nextSelectedNode = graphData.nodes.find((node) => node.id === nodeId);
-
-    setSelectedNodeId(nodeId);
-    setFocusRequestKey((currentKey) => currentKey + 1);
-
-    if (!nextSelectedNode) {
-      return;
-    }
-
-    if (editMode) {
-      setActiveRailTab("details");
-      setRightPanelOpen(false);
-      setEditNodeDraft(createDraftFromNode(nextSelectedNode));
-      setEdgeTargetId("");
-      return;
-    }
-
-    setEditNodeDraft(null);
-    setEdgeTargetId("");
-    setRightPanelOpen(true);
-  };
-
-  const handleGraphSearchSubmit = () => {
-    setSuppressInitialFocusAnimation(false);
-    const matchingNode = findFirstMatchingNode(filteredGraphData, graphSearchValue);
-
-    if (!matchingNode) {
-      return;
-    }
-
-    setSelectedNodeId(matchingNode.id);
-    setFocusRequestKey((currentKey) => currentKey + 1);
-    setCreateNodeDraft(null);
-    setCreateNodeError(null);
-    setEditNodeError(null);
-    setDeleteNodeConfirmOpen(false);
-    setEdgeError(null);
-    setEdgeUpdateSubmittingId(null);
-
-    if (editMode) {
-      setActiveRailTab("details");
-      setRightPanelOpen(false);
-      setEditNodeDraft(createDraftFromNode(matchingNode));
-      setEdgeTargetId("");
-      return;
-    }
-
-    setEditNodeDraft(null);
-    setEdgeTargetId("");
-    setRightPanelOpen(true);
-  };
-
-  const handleOpenCreateNode = () => {
-    if (!editMode) {
-      return;
-    }
-
-    setSystemPanelOpen(false);
-    setWorkspaceMenuOpen(false);
-    setEditNodeDraft(null);
-    setEditNodeError(null);
-    setDeleteNodeConfirmOpen(false);
-    setEdgeError(null);
-    setEdgeUpdateSubmittingId(null);
-    setSelectedNodeId(null);
-    setActiveRailTab("details");
-    setRightPanelOpen(false);
-    setCreateNodeError(null);
-    // A new node hangs under the workspace root by default, like a chat- or
-    // dump-made one; the sheet's "Under" changes it ("" = top level).
-    const rootId = selectedWorkspace?.bootstrap_root_node_id ?? "";
-    const rootLive = rootId !== "" && graphData.nodes.some((node) => node.id === rootId);
-    setCreateNodeDraft({ ...defaultCreateNodeDraft, parent_id: rootLive ? rootId : "" });
-  };
-
-  const handleChangeCreateNodeField = <Field extends keyof CreateNodeInput>(
-    field: Field,
-    value: CreateNodeInput[Field],
-  ) => {
-    setCreateNodeDraft((currentDraft) => ({
-      ...(currentDraft ?? defaultCreateNodeDraft),
-      [field]: value,
-    }));
-  };
-
-  const handleCloseCreateNode = () => {
-    setCreateNodeDraft(null);
-    setCreateNodeError(null);
-  };
-
-  const handleChangeEditNodeField = <Field extends keyof CreateNodeInput>(
-    field: Field,
-    value: CreateNodeInput[Field],
-  ) => {
-    setEditNodeDraft((currentDraft) => {
-      const base = currentDraft ?? defaultCreateNodeDraft;
-      const next = { ...base, [field]: value };
-      // In edit mode, dragging the importance slider sets a manual override so
-      // the scorer won't overwrite it on the next rescore.
-      if (field === "importance_index") {
-        next.manual_weight = Math.max(0, Math.min(100, Number(value)));
-      }
-      return next;
-    });
-  };
-
-  const handleResetManualWeight = () => {
-    setEditNodeDraft((currentDraft) => {
-      if (!currentDraft) return currentDraft;
-      return { ...currentDraft, manual_weight: null };
-    });
-  };
-
-  const handleCloseEditNode = () => {
-    setEditNodeDraft(null);
-    setEditNodeError(null);
-    setDeleteNodeConfirmOpen(false);
-    setEdgeError(null);
-    setEdgeUpdateSubmittingId(null);
-    setRightPanelOpen(false);
-  };
-
-  const handleToggleEditMode = () => {
-    setEditMode((currentMode) => {
-      const nextMode = !currentMode;
-
-      if (!nextMode) {
-        setCreateNodeDraft(null);
-        setCreateNodeError(null);
-        setEditNodeDraft(null);
-        setEditNodeError(null);
-        setDeleteNodeConfirmOpen(false);
-        setEdgeError(null);
-        setEdgeUpdateSubmittingId(null);
-        setRightPanelOpen(Boolean(selectedNodeId));
-      } else if (selectedNodeRecord) {
-        setCreateNodeDraft(null);
-        setCreateNodeError(null);
-        setEditNodeDraft(createDraftFromNode(selectedNodeRecord));
-        setEditNodeError(null);
-        setDeleteNodeConfirmOpen(false);
-        setEdgeError(null);
-        setEdgeUpdateSubmittingId(null);
-        setActiveRailTab("details");
-        setRightPanelOpen(false);
-      }
-
-      return nextMode;
-    });
-  };
-
-  const handleSubmitCreateNode = async () => {
-    if (!supabase || !authUser?.id || !selectedWorkspaceId || !createNodeDraft) {
-      setCreateNodeError("Workspace or auth context is unavailable.");
-      return;
-    }
-
-    const checked = checkNodeDraft(createNodeDraft);
-    if (!checked.ok) {
-      setCreateNodeError(checked.error);
-      return;
-    }
-
-    setCreateNodeSubmitting(true);
-    setCreateNodeError(null);
-
-    const { data, error } = await supabase
-      .from("nodes")
-      .insert(newNodeRow(createNodeDraft, checked, { userId: authUser.id, workspaceId: selectedWorkspaceId }))
-      .select("*")
-      .single();
-
-    if (error || !data) {
-      setCreateNodeSubmitting(false);
-      setCreateNodeError(error?.message ?? "Unable to create node.");
-      return;
-    }
-
-    const createdNode = data as Node;
-
-    // Its parent: one belongs_to edge through the one writer of parents.
-    // A failure here keeps the node (top level) rather than losing it.
-    let parentEdge: Edge | null = null;
-    const parentId = createNodeDraft.parent_id ?? "";
-    if (parentId && graphData.nodes.some((node) => node.id === parentId)) {
-      const parentResult = await setNodeParent({
-        supabase,
-        userId: authUser.id,
-        workspaceId: selectedWorkspaceId,
-        nodeId: createdNode.id,
-        parentId,
-      });
-      if (parentResult.ok) {
-        const { data: edgeRow } = await supabase
-          .from("edges")
-          .select("*")
-          .eq("source_node_id", createdNode.id)
-          .eq("target_node_id", parentId)
-          .eq("edge_type", "belongs_to")
-          .eq("status", "active")
-          .limit(1)
-          .maybeSingle();
-        parentEdge = (edgeRow as Edge | null) ?? null;
-      } else {
-        showToast(`Created "${createdNode.title}" at the top level — ${parentResult.error}.`);
-      }
-    }
-
-    setGraphData((currentGraphData) => ({
-      ...currentGraphData,
-      nodes: [...currentGraphData.nodes, createdNode],
-      edges: parentEdge ? [...currentGraphData.edges, parentEdge] : currentGraphData.edges,
-    }));
-    setCreateNodeSubmitting(false);
-    setCreateNodeDraft(null);
-    setCreateNodeError(null);
-    setSelectedNodeId(createdNode.id);
-    setRightPanelOpen(true);
-    setActiveRailTab("details");
-
-    // Sizing layer: only second-guess plain tasks. If the user explicitly
-    // created a project/goal/etc., take it at face value. Runs after the
-    // node is already on screen so the common (task) path has zero delay.
-    if (checked.nodeType === "task") {
-      void maybeOfferBreakdown(createdNode);
-    }
-  };
-
-  const handleSubmitEditNode = async () => {
-    if (
-      !supabase ||
-      !authUser?.id ||
-      !selectedWorkspaceId ||
-      !selectedNodeRecord ||
-      !editNodeDraft
-    ) {
-      setEditNodeError("Workspace or auth context is unavailable.");
-      return;
-    }
-
-    const checked = checkNodeDraft(editNodeDraft);
-    if (!checked.ok) {
-      setEditNodeError(checked.error);
-      return;
-    }
-
-    setEditNodeSubmitting(true);
-    setEditNodeError(null);
-
-    const { data, error } = await supabase
-      .from("nodes")
-      .update(editedNodeFields(editNodeDraft, checked))
-      .eq("id", selectedNodeRecord.id)
-      .eq("user_id", authUser.id)
-      .eq("workspace_id", selectedWorkspaceId)
-      .select("*")
-      .single();
-
-    setEditNodeSubmitting(false);
-
-    if (error || !data) {
-      setEditNodeError(error?.message ?? "Unable to update node.");
-      return;
-    }
-
-    const updatedNode = data as Node;
-
-    setGraphData((currentGraphData) => ({
-      ...currentGraphData,
-      nodes: currentGraphData.nodes.map((node) =>
-        node.id === updatedNode.id ? updatedNode : node,
-      ),
-    }));
-    setEditNodeDraft(null);
-    setEditNodeError(null);
-    setDeleteNodeConfirmOpen(false);
-    setSelectedNodeId(updatedNode.id);
-    setRightPanelOpen(false);
-    setActiveRailTab("details");
-  };
-
-  const handleDeleteNode = async () => {
-    if (
-      !supabase ||
-      !authUser?.id ||
-      !selectedWorkspaceId ||
-      !selectedNodeRecord ||
-      !selectedNodeDeletePlan
-    ) {
-      setEditNodeError("Workspace or auth context is unavailable.");
-      return;
-    }
-
-    const { edgeIds, nodeIds } = selectedNodeDeletePlan;
-
-    setDeleteNodeSubmitting(true);
-    setEditNodeError(null);
-
-    if (edgeIds.length > 0) {
-      const { error: deleteEdgesError } = await supabase
-        .from("edges")
-        .delete()
-        .in("id", edgeIds)
-        .eq("user_id", authUser.id)
-        .eq("workspace_id", selectedWorkspaceId);
-
-      if (deleteEdgesError) {
-        setDeleteNodeSubmitting(false);
-        setEditNodeError(deleteEdgesError.message);
-        return;
-      }
-    }
-
-    const { error: deleteNodeError } = await supabase
-      .from("nodes")
-      .delete()
-      .in("id", nodeIds)
-      .eq("user_id", authUser.id)
-      .eq("workspace_id", selectedWorkspaceId);
-
-    setDeleteNodeSubmitting(false);
-
-    if (deleteNodeError) {
-      setEditNodeError(deleteNodeError.message);
-      return;
-    }
-
-    nodeIds.forEach((nodeId) => {
-      removeLocalNodePosition(authUser.id, selectedWorkspaceId, nodeId);
-    });
-
-    setGraphData((currentGraphData) => ({
-      nodes: currentGraphData.nodes.filter((node) => !nodeIds.includes(node.id)),
-      edges: currentGraphData.edges.filter((edge) => !edgeIds.includes(edge.id)),
-    }));
-    setSelectedNodeId(null);
-    setEditNodeDraft(null);
-    setEditNodeError(null);
-    setDeleteNodeConfirmOpen(false);
-    // Drop a pending breakdown offer if its node was just deleted.
-    steps.forgetBreakdownFor(nodeIds);
-    setChatScope(createWorkspaceScope(workspaceName));
-    setRightPanelOpen(true);
-    setEdgeError(null);
-    setEdgeUpdateSubmittingId(null);
-    if (activeRailTab === "chat") {
-      setActiveRailTab("details");
-    }
-  };
-
-  const handleSubmitCreateEdge = async () => {
-    if (!supabase || !authUser?.id || !selectedWorkspaceId || !selectedNodeId) {
-      setEdgeError("Workspace or auth context is unavailable.");
-      return;
-    }
-
-    if (edgeTargetId.length === 0) {
-      setEdgeError("Choose a node to connect.");
-      return;
-    }
-
-    if (edgeTargetId === selectedNodeId) {
-      setEdgeError("A node cannot connect to itself.");
-      return;
-    }
-
-    const payload = buildEdgePayloadFromSelection(selectedNodeId, edgeTargetId, edgeRelationId);
-
-    const duplicateEdge = graphData.edges.find((edge) => {
-      return (
-        edge.edge_type === payload.edge_type &&
-        edge.source_node_id === payload.source_node_id &&
-        edge.target_node_id === payload.target_node_id
-      );
-    });
-
-    if (duplicateEdge) {
-      setEdgeError("That connection already exists.");
-      return;
-    }
-
-    setEdgeSubmitting(true);
-    setEdgeError(null);
-
-    const { data, error } = await supabase
-      .from("edges")
-      .insert({
-        ...payload,
-        user_id: authUser.id,
-        workspace_id: selectedWorkspaceId,
-      })
-      .select("*")
-      .single();
-
-    setEdgeSubmitting(false);
-
-    if (error || !data) {
-      setEdgeError(error?.message ?? "Unable to create edge.");
-      return;
-    }
-
-    const createdEdge = data as Edge;
-
-    setGraphData((currentGraphData) => ({
-      ...currentGraphData,
-      edges: [...currentGraphData.edges, createdEdge],
-    }));
-    setEdgeError(null);
-    setEdgeRelationId("contains");
-    setEdgeTargetId("");
-  };
-
-  const handleUpdateEdge = async (edgeId: string, relationId: EdgeRelationOptionId) => {
-    if (!supabase || !authUser?.id || !selectedWorkspaceId || !selectedNodeId) {
-      setEdgeError("Workspace or auth context is unavailable.");
-      return;
-    }
-
-    const existingEdge = graphData.edges.find((edge) => edge.id === edgeId);
-
-    if (!existingEdge) {
-      setEdgeError("Connection no longer exists.");
-      return;
-    }
-
-    const targetNodeId =
-      existingEdge.source_node_id === selectedNodeId
-        ? existingEdge.target_node_id
-        : existingEdge.source_node_id;
-
-    const payload = buildEdgePayloadFromSelection(selectedNodeId, targetNodeId, relationId);
-
-    const duplicateEdge = graphData.edges.find((edge) => {
-      if (edge.id === edgeId) {
-        return false;
-      }
-
-      return (
-        edge.edge_type === payload.edge_type &&
-        edge.source_node_id === payload.source_node_id &&
-        edge.target_node_id === payload.target_node_id
-      );
-    });
-
-    if (duplicateEdge) {
-      setEdgeError("That connection already exists.");
-      return;
-    }
-
-    setEdgeUpdateSubmittingId(edgeId);
-    setEdgeError(null);
-
-    const { data, error } = await supabase
-      .from("edges")
-      .update(payload)
-      .eq("id", edgeId)
-      .eq("user_id", authUser.id)
-      .eq("workspace_id", selectedWorkspaceId)
-      .select("*")
-      .single();
-
-    setEdgeUpdateSubmittingId(null);
-
-    if (error || !data) {
-      setEdgeError(error?.message ?? "Unable to update connection.");
-      return;
-    }
-
-    const updatedEdge = data as Edge;
-
-    setGraphData((currentGraphData) => ({
-      ...currentGraphData,
-      edges: currentGraphData.edges.map((edge) => (edge.id === edgeId ? updatedEdge : edge)),
-    }));
-  };
-
-  const handleDeleteEdge = async (edgeId: string) => {
-    if (!supabase || !authUser?.id || !selectedWorkspaceId) {
-      setEdgeError("Workspace or auth context is unavailable.");
-      return;
-    }
-
-    setEdgeDeleteSubmittingId(edgeId);
-    setEdgeError(null);
-
-    const { error } = await supabase
-      .from("edges")
-      .delete()
-      .eq("id", edgeId)
-      .eq("user_id", authUser.id)
-      .eq("workspace_id", selectedWorkspaceId);
-
-    setEdgeDeleteSubmittingId(null);
-
-    if (error) {
-      setEdgeError(error.message);
-      return;
-    }
-
-    setGraphData((currentGraphData) => ({
-      ...currentGraphData,
-      edges: currentGraphData.edges.filter((edge) => edge.id !== edgeId),
-    }));
-    setEdgeError(null);
-    setEdgeUpdateSubmittingId(null);
-  };
-
-  const handleCommitNodePosition = (nodeId: string, position: { x: number; y: number }) => {
-    if (!authUser?.id || !selectedWorkspaceId) {
-      return;
-    }
-
-    const normalizedPosition = {
-      x: Number(position.x.toFixed(2)),
-      y: Number(position.y.toFixed(2)),
-    };
-
-    persistLocalNodePosition(authUser.id, selectedWorkspaceId, nodeId, normalizedPosition);
-
-    setGraphData((currentGraphData) => ({
-      ...currentGraphData,
-      nodes: currentGraphData.nodes.map((node) =>
-        node.id === nodeId
-          ? {
-              ...node,
-              manual_position: true,
-              position_x: normalizedPosition.x,
-              position_y: normalizedPosition.y,
-            }
-          : node,
-      ),
-    }));
-
-    if (!supabase) {
-      return;
-    }
-
-    void supabase
-      .from("nodes")
-      .update({
-        manual_position: true,
-        position_x: normalizedPosition.x,
-        position_y: normalizedPosition.y,
-      })
-      .eq("id", nodeId)
-      .eq("user_id", authUser.id)
-      .eq("workspace_id", selectedWorkspaceId);
-  };
-
-  const deleteWorkspace = async (
-    workspaceId: string,
-    options?: { fallbackWorkspaceId?: string | null },
-  ) => {
-    const res = await fetch(`/api/workspaces/${workspaceId}`, { method: "DELETE" });
-    if (!res.ok) {
-      return false;
-    }
-
-    const remainingWorkspaces = workspaces.filter((workspace) => workspace.id !== workspaceId);
-    setWorkspaces(remainingWorkspaces);
-
-    if (selectedWorkspaceId === workspaceId) {
-      if (
-        options?.fallbackWorkspaceId &&
-        remainingWorkspaces.some((workspace) => workspace.id === options.fallbackWorkspaceId)
-      ) {
-        setSelectedWorkspaceId(options.fallbackWorkspaceId);
-      } else {
-        setSelectedWorkspaceId(remainingWorkspaces[0]?.id ?? null);
-      }
-    }
-
-    setBootstrapWorkspaceId((currentWorkspaceId) =>
-      currentWorkspaceId === workspaceId ? null : currentWorkspaceId,
-    );
-
-    if (workspaceCreationFlowRef.current?.workspaceId === workspaceId) {
-      workspaceCreationFlowRef.current = null;
-    }
-
-    return true;
-  };
-
-  const handleCancelWorkspaceCreation = async () => {
-    if (
-      !bootstrapWorkspaceId ||
-      workspaceCreationFlowRef.current?.workspaceId !== bootstrapWorkspaceId
-    ) {
-      setBootstrapWorkspaceId(null);
-      return;
-    }
-
-    const previousWorkspaceId = workspaceCreationFlowRef.current.previousWorkspaceId;
-    const fallbackWorkspaceId =
-      previousWorkspaceId &&
-      workspaces.some((workspace) => workspace.id === previousWorkspaceId)
-        ? previousWorkspaceId
-        : workspaces.find((workspace) => workspace.id !== bootstrapWorkspaceId)?.id ?? null;
-
-    const deleted = await deleteWorkspace(bootstrapWorkspaceId, { fallbackWorkspaceId });
-
-    if (!deleted) {
-      setBootstrapWorkspaceId(null);
-    }
-  };
-
-  // On-load nudge → open the SELECTIVE picker pre-loaded with the nodes that
-  // look ready for a next step (capped so it never feels like a wall).
-  const handleMapOutNeedsAction = () => {
-    const candidates = needsActionNodes.slice(0, 8);
-    if (candidates.length === 0) return;
-    snoozeFreezeNudge(7);
-    steps.offerSteps(candidates);
-  };
-
-  const handleStatusChange = async (nodeId: string, status: Node["status"]) => {
-    const previousNode = graphData.nodes.find((n) => n.id === nodeId);
-    if (!previousNode) return;
-
-    // Habits recur — "completing" one logs today's completion server-side and
-    // keeps the node ACTIVE. Never run the optimistic complete-and-hide path
-    // below for a habit, or it disappears from the graph even though the DB
-    // keeps it active (#13). Fire the same PATCH (the server's habit guard
-    // records the day) and refresh so the streak/day reflects it.
-    if (previousNode.node_type === "habit" && status === "completed") {
-      // Confirm on tap; only a failed request changes the message.
-      showToast("Logged today ✓");
-      try {
-        const res = await fetch(`/api/nodes/${nodeId}/status`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "completed" }),
-        });
-        if (!res.ok) showToast("Couldn't log that — try again.");
-      } catch {
-        showToast("Couldn't log that — try again.");
-      }
-      return;
-    }
-
-    // The node, its belongs_to subtree and (archive / restore) its edges
-    // change on the SAME click; a failed request puts them back.
-    const plan = planStatusChange(graphData, previousNode, status);
-    setGraphData((prev) => applyOptimisticStatus(prev, plan, status));
-
-    const res = await fetch(`/api/nodes/${nodeId}/status`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-
-    if (!res.ok) {
-      // Revert clicked node + edges, and restore every cascaded descendant.
-      setGraphData((prev) => revertOptimisticStatus(prev, plan, previousNode.status));
-      return;
-    }
-
-    const data = (await res.json()) as StatusResponse;
-    const nowIso = new Date().toISOString();
-
-    // If the server cascaded any plan_tasks (linked-task auto-toggle), bump
-    // the planner refresh key so AssistantMode re-loads its task list.
-    if (data.updated_task_ids && data.updated_task_ids.length > 0) {
-      planner.refreshPlanner();
-    }
-
-    // Merge authoritative server state (scores etc.) onto the already-optimistic UI
-    setGraphData((prev) => mergeServerStatus(prev, plan, data, nowIso));
-  };
+  const editor = useNodeEditor({
+    supabase,
+    userId: authUser?.id ?? null,
+    workspaceId: selectedWorkspaceId,
+    selectedWorkspace,
+    workspaceName,
+    graph,
+    view,
+    panels,
+    setChatScope,
+    steps,
+    showToast,
+  });
+  const {
+    editMode,
+    createNodeDraft,
+    createNodeError,
+    createNodeSubmitting,
+    editNodeDraft,
+    editNodeError,
+    editNodeSubmitting,
+    deleteNodeConfirmOpen,
+    setDeleteNodeConfirmOpen,
+    deleteNodeSubmitting,
+    edgeRelationId,
+    setEdgeRelationId,
+    edgeTargetId,
+    setEdgeTargetId,
+    edgeError,
+    edgeSubmitting,
+    edgeDeleteSubmittingId,
+    edgeUpdateSubmittingId,
+    selectNode: handleSelectNode,
+    submitGraphSearch: handleGraphSearchSubmit,
+    openCreateNode: handleOpenCreateNode,
+    changeCreateField: handleChangeCreateNodeField,
+    closeCreateNode: handleCloseCreateNode,
+    changeEditField: handleChangeEditNodeField,
+    resetManualWeight: handleResetManualWeight,
+    closeEditNode: handleCloseEditNode,
+    toggleEditMode: handleToggleEditMode,
+    submitCreateNode: handleSubmitCreateNode,
+    submitEditNode: handleSubmitEditNode,
+    deleteNode: handleDeleteNode,
+    createEdge: handleSubmitCreateEdge,
+    updateEdge: handleUpdateEdge,
+    deleteEdge: handleDeleteEdge,
+    commitNodePosition: handleCommitNodePosition,
+  } = editor;
+  const { changeStatus: handleStatusChange, mirrorPlannerStatus } = useNodeStatus({ graph, planner, showToast });
+  const focus = useFocusSession({
+    supabase,
+    userId: authUser?.id ?? null,
+    workspaceId: selectedWorkspaceId,
+    graph,
+    planner,
+    showToast,
+  });
+  const { focusTimer, startFocus: handleStartFocus, finishFocus: handleFocusDone, checkBack: handleCheckBack } = focus;
+  const freeze = useFreezeNudge({
+    userId: authUser?.id ?? null,
+    workspaceId: selectedWorkspaceId,
+    appMode,
+    needsActionNodes,
+    steps,
+    whatNowOpen,
+    brainDumpOpen,
+  });
+  const onboarding = useOnboarding({ session, graph, proposals, panels, showToast });
 
   return (
     <div
@@ -1266,25 +352,9 @@ export function AppShell({ initialUser }: AppShellProps) {
           setSelectedWorkspaceId(workspaceId);
           setWorkspaceMenuOpen(false);
         }}
-        onCreateWorkspace={async (name) => {
-          const res = await fetch("/api/workspaces", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name }),
-          });
-          if (!res.ok) return;
-          const workspace = (await res.json()) as Workspace;
-          workspaceCreationFlowRef.current = {
-            previousWorkspaceId: selectedWorkspaceId,
-            workspaceId: workspace.id,
-          };
-          setWorkspaces((prev) => [...prev, workspace]);
-          setSelectedWorkspaceId(workspace.id);
-          setBootstrapWorkspaceId(workspace.id);
-          setWorkspaceMenuOpen(false);
-        }}
+        onCreateWorkspace={onboarding.createWorkspace}
         onDeleteWorkspace={async (workspaceId) => {
-          await deleteWorkspace(workspaceId);
+          await onboarding.deleteWorkspace(workspaceId);
         }}
         selectedWorkspaceId={selectedWorkspaceId}
         systemPanelOpen={systemPanelOpen}
@@ -1442,24 +512,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 onAskInChat={(message) => {
                   void submitMessage(message);
                 }}
-                onLinkedNodeStatusChange={(nodeId, nextStatus) => {
-                  // Mirror the planner toggle in the local graphData so the
-                  // graph view shows the matching status without a refetch.
-                  setGraphData((prev) => {
-                    const target = prev.nodes.find((n) => n.id === nodeId);
-                    // Habits recur — checking off a habit's planner task logs
-                    // TODAY's completion server-side (the /status route's habit
-                    // guard) but must NOT complete the node, or it vanishes from
-                    // the graph (#13). Leave its status untouched.
-                    if (target?.node_type === "habit") return prev;
-                    return {
-                      ...prev,
-                      nodes: prev.nodes.map((n) =>
-                        n.id === nodeId ? { ...n, status: nextStatus } : n,
-                      ),
-                    };
-                  });
-                }}
+                onLinkedNodeStatusChange={mirrorPlannerStatus}
               />
             </motion.div>
           ) : appMode === "todos" ? (
@@ -1871,13 +924,7 @@ export function AppShell({ initialUser }: AppShellProps) {
 
       {/* On-load anti-freeze nudge — proactively surface nodes ready for a
           next step, opening the SELECTIVE picker so it's never a wall. */}
-      {appMode === "graph" &&
-      freezeNudgeAllowed &&
-      !freezeNudgeDismissed &&
-      !stepSuggestionOpen &&
-      !whatNowOpen &&
-      !brainDumpOpen &&
-      needsActionNodes.length > 0 ? (
+      {freeze.showFreezeNudge ? (
         <div className="freeze-nudge" role="status">
           <span className="freeze-nudge-text">
             {needsActionNodes.length === 1
@@ -1885,16 +932,13 @@ export function AppShell({ initialUser }: AppShellProps) {
               : `${needsActionNodes.length} items look ready for a next step.`}
           </span>
           <div className="freeze-nudge-actions">
-            <button className="freeze-nudge-btn" type="button" onClick={handleMapOutNeedsAction}>
+            <button className="freeze-nudge-btn" type="button" onClick={freeze.mapOutNeedsAction}>
               Pick what to map out
             </button>
             <button
               className="freeze-nudge-dismiss"
               type="button"
-              onClick={() => {
-                setFreezeNudgeDismissed(true);
-                snoozeFreezeNudge(14);
-              }}
+              onClick={freeze.dismissFreezeNudge}
             >
               Not now
             </button>
@@ -2059,92 +1103,12 @@ export function AppShell({ initialUser }: AppShellProps) {
         ) : null}
       </AnimatePresence>
 
-      {/* User-level "about you" intake — the first-run sign-up moment. Shown
-          once, before any workspace onboarding, and gated on profileIntakeState. */}
-      {profileIntakeState === "open" && authUser && (
-        <AboutYouIntake onDone={() => setProfileIntakeState("done")} />
-      )}
-
-      {/* Workspace bootstrap wizard — only shown for an in-progress creation flow */}
-      {bootstrapWorkspaceId && bootstrapWorkspaceId === selectedWorkspaceId && (
-        <WorkspaceBootstrapWizard
-          workspaceId={selectedWorkspaceId}
-          workspaceName={workspaceName}
-          isOnboarding={!workspaceCreationFlowRef.current}
-          onComplete={(handoff) => {
-            if (workspaceCreationFlowRef.current?.workspaceId === selectedWorkspaceId) {
-              workspaceCreationFlowRef.current = null;
-            }
-            setBootstrapWorkspaceId(null);
-
-            // Mirror the first (bootstrap) dump into the chat thread, exactly
-            // like every later brain dump does, and hand its proposals to the review.
-            const { hasHandoff, extractionFailed } = proposals.takeBootstrapHandoff(handoff);
-            if (!hasHandoff && extractionFailed) {
-              showToast(
-                "Couldn't process that dump right now — your notes are saved, try a Brain Dump again.",
-              );
-            }
-            void loadWorkspaceGraphData(
-              authUser?.id ?? null,
-              selectedWorkspaceId,
-              selectedWorkspace?.name ?? null,
-            ).then((nextGraphData) => {
-              setGraphData(nextGraphData);
-              // After onboarding wizard, start the guided tour — but only
-              // if there's no review modal already grabbing focus, else
-              // the tour pops over the proposals which is jarring.
-              // Run the tour after EVERY new-workspace wizard (not just first
-              // onboarding), unless a review modal is already grabbing focus.
-              if (!hasHandoff) {
-                setShowTour(true);
-              }
-            });
-          }}
-          onSkip={() => {
-            // "Skip for now" (onboarding): dismiss for this session without
-            // writing bootstrap_completed_at, so the wizard can re-offer
-            // itself on a later still-empty load. The session ref stops it
-            // from immediately re-opening this same session.
-            if (!workspaceCreationFlowRef.current) {
-              if (selectedWorkspaceId) {
-                bootstrapSkippedThisSessionRef.current.add(selectedWorkspaceId);
-              }
-              setBootstrapWorkspaceId(null);
-              // Skipping setup must NOT dead-end onboarding — the user still
-              // gets the guided tour of the UI (previously the tour only ran
-              // after completing the wizard, so a skip left them staring at an
-              // empty graph with no walkthrough).
-              setShowTour(true);
-              return;
-            }
-            // Non-onboarding ("created a workspace by mistake") still discards.
-            void handleCancelWorkspaceCreation();
-          }}
-        />
-      )}
-
-      {/* Welcome screen — guides new users into workspace setup */}
-      {showWelcome && authUser && (
-        <WelcomeScreen
-          onGetStarted={() => {
-            markWelcomeDone(authUser.id);
-            setShowWelcome(false);
-            if (selectedWorkspaceId) {
-              setBootstrapWorkspaceId(selectedWorkspaceId);
-            }
-          }}
-          onSkip={() => {
-            markWelcomeDone(authUser.id);
-            setShowWelcome(false);
-          }}
-        />
-      )}
-
-      {/* Guided tour — walks user through UI features after onboarding */}
-      {showTour && (
-        <GuidedTour onDone={() => setShowTour(false)} />
-      )}
+      <ShellOnboarding
+        onboarding={onboarding}
+        signedIn={Boolean(authUser)}
+        workspaceId={selectedWorkspaceId}
+        workspaceName={workspaceName}
+      />
 
       {/* Focus timer pill — persistent across every mode/view, except the
           dedicated Pomodoro view which owns the full-size countdown. */}
