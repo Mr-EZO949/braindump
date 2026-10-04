@@ -17031,7 +17031,7 @@ body:has(.app-shell[data-app-mode="graph"]) {
   padding: 24px;
   text-align: center;
   border-radius: inherit;
-  background: rgba(16, 14, 13, 0.82);
+  background: rgba(16, 14, 13, 0.9);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
@@ -17056,7 +17056,7 @@ body:has(.app-shell[data-app-mode="graph"]) {
   transition: opacity 0.2s ease;
 }
 :root[data-theme="light"] .bootstrap-building {
-  background: rgba(250, 247, 242, 0.86);
+  background: rgba(250, 247, 242, 0.94);
 }
 :root[data-theme="light"] .bootstrap-building-title {
   color: #1a1613;
@@ -17069,6 +17069,329 @@ body:has(.app-shell[data-app-mode="graph"]) {
 }
 :root[data-theme="light"] .bootstrap-areas-loading-sub {
   color: rgba(26, 22, 19, 0.5);
+}
+
+/* ── Setup wizard detail (fix list #17) ──────────────────────────────────
+   A two-step rail in the header, a live "N things so far" under the dump,
+   the areas as a preview of the graph (workspace → hollow uppercase areas,
+   as on the canvas), and the build as a checklist that ticks along. */
+.bootstrap-hero-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.bootstrap-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bootstrap-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(242, 239, 233, 0.38);
+}
+
+.bootstrap-step[data-state="current"] {
+  color: rgba(242, 239, 233, 0.9);
+}
+
+.bootstrap-step[data-state="done"] {
+  color: rgba(242, 239, 233, 0.6);
+}
+
+.bootstrap-step-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+}
+
+.bootstrap-step[data-state="current"] .bootstrap-step-dot {
+  border-color: #d53a47;
+  background: #d53a47;
+  box-shadow: 0 0 0 3px rgba(213, 58, 71, 0.18);
+}
+
+.bootstrap-step[data-state="done"] .bootstrap-step-dot {
+  border-color: rgba(213, 58, 71, 0.7);
+  background: rgba(213, 58, 71, 0.7);
+}
+
+.bootstrap-step-line {
+  width: 22px;
+  height: 1px;
+  background: rgba(242, 239, 233, 0.16);
+}
+
+.bootstrap-step-line[data-done] {
+  background: rgba(213, 58, 71, 0.6);
+}
+
+.bootstrap-dump-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+.bootstrap-dump-meta .bootstrap-structure-toggle {
+  align-self: auto;
+}
+
+.bootstrap-dump-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: rgba(242, 239, 233, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
+.bootstrap-dump-count-num {
+  color: rgba(242, 239, 233, 0.85);
+  font-weight: 600;
+}
+
+.bootstrap-kbd-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 12px;
+}
+
+.bootstrap-kbd-hint kbd {
+  padding: 1px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  color: rgba(242, 239, 233, 0.6);
+}
+
+/* Step 2: the graph-to-be. */
+.bootstrap-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bootstrap-tree-root {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bootstrap-tree-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  max-width: 70%;
+  padding: 0 14px;
+  border: 1.5px solid #928b85;
+  border-radius: 999px;
+  color: rgba(242, 239, 233, 0.9);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bootstrap-tree-count {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  color: rgba(242, 239, 233, 0.4);
+}
+
+.bootstrap-tree-branches {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+}
+
+/* Each branch hangs off one vertical line from the root, like the canvas. */
+.bootstrap-tree-branch {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 4px 0 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.bootstrap-tree-branch::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(146, 139, 133, 0.45);
+}
+
+.bootstrap-tree-branch:last-child::before {
+  bottom: 50%;
+}
+
+.bootstrap-tree-branch::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 16px;
+  height: 1px;
+  background: rgba(146, 139, 133, 0.45);
+}
+
+.bootstrap-tree-ring {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid #928b85;
+  border-radius: 50%;
+}
+
+.bootstrap-tree-title {
+  min-width: 0;
+  padding: 6px 8px;
+  margin-left: -8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #f2eee8;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  outline: none;
+  transition: border-color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.bootstrap-tree-title:hover {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.bootstrap-tree-title:focus {
+  border-color: rgba(213, 58, 71, 0.4);
+  background: rgba(255, 255, 255, 0.03);
+  text-transform: none;
+  letter-spacing: -0.01em;
+}
+
+.bootstrap-tree-branch .bootstrap-area-type {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-weight: 500;
+  background: transparent;
+  padding: 0;
+  color: rgba(242, 239, 233, 0.4);
+}
+
+.bootstrap-tree + .bootstrap-area-add {
+  padding-left: 36px;
+}
+
+/* Build veil: the stages tick along. */
+.bootstrap-building-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.bootstrap-building-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: rgba(242, 239, 233, 0.38);
+  transition: color 200ms ease;
+}
+
+.bootstrap-building-step[data-state="current"] {
+  color: rgba(242, 239, 233, 0.92);
+}
+
+.bootstrap-building-step[data-state="done"] {
+  color: rgba(242, 239, 233, 0.6);
+}
+
+.bootstrap-building-step-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid rgba(242, 239, 233, 0.2);
+  border-radius: 50%;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.bootstrap-building-step[data-state="current"] .bootstrap-building-step-mark {
+  border-color: #d53a47;
+  border-top-color: transparent;
+  animation: graph-loading-spin 0.85s linear infinite;
+}
+
+.bootstrap-building-step[data-state="done"] .bootstrap-building-step-mark {
+  border-color: #d53a47;
+  background: #d53a47;
+  color: #fff;
+}
+
+@media (max-width: 640px) {
+  .bootstrap-kbd-hint {
+    display: none;
+  }
+
+  .bootstrap-hero-topline {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .bootstrap-tree-branch {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .bootstrap-tree-branch .bootstrap-area-type {
+    display: none;
+  }
+}
+
+@media (hover: none) {
+  .bootstrap-kbd-hint {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bootstrap-building-step[data-state="current"] .bootstrap-building-step-mark {
+    animation: none;
+    border-top-color: #d53a47;
+  }
 }
 
 /* ── Post-dump anti-freeze: selective checklist · directions · nudge ──── */

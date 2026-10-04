@@ -929,3 +929,170 @@
     box-shadow: 0 7px 22px rgba(67, 44, 32, 0.12);
   }
 }
+
+/* Setup wizard (fix list #17): the hero steps were dark-only — cream heading,
+   toggle, Skip and Back on the paper card read as blank. */
+:root[data-theme="light"] .bootstrap-hero-heading {
+  color: var(--light-ink);
+}
+
+:root[data-theme="light"] .bootstrap-hero-heading-em {
+  color: var(--color-accent-primary);
+}
+
+:root[data-theme="light"] .bootstrap-hero-sub,
+:root[data-theme="light"] .bootstrap-confirm-copy {
+  color: var(--color-text-secondary);
+}
+
+/* Its own focus line (the bottom rule turns red) — no box around it. */
+:root[data-theme="light"] .bootstrap-hero-textarea:focus-visible,
+:root[data-theme="light"] .bootstrap-line-input:focus-visible,
+:root[data-theme="light"] .bootstrap-tree-title:focus-visible {
+  outline: none;
+}
+
+:root[data-theme="light"] .bootstrap-hero-textarea:focus,
+:root[data-theme="light"] .bootstrap-line:focus-within {
+  border-bottom-color: rgba(213, 58, 71, 0.55);
+}
+
+:root[data-theme="light"] .bootstrap-structure-toggle,
+:root[data-theme="light"] .bootstrap-back,
+:root[data-theme="light"] .bootstrap-cancel {
+  background: #faf6f0;
+  border-color: var(--light-line);
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"] .bootstrap-structure-toggle:hover,
+:root[data-theme="light"] .bootstrap-back:hover,
+:root[data-theme="light"] .bootstrap-cancel:hover {
+  background: #f2e9e0;
+  border-color: #c9b9a9;
+  color: var(--light-ink);
+}
+
+:root[data-theme="light"] .bootstrap-structure-toggle[data-open="true"] {
+  background: #fbeae7;
+  border-color: #e6bdbb;
+  color: var(--color-accent-text);
+}
+
+:root[data-theme="light"] .bootstrap-structure-toggle-chevron {
+  background: rgba(40, 35, 31, 0.07);
+}
+
+:root[data-theme="light"] .bootstrap-structure-toggle[data-open="true"] .bootstrap-structure-toggle-chevron {
+  background: var(--color-accent-primary);
+  color: #fff;
+}
+
+:root[data-theme="light"] .bootstrap-structure-toggle-hint,
+:root[data-theme="light"] .bootstrap-line-prompt,
+:root[data-theme="light"] .bootstrap-areas-note,
+:root[data-theme="light"] .bootstrap-confirm-kicker,
+:root[data-theme="light"] .bootstrap-dump-count,
+:root[data-theme="light"] .bootstrap-tree-count,
+:root[data-theme="light"] .bootstrap-step,
+:root[data-theme="light"] .bootstrap-building-step {
+  color: var(--color-text-muted);
+}
+
+:root[data-theme="light"] .bootstrap-hero-footer {
+  border-top-color: var(--color-border-faint);
+}
+
+:root[data-theme="light"] .bootstrap-error {
+  background: #fff5f3;
+  border-color: #e7c6c3;
+  color: var(--color-accent-text);
+}
+
+:root[data-theme="light"] .bootstrap-line-add {
+  background: #fbeae7;
+  border-color: #e6bdbb;
+  color: var(--color-accent-text);
+}
+
+:root[data-theme="light"] .bootstrap-goal-chip-v2-x {
+  color: var(--color-text-muted);
+}
+
+:root[data-theme="light"] .bootstrap-goal-chip-v2-x:hover {
+  background: #fbeae7;
+  color: var(--color-accent-text);
+}
+
+:root[data-theme="light"] .bootstrap-confirm-overlay {
+  background: rgba(242, 239, 233, 0.72);
+}
+
+:root[data-theme="light"] .bootstrap-confirm-card {
+  background: var(--light-paper);
+  border-color: var(--light-line);
+  box-shadow: var(--light-shadow);
+}
+
+:root[data-theme="light"] .bootstrap-confirm-heading,
+:root[data-theme="light"] .bootstrap-step[data-state="current"],
+:root[data-theme="light"] .bootstrap-dump-count-num,
+:root[data-theme="light"] .bootstrap-tree-pill,
+:root[data-theme="light"] .bootstrap-tree-title,
+:root[data-theme="light"] .bootstrap-building-step[data-state="current"] {
+  color: var(--light-ink);
+}
+
+:root[data-theme="light"] .bootstrap-step[data-state="done"],
+:root[data-theme="light"] .bootstrap-building-step[data-state="done"] {
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"] .bootstrap-step-line,
+:root[data-theme="light"] .bootstrap-tree-branch::before,
+:root[data-theme="light"] .bootstrap-tree-branch::after {
+  background: #cdbfb1;
+}
+
+:root[data-theme="light"] .bootstrap-step-line[data-done] {
+  background: rgba(213, 58, 71, 0.6);
+}
+
+:root[data-theme="light"] .bootstrap-kbd-hint kbd {
+  background: #faf6f0;
+  border-color: var(--light-line);
+  color: var(--color-text-secondary);
+}
+
+/* Areas: hollow, warm-grey rings — the light canvas's area colour. */
+:root[data-theme="light"] .bootstrap-tree-pill,
+:root[data-theme="light"] .bootstrap-tree-ring {
+  border-color: #ae9e8d;
+}
+
+:root[data-theme="light"] .bootstrap-tree-branch {
+  border-bottom-color: var(--color-border-faint);
+}
+
+:root[data-theme="light"] .bootstrap-tree-title:hover {
+  border-color: var(--light-line);
+}
+
+:root[data-theme="light"] .bootstrap-tree-title:focus {
+  background: #fffdfa;
+  border-color: #bb6870;
+}
+
+:root[data-theme="light"] .bootstrap-tree-branch .bootstrap-area-type {
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+:root[data-theme="light"] .bootstrap-building-step[data-state="todo"] .bootstrap-building-step-mark {
+  border-color: var(--light-line);
+}
+
+:root[data-theme="light"] :is(.bootstrap-building-spinner, .bootstrap-spinner) {
+  border-color: rgba(40, 35, 31, 0.1);
+  border-top-color: #d53a47;
+}

@@ -64,6 +64,16 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// "climbing 3x a week, OS project due Nov 8, call mom" → 3. A rough, free
+// count of the things in the dump so far — the "I'm being heard" touch under
+// the textarea. Commas, new lines, semicolons and bullets separate things.
+function countDumpThings(text: string): number {
+  return text
+    .split(/[\n,;•]+|\s+-\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 3).length;
+}
+
 export function WorkspaceBootstrapWizard({
   workspaceId,
   workspaceName,
@@ -96,6 +106,10 @@ export function WorkspaceBootstrapWizard({
   const trimmedRole = role.trim();
   const trimmedDump = bootstrapDump.trim();
   const trimmedAreaDraft = areaTitleDraft.trim();
+  const dumpThings = countDumpThings(bootstrapDump);
+  const [isMac] = useState(
+    () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent),
+  );
   const canAddArea =
     Boolean(trimmedAreaDraft) &&
     areas.length < MAX_AREAS &&
@@ -161,6 +175,11 @@ export function WorkspaceBootstrapWizard({
     setAreas((prev) => prev.filter((a) => a.id !== id));
   }
 
+  // Rename in place — fixing "Uni stuff" shouldn't take remove + retype.
+  function renameArea(id: string, title: string) {
+    setAreas((prev) => prev.map((a) => (a.id === id ? { ...a, title: title.slice(0, 80) } : a)));
+  }
+
   async function handleSubmit() {
     if (submitting) return;
     setSubmitting(true);
@@ -179,7 +198,9 @@ export function WorkspaceBootstrapWizard({
           // Goals are no longer a separate concept in the wizard — the user's
           // own branches come through as areas from step 2.
           goals: [],
-          areas: areas.map((a) => ({ title: a.title, area_type: a.area_type })),
+          areas: areas
+            .filter((a) => a.title.trim())
+            .map((a) => ({ title: a.title.trim(), area_type: a.area_type })),
           bootstrap_dump: trimmedDump || null,
         }),
       });
@@ -253,9 +274,21 @@ export function WorkspaceBootstrapWizard({
         <div className="bootstrap-atmosphere" aria-hidden="true" />
 
         <header className="bootstrap-hero-header">
-          <span className="bootstrap-eyebrow">
-            {step === 0 ? (isOnboarding ? "First setup" : "New workspace") : "Step 2 · your areas"}
-          </span>
+          <div className="bootstrap-hero-topline">
+            <span className="bootstrap-eyebrow">{isOnboarding ? "First setup" : "New workspace"}</span>
+            {/* Two steps, and where you are — setup never feels open-ended. */}
+            <ol className="bootstrap-steps" aria-label={`Step ${step + 1} of 2`}>
+              <li className="bootstrap-step" data-state={step === 0 ? "current" : "done"}>
+                <span className="bootstrap-step-dot" aria-hidden="true" />
+                Dump
+              </li>
+              <li className="bootstrap-step-line" aria-hidden="true" data-done={step === 1 || undefined} />
+              <li className="bootstrap-step" data-state={step === 1 ? "current" : "todo"}>
+                <span className="bootstrap-step-dot" aria-hidden="true" />
+                Areas
+              </li>
+            </ol>
+          </div>
           {step === 0 ? (
             <>
               <h2 className="bootstrap-hero-heading">
@@ -281,7 +314,15 @@ export function WorkspaceBootstrapWizard({
           {step === 0 ? (
           <>
           <textarea
+            aria-label="Brain dump"
             className="bootstrap-hero-textarea"
+            onKeyDown={(e) => {
+              // ⌘/Ctrl+Enter = Next, so a keyboard user never reaches for the mouse.
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void goToAreas();
+              }
+            }}
             placeholder="climbing 3x a week, OS project due Nov 8, mom's birthday May 18, half-formed app idea about route logging, want to read more philosophy this year, marathon in september…"
             value={bootstrapDump}
             onChange={(e) => setBootstrapDump(e.target.value)}
@@ -294,6 +335,7 @@ export function WorkspaceBootstrapWizard({
           {/* Structure toggle — collapsed by default. Opens to reveal two
               terse inputs: focus + who you are. (Goals were removed — the
               user adds their own branches as areas on step 2 instead.) */}
+          <div className="bootstrap-dump-meta">
           <button
             type="button"
             className="bootstrap-structure-toggle"
@@ -309,6 +351,21 @@ export function WorkspaceBootstrapWizard({
               focus · who you are
             </span>
           </button>
+          <span className="bootstrap-dump-count" aria-live="polite">
+            {dumpThings > 0 ? (
+              <>
+                <span className="bootstrap-dump-count-num">{dumpThings}</span>
+                {dumpThings === 1 ? " thing so far" : " things so far"}
+              </>
+            ) : (
+              "one line or fifty — both work"
+            )}
+            <span className="bootstrap-kbd-hint">
+              <kbd>{isMac ? "⌘" : "Ctrl"}</kbd>
+              <kbd>↵</kbd> next
+            </span>
+          </span>
+          </div>
 
           <AnimatePresence initial={false}>
             {showStructure && (
@@ -359,28 +416,47 @@ export function WorkspaceBootstrapWizard({
               </div>
             ) : (
               <>
-                {areas.length === 0 ? (
-                  <p className="bootstrap-areas-note">No areas yet — add your main life-areas below.</p>
-                ) : (
-                  <div className="bootstrap-area-list">
-                    {areas.map((a) => (
-                      <div className="bootstrap-area-row" key={a.id}>
-                        <span className="bootstrap-area-type" data-type={a.area_type}>
-                          {AREA_TYPE_LABEL[a.area_type]}
-                        </span>
-                        <span className="bootstrap-area-title">{a.title}</span>
-                        <button
-                          type="button"
-                          className="bootstrap-goal-chip-v2-x"
-                          onClick={() => removeArea(a.id)}
-                          aria-label={`Remove ${a.title}`}
-                        >
-                          <CloseIcon className="h-[9px] w-[9px]" />
-                        </button>
-                      </div>
-                    ))}
+                {/* A preview of the graph you're about to get: the workspace
+                    at the root, your areas hanging off it (areas render hollow
+                    and uppercase on the canvas, so they do here too). */}
+                <div className="bootstrap-tree">
+                  <div className="bootstrap-tree-root">
+                    <span className="bootstrap-tree-pill">{workspaceName || "My workspace"}</span>
+                    <span className="bootstrap-tree-count">
+                      {areas.length} of {MAX_AREAS} areas
+                    </span>
                   </div>
-                )}
+                  {areas.length === 0 ? (
+                    <p className="bootstrap-areas-note">No areas yet — add your main life-areas below.</p>
+                  ) : (
+                    <ul className="bootstrap-tree-branches">
+                      {areas.map((a) => (
+                        <li className="bootstrap-tree-branch" key={a.id}>
+                          <span className="bootstrap-tree-ring" aria-hidden="true" />
+                          <input
+                            aria-label={`Area name: ${a.title || "empty"}`}
+                            className="bootstrap-tree-title"
+                            maxLength={80}
+                            onChange={(e) => renameArea(a.id, e.target.value)}
+                            placeholder="Area name"
+                            value={a.title}
+                          />
+                          <span className="bootstrap-area-type" data-type={a.area_type}>
+                            {AREA_TYPE_LABEL[a.area_type]}
+                          </span>
+                          <button
+                            type="button"
+                            className="bootstrap-goal-chip-v2-x"
+                            onClick={() => removeArea(a.id)}
+                            aria-label={`Remove ${a.title}`}
+                          >
+                            <CloseIcon className="h-[9px] w-[9px]" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 <div className="bootstrap-area-add">
                   <input
                     className="bootstrap-line-input"
@@ -461,7 +537,31 @@ export function WorkspaceBootstrapWizard({
           <div className="bootstrap-building" role="status" aria-live="polite">
             <span className="bootstrap-building-spinner" aria-hidden="true" />
             <p className="bootstrap-building-title">Building your graph</p>
-            <p className="bootstrap-building-msg">{BUILD_MESSAGES[buildMessageIndex]}</p>
+            {trimmedDump ? (
+              /* The stages as a list that ticks along — progress you can see,
+                 not one line that keeps changing. Timed, not tracked. */
+              <ol className="bootstrap-building-steps">
+                {BUILD_MESSAGES.slice(0, -1).map((message, index) => (
+                  <li
+                    className="bootstrap-building-step"
+                    data-state={
+                      index < buildMessageIndex ? "done" : index === buildMessageIndex ? "current" : "todo"
+                    }
+                    key={message}
+                  >
+                    <span className="bootstrap-building-step-mark" aria-hidden="true">
+                      {index < buildMessageIndex ? "✓" : ""}
+                    </span>
+                    {message}
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="bootstrap-building-msg">Setting up your areas…</p>
+            )}
+            {buildMessageIndex >= BUILD_MESSAGES.length - 1 ? (
+              <p className="bootstrap-building-msg">{BUILD_MESSAGES[BUILD_MESSAGES.length - 1]}</p>
+            ) : null}
           </div>
         )}
 
