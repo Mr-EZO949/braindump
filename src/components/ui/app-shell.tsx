@@ -9,6 +9,10 @@ import { useSession, type AuthUserState } from "@/components/app-shell/use-sessi
 import { usePlannerSync, useShellDialogs, useShellPanels, useShellToast } from "@/components/app-shell/use-shell-ui";
 import { useGraphView } from "@/components/app-shell/use-graph-view";
 import { useWorkspaceGraph } from "@/components/app-shell/use-workspace-graph";
+import { useChatNudges, useChatThread } from "@/components/app-shell/use-chat-thread";
+import { useConnectionAnalysis } from "@/components/app-shell/use-connection-analysis";
+import { useChatActions } from "@/components/app-shell/use-chat-actions";
+import { useTurnCards } from "@/components/app-shell/use-turn-cards";
 import { AssistantMode as AssistantModeView } from "@/components/assistant/assistant-mode";
 import { TodosView } from "@/components/ui/todos-view";
 import { HabitsView } from "@/components/ui/habits-view";
@@ -20,13 +24,6 @@ import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
 import { clearFocusCache, WhatNowDialog } from "@/components/ui/what-now-dialog";
 import { WeeklyReflectionModal } from "@/components/ui/weekly-reflection-modal";
 import { DumpHistoryModal } from "@/components/ui/dump-history-modal";
-import {
-  listChatSessions,
-  loadChatSession,
-  upsertChatSession,
-  deleteChatSession,
-  type ChatSessionMeta,
-} from "@/lib/chat/sessions";
 import { ProposedNodesReview } from "@/components/ui/proposed-nodes-review";
 import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
 import { MergeAlert } from "@/components/ui/merge-alert";
@@ -38,15 +35,11 @@ import { WelcomeScreen, shouldShowWelcome, markWelcomeDone } from "@/components/
 import { GuidedTour } from "@/components/ui/guided-tour";
 import { FocusTimerPill } from "@/components/ui/focus-timer-pill";
 import { useFocusTimer } from "@/hooks/use-focus-timer";
-import type { ProposedEdgeWithNodes } from "@/lib/ai/connection";
-import type { MergeCandidate } from "@/lib/ai/merge";
 import {
-  createNodeScope,
   createUserChatMessage,
   createWorkspaceScope,
 } from "@/lib/graph/chat";
 import {
-  buildChatNodeContext,
   findFirstMatchingNode,
   loadWorkspaceGraphData,
   persistLocalNodePosition,
@@ -67,18 +60,12 @@ import { ContextRail } from "@/components/panel/context-rail";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
-import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
 import {
   appliedActionFromPayload,
-  appliedUndoEndpoint,
-  createAppliedMarkerParser,
-  isCommitmentAction,
   type AppliedMarkerPayload,
 } from "@/lib/chat/applied-marker";
-import { chatHistoryForModel, dumpHistoryForEntries, mergeTurnCards } from "@/lib/chat/thread-history";
-import { readChatHistory, readChatSessionId, writeChatHistory, writeChatSessionId } from "@/lib/chat/thread-storage";
+import { dumpHistoryForEntries } from "@/lib/chat/thread-history";
 import { bootstrapSummaryText, dumpSummaryText, roadmapOfferText } from "@/lib/chat/dump-summary";
-import { createTurnMarkerParser, createUndoMarkerParser, turnCardFromApplied } from "@/lib/chat/turn-marker";
 import { readDumpResponse } from "@/lib/chat/dump-stream";
 import type { DumpProgressState } from "@/components/ui/dump-progress";
 import { classifyTaskSize } from "@/lib/ai/sizing";
@@ -93,19 +80,9 @@ import {
   newNodeRow,
 } from "@/lib/graph/node-draft";
 import {
-  buildAnalysisNotice,
-  connectionsCardFromEdges,
-  normalizeNodeIds,
-  type AINotice,
-  type AnalysisResponse,
-} from "@/lib/graph/connection-analysis";
-import {
   placeAcceptedNodes,
   stepCandidates,
-  withMergedNode,
   withoutNodes,
-  withReviewedEdges,
-  type ScoreUpdate,
 } from "@/lib/graph/graph-patches";
 import {
   applyOptimisticStatus,
@@ -115,16 +92,6 @@ import {
   type StatusResponse,
 } from "@/lib/graph/status-optimistic";
 import { isWeeklyReflectionAvailable } from "@/lib/time/weekly-unlock";
-import type {
-  AppliedAction,
-  ChatMessage,
-  ChatScope,
-  Nudge,
-  PendingAction,
-  TurnAddedStatus,
-  TurnCardData,
-  TurnSection,
-} from "@/types/chat";
 import type { CreateNodeInput, Edge, GraphData, Node, Workspace } from "@/types/graph";
 import { addDaysISO, localDateISO } from "@/lib/time/local-date";
 import { todayIsoDate } from "@/lib/planner/auto-schedule";
@@ -161,7 +128,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     useShellDialogs();
   const { toast, showToast } = useShellToast();
   const planner = usePlannerSync();
-  const { plannerRefreshKey, draftPlanRefreshKey, setDraftPlanRefreshKey, draftPlanHint, setDraftPlanHint } = planner;
+  const { plannerRefreshKey, draftPlanRefreshKey, draftPlanHint } = planner;
   const session = useSession({ initialUser, supabase, router, closeSystemPanel: () => setSystemPanelOpen(false) });
   const {
     authUser,
@@ -222,6 +189,69 @@ export function AppShell({ initialUser }: AppShellProps) {
     connectableNodes,
     selectedNodeConnections,
   } = view;
+  const thread = useChatThread({
+    userId: authUser?.id ?? null,
+    workspaceId: selectedWorkspaceId,
+    workspaceName,
+    selectedNode,
+    graphData,
+    panels,
+  });
+  const {
+    chatMessages,
+    setChatMessages,
+    chatScope,
+    setChatScope,
+    chatLoading,
+    setChatLoading,
+    pendingActionBusy,
+    railChatInput,
+    setRailChatInput,
+    chatSendingRef,
+    dumpInChatRef,
+    chatSessionId,
+    chatSessions,
+    chatHistoryOpen,
+    setChatHistoryOpen,
+  } = thread;
+  const nudges = useChatNudges(selectedWorkspaceId);
+  const connections = useConnectionAnalysis({
+    userId: authUser?.id ?? null,
+    workspaceId: selectedWorkspaceId,
+    graph,
+    thread,
+  });
+  const {
+    analyzeNodes,
+    analyzingConnections,
+    aiNotice,
+    lastAnalysisNodeIds,
+    lastAnalysisWorkspaceId,
+    mergeCandidates,
+    edgeReviewOpen,
+    proposedEdges,
+    findAllConfirmOpen,
+  } = connections;
+  const chat = useChatActions({
+    userId: authUser?.id ?? null,
+    workspaceId: selectedWorkspaceId,
+    thread,
+    graph,
+    analyzeNodes,
+    panels,
+    planner,
+  });
+  const { submitMessage, cancelChat, resolvePendingAction, retryLastMessage } = chat;
+  const turns = useTurnCards({
+    userId: authUser?.id ?? null,
+    workspaceId: selectedWorkspaceId,
+    thread,
+    graph,
+    analyzeNodes,
+    submitMessage,
+    panels,
+  });
+  const { undoAppliedAction, undoTurnSection, undoAcceptedCard, answerTurnQuestion } = turns;
 
   const [brainDumpOpen, setBrainDumpOpen] = useState(false);
   // Workspace captured at open time — stays fixed even if the user switches workspace mid-dump.
@@ -289,17 +319,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   // fetch also aborts the upstream model call server-side (the route forwards
   // req.signal to Anthropic), so a cancel doesn't keep burning tokens.
   const stepSuggestAbortRef = useRef<AbortController | null>(null);
-  const [proposedEdges, setProposedEdges] = useState<ProposedEdgeWithNodes[]>([]);
-  const [edgeReviewOpen, setEdgeReviewOpen] = useState(false);
-  const [analyzingConnections, setAnalyzingConnections] = useState(false);
-  const [mergeCandidates, setMergeCandidates] = useState<MergeCandidate[]>([]);
-  const [aiNotice, setAiNotice] = useState<AINotice | null>(null);
-  const [lastAnalysisNodeIds, setLastAnalysisNodeIds] = useState<string[]>([]);
-  const [lastAnalysisFailedNodeIds, setLastAnalysisFailedNodeIds] = useState<string[]>([]);
-  const [lastAnalysisWorkspaceId, setLastAnalysisWorkspaceId] = useState<string | null>(null);
-  const [findAllConfirmOpen, setFindAllConfirmOpen] = useState(false);
-
-  const [railChatInput, setRailChatInput] = useState("");
   // When a freshly-created task looks like a multi-session project, we hold it
   // here and show an inline "break it down?" chooser in the chat rail (the
   // sizing layer — see lib/ai/sizing.ts).
@@ -310,37 +329,6 @@ export function AppShell({ initialUser }: AppShellProps) {
   // Project ids we've already offered a roadmap for this session — so the
   // in-thread "want a roadmap?" prompt never nags about the same project.
   const roadmapPromptedRef = useRef<Set<string>>(new Set());
-
-  // Chat state
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  // The thread as of the last render — for async work that finishes later
-  // (connection analysis) and must know whether its message is still shown.
-  const chatMessagesRef = useRef<ChatMessage[]>([]);
-  useEffect(() => {
-    chatMessagesRef.current = chatMessages;
-  }, [chatMessages]);
-  const [chatScope, setChatScope] = useState<ChatScope>(createWorkspaceScope("General"));
-  const [chatLoading, setChatLoading] = useState(false);
-  const [pendingActionBusy, setPendingActionBusy] = useState(false);
-  const [nudges, setNudges] = useState<Nudge[]>([]);
-  const chatAbortRef = useRef<AbortController | null>(null);
-
-  // Chat history (persistent sessions)
-  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
-  const [chatSessions, setChatSessions] = useState<ChatSessionMeta[]>([]);
-  const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
-  const chatSessionIdRef = useRef<string | null>(null);
-  const chatSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Synchronous re-entry lock for the chat send + resume paths. State flags
-  // (chatLoading / pendingActionBusy) update async, so two events in the same
-  // tick could both pass the check and fire two API calls (#11 credit-burn).
-  const chatSendingRef = useRef(false);
-  // Whether the current brain-dump's text has already been echoed into chat.
-  // applyDumpExtraction / the onboarding handoff set it true after echoing the
-  // dump once; the clarifying-question flow reads it so it never re-echoes the
-  // same dump (#11 duplication). Category-B openers (retry, legacy <nodes>)
-  // that DON'T echo reset it to false so the clarifying flow echoes once.
-  const dumpInChatRef = useRef(false);
 
   const [editMode, setEditMode] = useState(false);
   // Focus timer — one persistent Pomodoro per workspace, backed by localStorage
@@ -406,14 +394,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   }, [appMode, freezeNudgeAllowed, freezeNudgeDismissed, stepSuggestionOpen, needsActionNodes.length]);
 
-  const defaultChatScope = useMemo(
-    () =>
-      selectedNode
-        ? createNodeScope(workspaceName, selectedNode)
-        : createWorkspaceScope(workspaceName),
-    [selectedNode, workspaceName],
-  );
-
   // A newly loaded workspace may show the anti-freeze nudge again.
   useEffect(() => {
     setFreezeNudgeDismissed(false);
@@ -473,25 +453,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     };
   }, [authUser?.id]);
 
-  // Keep chat scope in sync with node selection — when the user selects a
-  // different node (or deselects), update the scope so the assistant always
-  // has the right context.  This also covers the empty-messages case.
   useEffect(() => {
-    setChatScope(defaultChatScope);
-  }, [defaultChatScope]);
-
-  useEffect(() => {
-    // Workspace-switch reset. Keyed on selectedWorkspaceId (stable across
-    // a workspace's lifetime) rather than workspaceName — the latter
-    // briefly resolves from "General" → the actual name during bootstrap,
-    // which would re-run this effect mid-flow and wipe any in-flight chat
-    // messages (e.g. inline answers from the proposed-nodes review) that
-    // hadn't been flushed to localStorage yet.
-    setRailChatInput("");
-    setChatMessages(readChatHistory(authUser?.id ?? null, selectedWorkspaceId));
-    const storedSessionId = readChatSessionId(authUser?.id ?? null, selectedWorkspaceId);
-    setChatSessionId(storedSessionId);
-    chatSessionIdRef.current = storedSessionId;
+    // Workspace-switch reset: no sheet, draft, edit mode or connection form
+    // carries over (the thread resets in useChatThread).
     setCreateNodeDraft(null);
     setCreateNodeError(null);
     setEditNodeDraft(null);
@@ -502,167 +466,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     setEdgeTargetId("");
     setEdgeError(null);
     setEdgeUpdateSubmittingId(null);
-    setChatScope(createWorkspaceScope(workspaceName));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedWorkspaceId]);
-
-  useEffect(() => {
-    writeChatHistory(authUser?.id ?? null, selectedWorkspaceId, chatMessages);
-  }, [authUser?.id, selectedWorkspaceId, chatMessages]);
-
-  // Keep the ref + localStorage in sync so the debounced save reads the current
-  // session id and reloads restore it across page refreshes.
-  useEffect(() => {
-    chatSessionIdRef.current = chatSessionId;
-    writeChatSessionId(authUser?.id ?? null, selectedWorkspaceId, chatSessionId);
-  }, [chatSessionId, authUser?.id, selectedWorkspaceId]);
-
-  // Debounced persistence to Supabase — fires 800ms after the last change.
-  useEffect(() => {
-    if (!authUser?.id || !selectedWorkspaceId) return;
-    if (chatMessages.length === 0) return;
-
-    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
-    chatSaveTimerRef.current = setTimeout(() => {
-      // Fired → no longer pending (flushPendingChatSave keys off this ref).
-      chatSaveTimerRef.current = null;
-      void (async () => {
-        const saved = await upsertChatSession({
-          id: chatSessionIdRef.current,
-          workspaceId: selectedWorkspaceId,
-          scope: chatScope,
-          messages: chatMessages,
-        });
-        if (saved) {
-          if (!chatSessionIdRef.current) {
-            chatSessionIdRef.current = saved.id;
-            setChatSessionId(saved.id);
-          }
-          setChatSessions((prev) => {
-            const filtered = prev.filter((s) => s.id !== saved.id);
-            return [
-              { ...(prev.find((s) => s.id === saved.id) ?? {} as ChatSessionMeta), ...saved },
-              ...filtered,
-            ];
-          });
-        }
-      })();
-    }, 800);
-
-    return () => {
-      if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
-      chatSaveTimerRef.current = null;
-    };
-  }, [authUser?.id, selectedWorkspaceId, chatMessages, chatScope]);
-
-  // Persist the current thread IMMEDIATELY if a debounced save is still
-  // pending. Anything that switches threads (a dump starting a fresh thread,
-  // "New chat", loading another session) used to just cancel the timer, which
-  // silently dropped the last <800ms of messages. The session id is read
-  // synchronously here, before callers null it for the new thread.
-  const flushPendingChatSave = () => {
-    const pending = chatSaveTimerRef.current;
-    if (!pending) return;
-    clearTimeout(pending);
-    chatSaveTimerRef.current = null;
-    if (!authUser?.id || !selectedWorkspaceId || chatMessages.length === 0) return;
-    void upsertChatSession({
-      id: chatSessionIdRef.current,
-      workspaceId: selectedWorkspaceId,
-      scope: chatScope,
-      messages: chatMessages,
-    }).then((saved) => {
-      if (!saved) return;
-      setChatSessions((prev) => [
-        { ...(prev.find((s) => s.id === saved.id) ?? ({} as ChatSessionMeta)), ...saved },
-        ...prev.filter((s) => s.id !== saved.id),
-      ]);
-    });
-  };
-
-
-  // Load the list of past sessions when workspace changes. The workspace-switch
-  // effect above already sets chatSessionId from localStorage, so we only
-  // refresh the list here.
-  useEffect(() => {
-    if (!selectedWorkspaceId) {
-      setChatSessions([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const list = await listChatSessions(selectedWorkspaceId);
-      if (!cancelled) setChatSessions(list);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedWorkspaceId]);
-
-  const handleStartNewChat = () => {
-    flushPendingChatSave();
-    setChatMessages([]);
-    setChatSessionId(null);
-    chatSessionIdRef.current = null;
-    setChatScope(createWorkspaceScope(workspaceName));
-    setChatHistoryOpen(false);
-  };
-
-  const handleLoadChatSession = async (sessionId: string) => {
-    const detail = await loadChatSession(sessionId);
-    if (!detail) return;
-    flushPendingChatSave();
-    setChatSessionId(detail.id);
-    chatSessionIdRef.current = detail.id;
-    setChatMessages(detail.messages ?? []);
-    if (detail.scope_kind === "node" && detail.scope_node_id) {
-      const node = buildChatNodeContext(graphData, detail.scope_node_id);
-      if (node) {
-        setChatScope(createNodeScope(workspaceName, node));
-      } else {
-        setChatScope(createWorkspaceScope(workspaceName));
-      }
-    } else {
-      setChatScope(createWorkspaceScope(workspaceName));
-    }
-    setActiveRailTab("chat");
-    setRightPanelOpen(true);
-    setChatHistoryOpen(false);
-  };
-
-  const handleDeleteChatSession = async (sessionId: string) => {
-    const ok = await deleteChatSession(sessionId);
-    if (!ok) return;
-    setChatSessions((prev) => prev.filter((s) => s.id !== sessionId));
-    if (sessionId === chatSessionIdRef.current) {
-      setChatMessages([]);
-      setChatSessionId(null);
-      chatSessionIdRef.current = null;
-    }
-  };
-
-  useEffect(() => {
-    if (!selectedWorkspaceId) {
-      setNudges([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(
-          `/api/assistant/nudges?workspace_id=${encodeURIComponent(selectedWorkspaceId)}`,
-          { cache: "no-store" },
-        );
-        if (!res.ok) return;
-        const data = (await res.json()) as { nudges?: Nudge[] };
-        if (!cancelled) setNudges(data.nudges ?? []);
-      } catch {
-        // Nudges are optional — failing silently keeps the empty-state clean.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
@@ -682,141 +485,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     // The setters come from the shell's hooks (stable).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredGraphData.nodes, selectedNodeId]);
-
-  // Undo on an applied priority card: the server restores exactly the fields
-  // the change touched (lib/ai/tools/priority-mutations undoPriorityChanges).
-  const undoAppliedAction = async (messageId: string, slot?: "commitments") => {
-    // A brain-dump turn card holds two applied changes: the priority changes
-    // (the message's own) and the weekly commitments (slot "commitments").
-    const message = chatMessages.find((m) => m.id === messageId);
-    const action = slot === "commitments" ? message?.turn?.commitments : message?.appliedAction;
-    const workspaceId = selectedWorkspaceId;
-    if (!action || (action.status !== "applied" && action.status !== "error") || !workspaceId) return;
-
-    const setStatus = (status: AppliedAction["status"], errorMessage?: string) =>
-      setChatMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== messageId) return m;
-          if (slot === "commitments") {
-            return m.turn?.commitments
-              ? { ...m, turn: { ...m.turn, commitments: { ...m.turn.commitments, status, errorMessage } } }
-              : m;
-          }
-          return m.appliedAction ? { ...m, appliedAction: { ...m.appliedAction, status, errorMessage } } : m;
-        }),
-      );
-
-    setStatus("undoing");
-    try {
-      const res = await fetch(appliedUndoEndpoint(action), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: workspaceId, undo: action.undo, ...clientDayHints() }),
-      });
-      if (!res.ok) throw new Error("undo failed");
-      setStatus("undone");
-      if (isCommitmentAction(action)) clearFocusCache(workspaceId);
-    } catch {
-      setStatus("error", "Couldn't undo that — try again.");
-    }
-    void refreshAfterPriorityChange(
-      workspaceId,
-      action.items.map((item) => item.nodeId),
-    );
-  };
-
-  // Undo on a brain-dump turn card's "Added": removes the nodes that dump
-  // created (and teaches the auto-apply calibration, as the old toast did).
-  // The Undo on one section of a turn card (Added / Marked done / Linked).
-  // Cards from before 2026-10-02 carry no undo steps: their Added Undo goes
-  // through the proposal ledger instead.
-  const undoTurnSection = async (messageId: string, section: TurnSection) => {
-    const turn = chatMessages.find((m) => m.id === messageId)?.turn;
-    if (!turn) return;
-    const statusKey = section === "added" ? "addedStatus" : section === "done" ? "doneStatus" : "linksStatus";
-    const status = turn[statusKey] ?? "applied";
-    if (status !== "applied" && status !== "error") return;
-    const steps = turn.undo?.[section] ?? [];
-    const proposalIds = section === "added" ? turn.added.flatMap((n) => (n.proposalId ? [n.proposalId] : [])) : [];
-    if (steps.length === 0 && proposalIds.length === 0) return;
-    const setStatus = (next: TurnAddedStatus) =>
-      setChatMessages((prev) =>
-        prev.map((m) => (m.id === messageId && m.turn ? { ...m, turn: { ...m.turn, [statusKey]: next } } : m)),
-      );
-    setStatus("undoing");
-    const ok =
-      steps.length > 0 ? await undoChangeSteps(steps) : (await undoAutoApplied(proposalIds)).length > 0;
-    setStatus(ok ? "undone" : "error");
-    if (ok) await reloadGraphAfterUndo();
-  };
-
-  // The Undo on a card's accepted rows (a reorganization, a suggestion OK'd).
-  const undoAcceptedCard = async (messageId: string) => {
-    const action = chatMessages.find((m) => m.id === messageId)?.pendingAction;
-    if (!action || action.status !== "accepted" || !action.undo?.length) return;
-    if (action.undoStatus && action.undoStatus !== "error") return;
-    const setStatus = (undoStatus: TurnAddedStatus) =>
-      setChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === messageId && m.pendingAction ? { ...m, pendingAction: { ...m.pendingAction, undoStatus } } : m,
-        ),
-      );
-    setStatus("undoing");
-    const ok = await undoChangeSteps(action.undo);
-    setStatus(ok ? "undone" : "error");
-    if (ok) await reloadGraphAfterUndo();
-  };
-
-  const undoChangeSteps = async (steps: unknown[]): Promise<boolean> => {
-    if (!selectedWorkspaceId) return false;
-    try {
-      const res = await fetch("/api/changes/undo", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: selectedWorkspaceId, steps }),
-      });
-      if (!res.ok) return false;
-      const data = (await res.json()) as { undone?: number };
-      return (data.undone ?? 0) > 0;
-    } catch {
-      return false;
-    }
-  };
-
-  const reloadGraphAfterUndo = async () => {
-    if (!selectedWorkspaceId || !authUser?.id) return;
-    try {
-      setGraphData(await loadWorkspaceGraphData(authUser.id, selectedWorkspaceId, selectedWorkspace?.name ?? null));
-    } catch {
-      // The next load catches up.
-    }
-  };
-
-  // A question on a brain-dump turn card, answered: the answer is an ordinary
-  // chat message — the thread's note of the dump (turn-note.ts) tells the
-  // model what was asked, so nothing synthetic is sent.
-  const answerTurnQuestion = (messageId: string, questionIndex: number, answer: string) => {
-    const turn = chatMessages.find((m) => m.id === messageId)?.turn;
-    const question = turn?.questions[questionIndex];
-    const text = answer.trim();
-    if (!turn || !question || question.answer || !text || chatLoading || chatSendingRef.current) return;
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        m.id === messageId && m.turn
-          ? {
-              ...m,
-              turn: {
-                ...m.turn,
-                questions: m.turn.questions.map((q, i) => (i === questionIndex ? { ...q, answer: text } : q)),
-              },
-            }
-          : m,
-      ),
-    );
-    // With several questions open, say which one this answers.
-    const open = turn.questions.filter((q) => !q.answer).length;
-    void submitMessage(open > 1 ? `About "${question.text}" — ${text}` : text);
-  };
 
   // Focus's check-back card: "It's done" completes the waiting item; "Still
   // waiting" keeps it on hold and asks again in a week. Same engine as chat's
@@ -843,428 +511,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (!res.ok) throw new Error("check-back failed");
     showToast(decision === "done" ? "Done ✓" : `OK — I'll ask again next week`);
     await refreshAfterPriorityChange(workspaceId, [nodeId]);
-  };
-
-  // Streams /api/assistant/chat (or /resume) into the assistant bubble.
-  // Handles the <<BRAINDUMP_PAUSE>> marker: when seen, attaches a pending
-  // action to the bubble so the user gets an inline Accept/Reject card.
-  // Also runs the <recompute_scores/> post-
-  // processing on the marker-stripped final text.
-  const consumeAssistantStream = async (
-    res: Response,
-    assistantMsgId: string,
-    targetWorkspaceId: string | null,
-    appendToExistingBody = false,
-  ) => {
-    if (!res.ok || !res.body) {
-      throw new Error("Chat request failed");
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    const parser = createPauseMarkerParser();
-    // Chained after the pause parser: a change chat already applied
-    // (update_priorities) arrives as its own marker → applied card + Undo;
-    // a change / build_graph call's turn card (what applied now, with Undo);
-    // the Undo for the rows a card's Accept just applied.
-    const appliedParser = createAppliedMarkerParser();
-    const turnParser = createTurnMarkerParser();
-    const undoParser = createUndoMarkerParser();
-    const turnAddedIds = new Set<string>();
-    let turnChanged = false;
-    let cleanText = "";
-    let sawPause = false;
-    const appliedNodeIds = new Set<string>();
-
-    // Snapshot the pre-stream body once so appends don't accumulate on top
-    // of their own prior output. Each write then sets body = base + stream.
-    const baseBody = appendToExistingBody
-      ? (chatMessages.find((m) => m.id === assistantMsgId)?.body.trimEnd() ?? "")
-      : "";
-
-    const writeBody = (nextCleanText: string) => {
-      setChatMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantMsgId) return m;
-          if (appendToExistingBody) {
-            const joiner = baseBody.length > 0 && nextCleanText.length > 0 ? "\n\n" : "";
-            return { ...m, body: baseBody + joiner + nextCleanText };
-          }
-          return { ...m, body: nextCleanText };
-        }),
-      );
-    };
-
-    const attachPending = (action: PendingAction) => {
-      setChatMessages((prev) =>
-        prev.map((m) => (m.id === assistantMsgId ? { ...m, pendingAction: action } : m)),
-      );
-    };
-
-    const attachApplied = (applied: Omit<AppliedAction, "status">) => {
-      for (const item of applied.items) appliedNodeIds.add(item.nodeId);
-      // Busy time changed — Focus's cached list no longer knows it.
-      if (isCommitmentAction(applied) && selectedWorkspaceId) clearFocusCache(selectedWorkspaceId);
-      setChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId ? { ...m, appliedAction: { ...applied, status: "applied" } } : m,
-        ),
-      );
-    };
-
-    const attachTurn = (card: TurnCardData) => {
-      for (const node of card.added) turnAddedIds.add(node.id);
-      turnChanged = true;
-      setChatMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantMsgId) return m;
-          if (!m.turn) return { ...m, turn: card };
-          // A second change in the same reply: one card, sections joined.
-          return { ...m, turn: mergeTurnCards(m.turn, card) };
-        }),
-      );
-    };
-
-    const attachUndo = (steps: unknown[]) => {
-      setChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId && m.pendingAction ? { ...m, pendingAction: { ...m.pendingAction, undo: steps } } : m,
-        ),
-      );
-    };
-
-    const takeText = (text: string) => {
-      const afterUndo = undoParser.push(text);
-      if (afterUndo.marker) attachUndo(afterUndo.marker);
-      const afterTurn = turnParser.push(afterUndo.text);
-      if (afterTurn.marker) attachTurn(afterTurn.marker);
-      const next = appliedParser.push(afterTurn.text);
-      if (next.marker) attachApplied(next.marker);
-      if (next.text.length > 0) {
-        cleanText += next.text;
-        writeBody(cleanText);
-      }
-    };
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      const parsed = parser.push(chunk);
-      takeText(parsed.text);
-      if (parsed.pause && !sawPause) {
-        sawPause = true;
-        attachPending({ ...parsed.pause, status: "awaiting" });
-      }
-    }
-    takeText(parser.flush().text);
-    // Drain the chained parsers in order (undo → turn → applied).
-    let rest = undoParser.flush().text;
-    rest = turnParser.push(rest).text + turnParser.flush().text;
-    rest = appliedParser.push(rest).text + appliedParser.flush().text;
-    if (rest.length > 0) {
-      cleanText += rest;
-      writeBody(cleanText);
-    }
-
-    // A chat change applied at once: show it on the graph now, and look for
-    // links around the new nodes — the same follow-up a dump gets.
-    if (turnChanged && targetWorkspaceId && authUser?.id) {
-      void loadWorkspaceGraphData(authUser.id, targetWorkspaceId, selectedWorkspace?.name ?? null)
-        .then((next) => setGraphData(next))
-        .catch(() => {
-          // The next load catches up.
-        });
-      if (turnAddedIds.size > 0) void analyzeNodes([...turnAddedIds], targetWorkspaceId, assistantMsgId);
-    }
-
-    // The graph already changed — resize the nodes now and pulse the ones
-    // that moved, so the rerank is visible where the user is looking.
-    if (appliedNodeIds.size > 0 && targetWorkspaceId) {
-      void refreshAfterPriorityChange(targetWorkspaceId, [...appliedNodeIds]);
-    }
-
-    if (sawPause) return;
-
-    // <recompute_scores/> — only when we reached end_turn (no pause).
-    if (/<recompute_scores\s*\/?>/.test(cleanText) && targetWorkspaceId) {
-      cleanText = cleanText.replace(/<recompute_scores\s*\/?>/g, "").trimEnd();
-      writeBody(cleanText);
-
-      fetch("/api/nodes/scores/recompute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: targetWorkspaceId }),
-      })
-        .then(async (scoreRes) => {
-          if (scoreRes.ok) {
-            const nextGraphData = await loadWorkspaceGraphData(
-              authUser?.id ?? null,
-              targetWorkspaceId,
-              selectedWorkspace?.name ?? null,
-            );
-            setGraphData(nextGraphData);
-          }
-        })
-        .catch(() => {
-          // Score recompute failed silently
-        });
-    }
-  };
-
-  const submitMessage = async (message: string, duplicateUserMessage = true) => {
-    const trimmedMessage = message.trim();
-
-    // chatLoading is async state; chatSendingRef is a synchronous lock so two
-    // events in the same tick (e.g. Enter + click) can't fire two POSTs and
-    // duplicate the message / double-bill (#11).
-    if (trimmedMessage.length === 0 || chatLoading || chatSendingRef.current) {
-      return;
-    }
-    chatSendingRef.current = true;
-    // Everything after taking the lock runs inside try/finally, so no failure
-    // path can leave chat permanently locked.
-    const assistantMsgId = `chat-${Math.random().toString(36).slice(2, 10)}`;
-    const abortCtrl = new AbortController();
-
-    try {
-      const nextScope = chatMessages.length === 0 ? defaultChatScope : chatScope;
-      const targetWorkspaceId = selectedWorkspaceId;
-
-      setRightPanelOpen(true);
-      setActiveRailTab("chat");
-      setChatScope(nextScope);
-      setRailChatInput("");
-
-      setChatMessages((prev) => [
-        ...prev,
-        ...(duplicateUserMessage ? [createUserChatMessage(trimmedMessage)] : []),
-        {
-          id: assistantMsgId,
-          role: "assistant" as const,
-          body: "",
-          createdAt: new Date().toISOString(),
-          status: "ready" as const,
-        },
-      ]);
-
-      setChatLoading(true);
-
-      // Prior turns in this thread — a card's note stands in for its text.
-      const history = chatHistoryForModel(chatMessages, new Map(graphData.nodes.map((n) => [n.id, n.title])));
-
-      chatAbortRef.current = abortCtrl;
-
-      const res = await fetch("/api/assistant/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: trimmedMessage,
-          workspace_id: targetWorkspaceId,
-          selected_node_id: nextScope.kind === "node" ? nextScope.node.id : null,
-          history,
-        }),
-        signal: abortCtrl.signal,
-      });
-
-      await consumeAssistantStream(res, assistantMsgId, targetWorkspaceId);
-    } catch (err) {
-      if ((err as { name?: string })?.name === "AbortError") {
-        setChatMessages((prev) =>
-          prev.map((m) => {
-            if (m.id !== assistantMsgId) return m;
-            const body = m.body.trim().length > 0 ? m.body : "Stopped.";
-            return { ...m, body, status: "ready" as const };
-          }),
-        );
-      } else {
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, body: "Response unavailable. Try again.", status: "error" as const }
-              : m,
-          ),
-        );
-      }
-    } finally {
-      if (chatAbortRef.current === abortCtrl) chatAbortRef.current = null;
-      chatSendingRef.current = false;
-      setChatLoading(false);
-    }
-  };
-
-  const cancelChat = () => {
-    chatAbortRef.current?.abort();
-  };
-
-  const resolvePendingAction = async (
-    messageId: string,
-    decision: "accept" | "reject" | "choice",
-    choice?: string,
-    // A change-set card accepted in part: the rows the user kept.
-    acceptedIndexes?: number[],
-  ) => {
-    // pendingActionBusy is async state; chatSendingRef is the synchronous lock
-    // so a rapid double-click can't fire two resume POSTs (#11 credit-burn).
-    if (pendingActionBusy || chatSendingRef.current) return;
-
-    const target = chatMessages.find((m) => m.id === messageId);
-    const action = target?.pendingAction;
-    if (!action || action.status !== "awaiting") return;
-
-    const targetWorkspaceId = selectedWorkspaceId;
-    // When the server runs an accepted plan_day: a plan with no start time
-    // starts then, and the Planner lands it there.
-    const acceptedAt = Date.now();
-
-    chatSendingRef.current = true;
-    // As in submitMessage: everything after taking the lock is inside
-    // try/finally so no failure path can leave chat locked.
-    const abortCtrl = new AbortController();
-
-    try {
-      setPendingActionBusy(true);
-      setChatLoading(true);
-      setChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === messageId && m.pendingAction
-            ? {
-                ...m,
-                pendingAction: {
-                  ...m.pendingAction,
-                  // Accept shows "Applying…" until the server has done it.
-                  status: decision === "reject" ? "rejected" : decision === "accept" ? "applying" : "accepted",
-                  ...(decision === "accept" && acceptedIndexes ? { acceptedIndexes } : {}),
-                },
-              }
-            : m,
-        ),
-      );
-
-      chatAbortRef.current = abortCtrl;
-
-      const res = await fetch("/api/assistant/chat/resume", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          run_id: action.runId,
-          decision,
-          choice,
-          ...(decision === "accept" && acceptedIndexes ? { accepted_indexes: acceptedIndexes } : {}),
-        }),
-        signal: abortCtrl.signal,
-      });
-
-      const markApplied = () =>
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === messageId && m.pendingAction?.status === "applying"
-              ? { ...m, pendingAction: { ...m.pendingAction, status: "accepted" } }
-              : m,
-          ),
-        );
-      // The server applies the accepted action BEFORE it answers. When a
-      // follow-up answer streams after it (seconds of text), show the change
-      // now instead of after the last word — "mark X done" used to land on
-      // the graph only once the reply to the rest of the message was over.
-      // The graph is loaded again below: the follow-up can change more.
-      let graphLoadedAfterReply = false;
-      if (decision === "accept" && res.ok && res.headers.get("X-Resume-Model") !== "none") {
-        markApplied();
-        if (targetWorkspaceId && authUser?.id) {
-          void loadWorkspaceGraphData(authUser.id, targetWorkspaceId, selectedWorkspace?.name ?? null)
-            .then((next) => {
-              if (!graphLoadedAfterReply) setGraphData(next);
-            })
-            .catch(() => {
-              // The load after the reply catches up.
-            });
-        }
-      }
-
-      await consumeAssistantStream(res, messageId, targetWorkspaceId, true);
-      if (decision === "accept") markApplied();
-
-      // If the user accepted a graph-changing tool, refresh the graph.
-      if (decision === "accept" && targetWorkspaceId && authUser?.id) {
-        const prevNodeIds = new Set(graphData.nodes.map((n) => n.id));
-        const nextGraphData = await loadWorkspaceGraphData(
-          authUser.id,
-          targetWorkspaceId,
-          selectedWorkspace?.name ?? null,
-        );
-        graphLoadedAfterReply = true;
-        setGraphData(nextGraphData);
-
-        // Parity with the braindump pipeline: any node the assistant just
-        // created is run through connection inference so it links to the
-        // nodes that logically make sense (surfaced in the edge-review
-        // modal), instead of floating disconnected. No new nodes (e.g. an
-        // accepted complete_node / propose_edge) → analyzeNodes no-ops.
-        const newNodeIds = nextGraphData.nodes
-          .filter((n) => !prevNodeIds.has(n.id))
-          .map((n) => n.id);
-        if (newNodeIds.length > 0) {
-          void analyzeNodes(newNodeIds, targetWorkspaceId, messageId);
-        }
-
-        // If the accepted tool mutated calendar tasks, the planner's persisted
-        // tasks are now stale — bump the refresh key so AssistantMode re-fetches.
-        const PLANNER_TOOLS = ["add_task_to_calendar", "reschedule_task", "mark_task_done"];
-        if (action.toolName && PLANNER_TOOLS.includes(action.toolName)) {
-          planner.refreshPlanner();
-        }
-
-        // A chat-generated plan (plan_day) is drafted server-side but invisible
-        // until the planner loads it. Switch to the planner and pull the draft
-        // into its review UI so the user actually sees what was generated (#6).
-        if (action.toolName === "plan_day") {
-          setAppMode("assistant");
-          setDraftPlanHint({
-            startTime: action.toolInput?.start_time,
-            busy: action.toolInput?.busy,
-            window: action.toolInput?.window,
-            acceptedAt,
-          });
-          setDraftPlanRefreshKey((v) => v + 1);
-        }
-      }
-    } catch (err) {
-      if ((err as { name?: string })?.name === "AbortError") {
-        // Abort mid-resume — leave the card state as-is (already accepted/rejected)
-        // and just stop the follow-up text.
-      } else {
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === messageId && m.pendingAction
-              ? {
-                  ...m,
-                  pendingAction: {
-                    ...m.pendingAction,
-                    status: "error",
-                    errorMessage: "Could not complete the action. Try again.",
-                  },
-                }
-              : m,
-          ),
-        );
-      }
-    } finally {
-      if (chatAbortRef.current === abortCtrl) chatAbortRef.current = null;
-      chatSendingRef.current = false;
-      setPendingActionBusy(false);
-      setChatLoading(false);
-    }
-  };
-
-  const retryLastMessage = () => {
-    const lastUserMessage = [...chatMessages].reverse().find((message) => message.role === "user");
-
-    if (!lastUserMessage) {
-      return;
-    }
-
-    void submitMessage(lastUserMessage.body, false);
   };
 
   // Start a focus session on a node. Duration = the linked plan_task's
@@ -1996,116 +1242,6 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
-  // A brain dump handled as ONE turn: the dump, then ONE assistant message —
-  // the reply to its human part, and one card with everything it changed.
-  // No review modal, no toast, no separate cards (docs/unified-turn.md).
-  const applyDumpTurn = async (
-    rawText: string,
-    turn: DumpTurn,
-    data: {
-      priority_update?: (Omit<AppliedMarkerPayload, "tool_name"> & { unclear?: string[] }) | null;
-      commitment_update?: Omit<AppliedMarkerPayload, "tool_name"> | null;
-      pending_action?: {
-        run_id: string;
-        tool_use_id: string;
-        tool_name: string;
-        tool_input: Record<string, unknown>;
-      } | null;
-    },
-    workspaceId: string | null,
-    continueThread: boolean,
-  ) => {
-    const priorityAction = data.priority_update
-      ? appliedActionFromPayload({ ...data.priority_update, tool_name: "update_priorities" })
-      : null;
-    const commitmentAction = data.commitment_update
-      ? appliedActionFromPayload({ ...data.commitment_update, tool_name: "set_commitments" })
-      : null;
-    if (commitmentAction && workspaceId) clearFocusCache(workspaceId);
-    const waiting = data.pending_action ?? null;
-
-    const card: TurnCardData = {
-      ...(turnCardFromApplied(turn) ?? { added: [], addedStatus: "applied", done: [], links: [], questions: [] }),
-      ...(commitmentAction ? { commitments: { ...commitmentAction, status: "applied" as const } } : {}),
-    };
-    const changedGraph = card.added.length > 0 || card.done.length > 0 || card.links.length > 0;
-    const nothing =
-      !changedGraph && card.questions.length === 0 && !priorityAction && !commitmentAction && !waiting;
-
-    const nowIso = new Date().toISOString();
-    const turnMessageId = `chat-turn-${Math.random().toString(36).slice(2, 10)}`;
-    const turnMessage: ChatMessage = {
-      id: turnMessageId,
-      role: "assistant" as const,
-      body: turn.reply ?? (nothing ? "I went through that and found nothing to add or change." : ""),
-      createdAt: nowIso,
-      status: "ready" as const,
-      turn: card,
-      ...(priorityAction ? { appliedAction: { ...priorityAction, status: "applied" as const } } : {}),
-      ...(waiting
-        ? {
-            pendingAction: {
-              runId: waiting.run_id,
-              toolUseId: waiting.tool_use_id,
-              toolName: waiting.tool_name,
-              toolInput: waiting.tool_input,
-              status: "awaiting" as const,
-            },
-          }
-        : {}),
-    };
-    if (continueThread) {
-      setChatMessages((prev) => [...prev, turnMessage]);
-    } else {
-      // #18: a dump from the Brain Dump box starts a FRESH chat thread (the
-      // previous one is auto-saved).
-      flushPendingChatSave();
-      setChatSessionId(null);
-      chatSessionIdRef.current = null;
-      setChatScope(createWorkspaceScope(workspaceName));
-      setChatMessages([
-        {
-          id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
-          role: "user" as const,
-          body: rawText,
-          createdAt: nowIso,
-          status: "ready" as const,
-        },
-        turnMessage,
-      ]);
-    }
-    dumpInChatRef.current = true;
-    setRightPanelOpen(true);
-    setActiveRailTab("chat");
-
-    // The graph already changed on the server — show it.
-    if (workspaceId && (changedGraph || priorityAction)) {
-      if (priorityAction) {
-        await refreshAfterPriorityChange(
-          workspaceId,
-          priorityAction.items.map((item) => item.nodeId),
-        );
-      } else if (authUser?.id) {
-        try {
-          setGraphData(
-            await loadWorkspaceGraphData(authUser.id, workspaceId, selectedWorkspace?.name ?? null),
-          );
-        } catch {
-          // The card still shows the change; the next load draws the nodes.
-        }
-      }
-      if (card.added.length > 0) {
-        graph.refreshClusters();
-        // Links it notices land in this thread, not in a modal.
-        void analyzeNodes(
-          card.added.map((n) => n.id),
-          workspaceId,
-          turnMessageId,
-        );
-      }
-    }
-  };
-
   // Shared tail for every dump (button, chat, bootstrap): mirror the dump +
   // a conversational summary into chat, then open the proposed-nodes review
   // modal. One implementation so all entry points behave identically.
@@ -2139,7 +1275,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     opts?: { continueThread?: boolean },
   ) => {
     if (data.turn) {
-      await applyDumpTurn(rawText, data.turn, data, workspaceId, opts?.continueThread ?? false);
+      await turns.postTurn(rawText, data.turn, data, workspaceId, opts?.continueThread ?? false);
       return;
     }
     const nodes = data.proposed_nodes ?? [];
@@ -2184,10 +1320,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     // echo depending on timing.) The old thread is flushed first, so it's
     // genuinely saved before we cut over. Posted BEFORE auto-apply so the
     // roadmap prompt it may add lands after the summary, not wiped by it.
-    flushPendingChatSave();
-    setChatSessionId(null);
-    chatSessionIdRef.current = null;
-    setChatScope(createWorkspaceScope(workspaceName));
+    thread.startFreshThread();
     setChatMessages([
       {
         id: `chat-dump-${Math.random().toString(36).slice(2, 10)}`,
@@ -2610,7 +1743,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     };
     if (signal.aborted) return;
     const title = graphData.nodes.find((n) => n.id === nodes[0].id)?.title ?? "this";
-    await applyDumpTurn(
+    await turns.postTurn(
       data.label ?? `Steps for “${title}”`,
       {
         reply: res.ok && data.pending_action ? null : (data.error ?? "Couldn't write steps right now — try again."),
@@ -2788,10 +1921,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   // auto-saved, so it stays available in chat history.
   const startFreshDumpChatIfNeeded = () => {
     if (dumpInChatRef.current) return;
-    flushPendingChatSave();
-    setChatSessionId(null);
-    chatSessionIdRef.current = null;
-    setChatScope(createWorkspaceScope(workspaceName));
+    thread.startFreshThread();
   };
 
   const openClarifyingQuestionsInChat = (questions: string[], dumpText: string) => {
@@ -2890,170 +2020,6 @@ export function AppShell({ initialUser }: AppShellProps) {
       `My answers to your questions about my last brain dump — act on them now:\n${lines.join("\n")}`,
       false,
     );
-  };
-
-  const closeProposedEdgesReview = () => {
-    setEdgeReviewOpen(false);
-    setProposedEdges([]);
-  };
-
-  const requestCloseProposedEdgesReview = () => {
-    const confirmed = window.confirm(
-      "Close connection review? The suggested edges will stay pending review and your current selections will be lost.",
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    closeProposedEdgesReview();
-  };
-
-  // threadMessageId: the chat message whose turn added these nodes — the links
-  // go into that thread as a card instead of a modal (docs/unified-turn.md).
-  const applyAnalysisResult = (result: AnalysisResponse, threadMessageId?: string) => {
-    if (result.merge_candidates && result.merge_candidates.length > 0) {
-      setMergeCandidates(result.merge_candidates);
-    }
-    const edges = result.proposed_edges ?? [];
-    const inThread =
-      !!threadMessageId && chatMessagesRef.current.some((m) => m.id === threadMessageId);
-    if (edges.length > 0 && inThread) {
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: `chat-links-${Math.random().toString(36).slice(2, 10)}`,
-          role: "assistant" as const,
-          body: "",
-          createdAt: new Date().toISOString(),
-          status: "ready" as const,
-          connections: connectionsCardFromEdges(edges),
-        },
-      ]);
-    } else if (edges.length > 0) {
-      setProposedEdges(edges);
-      setEdgeReviewOpen(true);
-    }
-
-    // Track which nodes specifically failed so retry can target only those
-    // instead of replaying the whole batch.
-    setLastAnalysisFailedNodeIds(
-      Array.isArray(result.failed_node_ids) ? result.failed_node_ids : [],
-    );
-
-    setAiNotice(buildAnalysisNotice(result));
-  };
-
-  const analyzeNodes = async (nodeIds: string[], workspaceIdOverride?: string, threadMessageId?: string) => {
-    const workspaceId = workspaceIdOverride ?? selectedWorkspaceId;
-    const normalizedNodeIds = normalizeNodeIds(nodeIds);
-
-    if (!workspaceId || normalizedNodeIds.length === 0) {
-      return;
-    }
-
-    setLastAnalysisNodeIds(normalizedNodeIds);
-    setLastAnalysisFailedNodeIds([]);
-    setLastAnalysisWorkspaceId(workspaceId);
-    setAnalyzingConnections(true);
-    setAiNotice(null);
-
-    try {
-      const res = await fetch("/api/nodes/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ node_ids: normalizedNodeIds, workspace_id: workspaceId }),
-      });
-      const data = await res.json() as AnalysisResponse;
-
-      if (!res.ok) {
-        throw new Error(data.error ?? "Connection analysis failed.");
-      }
-
-      applyAnalysisResult(data, threadMessageId);
-    } catch (error) {
-      setAiNotice({
-        tone: "error",
-        message: error instanceof Error ? error.message : "Connection analysis failed.",
-      });
-    } finally {
-      setAnalyzingConnections(false);
-    }
-  };
-
-  const retryLastConnectionAnalysis = () => {
-    if (!lastAnalysisWorkspaceId) {
-      return;
-    }
-
-    // Prefer retrying only the nodes that actually failed. Fall back to the full
-    // batch if the API didn't report specific failures (e.g. transport-level error
-    // before the response was parsed).
-    const nodesToRetry =
-      lastAnalysisFailedNodeIds.length > 0
-        ? lastAnalysisFailedNodeIds
-        : lastAnalysisNodeIds;
-
-    if (nodesToRetry.length === 0) {
-      return;
-    }
-
-    void analyzeNodes(nodesToRetry, lastAnalysisWorkspaceId);
-  };
-
-  const handleEdgeReview = async (
-    actions: Array<{ id: string; action: "accept" | "reject" }>
-  ) => {
-    const res = await fetch("/api/proposals/edges/review", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actions }),
-    });
-    const data = await res.json() as {
-      accepted_edges?: Edge[];
-      updated_nodes?: Node[];
-    };
-
-    // Add accepted edges to graph state immediately
-    const newEdges = data.accepted_edges ?? [];
-    const updatedNodeMap = new Map((data.updated_nodes ?? []).map((node) => [node.id, node]));
-
-    if (newEdges.length > 0) {
-      // Clear manual positions so the tree layout can reorganize around new edges.
-      // The existing buildGraphLayout uses belongs_to edges for hierarchy —
-      // letting it re-run produces a clean tree.
-      if (authUser?.id && selectedWorkspaceId) {
-        const key = `brain-dump:graph-layout:${authUser.id}:${selectedWorkspaceId}`;
-        try { localStorage.removeItem(key); } catch {}
-      }
-
-      setGraphData((prev) => withReviewedEdges(prev, newEdges, updatedNodeMap));
-    } else if (updatedNodeMap.size > 0) {
-      setGraphData((prev) => withReviewedEdges(prev, newEdges, updatedNodeMap));
-    }
-
-    setEdgeReviewOpen(false);
-    setProposedEdges([]);
-  };
-
-  // A links card in the thread: the kept links are added, the rest rejected —
-  // through the same review endpoint the modal uses.
-  const resolveConnections = async (messageId: string, acceptedIds: string[] | null) => {
-    const card = chatMessages.find((m) => m.id === messageId)?.connections;
-    if (!card || (card.status !== "awaiting" && card.status !== "error")) return;
-    const kept = new Set(acceptedIds ?? []);
-    const setCard = (patch: Partial<NonNullable<ChatMessage["connections"]>>) =>
-      setChatMessages((prev) =>
-        prev.map((m) => (m.id === messageId && m.connections ? { ...m, connections: { ...m.connections, ...patch } } : m)),
-      );
-    setCard({ status: "saving" });
-    try {
-      await handleEdgeReview(
-        card.edges.map((edge) => ({ id: edge.id, action: kept.has(edge.id) ? ("accept" as const) : ("reject" as const) })),
-      );
-      setCard(acceptedIds ? { status: "added", acceptedIds: [...kept] } : { status: "dismissed" });
-    } catch {
-      setCard({ status: "error" });
-    }
   };
 
   const handleStatusChange = async (nodeId: string, status: Node["status"]) => {
@@ -3269,11 +2235,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                   void handleStatusChange(nodeId, "active");
                 }}
                 onToggleHideCompleted={() => setHideCompleted((v) => !v)}
-                onFindAllConnections={() => {
-                  if (!selectedWorkspaceId || analyzingConnections) return;
-                  if (graphData.nodes.length === 0) return;
-                  setFindAllConfirmOpen(true);
-                }}
+                onFindAllConnections={connections.requestFindAll}
                 findingConnections={analyzingConnections}
                 onToggleEditMode={handleToggleEditMode}
                 onRequestDeleteNode={() => setDeleteNodeConfirmOpen(true)}
@@ -3414,7 +2376,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           chatScope={chatScope}
           graphData={graphData}
           onChatInputChange={setRailChatInput}
-          onClearChatScope={() => setChatScope(createWorkspaceScope(workspaceName))}
+          onClearChatScope={thread.clearChatScope}
           onRetryChat={retryLastMessage}
           onResolvePendingAction={(messageId, decision, choice, acceptedIndexes) => {
             void resolvePendingAction(messageId, decision, choice, acceptedIndexes);
@@ -3431,7 +2393,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           }}
           onAnswerTurnQuestion={answerTurnQuestion}
           onResolveConnections={(messageId, acceptedIds) => {
-            void resolveConnections(messageId, acceptedIds);
+            void connections.resolveConnections(messageId, acceptedIds);
           }}
           pendingActionBusy={pendingActionBusy}
           dumpProgress={dumpProgress}
@@ -3499,12 +2461,12 @@ export function AppShell({ initialUser }: AppShellProps) {
           activeChatSessionId={chatSessionId}
           chatHistoryOpen={chatHistoryOpen}
           onToggleChatHistory={() => setChatHistoryOpen((v) => !v)}
-          onStartNewChat={handleStartNewChat}
+          onStartNewChat={thread.startNewChat}
           onSelectChatSession={(id) => {
-            void handleLoadChatSession(id);
+            void thread.openChatSession(id);
           }}
           onDeleteChatSession={(id) => {
-            void handleDeleteChatSession(id);
+            void thread.removeChatSession(id);
           }}
         />
       </div>
@@ -3616,7 +2578,7 @@ export function AppShell({ initialUser }: AppShellProps) {
             initial={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             style={{ background: "rgba(0,0,0,0.45)" }}
-            onClick={() => setFindAllConfirmOpen(false)}
+            onClick={connections.closeFindAllConfirm}
           >
             <motion.div
               className="step-suggest-modal"
@@ -3645,20 +2607,14 @@ export function AppShell({ initialUser }: AppShellProps) {
               <div className="step-suggest-actions">
                 <button
                   className="per-btn-ghost"
-                  onClick={() => setFindAllConfirmOpen(false)}
+                  onClick={connections.closeFindAllConfirm}
                   type="button"
                 >
                   Cancel
                 </button>
                 <button
                   className="per-btn-primary"
-                  onClick={() => {
-                    setFindAllConfirmOpen(false);
-                    if (!selectedWorkspaceId) return;
-                    const allNodeIds = graphData.nodes.map((n) => n.id);
-                    if (allNodeIds.length === 0) return;
-                    void analyzeNodes(allNodeIds);
-                  }}
+                  onClick={connections.confirmFindAll}
                   type="button"
                 >
                   Reanalyze all
@@ -3742,7 +2698,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               !analyzingConnections ? (
                 <button
                   className="ai-notice-action"
-                  onClick={retryLastConnectionAnalysis}
+                  onClick={connections.retryLastConnectionAnalysis}
                   type="button"
                 >
                   Find connections
@@ -3750,7 +2706,7 @@ export function AppShell({ initialUser }: AppShellProps) {
               ) : null}
               <button
                 className="ai-notice-dismiss"
-                onClick={() => setAiNotice(null)}
+                onClick={connections.dismissAiNotice}
                 type="button"
               >
                 Dismiss
@@ -3822,47 +2778,9 @@ export function AppShell({ initialUser }: AppShellProps) {
       {mergeCandidates.length > 0 && (
         <MergeAlert
           candidates={mergeCandidates}
-          onKeepBoth={(c) => {
-            // Dismiss — keep both, record in DB (best-effort)
-            void fetch(`/api/nodes/merge-suggestions/${c.suggestion_id}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ status: "dismissed" }),
-            });
-            setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
-          }}
-          onNever={(c) => {
-            // Suppress pair forever
-            void fetch(`/api/nodes/merge-suggestions/${c.suggestion_id}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ status: "never" }),
-            });
-            setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
-          }}
-          onMerge={(c) => {
-            // Safe merge: reattach edges from new → existing, archive new
-            void fetch(`/api/nodes/${c.new_node_id}/merge`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                target_node_id: c.existing_node_id,
-                suggestion_id: c.suggestion_id,
-              }),
-            })
-              .then((r) => r.json() as Promise<{
-                archived_node_id?: string;
-                recomputed_scores?: ScoreUpdate[];
-              }>)
-              .then((data) => {
-                setGraphData((prev) => withMergedNode(prev, data.archived_node_id, data.recomputed_scores));
-                setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
-              })
-              .catch(() => {
-                // If merge fails, still dismiss from UI
-                setMergeCandidates((prev) => prev.filter((x) => x.new_node_id !== c.new_node_id));
-              });
-          }}
+          onKeepBoth={connections.keepBoth}
+          onNever={connections.neverMerge}
+          onMerge={connections.mergeNodes}
         />
       )}
 
@@ -3870,8 +2788,8 @@ export function AppShell({ initialUser }: AppShellProps) {
       {edgeReviewOpen && proposedEdges.length > 0 && (
         <ProposedEdgesReview
           edges={proposedEdges}
-          onConfirm={(actions) => handleEdgeReview(actions)}
-          onDismiss={requestCloseProposedEdgesReview}
+          onConfirm={(actions) => connections.reviewEdges(actions)}
+          onDismiss={connections.requestCloseEdgeReview}
         />
       )}
 
@@ -3999,7 +2917,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 setAppMode("assistant");
               }}
               onCheckBack={handleCheckBack}
-              onGraphChanged={() => void reloadGraphAfterUndo()}
+              onGraphChanged={() => void graph.reloadGraph()}
               onSelectNudge={(nudge) => {
                 setWhatNowOpen(false);
                 // No app-mode swap — the chat fires in the right rail
