@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion, type Variants } from "framer-motion";
+import { AnimatePresence, motion, type Variants } from "framer-motion";
 import { CloseIcon, TargetIcon } from "@/components/ui/icons";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
+  DURATION_BY_TYPE,
   minutesToHHMM,
   nowMinutesFloor,
   parseHHMM,
@@ -100,6 +101,34 @@ function writeFocusCache(workspaceId: string, data: LockInData, sig: string) {
   }
 }
 
+// The brief is SQL only ($0). One fetch path for opening Focus and for the
+// warm-up below.
+async function fetchFocusBrief(workspaceId: string, signal?: AbortSignal): Promise<LockInData> {
+  const res = await fetch("/api/assistant/daily-brief", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace_id: workspaceId, ...clientDayHints() }),
+    signal,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error ?? "Could not load focus");
+  return json as LockInData;
+}
+
+/**
+ * Warm the Focus cache once the graph has loaded, so the FIRST press of Focus
+ * paints at once too (R1 #9: "it opens instantly"). Skipped when any cached
+ * brief exists: a stale one already paints instantly while Focus refreshes it.
+ */
+export function prefetchFocusBrief(workspaceId: string, graphSignature: string): void {
+  if (readFocusEnvelope(workspaceId)) return;
+  fetchFocusBrief(workspaceId)
+    .then((data) => writeFocusCache(workspaceId, data, graphSignature))
+    .catch(() => {
+      // A warm-up only; opening Focus fetches (and reports errors) itself.
+    });
+}
+
 // Mount choreography: the card settles in, then its contents stagger up just
 // behind it. Framer-variants keep the timing declarative; the parent wrapper in
 // app-shell still owns the outer fade/slide + exit, so this is purely the
@@ -132,6 +161,9 @@ const ITEM_VARIANTS: Variants = {
 type WhatNowDialogProps = {
   workspaceId: string | null;
   userId: string | null;
+  // "in Pass Statistics Midterm" under the title — where the step lives
+  // (its parent, from the graph already on screen; null hides the line).
+  contextFor?: (nodeId: string) => string | null;
   // A cheap fingerprint of the current graph (node/edge/completed counts). When
   // it changes, the Focus cache is treated as stale and re-fetched.
   graphSignature?: string;
@@ -151,9 +183,16 @@ function checkBackLine(node: TopNode): string {
   return rest ? rest.charAt(0).toUpperCase() + rest.slice(1) : "On hold — any news?";
 }
 
+// About how long a sitting on it takes — the same per-type estimate Focus
+// uses to fit work into a free window (lib/ai/planner.ts estimateMinutes).
+function estimateMinutes(nodeType: string): number {
+  return DURATION_BY_TYPE[nodeType] ?? 30;
+}
+
 export function WhatNowDialog({
   workspaceId,
   userId,
+  contextFor,
   graphSignature = "",
   onClose,
   onFocusNode,
@@ -168,6 +207,9 @@ export function WhatNowDialog({
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [checkBackBusy, setCheckBackBusy] = useState<"done" | "still_waiting" | null>(null);
   const [checkBackError, setCheckBackError] = useState<string | null>(null);
+  // Which of the ranked picks is showing. ONE next action leads; "Show me
+  // another" steps through the rest quietly, in rank order, and wraps.
+  const [pickIndex, setPickIndex] = useState(0);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -185,17 +227,7 @@ export function WhatNowDialog({
     const ac = new AbortController();
     setLoading(!cached);
 
-    fetch("/api/assistant/daily-brief", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspace_id: workspaceId, ...clientDayHints() }),
-      signal: ac.signal,
-    })
-      .then(async (res) => {
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(json?.error ?? "Could not load focus");
-        return json as LockInData;
-      })
+    fetchFocusBrief(workspaceId, ac.signal)
       .then((nextData) => {
         setData(nextData);
         writeFocusCache(workspaceId, nextData, graphSignature);
@@ -225,7 +257,9 @@ export function WhatNowDialog({
       setScheduleError("Not signed in.");
       return;
     }
-    const top = (data?.top ?? []).filter((node) => !node.check_back);
+    // The day plan takes the top three, as before (the brief returns a few
+    // more so "Show me another" has somewhere to go).
+    const top = (data?.top ?? []).filter((node) => !node.check_back).slice(0, 3);
     if (top.length === 0) return;
 
     setScheduling(true);
@@ -326,11 +360,22 @@ export function WhatNowDialog({
 
   const top = data?.top ?? [];
   const nudges = data?.nudges ?? [];
-  const backups = top.slice(1, 3);
-  const hero = top[0];
+  const heroPosition = top.length > 0 ? pickIndex % top.length : 0;
+  const hero = top[heroPosition];
   // "45 min free · Stats at 14:00" — from the clock at render, so a cached
   // brief never shows a stale countdown.
-  const timeLine = describeFreeTime(freeTimeInBusy(data?.busy_today ?? [], nowMinutesFloor()));
+  const free = freeTimeInBusy(data?.busy_today ?? [], nowMinutesFloor());
+  const timeLine = describeFreeTime(free);
+  const heroMinutes = hero ? estimateMinutes(hero.node_type) : 0;
+  const heroFits =
+    !free.current && free.next && free.freeMinutes !== null && free.freeMinutes >= 15 && heroMinutes <= free.freeMinutes;
+  const heroContext = hero ? contextFor?.(hero.id) ?? null : null;
+  const heroReason = hero?.planning_signals[0] ?? null;
+
+  const showAnother = () => {
+    setCheckBackError(null);
+    setPickIndex((index) => (top.length > 0 ? (index + 1) % top.length : 0));
+  };
 
   const settleCheckBack = async (decision: "done" | "still_waiting") => {
     if (!hero || !onCheckBack || checkBackBusy) return;
@@ -371,10 +416,16 @@ export function WhatNowDialog({
       </div>
 
       {loading ? (
-        <div className="lockin-state">Finding your next move…</div>
+        /* First open with no cache: the hero's shape, not a sentence. */
+        <div className="lockin-skeleton" aria-busy="true" aria-label="Finding your next step">
+          <span className="lockin-skeleton-line lockin-skeleton-line--eyebrow" />
+          <span className="lockin-skeleton-line lockin-skeleton-line--title" />
+          <span className="lockin-skeleton-line lockin-skeleton-line--meta" />
+          <span className="lockin-skeleton-line lockin-skeleton-line--button" />
+        </div>
       ) : error ? (
         <div className="lockin-state lockin-error">{error}</div>
-      ) : top.length === 0 ? (
+      ) : !hero ? (
         <div className="lockin-state">
           Nothing active yet — brain dump a goal or task first.
         </div>
@@ -386,86 +437,103 @@ export function WhatNowDialog({
               {timeLine}
             </motion.div>
           ) : null}
-          {hero.check_back && onCheckBack ? (
-            /* A waiting item whose day came — a decision, not a work block:
-               two taps settle it, no chat needed. */
-            <motion.div className="lockin-hero lockin-hero--checkback" variants={ITEM_VARIANTS}>
-              <span className="lockin-hero-eyebrow">
-                <span className="lockin-hero-pip lockin-hero-pip--calm" aria-hidden="true" />
-                Check back
-              </span>
-              <button
-                className="lockin-hero-title lockin-hero-title-link"
-                onClick={() => onFocusNode(hero.id)}
-                type="button"
+
+          <AnimatePresence mode="wait" initial={false}>
+            {hero.check_back && onCheckBack ? (
+              /* A waiting item whose day came — a decision, not a work block:
+                 two taps settle it, no chat needed. */
+              <motion.div
+                animate={{ opacity: 1, y: 0 }}
+                className="lockin-hero lockin-hero--checkback"
+                exit={{ opacity: 0, y: -6 }}
+                initial={{ opacity: 0, y: 6 }}
+                key={hero.id}
+                transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
               >
-                {hero.title}
-              </button>
-              <span className="lockin-hero-signal">{checkBackLine(hero)}</span>
-              <div className="lockin-checkback-actions">
+                <span className="lockin-hero-eyebrow">
+                  <span className="lockin-hero-pip lockin-hero-pip--calm" aria-hidden="true" />
+                  Check back
+                </span>
                 <button
-                  className="lockin-checkback-btn lockin-checkback-btn--primary"
-                  disabled={checkBackBusy !== null}
-                  onClick={() => void settleCheckBack("done")}
+                  className="lockin-hero-title lockin-hero-title-link"
+                  onClick={() => onFocusNode(hero.id)}
                   type="button"
                 >
-                  {checkBackBusy === "done" ? "Saving…" : "It's done ✓"}
+                  {hero.title}
                 </button>
+                <span className="lockin-hero-signal">{checkBackLine(hero)}</span>
+                <div className="lockin-checkback-actions">
+                  <button
+                    className="lockin-checkback-btn lockin-checkback-btn--primary"
+                    disabled={checkBackBusy !== null}
+                    onClick={() => void settleCheckBack("done")}
+                    type="button"
+                  >
+                    {checkBackBusy === "done" ? "Saving…" : "It's done ✓"}
+                  </button>
+                  <button
+                    className="lockin-checkback-btn"
+                    disabled={checkBackBusy !== null}
+                    onClick={() => void settleCheckBack("still_waiting")}
+                    type="button"
+                  >
+                    {checkBackBusy === "still_waiting" ? "Saving…" : "Still waiting"}
+                  </button>
+                </div>
+                {checkBackError ? <span className="lockin-foot-note lockin-error">{checkBackError}</span> : null}
+              </motion.div>
+            ) : (
+              /* The ONE next action: what it is, where it lives, why now, how
+                 big — and one button. The button opens it and sets up the
+                 timer PAUSED (R1 #4); nothing here breaks it down or runs AI. */
+              <motion.div
+                animate={{ opacity: 1, y: 0 }}
+                className="lockin-hero lockin-hero--next"
+                exit={{ opacity: 0, y: -6 }}
+                initial={{ opacity: 0, y: 6 }}
+                key={hero.id}
+                transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <span className="lockin-hero-eyebrow">
+                  <span className="lockin-hero-pip" aria-hidden="true" />
+                  {heroPosition === 0 ? "Your next step" : "Or this one"}
+                </span>
+                <span className="lockin-hero-title">{hero.title}</span>
+                {heroContext ? <span className="lockin-hero-context">in {heroContext}</span> : null}
+                <span className="lockin-hero-facts">
+                  {heroReason ? <span className="lockin-fact lockin-fact--why">{heroReason}</span> : null}
+                  <span className="lockin-fact">about {heroMinutes} min</span>
+                  {heroFits && free.next ? (
+                    <span className="lockin-fact lockin-fact--fit">fits before {free.next.title}</span>
+                  ) : null}
+                </span>
                 <button
-                  className="lockin-checkback-btn"
-                  disabled={checkBackBusy !== null}
-                  onClick={() => void settleCheckBack("still_waiting")}
+                  autoFocus
+                  className="lockin-start"
+                  onClick={() => onFocusNode(hero.id)}
                   type="button"
                 >
-                  {checkBackBusy === "still_waiting" ? "Saving…" : "Still waiting"}
+                  Work on this
+                  <span className="lockin-hero-go-arrow" aria-hidden="true">
+                    →
+                  </span>
                 </button>
-              </div>
-              {checkBackError ? <span className="lockin-foot-note lockin-error">{checkBackError}</span> : null}
-            </motion.div>
-          ) : (
-            /* The one thing — pick #1, the obvious move. Whole card is the action. */
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {top.length > 1 ? (
             <motion.button
-              className="lockin-hero"
-              onClick={() => onFocusNode(hero.id)}
+              className="lockin-another"
+              onClick={showAnother}
               type="button"
               variants={ITEM_VARIANTS}
             >
-              <span className="lockin-hero-eyebrow">
-                <span className="lockin-hero-pip" aria-hidden="true" />
-                Start here
-              </span>
-              <span className="lockin-hero-title">{hero.title}</span>
-              {hero.planning_signals[0] ? (
-                <span className="lockin-hero-signal">{hero.planning_signals[0]}</span>
-              ) : null}
-              <span className="lockin-hero-go">
-                Focus this
-                <span className="lockin-hero-go-arrow" aria-hidden="true">
-                  →
-                </span>
+              Not this one — show me another
+              <span className="lockin-another-count" aria-label={`${heroPosition + 1} of ${top.length}`}>
+                {heroPosition + 1}/{top.length}
               </span>
             </motion.button>
-          )}
-
-          {/* Quiet backups — only if there are any */}
-          {backups.length > 0 ? (
-            <motion.div className="lockin-backups" variants={ITEM_VARIANTS}>
-              <span className="lockin-or">or</span>
-              {backups.map((node, i) => (
-                <button
-                  className="lockin-backup"
-                  key={node.id}
-                  onClick={() => onFocusNode(node.id)}
-                  type="button"
-                >
-                  <span className="lockin-backup-index" aria-hidden="true">
-                    {i + 2}
-                  </span>
-                  <span className="lockin-backup-title">{node.title}</span>
-                  {node.check_back ? <span className="lockin-backup-tag">check back</span> : null}
-                </button>
-              ))}
-            </motion.div>
           ) : null}
 
           {/* Quiet footer — plan the day, and at most one nudge */}

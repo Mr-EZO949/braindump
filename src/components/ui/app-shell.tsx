@@ -13,7 +13,7 @@ import { PomodoroView } from "@/components/ui/pomodoro-view";
 import { SectionBackdrop } from "@/components/ui/section-backdrop";
 import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
-import { clearFocusCache, WhatNowDialog } from "@/components/ui/what-now-dialog";
+import { clearFocusCache, prefetchFocusBrief, WhatNowDialog } from "@/components/ui/what-now-dialog";
 import { WeeklyReflectionModal } from "@/components/ui/weekly-reflection-modal";
 import { DumpHistoryModal } from "@/components/ui/dump-history-modal";
 import {
@@ -656,6 +656,19 @@ export function AppShell({ initialUser }: AppShellProps) {
     () => hashGraphContent(graphData.nodes, graphData.edges),
     [graphData.nodes, graphData.edges],
   );
+
+  // Warm the Focus brief (SQL only, $0) a moment after a workspace's graph
+  // loads, so even the first press of Focus paints at once (R1 #9). Once a
+  // brief is cached, Focus shows it instantly and refreshes behind it.
+  useEffect(() => {
+    if (graphLoading || !selectedWorkspaceId || graphData.nodes.length === 0) return;
+    const workspaceId = selectedWorkspaceId;
+    const signature = graphContentSignature;
+    const timer = window.setTimeout(() => prefetchFocusBrief(workspaceId, signature), 1200);
+    return () => window.clearTimeout(timer);
+    // Once per workspace load — later graph edits refresh Focus when it opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphLoading, selectedWorkspaceId]);
 
   // Actionable-but-empty nodes (goal/project/class with no next step) — drives
   // the on-load anti-freeze nudge so the user sees what's ready to map out.
@@ -5044,6 +5057,19 @@ export function AppShell({ initialUser }: AppShellProps) {
               workspaceId={selectedWorkspaceId}
               userId={authUser?.id ?? null}
               graphSignature={graphContentSignature}
+              contextFor={(nodeId) => {
+                // The step's parent, unless that's the workspace root ("in
+                // Life" says nothing).
+                const parentEdge = graphData.edges.find(
+                  (edge) =>
+                    edge.edge_type === "belongs_to" &&
+                    edge.source_node_id === nodeId &&
+                    isLiveEdge(edge),
+                );
+                if (!parentEdge) return null;
+                if (parentEdge.target_node_id === selectedWorkspace?.bootstrap_root_node_id) return null;
+                return graphData.nodes.find((node) => node.id === parentEdge.target_node_id)?.title ?? null;
+              }}
               onClose={() => setWhatNowOpen(false)}
               onFocusNode={(nodeId) => {
                 setAppMode("graph");

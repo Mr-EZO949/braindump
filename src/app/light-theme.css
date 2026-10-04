@@ -833,7 +833,6 @@
 
 :root[data-theme="light"] .graph-create-close,
 :root[data-theme="light"] .weekly-close,
-:root[data-theme="light"] .lockin-backup,
 :root[data-theme="light"] .weekly-step-back,
 :root[data-theme="light"] .weekly-kpi {
   background: #f8f3ed;
@@ -853,11 +852,43 @@
   box-shadow: 0 14px 28px rgba(213, 58, 71, 0.12);
 }
 
-:root[data-theme="light"] .lockin-backup:hover,
 :root[data-theme="light"] .weekly-step-back:hover:not(:disabled) {
   background: #f1e8dd;
   border-color: #cbb9a8;
   color: var(--light-ink);
+}
+
+:root[data-theme="light"] .lockin-hero.lockin-hero--next,
+:root[data-theme="light"] .lockin-hero.lockin-hero--next:hover {
+  background: linear-gradient(135deg, #fbeae7, #fff7f3 63%, #fffdfa);
+  border-color: #e6bdbb;
+  box-shadow: 0 10px 25px rgba(213, 58, 71, 0.08);
+}
+
+:root[data-theme="light"] .lockin-fact {
+  background: #faf6f0;
+  border-color: var(--light-line);
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme="light"] .lockin-fact--why {
+  background: #fbeae7;
+  border-color: #e6bdbb;
+  color: var(--color-accent-text);
+}
+
+:root[data-theme="light"] .lockin-start {
+  box-shadow: 0 8px 20px rgba(213, 58, 71, 0.2);
+}
+
+:root[data-theme="light"] .lockin-skeleton {
+  background: #faf6f0;
+  border-color: var(--light-line);
+}
+
+:root[data-theme="light"] .lockin-skeleton-line {
+  background: linear-gradient(90deg, #efe7dd, #e4d9cc, #efe7dd);
+  background-size: 200% 100%;
 }
 
 :root[data-theme="light"] .lockin-close:hover,

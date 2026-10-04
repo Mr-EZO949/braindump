@@ -442,25 +442,6 @@
   color: rgba(180, 36, 50, 0.95);
 }
 
-:root[data-theme="light"] .lockin-backup {
-  background: rgba(20, 20, 24, 0.018);
-  border-color: rgba(20, 20, 24, 0.06);
-}
-
-:root[data-theme="light"] .lockin-backup-index {
-  background: rgba(20, 20, 24, 0.05);
-}
-
-:root[data-theme="light"] .lockin-backup:hover {
-  background: rgba(20, 20, 24, 0.04);
-  border-color: rgba(20, 20, 24, 0.1);
-}
-
-:root[data-theme="light"] .lockin-backup:hover .lockin-backup-index {
-  background: rgba(213, 58, 71, 0.16);
-  color: rgba(180, 36, 50, 0.95);
-}
-
 :root[data-theme="light"] .lockin-state {
   color: var(--color-text-muted);
 }
@@ -7329,74 +7310,203 @@ body:has(.graph-create-overlay-open) .freeze-nudge {
   transform: translateX(3px);
 }
 
-/* Quiet backups — the other two, de-emphasized under an "or" */
-.lockin-backups {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+/* Focus redesign (fix list #17): ONE next action — what, where, why, how
+   big — and one button. The card itself isn't a button any more. */
+.lockin-hero.lockin-hero--next,
+.lockin-hero.lockin-hero--next:hover {
+  gap: 8px;
+  cursor: default;
+  border-color: rgba(213, 58, 71, 0.28);
+  background:
+    radial-gradient(
+      120% 90% at 0% 0%,
+      rgba(213, 58, 71, 0.14),
+      rgba(213, 58, 71, 0) 60%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(213, 58, 71, 0.1),
+      rgba(213, 58, 71, 0.02)
+    );
+  box-shadow:
+    0 10px 30px rgba(213, 58, 71, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.lockin-or {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+.lockin-hero.lockin-hero--next:active {
+  transform: none;
+}
+
+.lockin-hero-context {
+  margin-top: -3px;
+  font-size: 12.5px;
+  letter-spacing: -0.005em;
   color: var(--color-text-muted);
-  padding: 0 2px 6px;
+  overflow-wrap: anywhere;
 }
 
-.lockin-backup {
+.lockin-hero-facts {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.lockin-fact {
+  display: inline-flex;
   align-items: center;
-  gap: 11px;
-  width: 100%;
-  text-align: left;
-  padding: 11px 12px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.018);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  min-height: 24px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.035);
   color: var(--color-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+}
+
+.lockin-fact--why {
+  border-color: rgba(213, 58, 71, 0.22);
+  background: rgba(213, 58, 71, 0.1);
+  color: rgba(238, 150, 159, 0.98);
+}
+
+.lockin-start {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: 12px;
+  border: 1px solid var(--color-accent-primary);
+  background: var(--color-accent-primary);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  box-shadow: 0 8px 22px rgba(213, 58, 71, 0.26);
   cursor: pointer;
   transition:
     background var(--motion-fast),
-    border-color var(--motion-fast),
-    color var(--motion-fast);
+    box-shadow var(--motion-fast),
+    transform var(--motion-fast);
 }
 
-.lockin-backup-index {
-  flex: none;
-  display: flex;
+.lockin-start:hover {
+  background: var(--color-accent-primary-hover);
+  box-shadow: 0 10px 26px rgba(213, 58, 71, 0.34);
+}
+
+.lockin-start:hover .lockin-hero-go-arrow {
+  transform: translateX(3px);
+}
+
+.lockin-start:active {
+  transform: scale(0.98);
+}
+
+.lockin-start:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgba(213, 58, 71, 0.32),
+    0 8px 22px rgba(213, 58, 71, 0.26);
+}
+
+/* "Not this one — show me another": quiet, under the card. */
+.lockin-another {
+  align-self: flex-start;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 19px;
-  height: 19px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
+  gap: 10px;
+  margin-top: -6px;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
   color: var(--color-text-muted);
+  font-size: 12.5px;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition: color var(--motion-fast);
+}
+
+.lockin-another:hover {
+  color: var(--color-text-secondary);
+}
+
+.lockin-another-count {
+  padding: 1px 7px;
+  border: 1px solid var(--color-border-faint);
+  border-radius: 999px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 10.5px;
-  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.lockin-backup-title {
-  flex: 1;
-  min-width: 0;
-  font-size: 13.5px;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* First open with nothing cached: the hero's shape while the brief loads. */
+.lockin-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
 }
 
-.lockin-backup:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.09);
-  color: var(--color-text-primary);
+.lockin-skeleton-line {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.09),
+    rgba(255, 255, 255, 0.04)
+  );
+  background-size: 200% 100%;
+  animation: lockin-shimmer 1.3s linear infinite;
 }
 
-.lockin-backup:hover .lockin-backup-index {
-  background: rgba(213, 58, 71, 0.22);
-  color: rgba(238, 150, 159, 0.98);
+.lockin-skeleton-line--eyebrow {
+  width: 92px;
+  height: 9px;
+}
+
+.lockin-skeleton-line--title {
+  width: 78%;
+  height: 22px;
+}
+
+.lockin-skeleton-line--meta {
+  width: 46%;
+}
+
+.lockin-skeleton-line--button {
+  width: 136px;
+  height: 40px;
+  margin-top: 8px;
+  border-radius: 12px;
+}
+
+@keyframes lockin-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .lockin-start {
+    align-self: stretch;
+    justify-content: center;
+    min-height: 46px;
+  }
 }
 
 /* Quiet footer — plan the day + at most one nudge, both low-key */
@@ -7526,7 +7636,8 @@ body:has(.graph-create-overlay-open) .freeze-nudge {
 /* Honor reduced-motion: kill the pip pulse and arrow nudge. The framer mount
    variants stay subtle but the looping pulse is the part worth disabling. */
 @media (prefers-reduced-motion: reduce) {
-  .lockin-hero-pip {
+  .lockin-hero-pip,
+  .lockin-skeleton-line {
     animation: none;
   }
   .lockin-hero:hover .lockin-hero-go-arrow {
@@ -17773,18 +17884,6 @@ button.change-row:disabled {
   cursor: default;
 }
 
-.lockin-backup-tag {
-  flex: none;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid rgba(210, 190, 110, 0.2);
-  color: rgba(210, 190, 110, 0.9);
-  font-size: 9.5px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 :root[data-theme="light"] .lockin-hero.lockin-hero--checkback,
 :root[data-theme="light"] .lockin-hero.lockin-hero--checkback:hover {
   background:
@@ -17794,8 +17893,7 @@ button.change-row:disabled {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
-:root[data-theme="light"] .lockin-hero--checkback .lockin-hero-eyebrow,
-:root[data-theme="light"] .lockin-backup-tag {
+:root[data-theme="light"] .lockin-hero--checkback .lockin-hero-eyebrow {
   color: rgba(138, 108, 20, 0.95);
 }
 

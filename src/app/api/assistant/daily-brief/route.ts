@@ -1,6 +1,6 @@
 // POST /api/assistant/daily-brief
 // One-shot endpoint that returns everything the news-style daily brief needs:
-//   - top: top-3 priority nodes (same as /top-now)
+//   - top: the top 5 priority nodes (Focus shows one at a time)
 //   - nudges: proactive prompts (same shape as /nudges)
 //   - yesterday_wins: nodes completed in the last 24h
 //   - headline: always null (the Focus redesign dropped it; kept for shape)
@@ -20,6 +20,8 @@ const RECENT_COMPLETION_WINDOW_HOURS = 24;
 const QUIET_GOAL_DAYS = 14;
 const MAX_NUDGES = 4;
 const MAX_YESTERDAY_WINS = 5;
+// Ranked picks sent to Focus: one leads, the rest wait behind "Show me another".
+const FOCUS_PICKS = 5;
 
 
 function dateNDaysAgoISO(days: number, now = new Date()): string {
@@ -128,7 +130,8 @@ export async function POST(req: NextRequest) {
   }
 
   // ── top focus ────────────────────────────────────────────────────────────
-  const top = plannerResult.candidates.slice(0, 3).map((c) => ({
+  // Focus leads with the first; "Show me another" steps through the rest.
+  const top = plannerResult.candidates.slice(0, FOCUS_PICKS).map((c) => ({
     id: c.id,
     title: c.title,
     summary: c.summary,
