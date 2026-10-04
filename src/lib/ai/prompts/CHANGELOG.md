@@ -1,7 +1,7 @@
 # Prompt Version Changelog
 
 All prompt changes are tracked here. Each entry records the version, what changed, and why.
-Run `POST /api/eval/run` before and after changes to verify regression.
+Run the eval before and after a change: `npx tsx --env-file=.env.local scripts/eval-run.ts` (synthetic fixtures in `src/lib/ai/eval/`, ~$0.2 a run; `--only <ids>` for one fixture, `--replay <report.json>` to re-check a saved run for free).
 
 ---
 
