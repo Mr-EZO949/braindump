@@ -346,7 +346,9 @@ export function SystemPanel({
       <div className="flex h-full flex-col overflow-y-auto">
         {/* Header with logo */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4">
-          <Image src="/logo_withtext.svg" alt="BrainDump" width={180} height={36} style={{ height: 32, width: "auto" }} />
+          {/* White wordmark on dark, ink wordmark on light (globals.css .sp-logo--*). */}
+          <Image className="sp-logo sp-logo--dark" src="/logo_withtext.svg" alt="BrainDump" width={180} height={36} style={{ height: 32, width: "auto" }} />
+          <Image className="sp-logo sp-logo--light" src="/logo_withtext_light.svg" alt="BrainDump" width={180} height={36} style={{ height: 32, width: "auto" }} />
           <button
             aria-label="Close"
             className="sp-close"

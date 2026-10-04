@@ -132,6 +132,19 @@
     8px 0 28px rgba(20, 20, 24, 0.05);
 }
 
+/* Account panel logo: white wordmark on dark, ink wordmark on light. */
+.sp-logo--light {
+  display: none;
+}
+
+:root[data-theme="light"] .sp-logo--dark {
+  display: none;
+}
+
+:root[data-theme="light"] .sp-logo--light {
+  display: block;
+}
+
 :root[data-theme="light"] .sp-close:hover {
   background: rgba(0, 0, 0, 0.05);
   color: var(--color-text-primary);
@@ -18428,6 +18441,13 @@ button.change-row:disabled {
   body:has(.context-rail-responsive[data-open="true"]) .freeze-nudge,
   body:has(.graph-create-overlay-open) .freeze-nudge,
   body:has(.system-panel[aria-hidden="false"]) .freeze-nudge {
+    display: none;
+  }
+
+  /* The graph's reload / tidy / edit buttons share the panel's z-level and
+     come later in the DOM, so they sat on the full-width account panel's
+     close button. */
+  body:has(.system-panel[aria-hidden="false"]) .graph-toolbar-responsive {
     display: none;
   }
 
