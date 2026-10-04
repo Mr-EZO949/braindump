@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
       clientTzOffsetMinutes: client_tz_offset,
       // A short gap before a class → what fits it leads (docs/commitments.md).
       fitToFreeTime: true,
-    }).catch(() => ({ candidates: [], busy_today: [] })),
+    }).catch(() => ({ candidates: [], busy_today: [], stale_check: [] })),
 
     supabase
       .from("lifecycle_events")
@@ -217,5 +217,8 @@ export async function POST(req: NextRequest) {
     // Stats at 14:00" line from it on the clock, and "Plan my day" skips it
     // (docs/commitments.md).
     busy_today: plannerResult.busy_today,
+    // "Does this still matter?" — work planned and skipped on 2+ days with no
+    // deadline; it's out of the picks above until answered (lib/planner/skips.ts).
+    stale_check: plannerResult.stale_check,
   });
 }

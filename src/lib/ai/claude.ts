@@ -417,6 +417,8 @@ export class ClaudeProvider {
       candidate_nodes: input.candidate_nodes,
       workspace_context: input.workspace_context,
       busy_lines: input.busy?.lines,
+      time_blocks: input.time_blocks,
+      requests: input.requests,
       session_span:
         typeof input.session_start_minute === "number"
           ? describeSessionSpan(input.session_start_minute, totalMinutes)
@@ -468,7 +470,10 @@ export class ClaudeProvider {
       try {
         const parsed = JSON.parse(extractJson(text));
         // Packed into the free minutes; the Planner lays them around the busy time on Accept.
-        output = validatePlanOutput(parsed, planMinutes, input.busy?.titles);
+        output = validatePlanOutput(parsed, planMinutes, input.busy?.titles, {
+          timeBlocks: input.time_blocks,
+          requests: input.requests,
+        });
         break;
       } catch (error) {
         lastError = error;

@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
     client_tz_offset,
     session_date,
     session_start,
+    include,
   } = body as {
     workspace_id: string;
     planning_window?: string;
@@ -96,6 +97,8 @@ export async function POST(req: NextRequest) {
     // commitments inside it are planned around (docs/commitments.md).
     session_date?: string;
     session_start?: string;
+    // What to fit in, the user's words: "3h of Italian, 2h of math".
+    include?: string;
   };
 
   if (!workspace_id || typeof workspace_id !== "string") {
@@ -157,11 +160,12 @@ export async function POST(req: NextRequest) {
       supabase,
       clientToday: client_today,
       clientTzOffsetMinutes: client_tz_offset,
+      include: typeof include === "string" ? include.slice(0, 400) : null,
     }),
     buildWorkspaceProfileContext({ workspaceId: workspace_id, userId: user.id, supabase }),
   ]);
 
-  const { candidates, manual_items, preference_hints, commitments } = candidateBundle;
+  const { candidates, manual_items, preference_hints, commitments, time_blocks, requests } = candidateBundle;
 
   // A day runs from the session start to 23:00 (lib/planner/plan-window.ts).
   // A class inside the session: the planner fills only the free stretches.
@@ -172,7 +176,7 @@ export async function POST(req: NextRequest) {
       ? sessionBusyNote(busyOn(commitments, session_date), sessionStartMinute, sessionMinutes)
       : null;
 
-  if (candidates.length === 0) {
+  if (candidates.length === 0 && time_blocks.length === 0) {
     return NextResponse.json(
       { error: "No active work items found. Add some tasks or goals first." },
       { status: 422 },
@@ -224,6 +228,8 @@ export async function POST(req: NextRequest) {
       })),
       workspace_context: workspaceContext || undefined,
       busy,
+      time_blocks,
+      requests,
     });
   } catch (err) {
     const normalized = normalizeAIError(err, "Planning failed");

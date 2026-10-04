@@ -13,6 +13,23 @@ import {
 } from "@/lib/graph/priority-signals";
 import { DURATION_BY_TYPE } from "@/lib/planner/auto-schedule";
 import {
+  matchRequest,
+  parsePlanRequests,
+  formatRequestMinutes,
+} from "@/lib/planner/plan-requests";
+import {
+  SKIP_WINDOW_DAYS,
+  STALE_CHECK_ENTITY,
+  answeredAtByNode,
+  calendarEntryCounts,
+  formatSkipDays,
+  isStale,
+  localDateOf,
+  skipDaysByNode,
+  type StaleItem,
+  type StaleMarker,
+} from "@/lib/planner/skips";
+import {
   busyOn,
   freeTimeInBusy,
   loadActiveCommitments,
@@ -38,6 +55,17 @@ const RECENT_PLAN_WINDOW_DAYS = 7;
 const DUE_SOON_WINDOW_DAYS = 7;
 const PLANNER_FEEDBACK_WINDOW_DAYS = 30;
 const TITLE_PREVIEW_LIMIT = 2;
+// Time blocks (owner, 2026-10-04: "AI should be able to place 3h for Italian
+// crash course without necessarily putting a certain task"): a class, goal,
+// project or big task can get a block of time on itself in a PLAN. Focus stays
+// one leaf step. A goal / project / big task with no open steps is already a
+// plain candidate; a class always needs a block to be planned at all.
+const TIME_BLOCK_TYPES: ReadonlySet<NodeType> = new Set(["class", "goal", "project", "big_task"]);
+const MAX_TIME_BLOCKS = 6;
+// "Start with" — the next open steps inside a block, in the user's order.
+const START_WITH_STEPS = 2;
+// A node the user named in the plan request leads the list it belongs to.
+const REQUESTED_PRIORITY = 10_000;
 
 // ─── Planner priority weights ────────────────────────────────────────────
 //
@@ -186,6 +214,31 @@ export interface PlannerCandidate {
   check_back?: boolean;
 }
 
+/** A bigger thing a plan may give a block of time on itself (see TIME_BLOCK_TYPES). */
+export interface TimeBlockCandidate {
+  id: string;
+  title: string;
+  summary: string | null;
+  node_type: NodeType;
+  current_importance_score: number | null;
+  planning_signals: string[];
+  /** Open steps inside it, any depth. */
+  open_steps: number;
+  /** The next 1–2 open steps, in the user's order — where the block starts. */
+  start_with: string[];
+  /** Every open node inside it: a block on this one covers them (no double-booking). */
+  step_ids: string[];
+}
+
+/** What the user asked the plan to include ("3h of Italian"), matched to a node when its words name one. */
+export interface PlanRequestItem {
+  text: string;
+  minutes: number | null;
+  node_id: string | null;
+  title: string | null;
+  node_type: NodeType | null;
+}
+
 export interface PlannerManualItem {
   id: string;
   title: string;
@@ -202,6 +255,12 @@ export interface PlannerCandidateBundle {
   commitments: Commitment[];
   /** Today's busy intervals from them, earliest first. */
   busy_today: BusyInterval[];
+  /** Plans only: bigger things that can get a block of time. Focus ignores these. */
+  time_blocks: TimeBlockCandidate[];
+  /** Skipped on 2+ days with no deadline — held out until the user answers. */
+  stale_check: StaleItem[];
+  /** The plan request's items (`include`), matched to nodes where possible. */
+  requests: PlanRequestItem[];
 }
 
 // Focus fits its head to a short free window: with 15–90 min before the next
@@ -543,6 +602,8 @@ export async function buildPlannerCandidates(params: {
   clientTzOffsetMinutes?: number;
   /** Focus only: pull what fits before the next fixed commitment to the top. */
   fitToFreeTime?: boolean;
+  /** Plans only: what the user asked to fit in, their words ("3h of Italian, 2h of math"). */
+  include?: string | null;
 }): Promise<PlannerCandidateBundle> {
   const unblockedAfter = new Date(
     Date.now() - RECENTLY_UNBLOCKED_WINDOW_HOURS * 60 * 60 * 1000,
@@ -577,6 +638,10 @@ export async function buildPlannerCandidates(params: {
   const historyStart = new Date(
     todayStartMs - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
+  // Skips look further back than the rhythm signals.
+  const skipWindowStart = new Date(
+    todayStartMs - SKIP_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
   const steerAfter = new Date(
     Date.now() - STEER_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
@@ -602,6 +667,7 @@ export async function buildPlannerCandidates(params: {
     chatSessionsSinceYesterdayResult,
     steerEventsResult,
     commitments,
+    staleMarkersResult,
   ] = await Promise.all([
     // Active AND paused: paused nodes (and everything under them) are on hold,
     // and a paused node whose check-back date arrived comes back into Focus.
@@ -670,11 +736,13 @@ export async function buildPlannerCandidates(params: {
     // Rhythm: status changes this past week → today-done filter, rotation /
     // momentum (yesterday) and neglect (3+ days). lifecycle_events has user_id
     // but no workspace_id; the workspace's edges and nodes scope it below.
+    // Loaded for the skip window (14 days); the rhythm signals keep reading
+    // only the past week.
     params.supabase
       .from("lifecycle_events")
       .select("node_id, new_status, created_at")
       .eq("user_id", params.userId)
-      .gte("created_at", historyStart),
+      .gte("created_at", skipWindowStart),
 
     // Rhythm: this week's habit completions → cadence-due + today-done.
     params.supabase
@@ -704,6 +772,15 @@ export async function buildPlannerCandidates(params: {
 
     // Fixed commitments → today's busy time (per user, fail-soft).
     loadActiveCommitments(params.supabase, params.userId, todayDate),
+
+    // "Does this still matter?" answers (lib/planner/skips.ts).
+    params.supabase
+      .from("feedback_events")
+      .select("id, entity_id, created_at, metadata")
+      .eq("workspace_id", params.workspaceId)
+      .eq("user_id", params.userId)
+      .eq("entity_type", STALE_CHECK_ENTITY)
+      .gte("created_at", skipWindowStart),
   ]);
 
   // The user's clock right now, minutes from their local midnight.
@@ -734,6 +811,19 @@ export async function buildPlannerCandidates(params: {
     }>,
   });
 
+  // The Focus hero's deadline line: "\"Pass Stats\" due in 5 days · ~4 sessions left".
+  const deadlineLine = (deadline: ReturnType<typeof rankCtx.deadline>): string | null => {
+    if (!deadline || deadline.pressure < 20) return null;
+    if (deadline.daysLeft < 0) {
+      return `${capitalize(relativeDue(deadline.daysLeft))} — done, moved or dropped?`;
+    }
+    const owner = deadline.inherited ? nodeById.get(deadline.ownerId)?.title : null;
+    return (
+      `${owner ? `"${owner}" ${relativeDue(deadline.daysLeft)}` : capitalize(relativeDue(deadline.daysLeft))}` +
+      ` · ~${deadline.sessionsLeft} session${deadline.sessionsLeft === 1 ? "" : "s"} left`
+    );
+  };
+
   // Parent of ANY node in this workspace (completed ones too — completing a
   // step is the main way a cluster gets "worked").
   const clusterParentOf = new Map<string, string>();
@@ -758,6 +848,8 @@ export async function buildPlannerCandidates(params: {
   }
 
   // How many recent accepted plans left this node undone (one pending block each).
+  // It pushes only work with a deadline (below); undated work that keeps
+  // getting skipped is asked about instead (lib/planner/skips.ts).
   const carriedOverCountByNode = new Map<string, number>();
   for (const row of (recentPlanBlocksResult.data ?? []) as Array<{ node_id: string }>) {
     if (row.node_id && activeIds.has(row.node_id)) {
@@ -766,11 +858,12 @@ export async function buildPlannerCandidates(params: {
   }
 
   // ─── Rhythm signals (all derived in-memory, no AI) ──────────────────────
-  const lifecycleRows = (lifecycleSinceYesterdayResult.data ?? []) as Array<{
+  const lifecycleWindowRows = (lifecycleSinceYesterdayResult.data ?? []) as Array<{
     node_id: string;
     new_status: string;
     created_at: string;
   }>;
+  const lifecycleRows = lifecycleWindowRows.filter((row) => row.created_at >= historyStart);
   const habitRows = (habitCompletionsThisWeekResult.data ?? []) as Array<{
     node_id: string;
     completed_on: string;
@@ -839,6 +932,16 @@ export async function buildPlannerCandidates(params: {
     if (!task.node_id || !task.scheduled_date || task.scheduled_date > dueSoonCutoff) {
       continue;
     }
+    // A past entry left undone is a skip: it pushes only dated work.
+    if (
+      !calendarEntryCounts({
+        scheduledDate: task.scheduled_date,
+        today: todayDate,
+        hasDeadline: Boolean(rankCtx.deadline(task.node_id)),
+      })
+    ) {
+      continue;
+    }
 
     const current = dueSoonNodeDates.get(task.node_id);
     if (!current || task.scheduled_date < current) {
@@ -881,6 +984,76 @@ export async function buildPlannerCandidates(params: {
   // around its work, and ideas/notes aren't committed work (node-types.ts).
   const NON_ACTIONABLE_TYPES: ReadonlySet<NodeType> = new Set([...STRUCTURE_TYPES, ...KNOWLEDGE_TYPES]);
 
+  // ─── Skips → stale (lib/planner/skips.ts) ──────────────────────────────
+  // A day counts as worked for a node when it or anything inside it was
+  // finished that day. Finished steps aren't loaded, so walk up the
+  // workspace's edges (completed nodes included).
+  const workedDays = new Map<string, Set<string>>();
+  for (const row of lifecycleWindowRows) {
+    if (row.new_status !== "completed" || !inWorkspace(row.node_id)) continue;
+    const day = localDateOf(row.created_at, tzOffsetMin);
+    let cur: string | undefined = row.node_id;
+    for (let depth = 0; cur && depth < 8; depth += 1) {
+      const days = workedDays.get(cur) ?? new Set<string>();
+      days.add(day);
+      workedDays.set(cur, days);
+      cur = clusterParentOf.get(cur);
+    }
+  }
+  const skipDays = skipDaysByNode({
+    tasks: planTasks,
+    today: todayDate,
+    answeredAt: answeredAtByNode((staleMarkersResult.data ?? []) as StaleMarker[]),
+    tzOffsetMin,
+    workedOn: (nodeId, day) => workedDays.get(nodeId)?.has(day) ?? false,
+  });
+
+  // What the user asked a plan to include (plans only): matched by its words
+  // to an open node that can be planned.
+  const requestable = rawNodes.filter(
+    (node) =>
+      node.node_type !== "area" && !KNOWLEDGE_TYPES.has(node.node_type) && rankCtx.hold(node.id) === "none",
+  );
+  const requests: PlanRequestItem[] = parsePlanRequests(params.include).map((request) => {
+    const node = matchRequest(request.phrase, requestable);
+    return {
+      text: request.text,
+      minutes: request.minutes,
+      node_id: node?.id ?? null,
+      title: node?.title ?? null,
+      node_type: node?.node_type ?? null,
+    };
+  });
+  const requestedMinutes = new Map<string, number | null>();
+  for (const request of requests) {
+    if (request.node_id && !requestedMinutes.has(request.node_id)) {
+      requestedMinutes.set(request.node_id, request.minutes);
+    }
+  }
+  const requestSignal = (nodeId: string): string | null => {
+    if (!requestedMinutes.has(nodeId)) return null;
+    const minutes = requestedMinutes.get(nodeId);
+    return minutes ? `You asked for ${formatRequestMinutes(minutes)}` : "You asked for time on this";
+  };
+
+  // Skipped on enough days with no deadline: held out of Focus and new plans
+  // until the user answers "Does this still matter?". Not what they just
+  // asked a plan for.
+  const staleIds = new Set<string>();
+  for (const node of rawNodes) {
+    const days = skipDays.get(node.id);
+    if (!days || requestedMinutes.has(node.id) || rankCtx.hold(node.id) !== "none") continue;
+    if (
+      isStale({
+        skipDays: days.length,
+        hasDeadline: Boolean(rankCtx.deadline(node.id)),
+        nodeType: node.node_type,
+      })
+    ) {
+      staleIds.add(node.id);
+    }
+  }
+
   // Resolve a node's project cluster: its parent, else itself.
   const belongsToParentOf = (nodeId: string): string => clusterParentOf.get(nodeId) ?? nodeId;
   // Which clusters were worked yesterday, and when each was last touched.
@@ -903,6 +1076,7 @@ export async function buildPlannerCandidates(params: {
     if (isClusterAnchor.has(node.id)) return false;
     if (doneTodayIds.has(node.id)) return false; // today-awareness: hide what's done
     if (rankCtx.hold(node.id) !== "none") return false;
+    if (staleIds.has(node.id)) return false;
     return true;
   });
 
@@ -961,10 +1135,14 @@ export async function buildPlannerCandidates(params: {
         .filter(Boolean);
 
       const planningSignals: string[] = [];
+      const requested = requestSignal(node.id);
+      if (requested) planningSignals.push(requested);
       const dueSoonDate = dueSoonNodeDates.get(node.id);
       const dueSoon = Boolean(dueSoonDate);
+      const deadline = rankCtx.deadline(node.id);
       const carriedOverCount = carriedOverCountByNode.get(node.id) ?? 0;
-      const carriedOver = carriedOverCount > 0;
+      // Being skipped pushes only work with a deadline (lib/planner/skips.ts).
+      const carriedOver = carriedOverCount > 0 && deadline !== null;
       const recentlyUnblocked = recentlyUnblockedIds.has(node.id);
       const completionsThisWeek = habitCompletionsThisWeekByNode.get(node.id) ?? 0;
       const cadenceIsDue = cadenceDue({
@@ -974,7 +1152,6 @@ export async function buildPlannerCandidates(params: {
         dayOfWeek: isoDayOfWeek,
       });
 
-      const deadline = rankCtx.deadline(node.id);
       const pressure = deadline?.pressure ?? 0;
       const isNextStep = (siblingIndex.get(node.id) ?? 0) === 0;
       const siblingFactor = isNextStep ? 1 : PLANNER_BONUSES.DEADLINE_SIBLING_FACTOR;
@@ -996,17 +1173,8 @@ export async function buildPlannerCandidates(params: {
       const stakes = rankCtx.stakes(node.id);
 
       // Order = what the Focus hero line should say first.
-      if (deadline && pressure >= 20) {
-        if (deadline.daysLeft < 0) {
-          planningSignals.push(`${capitalize(relativeDue(deadline.daysLeft))} — done, moved or dropped?`);
-        } else {
-          const owner = deadline.inherited ? nodeById.get(deadline.ownerId)?.title : null;
-          planningSignals.push(
-            `${owner ? `"${owner}" ${relativeDue(deadline.daysLeft)}` : capitalize(relativeDue(deadline.daysLeft))}` +
-              ` · ~${deadline.sessionsLeft} session${deadline.sessionsLeft === 1 ? "" : "s"} left`,
-          );
-        }
-      }
+      const deadlineSignal = deadlineLine(deadline);
+      if (deadlineSignal) planningSignals.push(deadlineSignal);
 
       if (recentlyUnblocked) {
         planningSignals.push("Ready to start");
@@ -1033,7 +1201,7 @@ export async function buildPlannerCandidates(params: {
         );
       }
 
-      if (carriedOverCount >= CARRIED_OVER_BREAKDOWN_AT) {
+      if (carriedOver && carriedOverCount >= CARRIED_OVER_BREAKDOWN_AT) {
         planningSignals.push(`Carried over ${carriedOverCount}× — break it into a smaller first step?`);
       } else if (carriedOver) {
         planningSignals.push("Carried over from a recent accepted plan");
@@ -1072,7 +1240,7 @@ export async function buildPlannerCandidates(params: {
         siblingFactor,
         steer,
         neglectDays,
-      });
+      }) + (requested ? REQUESTED_PRIORITY : 0);
 
       return {
         candidate: {
@@ -1125,6 +1293,120 @@ export async function buildPlannerCandidates(params: {
   // Focus: a short gap before the next commitment → what fits it leads.
   const fitted = params.fitToFreeTime ? fitHeadToFreeTime(candidates, free.freeMinutes) : candidates;
 
+  // ─── Time blocks (plans only) ──────────────────────────────────────────
+  // A class, goal, project or big task with open steps (or a class at all)
+  // can get a block of time on itself: "Italian Crash Course — 2h", starting
+  // with its next open steps. Ranked by its own signals; requested ones lead.
+  const actionableIds = new Set(actionableNodes.map((node) => node.id));
+  const byUserOrder = (a: string, b: string) => {
+    const na = nodeById.get(a);
+    const nb = nodeById.get(b);
+    if (!na || !nb) return 0;
+    return (
+      (na.reading_order ?? Number.MAX_SAFE_INTEGER) - (nb.reading_order ?? Number.MAX_SAFE_INTEGER) ||
+      na.created_at.localeCompare(nb.created_at) ||
+      na.title.localeCompare(nb.title)
+    );
+  };
+  const openInside = (rootId: string) => {
+    const steps: NodeRow[] = [];
+    const all: string[] = [];
+    const seen = new Set<string>([rootId]);
+    const visit = (id: string, depth: number) => {
+      if (depth > 8) return;
+      for (const kid of [...(rankCtx.childrenOf.get(id) ?? [])].sort(byUserOrder)) {
+        const child = nodeById.get(kid);
+        // Paused subtrees are parked; their steps aren't where to start.
+        if (!child || seen.has(kid) || (child.status ?? "active") !== "active") continue;
+        seen.add(kid);
+        all.push(kid);
+        if (actionableIds.has(kid)) steps.push(child);
+        visit(kid, depth + 1);
+      }
+    };
+    visit(rootId, 0);
+    return { steps, all };
+  };
+  const blockable = (node: NodeRow) =>
+    TIME_BLOCK_TYPES.has(node.node_type) &&
+    (isClusterAnchor.has(node.id) || node.node_type === "class") &&
+    rankCtx.hold(node.id) === "none" &&
+    !doneTodayIds.has(node.id) &&
+    !staleIds.has(node.id);
+  // A wrapper around a single bigger thing adds no choice ("Statistics" holding
+  // only "Pass Statistics Midterm"): list the inner one — unless it was asked for.
+  const onlyWraps = (node: NodeRow) => {
+    const open = (rankCtx.childrenOf.get(node.id) ?? [])
+      .map((id) => nodeById.get(id))
+      .filter((child): child is NodeRow => Boolean(child) && (child!.status ?? "active") === "active");
+    return open.length === 1 && blockable(open[0]);
+  };
+  const timeBlocks = rawNodes
+    .filter((node) => blockable(node) && (requestedMinutes.has(node.id) || !onlyWraps(node)))
+    .map((node) => {
+      const { steps, all } = openInside(node.id);
+      const deadline = rankCtx.deadline(node.id);
+      const steer = rankCtx.steer(node.id);
+      const signals: string[] = [];
+      const requested = requestSignal(node.id);
+      if (requested) signals.push(requested);
+      const deadlineSignal = deadlineLine(deadline);
+      if (deadlineSignal) signals.push(deadlineSignal);
+      if (steer >= 0.3) signals.push("You asked to focus on this");
+      if (rankCtx.stakes(node.id) === "high") signals.push("High stakes");
+      const priority =
+        computePlannerPriority({
+          dueSoon: false,
+          cadenceDue: false,
+          carriedOver: false,
+          currentImportanceScore: node.current_importance_score,
+          recentlyUnblocked: false,
+          nodeType: node.node_type,
+          blockerCount: 0,
+          prerequisiteCount: 0,
+          unlocksCount: 0,
+          rotationDemoted: false,
+          deadlinePressure: deadline?.pressure ?? 0,
+          steer,
+        }) + (requested ? REQUESTED_PRIORITY : 0);
+      return {
+        priority,
+        requested: Boolean(requested),
+        block: {
+          id: node.id,
+          title: node.title,
+          summary: node.summary,
+          node_type: node.node_type,
+          current_importance_score: node.current_importance_score,
+          planning_signals: signals,
+          open_steps: steps.length,
+          start_with: steps.slice(0, START_WITH_STEPS).map((step) => step.title),
+          step_ids: all,
+        } satisfies TimeBlockCandidate,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.priority - a.priority ||
+        (b.block.current_importance_score ?? 0) - (a.block.current_importance_score ?? 0) ||
+        a.block.title.localeCompare(b.block.title),
+    );
+  const requestedBlocks = timeBlocks.filter((entry) => entry.requested).length;
+
+  const staleCheck: StaleItem[] = [...staleIds]
+    .map((id) => {
+      const node = nodeById.get(id)!;
+      const days = skipDays.get(id) ?? [];
+      return {
+        id,
+        title: node.title,
+        node_type: node.node_type,
+        skipped_on: days,
+        skipped_label: formatSkipDays(days, todayDate),
+      };
+    })
+    .sort((a, b) => b.skipped_on.length - a.skipped_on.length || a.title.localeCompare(b.title));
+
   return {
     candidates: diversifyHead(fitted, FOCUS_HEAD_SIZE)
       .slice(0, MAX_CANDIDATES)
@@ -1133,6 +1415,9 @@ export async function buildPlannerCandidates(params: {
     preference_hints: preferenceHints,
     commitments,
     busy_today: busyToday,
+    time_blocks: timeBlocks.slice(0, Math.max(MAX_TIME_BLOCKS, requestedBlocks)).map((entry) => entry.block),
+    stale_check: staleCheck,
+    requests,
   };
 }
 

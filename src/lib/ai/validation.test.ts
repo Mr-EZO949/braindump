@@ -117,6 +117,91 @@ describe("validatePlanOutput", () => {
   });
 });
 
+describe("validatePlanOutput — time blocks (plan-v8)", () => {
+  const italian = { id: "it", start_with: ["Learn greetings", "Numbers"], step_ids: ["greet", "nums", "cafe"] };
+
+  it("drops a step that sits inside a time block in the same plan (no double-booking)", () => {
+    const out = validatePlanOutput(
+      planRaw([
+        block({ title: "Italian Crash Course", node_id: "it", start_offset: 0, duration_minutes: 120 }),
+        block({ title: "Learn greetings", node_id: "greet", start_offset: 120, duration_minutes: 45 }),
+        block({ title: "Update CV", node_id: "cv", start_offset: 165, duration_minutes: 45 }),
+      ]),
+      600,
+      [],
+      { timeBlocks: [italian] },
+    );
+    expect(out.blocks.map((b) => b.node_id)).toEqual(["it", "cv"]);
+    expect(out.blocks[1].start_offset).toBe(120);
+  });
+
+  it("keeps a step when its time block isn't in the plan", () => {
+    const out = validatePlanOutput(
+      planRaw([block({ title: "Learn greetings", node_id: "greet" })]),
+      600,
+      [],
+      { timeBlocks: [italian] },
+    );
+    expect(out.blocks.map((b) => b.node_id)).toEqual(["greet"]);
+  });
+
+  it("a time block's reason starts with its next open steps", () => {
+    const out = validatePlanOutput(
+      planRaw([block({ title: "Italian Crash Course", node_id: "it", duration_minutes: 120, reason: "You asked for 2h" })]),
+      600,
+      [],
+      { timeBlocks: [italian] },
+    );
+    expect(out.blocks[0].reason).toBe("Start with “Learn greetings”, then “Numbers” · You asked for 2h");
+  });
+
+  it("a requested item split in two blocks says where to start only once", () => {
+    const out = validatePlanOutput(
+      planRaw([
+        block({ title: "Italian Crash Course", node_id: "it", duration_minutes: 120, reason: "You asked for 3h" }),
+        block({ title: "Lunch", start_offset: 120, duration_minutes: 45, block_type: "break" }),
+        block({ title: "Italian — continued", node_id: "it", start_offset: 165, duration_minutes: 60, reason: "The rest of the 3h" }),
+      ]),
+      600,
+      [],
+      { timeBlocks: [italian] },
+    );
+    expect(out.blocks.map((b) => b.reason)).toEqual([
+      "Start with “Learn greetings”, then “Numbers” · You asked for 3h",
+      "because",
+      "The rest of the 3h",
+    ]);
+  });
+
+  it("a requested item the model left out goes first, at the length asked", () => {
+    const out = validatePlanOutput(
+      planRaw([
+        block({ title: "Update CV", node_id: "cv", start_offset: 0, duration_minutes: 45 }),
+        block({ title: "Free time", start_offset: 45, duration_minutes: 500, block_type: "break" }),
+      ]),
+      300,
+      [],
+      { requests: [{ node_id: "it", title: "Italian Crash Course", minutes: 180 }, { node_id: "cv", title: "Update CV", minutes: 60 }] },
+    );
+    expect(out.blocks.map((b) => [b.node_id, b.start_offset, b.duration_minutes])).toEqual([
+      ["it", 0, 180],
+      ["cv", 180, 45],
+      [null, 225, 75],
+    ]);
+  });
+
+  it("without a context it behaves exactly as before", () => {
+    const raw = planRaw([
+      block({ title: "Italian Crash Course", node_id: "it", duration_minutes: 120 }),
+      block({ title: "Learn greetings", node_id: "greet", start_offset: 120, duration_minutes: 45 }),
+    ]);
+    expect(validatePlanOutput(raw, 600).blocks.map((b) => [b.node_id, b.reason])).toEqual([
+      ["it", "because"],
+      ["greet", "because"],
+    ]);
+  });
+});
+
 describe("validateMergeCheckOutput", () => {
   it("accepts valid merge-check output", () => {
     const output = validateMergeCheckOutput({

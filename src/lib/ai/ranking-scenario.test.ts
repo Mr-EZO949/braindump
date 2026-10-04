@@ -322,3 +322,201 @@ describe("ranking v2 scenario — exams, a hold, a focus, a check-back", () => {
     expect(landlord?.planning_signals[0]).toBe("Overdue by 15 days — done, moved or dropped?");
   });
 });
+
+// ─── Skipped plans + time blocks (owner, 2026-10-04) ──────────────────────
+// "Past undone tasks clogging the current focus sessions and schedulings. If
+// there was a certain deadline then yes, it can reappear, but otherwise I
+// don't think it should." + "AI should be able to place 3h for Italian crash
+// course without necessarily putting a certain task."
+describe("skipped plans — no push without a deadline, 'Does this still matter?' at 2 skips", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const TODAY = "2026-10-04";
+
+  // A day in an accepted plan, left undone: the plan_task the Planner's
+  // Accept writes, plus the pending block (the carry-over signal reads it).
+  function skipped(tables: Record<string, Row[]>, nodeId: string, day: string) {
+    tables.plan_tasks.push({
+      id: `t-${nodeId}-${day}`,
+      user_id: USER,
+      workspace_id: WS,
+      node_id: nodeId,
+      title: nodeId,
+      scheduled_date: day,
+      start_time: "09:00:00",
+      duration_minutes: 30,
+      done: false,
+      created_at: `${day}T07:00:00.000Z`,
+    });
+    tables.plan_blocks.push({ node_id: nodeId, completion_status: "pending" });
+  }
+
+  function answer(tables: Record<string, Row[]>, id: string, nodeId: string, at: string, metadata: Row) {
+    tables.feedback_events.push({
+      id,
+      user_id: USER,
+      workspace_id: WS,
+      entity_type: "stale_check",
+      entity_id: nodeId,
+      event_type: "edit_plan",
+      created_at: at,
+      metadata,
+    });
+  }
+
+  async function build(tables: Record<string, Row[]>, include?: string) {
+    const { client } = fakeSupabase(tables);
+    return buildPlannerCandidates({
+      workspaceId: WS,
+      userId: USER,
+      supabase: client,
+      clientToday: TODAY,
+      clientTzOffsetMinutes: 0,
+      include,
+    });
+  }
+
+  function scenario() {
+    const tables = baseTables();
+    tables.nodes.push(n("bank", "Call the bank", "task"));
+    skipped(tables, "landlord", "2026-09-29"); // undated, twice → stale
+    skipped(tables, "landlord", "2026-10-01");
+    skipped(tables, "refs", "2026-09-30"); // under a dated goal, twice → keeps coming back
+    skipped(tables, "refs", "2026-10-02");
+    skipped(tables, "gym", "2026-10-01"); // a habit, twice → never asked
+    skipped(tables, "gym", "2026-10-02");
+    skipped(tables, "bank", "2026-10-03"); // undated, once → no push, no question
+    return tables;
+  }
+
+  it("undated work skipped on 2 days leaves Focus and is asked about instead", async () => {
+    setToday(TODAY);
+    const bundle = await build(scenario());
+    const ids = bundle.candidates.map((c) => c.id);
+    expect(ids).not.toContain("landlord");
+    expect(bundle.stale_check).toEqual([
+      {
+        id: "landlord",
+        title: "Email the landlord",
+        node_type: "task",
+        skipped_on: ["2026-09-29", "2026-10-01"],
+        skipped_label: "Tue, Thu",
+      },
+    ]);
+    // Never asked: dated work and habits.
+    expect(bundle.stale_check.map((s) => s.id)).not.toContain("refs");
+    expect(bundle.stale_check.map((s) => s.id)).not.toContain("gym");
+    expect(ids).toContain("refs");
+    expect(ids).toContain("gym");
+  });
+
+  it("a skip still pushes dated work; undated work gets no push from being skipped", async () => {
+    setToday(TODAY);
+    const bundle = await build(scenario());
+    const signals = (id: string) => bundle.candidates.find((c) => c.id === id)?.planning_signals ?? [];
+    expect(signals("refs")).toContain("Carried over from a recent accepted plan");
+    expect(signals("refs").some((s) => s.startsWith("On your calendar"))).toBe(true);
+    expect(signals("bank")).toEqual([]);
+    expect(signals("gym").some((s) => s.startsWith("Carried over") || s.startsWith("On your calendar"))).toBe(false);
+    expect(signals("gym")).toContain("Due this week (0/3 done)");
+
+    // Same graph, no skips at all: the undated task ranks exactly where it would anyway.
+    const clean = await build(baseTables());
+    const withBank = baseTables();
+    withBank.nodes.push(n("bank", "Call the bank", "task"));
+    skipped(withBank, "bank", "2026-10-03");
+    const once = await build(withBank);
+    const without = baseTables();
+    without.nodes.push(n("bank", "Call the bank", "task"));
+    const never = await build(without);
+    expect(once.candidates.map((c) => c.id)).toEqual(never.candidates.map((c) => c.id));
+    expect(clean.stale_check).toEqual([]);
+  });
+
+  it("'Still matters' puts it back at its normal rank; Undo asks again", async () => {
+    setToday(TODAY);
+    const tables = scenario();
+    answer(tables, "m1", "landlord", "2026-10-04T08:00:00.000Z", { answer: "still_matters" });
+    const kept = await build(tables);
+    expect(kept.stale_check).toEqual([]);
+    const landlord = kept.candidates.find((c) => c.id === "landlord");
+    expect(landlord).toBeDefined();
+    expect(landlord?.planning_signals).toEqual([]);
+
+    answer(tables, "m2", "landlord", "2026-10-04T08:01:00.000Z", { answer: "undo", undoes: "m1" });
+    const undone = await build(tables);
+    expect(undone.stale_check.map((s) => s.id)).toEqual(["landlord"]);
+    expect(undone.candidates.map((c) => c.id)).not.toContain("landlord");
+  });
+
+  it("a day a step inside it got done isn't a skip", async () => {
+    setToday(TODAY);
+    const tables = baseTables();
+    tables.nodes.push(n("course", "Italian Crash Course", "big_task"), n("lesson", "Lesson 1", "task"));
+    tables.nodes.push(n("lesson0", "Lesson 0", "task", { status: "completed" }));
+    tables.edges.push(under("lesson", "course"), under("lesson0", "course"));
+    skipped(tables, "course", "2026-10-01");
+    skipped(tables, "course", "2026-10-02");
+    tables.lifecycle_events.push({
+      user_id: USER,
+      node_id: "lesson0",
+      new_status: "completed",
+      created_at: "2026-10-02T15:00:00.000Z",
+    });
+    const bundle = await build(tables);
+    expect(bundle.stale_check).toEqual([]);
+  });
+});
+
+describe("time blocks — bigger things a plan can give time to (plans only)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const TODAY = "2026-10-04";
+
+  it("goals with steps (and classes) are time blocks that start with their next steps in order; areas and notes aren't", async () => {
+    setToday(TODAY);
+    const tables = baseTables();
+    tables.nodes.push(n("ml", "Machine Learning", "class"));
+    tables.edges.push(under("ml", "uni"));
+    const { client } = fakeSupabase(tables);
+    const bundle = await buildPlannerCandidates({ workspaceId: WS, userId: USER, supabase: client, clientToday: TODAY });
+
+    const blocks = new Map(bundle.time_blocks.map((b) => [b.id, b]));
+    expect([...blocks.keys()].sort()).toEqual(["masters", "ml", "psych", "stats"]);
+    expect(blocks.get("stats")?.start_with).toEqual(["Past paper 1", "Past paper 2"]);
+    expect(blocks.get("stats")?.open_steps).toBe(4);
+    expect(blocks.get("stats")?.step_ids.sort()).toEqual(["pp1", "pp2", "reg", "sheet"]);
+    expect(blocks.get("ml")?.open_steps).toBe(0);
+    // Focus is unchanged: one leaf step, never a container.
+    expect(bundle.candidates.map((c) => c.id)).not.toContain("stats");
+    expect(bundle.candidates.map((c) => c.id)).not.toContain("ml");
+  });
+
+  it("'2h of psychology' matches the goal, leads the time blocks and says so", async () => {
+    setToday(TODAY);
+    const { client } = fakeSupabase(baseTables());
+    const bundle = await buildPlannerCandidates({
+      workspaceId: WS,
+      userId: USER,
+      supabase: client,
+      clientToday: TODAY,
+      include: "2h of psychology, 1h of math",
+    });
+    expect(bundle.requests).toEqual([
+      { text: "2h of psychology", minutes: 120, node_id: "psych", title: "Pass Psychology", node_type: "goal" },
+      { text: "1h of math", minutes: 60, node_id: null, title: null, node_type: null },
+    ]);
+    expect(bundle.time_blocks[0].id).toBe("psych");
+    expect(bundle.time_blocks[0].planning_signals[0]).toBe("You asked for 2h");
+  });
+});

@@ -565,6 +565,8 @@ export class GeminiProvider implements AIProvider {
       candidate_nodes: input.candidate_nodes,
       workspace_context: input.workspace_context,
       busy_lines: input.busy?.lines,
+      time_blocks: input.time_blocks,
+      requests: input.requests,
       session_span:
         typeof input.session_start_minute === "number"
           ? describeSessionSpan(input.session_start_minute, totalMinutes)
@@ -597,7 +599,10 @@ export class GeminiProvider implements AIProvider {
     let output: PlanOutput;
     try {
       const parsed = JSON.parse(text);
-      output = validatePlanOutput(parsed, planMinutes, input.busy?.titles);
+      output = validatePlanOutput(parsed, planMinutes, input.busy?.titles, {
+        timeBlocks: input.time_blocks,
+        requests: input.requests,
+      });
     } catch (error) {
       throw malformedResponse({
         message: error instanceof Error ? error.message : "Plan output was malformed",

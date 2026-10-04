@@ -9,6 +9,8 @@ import type {
   ExtractionOutput,
   EdgeInferenceOutput,
   PlanOutput,
+  PlanRequestInput,
+  PlanTimeBlockInput,
   EmbeddingOutput,
   RerankOutput,
   MergeCheckOutput,
@@ -489,16 +491,31 @@ const VALID_BLOCK_TYPES = new Set(["focus", "admin", "break", "buffer"]);
 
 const normalizeTitle = (title: string) => title.toLowerCase().replace(/[^a-z0-9à-ÿ]+/g, " ").trim();
 
+/** What a plan was given beyond its work items (PlanInput.time_blocks / requests). */
+export interface PlanBlockContext {
+  timeBlocks?: Pick<PlanTimeBlockInput, "id" | "start_with" | "step_ids">[];
+  requests?: Pick<PlanRequestInput, "node_id" | "title" | "minutes">[];
+}
+
+// A requested item the model left out still gets its time; an hour when they
+// gave no length.
+const REQUEST_DEFAULT_MINUTES = 60;
+
 /**
  * `busyTitles`: the fixed commitments inside the session. An unlinked block
  * with one of their titles only restates busy time — on a 15-hour day with a
  * lecture, Sonnet wrote a 4-hour "Stats lecture" placeholder that used up the
  * free minutes, and every block after it (dinner, the evening) was dropped.
+ *
+ * `context` (plan-v8, time blocks): a step inside a time block that is also in
+ * the plan is double-booked and dropped; a requested item the plan left out is
+ * put first; a time block's reason starts with its next open steps.
  */
 export function validatePlanOutput(
   raw: unknown,
   totalMinutes?: number,
   busyTitles: string[] = [],
+  context: PlanBlockContext = {},
 ): PlanOutput {
   if (!isObject(raw)) throw new Error("Plan output must be an object");
   if (!Array.isArray(raw.blocks))
@@ -532,7 +549,13 @@ export function validatePlanOutput(
   });
 
   const busy = new Set(busyTitles.map(normalizeTitle).filter(Boolean));
-  const planned = parsed.filter((block) => !(block.node_id === null && busy.has(normalizeTitle(block.title))));
+  const planned = withRequests(
+    dropCoveredSteps(
+      parsed.filter((block) => !(block.node_id === null && busy.has(normalizeTitle(block.title)))),
+      context.timeBlocks ?? [],
+    ),
+    context.requests ?? [],
+  );
 
   // Re-sequence so blocks NEVER overlap or overflow. The LLM uses start_offset
   // as an intended ORDER but sometimes collides blocks (e.g. a break and a
@@ -553,7 +576,63 @@ export function validatePlanOutput(
     cursor += durationMinutes;
   }
 
-  return { blocks, prompt_version: raw.prompt_version as string };
+  return { blocks: withStartSteps(blocks, context.timeBlocks ?? []), prompt_version: raw.prompt_version as string };
+}
+
+type ParsedBlock = Omit<PlanOutput["blocks"][number], "id" | "plan_session_id">;
+
+/** A block on a step inside a time block that is ALSO in this plan: the time block covers it. */
+export function dropCoveredSteps<T extends Pick<ParsedBlock, "node_id">>(
+  blocks: T[],
+  timeBlocks: Pick<PlanTimeBlockInput, "id" | "step_ids">[],
+): T[] {
+  if (timeBlocks.length === 0) return blocks;
+  const planned = new Set(blocks.map((b) => b.node_id).filter((id): id is string => Boolean(id)));
+  const coveredBy = new Map<string, string[]>();
+  for (const tb of timeBlocks) {
+    if (!planned.has(tb.id)) continue;
+    for (const step of tb.step_ids) coveredBy.set(step, [...(coveredBy.get(step) ?? []), tb.id]);
+  }
+  return blocks.filter((b) => !b.node_id || !(coveredBy.get(b.node_id) ?? []).some((owner) => owner !== b.node_id));
+}
+
+/** Requested items the model left out go first, at the length asked. */
+export function withRequests<T extends ParsedBlock>(
+  blocks: T[],
+  requests: Pick<PlanRequestInput, "node_id" | "title" | "minutes">[],
+): T[] {
+  const planned = new Set(blocks.map((b) => b.node_id).filter(Boolean));
+  const missing: ParsedBlock[] = [];
+  for (const request of requests) {
+    if (!request.node_id || !request.title || planned.has(request.node_id)) continue;
+    planned.add(request.node_id);
+    missing.push({
+      node_id: request.node_id,
+      title: request.title,
+      start_offset: -1, // sorts first; packing starts it at 0
+      duration_minutes: request.minutes ?? REQUEST_DEFAULT_MINUTES,
+      reason: "You asked for this",
+      block_type: "focus",
+      completion_status: "pending",
+    });
+  }
+  return [...(missing as T[]), ...blocks];
+}
+
+/** A time block's reason starts with where to begin: its next open steps (its first block only). */
+export function withStartSteps<T extends Pick<ParsedBlock, "node_id" | "reason" | "block_type">>(
+  blocks: T[],
+  timeBlocks: Pick<PlanTimeBlockInput, "id" | "start_with">[],
+): T[] {
+  const startWith = new Map(timeBlocks.map((tb) => [tb.id, tb.start_with]));
+  const started = new Set<string>();
+  return blocks.map((block) => {
+    const steps = block.node_id && block.block_type !== "break" ? startWith.get(block.node_id) : undefined;
+    if (!steps || steps.length === 0 || started.has(block.node_id!)) return block;
+    started.add(block.node_id!);
+    const start = `Start with ${steps.map((t) => `“${t}”`).join(", then ")}`;
+    return { ...block, reason: block.reason ? `${start} · ${block.reason}` : start };
+  });
 }
 
 // ---------------------------------------------------------------------------

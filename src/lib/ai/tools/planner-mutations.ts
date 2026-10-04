@@ -303,6 +303,10 @@ const PLAN_DAY: ToolDefinition = {
           type: "string",
           description: "24h HH:MM, only when they say it (\"from 8am\" → \"08:00\"); omitted = now",
         },
+        include: {
+          type: "string",
+          description: "What they asked to fit in, their words with lengths (\"3h of Italian, 2h of math\")",
+        },
         busy: {
           type: "array",
           maxItems: 8,
@@ -327,6 +331,7 @@ const PLAN_DAY: ToolDefinition = {
       custom_minutes?: number;
       start_time?: string;
       busy?: unknown;
+      include?: string;
     };
     const window = (["1h", "2h", "day", "custom"].includes(args.window ?? "")
       ? args.window
@@ -338,8 +343,9 @@ const PLAN_DAY: ToolDefinition = {
       userId: ctx.userId,
       supabase: ctx.supabase,
       clientToday: ctx.today,
+      include: typeof args.include === "string" ? args.include.slice(0, 400) : null,
     });
-    if (!bundle.candidates.length) {
+    if (!bundle.candidates.length && !bundle.time_blocks.length) {
       return { accepted: false, error: "No active work items to plan — add a few tasks or goals first." };
     }
 
@@ -379,6 +385,8 @@ const PLAN_DAY: ToolDefinition = {
           planning_signals: c.planning_signals,
         })),
         busy,
+        time_blocks: bundle.time_blocks,
+        requests: bundle.requests,
       });
     } catch (err) {
       const cutOff = normalizeAIError(err).userMessage === PLAN_CUT_OFF_MESSAGE;

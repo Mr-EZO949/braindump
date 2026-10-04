@@ -521,6 +521,35 @@ export interface PlanInput {
   // Fixed commitments inside the session (docs/commitments.md): only the free
   // minutes get planned, and the Session block says where the gaps are.
   busy?: { free_minutes: number; lines: string[]; titles?: string[] } | null;
+  // Bigger things that can get a block of time on themselves (a class, goal,
+  // project or big task — lib/ai/planner.ts time_blocks).
+  time_blocks?: PlanTimeBlockInput[];
+  // What the user asked the plan to include ("3h of Italian").
+  requests?: PlanRequestInput[];
+}
+
+export interface PlanTimeBlockInput {
+  id: string;
+  title: string;
+  summary: string | null;
+  node_type: NodeType;
+  planning_signals?: string[];
+  /** Open steps inside it, any depth. */
+  open_steps: number;
+  /** The next 1–2 open steps — where the block starts. */
+  start_with: string[];
+  /** Every open node inside it: a block on this one covers them. */
+  step_ids: string[];
+}
+
+export interface PlanRequestInput {
+  /** The user's words ("3h of Italian"). */
+  text: string;
+  minutes: number | null;
+  /** The node their words name, when one does. */
+  node_id: string | null;
+  title: string | null;
+  node_type: NodeType | null;
 }
 
 export interface PlanOutput {

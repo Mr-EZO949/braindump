@@ -10,17 +10,27 @@ import type { Commitment } from "@/lib/planner/commitments";
 let commitments: Commitment[] = [];
 type PlanCall = {
   busy: { free_minutes: number; lines: string[] } | null;
+  time_blocks?: unknown[];
+  requests?: unknown[];
   session_minutes?: number | null;
   session_start_minute?: number | null;
 };
 const planCalls: PlanCall[] = [];
 let planError: Error | null = null;
 
+const candidateCalls: Array<{ include?: string | null }> = [];
+const timeBlocks = [{ id: "it", title: "Italian Crash Course", node_type: "big_task", open_steps: 3, start_with: ["Greetings"], step_ids: ["g"] }];
+const requests = [{ text: "3h of Italian", minutes: 180, node_id: "it", title: "Italian Crash Course", node_type: "big_task" }];
 vi.mock("../planner", () => ({
-  buildPlannerCandidates: vi.fn(async () => ({
-    candidates: [{ id: "n1", title: "ML project", summary: null, body: null, node_type: "task", planning_signals: {} }],
-    commitments,
-  })),
+  buildPlannerCandidates: vi.fn(async (params: { include?: string | null }) => {
+    candidateCalls.push(params);
+    return {
+      candidates: [{ id: "n1", title: "ML project", summary: null, body: null, node_type: "task", planning_signals: {} }],
+      commitments,
+      time_blocks: params.include ? timeBlocks : [],
+      requests: params.include ? requests : [],
+    };
+  }),
 }));
 vi.mock("../index", () => ({
   aiProvider: () => ({
@@ -54,6 +64,7 @@ function ctx() {
 beforeEach(() => {
   commitments = [];
   planCalls.length = 0;
+  candidateCalls.length = 0;
   planError = null;
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(`${WED}T12:10:00Z`));
@@ -152,5 +163,20 @@ describe("plan_day — the whole day (owner 10-03: ~15 h from when I'm awake)", 
     const result = (await PLAN_DAY.handler({ window: "day" }, ctx())) as { accepted: boolean; error: string };
     expect(result.accepted).toBe(false);
     expect(result.error).toBe(PLAN_CUT_OFF_MESSAGE);
+  });
+});
+
+describe("plan_day — what the user asks to fit in (plan-v8)", () => {
+  it("passes their words to the ranking and the time blocks + requests to the plan", async () => {
+    await PLAN_DAY.handler({ window: "day", start_time: "08:00", include: "3h of Italian" }, ctx());
+    expect(candidateCalls[0].include).toBe("3h of Italian");
+    expect(planCalls[0].time_blocks).toEqual(timeBlocks);
+    expect(planCalls[0].requests).toEqual(requests);
+  });
+
+  it("without it, nothing changes", async () => {
+    await PLAN_DAY.handler({ window: "day", start_time: "08:00" }, ctx());
+    expect(candidateCalls[0].include).toBeNull();
+    expect(planCalls[0].requests).toEqual([]);
   });
 });
