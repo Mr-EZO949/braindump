@@ -16466,6 +16466,70 @@ body:has(.app-shell[data-app-mode="graph"]) {
   border-color: rgba(0, 0, 0, 0.16);
 }
 
+/* Phones: the pill sat bottom-right on top of the tab bar (Start, Stop and
+   Done over Focus / Dump). It is one full-width row just above the bar now,
+   rides above the Details sheet, and steps aside for full-screen surfaces. */
+@media (max-width: 640px) {
+  .focus-pill {
+    left: 8px;
+    right: 8px;
+    /* The tab bar's top edge is 80px up (one row). */
+    bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    gap: 8px;
+    padding: 6px 6px 6px 14px;
+    max-width: none;
+  }
+
+  .focus-pill__title {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .focus-pill__actions {
+    gap: 4px;
+  }
+
+  .focus-pill__btn {
+    min-height: 32px;
+    padding: 5px 11px;
+  }
+
+  /* Lists open: the tab bar is two rows tall. */
+  body:has(.mode-dock-lists[data-expanded="true"]) .focus-pill {
+    bottom: calc(126px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* The Details bottom sheet starts at 40dvh: sit just above its edge. */
+  body:has(.context-rail-responsive[data-open="true"][data-tab="details"]) .focus-pill {
+    bottom: calc(60dvh + 8px);
+  }
+
+  /* Full-height chat, the create/edit sheet, the account panel, the Focus
+     card and the Brain Dump card own the bottom: the pill steps aside. */
+  body:has(.context-rail-responsive[data-open="true"]:not([data-tab="details"])) .focus-pill,
+  body:has(.graph-create-overlay-open) .focus-pill,
+  body:has(.system-panel[aria-hidden="false"]) .focus-pill,
+  body:has(.lockin-card) .focus-pill,
+  body:has(.brain-dump-card) .focus-pill {
+    display: none;
+  }
+
+  /* The "N items look ready" nudge and the done shelf stack above it. */
+  body:has(.focus-pill) .freeze-nudge {
+    bottom: calc(142px + env(safe-area-inset-bottom, 0px));
+  }
+
+  body:has(.focus-pill) .history-shelf-anchor {
+    bottom: calc(142px + env(safe-area-inset-bottom, 0px));
+  }
+
+  body:has(.focus-pill):has(.mode-dock-lists[data-expanded="true"]) .freeze-nudge,
+  body:has(.focus-pill):has(.mode-dock-lists[data-expanded="true"]) .history-shelf-anchor {
+    bottom: calc(180px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 /* ── App toast ─────────────────────────────────────────────────────────────
    Minimal hand-rolled toast (no library). Fixed bottom-center, sits above the
    focus pill so a "Done." confirmation doesn't overlap it. */
