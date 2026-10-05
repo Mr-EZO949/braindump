@@ -326,8 +326,9 @@ function fieldsFrom(
     if (!known) return { ok: false, error: `${at}.kind must be budget, hours, peak or rule` };
     fields.kind = known;
   }
+  // "coding" → "Coding": it's a label on cards and in settings.
   const title = str(row.title).slice(0, MAX_TITLE);
-  if (title) fields.title = title;
+  if (title) fields.title = title.charAt(0).toUpperCase() + title.slice(1);
   if (row.minutes !== undefined && row.minutes !== null && row.minutes !== "") {
     const minutes = minutesFrom(row.minutes);
     if (minutes === null || minutes < 5) return { ok: false, error: `${at}.minutes must be a number of minutes (4h = 240)` };
