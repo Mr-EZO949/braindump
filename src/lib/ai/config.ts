@@ -104,10 +104,11 @@ export const AI_CONFIDENCE = {
   // clear; a lateral link is just a line on the graph the user can reject.
   EDGE_DEPENDENCY_MIN: 0.75,
   EDGE_LATERAL_MIN: 0.6,
-  // "related_to" is the weakest claim, so it needs a bit more than the rest.
-  // (0.8 cut "faceless content ↔ personal brand" at 0.75 in the 2026-09-30
-  // eval — a link the owner had called out himself.)
-  EDGE_RELATED_MIN: 0.7,
+  // "related_to" is the weakest claim ("these overlap"), so it needs more than
+  // the rest. 0.7 → 0.8 on 2026-10-05 (#24, fewer links): a link that helps is
+  // supports / useful_for since infer-edge-v5, so related_to is only overlap.
+  // (In v4 "faceless content ↔ personal brand" came as related_to at 0.75.)
+  EDGE_RELATED_MIN: 0.8,
   // Minimum confidence to surface a merge suggestion (0–1)
   MERGE_DETECTION_MIN: 0.75,
 } as const;
@@ -131,6 +132,14 @@ export const AI_CANDIDATES = {
   // proposed per analysed node. Was 1, which with the old dependency-first
   // prompt meant a 25-node dump got none at all.
   LATERAL_PER_NODE: 2,
+  // Max hard blockers (required_for) proposed per analysed node. Was 1, which
+  // dropped "Renew passport → Student visa" when the visa was also needed for
+  // the move (#24). Each one still has to pass the hard-need check.
+  DEPENDENCY_PER_NODE: 2,
+  // A node with this many lateral links (on the graph + waiting on review)
+  // gets no new one from the connection engine — a hub of "helps" lines says
+  // nothing (edge-selection.ts capWeakLinks).
+  WEAK_LINKS_MAX: 3,
   // Max duplicate candidates surfaced per node
   MERGE_MAX: 3,
 } as const;
