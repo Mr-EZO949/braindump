@@ -7,7 +7,6 @@ import { AnimatePresence, motion } from "framer-motion";
 
 import { BrainDumpOverlay } from "@/components/ui/brain-dump-overlay";
 import { ModeDock, type AppMode } from "@/components/ui/mode-dock";
-import { isWeeklyReflectionAvailable } from "@/lib/time/weekly-unlock";
 
 import type { BrainDump } from "./use-brain-dump";
 
@@ -16,16 +15,12 @@ export function DumpBoxOrDock({
   appMode,
   onSetMode,
   onOpenWhatNow,
-  onOpenWeeklyReflection,
-  onOpenHistory,
   focusGlow,
 }: {
   dump: BrainDump;
   appMode: AppMode;
   onSetMode: (mode: AppMode) => void;
   onOpenWhatNow: () => void;
-  onOpenWeeklyReflection: () => void;
-  onOpenHistory: () => void;
   focusGlow: boolean;
 }) {
   return (
@@ -66,9 +61,6 @@ export function DumpBoxOrDock({
             onSetMode={onSetMode}
             onOpenBrainDump={dump.openBrainDump}
             onOpenWhatNow={onOpenWhatNow}
-            onOpenWeeklyReflection={onOpenWeeklyReflection}
-            onOpenHistory={onOpenHistory}
-            weeklyReflectionLocked={!isWeeklyReflectionAvailable()}
             focusGlow={focusGlow}
           />
         </motion.div>

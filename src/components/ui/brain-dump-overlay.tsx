@@ -109,7 +109,10 @@ export function BrainDumpOverlay({
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
     >
       <div className="brain-dump-header">
-        <span className="brain-dump-label">Brain Dump</span>
+        <span className="brain-dump-title">
+          <span className="brain-dump-label">Brain Dump</span>
+          <span className="brain-dump-scope">goes into your graph · Undo after</span>
+        </span>
         <button
           aria-label="Dismiss brain dump"
           className="brain-dump-dismiss"
@@ -150,7 +153,7 @@ export function BrainDumpOverlay({
               handleSubmit();
             }
           }}
-          placeholder={recording ? "Listening…" : "Drop a raw thought, paste text, or capture it..."}
+          placeholder={recording ? "Listening…" : "Everything on your mind — tasks, plans, what happened. It gets sorted into your graph."}
           ref={textareaRef}
           rows={3}
           value={value}

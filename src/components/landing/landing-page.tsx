@@ -41,7 +41,7 @@ const PRICING_TIERS: PricingTier[] = [
       "Everything in Free",
       "Unlimited nodes & history",
       "AI planner + weekly review",
-      "Habits, roadmap & Pomodoro",
+      "Habits & roadmap",
     ],
     cta: "Start free trial",
     href: "#pricing",

@@ -59,22 +59,16 @@ const STEPS: TourStep[] = [
     position: "above",
   },
   {
-    target: "pomodoro-btn",
-    title: "Pomodoro",
-    body: "A built-in focus timer for deep-work sprints — pair it with Focus to actually finish the thing.",
-    position: "above",
-  },
-  {
     target: "weekly-reflection-btn",
     title: "Weekly Review",
     body: "Each week, see what you completed, your momentum, and a short reflection — so progress is visible, not just the backlog.",
-    position: "above",
+    position: "below",
   },
   {
     target: "history-btn",
     title: "Brain dump history",
     body: "Every dump you've ever made, kept with its date — revisit your past thinking so nothing gets lost.",
-    position: "above",
+    position: "below",
   },
 ];
 

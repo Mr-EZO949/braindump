@@ -1,7 +1,10 @@
 import Image from "next/image";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  ChartBarIcon,
   ChevronDownIcon,
+  ListIcon,
+  LockIcon,
   PlusIcon,
   TrashIcon,
 } from "@/components/ui/icons";
@@ -19,7 +22,20 @@ type TopCommandBarProps = {
   workspaces: Workspace[];
   workspaceMenuOpen: boolean;
   workspaceName: string;
+  onOpenWeeklyReflection: () => void;
+  onOpenHistory: () => void;
+  weeklyReflectionLocked: boolean;
 };
+
+const WEEKLY_LOCKED_NOTICE_MS = 3200;
+
+function nextSundayLabel(now = new Date()): string {
+  const today = now.getDay();
+  const daysUntilSunday = (7 - today) % 7 || 7;
+  const target = new Date(now);
+  target.setDate(now.getDate() + daysUntilSunday);
+  return target.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+}
 
 export function TopCommandBar({
   onToggleSystemPanel,
@@ -33,6 +49,9 @@ export function TopCommandBar({
   workspaces,
   workspaceMenuOpen,
   workspaceName,
+  onOpenWeeklyReflection,
+  onOpenHistory,
+  weeklyReflectionLocked,
 }: TopCommandBarProps) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -40,6 +59,13 @@ export function TopCommandBar({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [lockedNotice, setLockedNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!lockedNotice) return;
+    const t = setTimeout(() => setLockedNotice(null), WEEKLY_LOCKED_NOTICE_MS);
+    return () => clearTimeout(t);
+  }, [lockedNotice]);
   return (
     <header className="app-topbar bg-[var(--color-bg-shell)] shadow-[inset_0_-1px_0_var(--color-border-faint)]">
       <div className="top-bar-responsive flex h-16 items-center justify-between gap-6 px-6">
@@ -204,6 +230,51 @@ export function TopCommandBar({
         </div>
 
         <div className="flex-1" />
+
+        {/* Weekly Review and dump History sit top right (owner, 2026-10-05);
+            the bottom dock keeps the views, Brain Dump and Focus. */}
+        <div className="topbar-actions">
+          <div className="relative">
+            <button
+              className="workspace-trigger topbar-action"
+              data-locked={weeklyReflectionLocked}
+              data-tour="weekly-reflection-btn"
+              onClick={() => {
+                if (weeklyReflectionLocked) {
+                  setLockedNotice(`Unlocks Sunday — see you ${nextSundayLabel()}.`);
+                  return;
+                }
+                onOpenWeeklyReflection();
+              }}
+              title={weeklyReflectionLocked ? "Available on Sunday" : "Open weekly review"}
+              type="button"
+            >
+              {weeklyReflectionLocked ? (
+                <LockIcon className="h-[11px] w-[11px]" />
+              ) : (
+                <ChartBarIcon className="h-[12px] w-[12px]" />
+              )}
+              <span className="topbar-action-label">Weekly Review</span>
+            </button>
+            {lockedNotice ? (
+              <div className="mode-dock-notice topbar-notice" role="status">
+                <span className="mode-dock-notice-lock" aria-hidden="true">⌛</span>
+                {lockedNotice}
+              </div>
+            ) : null}
+          </div>
+
+          <button
+            className="workspace-trigger topbar-action"
+            data-tour="history-btn"
+            onClick={onOpenHistory}
+            title="View past brain dumps"
+            type="button"
+          >
+            <ListIcon className="h-[12px] w-[12px]" />
+            <span className="topbar-action-label">History</span>
+          </button>
+        </div>
 
         {/* Mobile-only panel toggle */}
         <button

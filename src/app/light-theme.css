@@ -702,7 +702,7 @@
 }
 
 :root[data-theme="light"]
-  :is(.list-view-row, .roadmap-item, .habit-card, .planner-task-card, .pomodoro-card) {
+  :is(.list-view-row, .roadmap-item, .habit-card, .planner-task-card) {
   background: var(--light-paper);
   border-color: var(--light-line);
   box-shadow: 0 2px 8px rgba(67, 44, 32, 0.035);
@@ -734,8 +734,7 @@
   --dl: #247757;
 }
 
-:root[data-theme="light"] .list-view-chip[data-active="true"],
-:root[data-theme="light"] .pomodoro-preset[data-active="true"] {
+:root[data-theme="light"] .list-view-chip[data-active="true"] {
   background: #f7e8e4;
   border-color: #dbaeb0;
   color: #8e2637;

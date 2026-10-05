@@ -43,6 +43,7 @@ import { ClusterSuggestionStack } from "@/components/clustering/cluster-suggesti
 import { NudgeRibbon } from "@/components/nudges/nudge-ribbon";
 import { SystemPanel } from "@/components/panel/system-panel";
 import { FocusTimerPill } from "@/components/ui/focus-timer-pill";
+import { isWeeklyReflectionAvailable } from "@/lib/time/weekly-unlock";
 import { MergeAlert } from "@/components/ui/merge-alert";
 import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
@@ -180,6 +181,9 @@ export function AppShell({ initialUser }: AppShellProps) {
         workspaces={session.workspaces}
         workspaceMenuOpen={workspaceMenuOpen}
         workspaceName={workspaceName}
+        onOpenWeeklyReflection={() => dialogs.setWeeklyReflectionOpen(true)}
+        onOpenHistory={() => dialogs.setDumpHistoryOpen(true)}
+        weeklyReflectionLocked={!isWeeklyReflectionAvailable()}
       />
 
       <div className="app-main-area relative flex min-h-0">
@@ -232,7 +236,6 @@ export function AppShell({ initialUser }: AppShellProps) {
           selectedNodeId={view.selectedNodeId}
           workspaceId={workspaceId}
           planner={planner}
-          focusTimer={focus.focusTimer}
           onAskInChat={(message) => {
             void chat.submitMessage(message);
           }}
@@ -352,8 +355,6 @@ export function AppShell({ initialUser }: AppShellProps) {
           }
         }}
         onOpenWhatNow={() => dialogs.setWhatNowOpen((open) => !open)}
-        onOpenWeeklyReflection={() => dialogs.setWeeklyReflectionOpen(true)}
-        onOpenHistory={() => dialogs.setDumpHistoryOpen(true)}
         focusGlow={appMode === "graph" && graph.graphData.nodes.some((n) => n.status === "active")}
       />
 
@@ -403,9 +404,8 @@ export function AppShell({ initialUser }: AppShellProps) {
         workspaceName={workspaceName}
       />
 
-      {/* Focus timer pill — persistent across every mode/view, except the
-          dedicated Pomodoro view which owns the full-size countdown. */}
-      {focus.focusTimer.timer && appMode !== "pomodoro" && (
+      {/* Focus timer pill — persistent across every mode/view. */}
+      {focus.focusTimer.timer && (
         <FocusTimerPill
           timer={focus.focusTimer.timer}
           remainingSeconds={focus.focusTimer.remainingSeconds}
