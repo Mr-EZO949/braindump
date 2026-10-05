@@ -81,7 +81,9 @@ const DETECTORS: Record<IntentKind, Detector> = {
 // update_priorities action, or a tool's name.
 const COVERED_BY: Record<IntentKind, string[]> = {
   complete: ["complete", "mark_task_done", "wait"],
-  deprioritize: ["deprioritize", "wait", "drop", "deadline", "archive"],
+  // Not archive / drop: "the BrainDump fixes can wait" came back as an
+  // archive op once (eval) — a can-wait is not a goodbye.
+  deprioritize: ["deprioritize", "wait", "deadline"],
   focus: ["focus", "stakes"],
   stakes: ["stakes"],
   drop: ["drop", "archive", "delete_node"],
@@ -225,7 +227,9 @@ export function mergeRetryCalls<T extends ToolUseLike>(first: T[], retry: T[]): 
     if (call.name === "change" || call.name === "update_priorities") {
       const source = (call.input as { source?: unknown } | null)?.source;
       const target = merged.find((b) => b.name === call.name && (b.input as { source?: unknown } | null)?.source === source);
-      const have = new Set(merged.filter((b) => b.name === call.name).flatMap((b) => rows(b.input).map(rowKey)));
+      // Across both tools: the gym "complete" sent as a change op first came
+      // back as an update_priorities row in the retry — shown twice (e2e).
+      const have = new Set(merged.flatMap(rowKeys));
       const fresh = rows(call.input).filter((r) => !have.has(rowKey(r)));
       if (fresh.length === 0) continue;
       if (target) {
@@ -240,6 +244,12 @@ export function mergeRetryCalls<T extends ToolUseLike>(first: T[], retry: T[]): 
     merged.push(call);
   }
   return merged;
+}
+
+function rowKeys(block: ToolUseLike): string[] {
+  if (block.name === "change" || block.name === "update_priorities") return rows(block.input).map(rowKey);
+  // An op or action called as a tool of its own.
+  return [rowKey({ ...(block.input as Record<string, unknown>), kind: block.name })];
 }
 
 function cloneInput(input: unknown): unknown {

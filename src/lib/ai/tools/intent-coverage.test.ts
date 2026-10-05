@@ -133,6 +133,13 @@ describe("mergeRetryCalls", () => {
     expect((first[0].input as { changes: unknown[] }).changes).toHaveLength(1);
   });
 
+  it("drops a retry row the first response already made with the other tool", () => {
+    const first = [block("a", "change", { source: "user", changes: [{ kind: "complete", node_id: "gym" }] })];
+    const retry = [block("b", "update_priorities", { source: "user", changes: [{ node_id: "cv", action: "deprioritize" }, { node_id: "gym", title: "Go to the gym", action: "complete" }] })];
+    const merged = mergeRetryCalls(first, retry);
+    expect((merged[1].input as { changes: unknown[] }).changes).toEqual([{ node_id: "cv", action: "deprioritize" }]);
+  });
+
   it("keeps a different source as its own call, and drops an identical repeat call", () => {
     const first = [block("a", "update_priorities", { source: "user", changes: [{ node_id: "cv", action: "deprioritize" }] }), block("p", "plan_day", { window: "day" })];
     const retry = [block("b", "update_priorities", { source: "suggestion", changes: [{ node_id: "s", action: "focus" }] }), block("q", "plan_day", { window: "day" })];
@@ -145,5 +152,41 @@ describe("statedOpSource", () => {
     expect(statedOpSource("went to the gym this morning, now plan my afternoon", "complete")).toBe("user");
     expect(statedOpSource("what should I do next?", "complete")).toBe("suggestion");
     expect(statedOpSource(undefined, "complete")).toBe("suggestion");
+  });
+});
+
+describe("coverage holes found in the live eval", () => {
+  it("a calendar item doesn't stand in for the date the user gave", () => {
+    const message = "ugh I'm so behind on everything. the stats midterm is on oct 20, and I need to book a room for the study group";
+    const calendar = { name: "add_task_to_calendar", input: { title: "Book room", scheduled_date: "2026-10-05" } };
+    expect(missingIntents(message, [calendar]).map((m) => m.kind)).toEqual(["deadline"]);
+  });
+
+  it("an archive doesn't stand in for a can-wait", () => {
+    const message = "The BrainDump fixes can wait. Is getting the internship by November realistic?";
+    const archive = { name: "change", input: { source: "user", changes: [{ kind: "archive", node_id: "f" }] } };
+    expect(missingIntents(message, [archive]).map((m) => m.kind)).toEqual(["deprioritize"]);
+  });
+});
+
+describe("core cases cost no extra round when the model gets them right", () => {
+  const call = (name: string, input: unknown = {}) => ({ name, input });
+  const change = (...kinds: string[]) => call("change", { source: "user", changes: kinds.map((kind) => ({ kind, node_id: "n" })) });
+  it.each([
+    ["add a task to email the TA under Statistics", [change("create_node")]],
+    ["I finished the CV", [change("complete")]],
+    ["did the gym", [change("complete")]],
+    ["move Italian under Personal Development", [change("move")]],
+    ["Italian and the gym aren't related, remove that link", [change("remove_edge")]],
+    ["the CV can wait till next week", [call("update_priorities", { changes: [{ action: "deprioritize" }] })]],
+    ["should I focus on stats or the internship?", []],
+    ["did the gym, what should I do next?", [change("complete")]],
+    ["plan my day", [call("plan_day")]],
+    ["plan my day, I want 3h on Italian", [call("plan_day")]],
+    ["break the thesis into steps", [call("write_steps")]],
+    ["stats every Tue 2pm", [call("set_commitments")]],
+    ["ugh, stats is killing me", []],
+  ] as const)("%j", (message, calls) => {
+    expect(missingIntents(message, [...calls])).toEqual([]);
   });
 });

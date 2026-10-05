@@ -12,6 +12,7 @@
 import { READ_ONLY_TOOLS, type ToolContext, type ToolDefinition } from "./read-only";
 import { CHANGE_TOOL, CHANGE_TOOLS, planChange, type TurnPlan } from "./change";
 import { CHANGE_KINDS } from "@/lib/graph/change-set";
+import { PRIORITY_ACTIONS } from "@/lib/graph/priority-changes";
 import { PLANNER_MUTATION_TOOLS } from "./planner-mutations";
 import { PRIORITY_MUTATION_TOOLS } from "./priority-mutations";
 import { COMMITMENT_MUTATION_TOOLS } from "./commitment-mutations";
@@ -238,7 +239,7 @@ export async function runTurnTools(modelBlocks: ToolUse[], ctx: ToolContext): Pr
   if (process.env.CHAT_TRACE === "1") {
     console.info(`[chat/trace] ${JSON.stringify({ message: ctx.userMessage, calls: modelBlocks.map(({ name, input }) => ({ name, input })) })}`);
   }
-  for (const block of modelBlocks) blocks.push(await separateAdvice(asChangeOp(block, ctx.userMessage), ctx, applied));
+  for (const block of modelBlocks) blocks.push(await separateAdvice(asPriorityOp(asChangeOp(block, ctx.userMessage), ctx.userMessage), ctx, applied));
 
   for (const block of blocks) {
     if (!isPausingTool(block.name, block.input)) continue;
@@ -365,4 +366,15 @@ export function asChangeOp(block: ToolUse, userMessage?: string): ToolUse {
     name: CHANGE_TOOL,
     input: { source: resolved, changes: [{ kind: block.name, ...op }] },
   };
+}
+
+// The same for an update_priorities action called as a tool ("deprioritize"
+// and "focus" with a node id — Haiku did it on the #22 case, 2026-10-05: two
+// "Unknown tool" errors, a second round and "Let me fix that — those are
+// actions within update_priorities" in the reply).
+export function asPriorityOp(block: ToolUse, userMessage?: string): ToolUse {
+  if (BY_NAME.has(block.name) || !(PRIORITY_ACTIONS as readonly string[]).includes(block.name)) return block;
+  const { source, ...row } = (block.input ?? {}) as Record<string, unknown>;
+  const resolved = source === "user" || source === "suggestion" ? source : statedOpSource(userMessage, block.name);
+  return { ...block, name: "update_priorities", input: { source: resolved, changes: [{ ...row, action: block.name }] } };
 }

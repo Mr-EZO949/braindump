@@ -9,6 +9,7 @@ import {
   isInteractiveTool,
   turnNeedsNoFollowUp,
   asChangeOp,
+  asPriorityOp,
 } from "./index";
 
 describe("tool registry classification", () => {
@@ -146,5 +147,24 @@ describe("asChangeOp", () => {
     expect(asChangeOp(real)).toBe(real);
     const unknown = { id: "t", name: "teleport", input: {} };
     expect(asChangeOp(unknown)).toBe(unknown);
+  });
+});
+
+describe("asPriorityOp", () => {
+  it("a priority action called as a tool becomes an update_priorities row (#22)", () => {
+    const message = "Did the gym. Also the CV update can wait till next week, should I focus on stats or the internship?";
+    expect(asPriorityOp({ id: "t", name: "deprioritize", input: { node_id: "cv" } }, message).input).toEqual({
+      source: "user",
+      changes: [{ node_id: "cv", action: "deprioritize" }],
+    });
+    // Only asked about → the assistant's answer: a suggestion.
+    expect((asPriorityOp({ id: "t", name: "focus", input: { node_id: "s" } }, message).input as { source: string }).source).toBe("suggestion");
+  });
+
+  it("leaves real tools and change ops alone", () => {
+    const real = { id: "t", name: "update_priorities", input: {} };
+    expect(asPriorityOp(real)).toBe(real);
+    const change = { id: "t", name: "change", input: {} };
+    expect(asPriorityOp(change)).toBe(change);
   });
 });
