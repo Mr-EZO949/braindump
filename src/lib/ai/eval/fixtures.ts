@@ -396,6 +396,12 @@ export interface EdgeFixture {
     // which end the link starts at ("source" = source → candidate).
     expect: { types: string[]; from: "source" | "candidate" } | null;
   }>;
+  // The graph already there, for the structural cuts in edge-selection.ts
+  // (parent/sibling/redundant links). "source" is the source node; other ids
+  // are the candidates' or extra nodes (a parent). belongs_to = child → parent.
+  graph?: Array<{ source: string; target: string; edge_type: string }>;
+  // Types of the extra nodes in `graph` (a parent's type decides the sibling rule).
+  graph_types?: Record<string, NodeType>;
 }
 
 export const EDGE_FIXTURES: EdgeFixture[] = [
@@ -445,6 +451,46 @@ export const EDGE_FIXTURES: EdgeFixture[] = [
       { id: "c-passport", title: "Renew Passport", summary: "Current passport expires in December.", node_type: "task", expect: { types: ["required_for"], from: "candidate" } },
       { id: "c-italian", title: "Italian Crash Course", summary: "Conversational Italian for the internship.", node_type: "big_task", expect: null },
     ],
+  },
+  {
+    id: "edge-helps-not-blocks",
+    covers: "promotion helps an opening, it doesn't block it (supports, not required_for); a blocker of something else and a routine get nothing",
+    source: {
+      title: "Run Instagram Ads for the Bakery",
+      summary: "Paid posts in the neighbourhood the month before opening.",
+      node_type: "big_task",
+      has_parent: true,
+    },
+    candidates: [
+      { id: "c-open", title: "Open the Bakery", summary: "Doors open in March on Via Roma.", node_type: "goal", expect: { types: ["supports", "useful_for"], from: "source" } },
+      { id: "c-permit", title: "Get the Food Permit", summary: "The city needs a permit before we can sell anything.", node_type: "task", expect: null },
+      { id: "c-sourdough", title: "Daily Sourdough Practice", summary: "Bake one loaf a day to get the recipe right.", node_type: "habit", expect: null },
+    ],
+  },
+  {
+    id: "edge-too-many",
+    covers: "fewer links: one real helper; same-topic work, a sibling under the same class and a link the graph already carries one level up get nothing",
+    source: {
+      title: "Study for the Calculus Midterm",
+      summary: "Integrals and series, exam on the 20th.",
+      node_type: "big_task",
+      has_parent: true,
+    },
+    candidates: [
+      { id: "c-bank", title: "Calculus Past Exams", summary: "Old midterms with worked solutions from the course page.", node_type: "note", expect: { types: ["useful_for", "supports"], from: "candidate" } },
+      { id: "c-stats", title: "Statistics Midterm", summary: "Chapters 1–6, two weeks after calculus.", node_type: "big_task", expect: null },
+      { id: "c-linalg", title: "Linear Algebra Homework 3", summary: "Eigenvalues, due Monday.", node_type: "task", expect: null },
+      // A sibling: both live under the class "Calculus II".
+      { id: "c-pset", title: "Calculus Problem Set 5", summary: "Integration by parts, due Friday.", node_type: "task", expect: null },
+      // Already linked to the source's parent — the graph says it one level up.
+      { id: "c-tutor", title: "Weekly Calculus Tutoring", summary: "Thursday sessions with a TA.", node_type: "habit", expect: null },
+    ],
+    graph: [
+      { source: "source", target: "p-calc", edge_type: "belongs_to" },
+      { source: "c-pset", target: "p-calc", edge_type: "belongs_to" },
+      { source: "c-tutor", target: "p-calc", edge_type: "supports" },
+    ],
+    graph_types: { "p-calc": "class" },
   },
 ];
 

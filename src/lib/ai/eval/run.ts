@@ -6,7 +6,7 @@
 // a structured [ai/run] line with its real price, and the report adds them up.
 // A budget cap stops the run before a fixture that would cross it.
 
-import { selectEdgeProposals } from "@/lib/ai/edge-selection";
+import { buildLinkStructure, selectEdgeProposals } from "@/lib/ai/edge-selection";
 import { sessionBusyNote } from "@/lib/planner/commitments";
 
 import { aiProvider } from "../index";
@@ -339,6 +339,17 @@ async function evalEdges(fixture: EdgeFixture, provider: EvalProvider) {
     sourceHasParent: fixture.source.has_parent,
     results: result.output.results,
     candidateTypeById: new Map(fixture.candidates.map((c) => [c.id, c.node_type])),
+    titleById: new Map([[EVAL_SOURCE_ID, fixture.source.title], ...fixture.candidates.map((c) => [c.id, c.title] as [string, string])]),
+    structure: fixture.graph
+      ? buildLinkStructure({
+          edges: fixture.graph.map((e) => ({
+            source_node_id: e.source === "source" ? EVAL_SOURCE_ID : e.source,
+            target_node_id: e.target === "source" ? EVAL_SOURCE_ID : e.target,
+            edge_type: e.edge_type,
+          })),
+          nodeTypes: new Map<string, string | null>(Object.entries(fixture.graph_types ?? {})),
+        })
+      : undefined,
   });
 
   const items: CheckItem[] = [];
