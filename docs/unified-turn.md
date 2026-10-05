@@ -382,6 +382,16 @@ Each phase ships on its own and is testable from `testing-journal.md`.
      its parent, what's under it and the user's words, and returns create ops on a Suggested
      card. The Details panel's Generate steps uses the same call and parks the card in a fresh
      thread (`pending_chat_runs`, origin `"steps"`). Chat no longer has a Sonnet route.
+   - **One message, every intent — 2026-10-05** (#22). `lib/ai/tools/intent-coverage.ts` reads
+     the clauses the user STATED (done, can wait, focus, stakes, drop, a date, waiting, add,
+     move, rename, plan, a weekly time, link, archive, merge) and counts them against the first
+     response's calls. Short → the chat route asks the model once for only the missing calls
+     (its calls held, not run), merges them into that response and runs the set as one turn
+     (one card). Questions never count (advice stays advice); no miss → no extra call. A
+     stated intent also keeps a question off the Gemini route (`chat-router.ts`). An op or a
+     priority action called as a tool without a source is the user's when the message states
+     it (`asChangeOp`, `asPriorityOp`). Live check: `scripts/eval-chat-intents.ts` (10 mixed
+     messages, `lib/ai/eval/chat-intents.ts`); `CHAT_TRACE=1` logs every turn's raw calls.
    - **Still open:** the composer's dump classifier (a dump typed in chat still takes the dump
      turn — same policy and card now, so the split no longer shows).
 5. **Server follow-ups + staged streaming.** Connections as a follow-up card (done in

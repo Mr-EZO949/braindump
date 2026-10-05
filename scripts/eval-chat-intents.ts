@@ -251,7 +251,7 @@ async function main() {
   }
   const repeatAt = args.indexOf("--repeat");
   const repeat = repeatAt >= 0 ? Number(args[repeatAt + 1]) || 1 : 1;
-  const wanted = args.filter((a, i) => !a.startsWith("--") && i !== repeatAt + 1);
+  const wanted = args.filter((a, i) => !a.startsWith("--") && (repeatAt < 0 || i !== repeatAt + 1));
   const cases = wanted.length ? MULTI_INTENT_CASES.filter((c) => wanted.includes(c.id)) : MULTI_INTENT_CASES;
 
   const userId = await ensureUser();
