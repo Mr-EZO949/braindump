@@ -9,8 +9,8 @@ import { clearFocusCache } from "@/components/ui/what-now-dialog";
 import {
   appliedActionFromPayload,
   appliedUndoEndpoint,
-  isCommitmentAction,
   isPlanAction,
+  isScheduleAction,
   type AppliedMarkerPayload,
 } from "@/lib/chat/applied-marker";
 import { turnCardFromApplied } from "@/lib/chat/turn-marker";
@@ -204,7 +204,7 @@ export function useTurnCards({
       });
       if (!res.ok) throw new Error("undo failed");
       setStatus("undone");
-      if (isCommitmentAction(action)) clearFocusCache(targetWorkspaceId);
+      if (isScheduleAction(action)) clearFocusCache(targetWorkspaceId);
       // Back to the earlier plan — the Planner re-reads its tasks.
       if (isPlanAction(action)) planner?.refreshPlanner();
     } catch {

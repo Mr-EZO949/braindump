@@ -6,6 +6,7 @@ import {
   createAppliedMarkerParser,
   encodeAppliedMarker,
   isPlanAction,
+  isScheduleAction,
 } from "./applied-marker";
 import { createPauseMarkerParser } from "./pause-marker";
 
@@ -89,5 +90,26 @@ describe("applied marker", () => {
     expect(isPlanAction(action)).toBe(true);
     expect(appliedUndoEndpoint(action)).toBe("/api/assistant/plan/undo");
     expect(appliedActionNote({ ...action, status: "applied" })).toBe("[Today's plan updated: Essay — 15:30–17:00 (was 09:00)]");
+  });
+});
+
+describe("where an applied card's Undo goes", () => {
+  it("priorities, weekly times and standing preferences each have their own", () => {
+    expect(appliedUndoEndpoint({ toolName: "update_priorities" })).toBe("/api/assistant/priorities/undo");
+    expect(appliedUndoEndpoint({ toolName: "set_commitments" })).toBe("/api/assistant/commitments/undo");
+    expect(appliedUndoEndpoint({ toolName: "set_preferences" })).toBe("/api/preferences");
+    expect(isScheduleAction({ toolName: "set_preferences" })).toBe(true);
+    expect(isScheduleAction({ toolName: "update_priorities" })).toBe(false);
+  });
+
+  it("the thread note names what was saved", () => {
+    const note = appliedActionNote({
+      toolName: "set_preferences",
+      items: [{ nodeId: "p1", title: "Coding", action: "add", detail: "4h a day", scoreBefore: null, scoreAfter: null }],
+      failed: [],
+      undo: null,
+      status: "applied",
+    });
+    expect(note).toBe("[Standing preferences updated: Coding — 4h a day]");
   });
 });

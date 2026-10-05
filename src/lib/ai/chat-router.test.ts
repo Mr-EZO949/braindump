@@ -53,6 +53,12 @@ describe("looksLikePlainQuestion", () => {
     expect(looksLikePlainQuestion(message)).toBe(false);
   });
 
+  it("keeps standing preferences on Claude — they need set_preferences (#28)", () => {
+    expect(looksLikePlainQuestion("will you remember I want 4h a day coding?")).toBe(false);
+    expect(looksLikePlainQuestion("can you forget the coding thing?")).toBe(false);
+    expect(looksLikePlainQuestion("from now on no work after 10pm, ok?")).toBe(false);
+  });
+
   it("keeps answers to the assistant's own question on Claude", () => {
     const history = [
       { role: "user" as const, body: "is mundane fantasy worth keeping?" },

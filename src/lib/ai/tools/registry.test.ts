@@ -48,6 +48,13 @@ describe("tool registry classification", () => {
     expect(isPausingTool("write_steps")).toBe(true);
   });
 
+  it("set_preferences is a direct tool; a suggested one waits (docs/preferences.md)", () => {
+    expect(getToolSchemas().some((s) => s.name === "set_preferences")).toBe(true);
+    expect(isDirectTool("set_preferences")).toBe(true);
+    expect(isPausingTool("set_preferences", { source: "user", changes: [] })).toBe(false);
+    expect(isPausingTool("set_preferences", { source: "suggestion", changes: [] })).toBe(true);
+  });
+
   it("set_commitments is a direct tool: registered, applies without a pause", () => {
     expect(getToolSchemas().some((s) => s.name === "set_commitments")).toBe(true);
     expect(isDirectTool("set_commitments")).toBe(true);

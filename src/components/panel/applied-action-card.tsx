@@ -4,7 +4,7 @@
 // Accept/Reject gate for priority changes — they're fully reversible, so the
 // safety net is after the fact instead of in the way.
 
-import { isCommitmentAction, isPlanAction } from "@/lib/chat/applied-marker";
+import { isPlanAction, isPreferenceAction, isScheduleAction } from "@/lib/chat/applied-marker";
 import { PRIORITY_ACTION_GLYPH, type PriorityAction } from "@/lib/graph/priority-changes";
 import { COMMITMENT_ACTION_GLYPH, type CommitmentAction } from "@/lib/planner/commitment-changes";
 import type { AppliedAction, AppliedActionItem } from "@/types/chat";
@@ -44,11 +44,19 @@ export function AppliedActionCard({ action, onUndo, embedded, heading: headingOv
   const { status } = action;
   const undone = status === "undone";
   const canUndo = status === "applied" || status === "error";
-  // set_commitments: a schedule change — same card, its own words and glyphs.
-  const schedule = isCommitmentAction(action);
+  // set_commitments / set_preferences: a schedule change — same card, its own words and glyphs.
+  const schedule = isScheduleAction(action);
   // replan_today: today's plan rebuilt from now — Undo goes back to the earlier plan.
   const plan = isPlanAction(action);
-  const heading = headingOverride ?? (plan ? "Rest of today replanned" : schedule ? "Schedule saved" : "Priorities updated");
+  const heading =
+    headingOverride ??
+    (plan
+      ? "Rest of today replanned"
+      : isPreferenceAction(action)
+        ? "Saved for your plans"
+        : schedule
+          ? "Schedule saved"
+          : "Priorities updated");
 
   return (
     <div

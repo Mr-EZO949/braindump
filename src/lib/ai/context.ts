@@ -6,6 +6,8 @@ import { AI_TOKEN_BUDGETS, AI_ASSISTANT } from "./config";
 import { matchNodes, type MatchedNode } from "./embeddings";
 import { stakesLevel } from "@/lib/graph/priority-signals";
 import { describeCommitment, loadActiveCommitments } from "@/lib/planner/commitments";
+import { preferencesSnapshotBlock, type Preference } from "@/lib/planner/preferences";
+import { loadPreferences } from "@/lib/planner/preference-store";
 import { localDateISO } from "@/lib/time/local-date";
 import { DAY_TASK_SELECT, PLAN_REPLACE_ENTITY, describeDayPlan, type DayPlanTask } from "@/lib/planner/replan";
 
@@ -79,6 +81,9 @@ export async function buildAssistantContext(params: {
   budget?: number;
   /** The user's local date — which fixed commitments are still running. */
   today?: string;
+  /** Standing preferences (docs/preferences.md), when the caller already has
+   *  them from the user's auth metadata; loaded otherwise. */
+  preferences?: Preference[];
 }): Promise<AssembledContext> {
   const budget = params.budget ?? AI_TOKEN_BUDGETS.ASSISTANT_CHAT;
   const items: ContextItem[] = [];
@@ -103,7 +108,7 @@ export async function buildAssistantContext(params: {
   }).catch(() => [] as MatchedNode[]);
 
   // Load all workspace data in parallel
-  const [nodesResult, edgesResult, feedbackResult, recentlyCompletedResult, planResult, userProfileResult, semanticMatches, commitments] = await Promise.all([
+  const [nodesResult, edgesResult, feedbackResult, recentlyCompletedResult, planResult, userProfileResult, semanticMatches, commitments, preferences] = await Promise.all([
     params.supabase
       .from("nodes")
       .select("id, title, summary, node_type, importance, current_importance_score, status, target_date, stakes, waiting_for, resume_on")
@@ -161,6 +166,8 @@ export async function buildAssistantContext(params: {
     semanticMatchPromise,
 
     loadActiveCommitments(params.supabase, params.userId, params.today ?? localDateISO(new Date(), null)),
+
+    params.preferences ?? loadPreferences(params.userId, params.supabase),
   ]);
 
 
@@ -312,6 +319,20 @@ export async function buildAssistantContext(params: {
       .map((c) => `- ${c.title}: ${describeCommitment(c, params.today)} — id: ${c.id}`);
     const text = `[FIXED COMMITMENTS — weekly busy times]\n${lines.join("\n")}`;
     items.push({ kind: "workspace_summary", id: "commitments", text, priority: 92, tokens: estimateTokens(text) });
+  }
+
+  // 2d. Standing preferences — "4h a day coding", "no work after 22:00". Lets
+  // chat answer "what did I say about coding?" and update / forget one by id.
+  // Ordered by kind then id (preferencesSnapshotBlock), byte-stable.
+  const preferencesBlock = preferencesSnapshotBlock(preferences);
+  if (preferencesBlock) {
+    items.push({
+      kind: "workspace_summary",
+      id: "preferences",
+      text: preferencesBlock,
+      priority: 91,
+      tokens: estimateTokens(preferencesBlock),
+    });
   }
 
   // ---------------------------------------------------------------------------

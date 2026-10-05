@@ -85,7 +85,9 @@ export function appliedActionNote(action: AppliedAction): string {
     ? "Today's plan"
     : isCommitmentAction(action)
       ? "Fixed commitments"
-      : "Priorities";
+      : isPreferenceAction(action)
+        ? "Standing preferences"
+        : "Priorities";
   // After an Undo the model kept stating the undone facts ("still on for
   // Friday", e2e 2026-09-29) — say outright that they no longer apply.
   return action.status === "undone"
@@ -103,8 +105,20 @@ export function isPlanAction(action: Pick<AppliedAction, "toolName">): boolean {
   return action.toolName === "replan_today";
 }
 
+/** set_preferences cards: how they want to spend their time (docs/preferences.md). */
+export function isPreferenceAction(action: Pick<AppliedAction, "toolName">): boolean {
+  return action.toolName === "set_preferences";
+}
+
+/** A change to when / how the user works — Focus and plans read it. */
+export function isScheduleAction(action: Pick<AppliedAction, "toolName">): boolean {
+  return isCommitmentAction(action) || isPreferenceAction(action);
+}
+
 /** Where an applied card's Undo goes. */
 export function appliedUndoEndpoint(action: Pick<AppliedAction, "toolName">): string {
   if (isPlanAction(action)) return "/api/assistant/plan/undo";
-  return isCommitmentAction(action) ? "/api/assistant/commitments/undo" : "/api/assistant/priorities/undo";
+  if (isCommitmentAction(action)) return "/api/assistant/commitments/undo";
+  if (isPreferenceAction(action)) return "/api/preferences";
+  return "/api/assistant/priorities/undo";
 }

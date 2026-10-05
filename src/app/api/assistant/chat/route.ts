@@ -31,6 +31,7 @@ import {
 import { buildHint, routeChatMessage } from "@/lib/ai/chat-router";
 import { ASSISTANT_QA_PROMPT_VERSION, buildQASystemPrompt, streamQAAnswer } from "@/lib/ai/gemini-chat";
 import { autoAddEnabled } from "@/lib/ai/auto-apply";
+import { preferencesFromMetadata } from "@/lib/planner/preferences";
 import { checkAIRunRateLimit } from "@/lib/ai/rate-limit";
 import { hashText, normalizeAIError } from "@/lib/ai/errors";
 import { persistAIRun, recordClaudeRun } from "@/lib/ai/telemetry";
@@ -269,6 +270,7 @@ export async function POST(req: NextRequest) {
     supabase,
     message: message.trim(),
     today: todayISO,
+    preferences: preferencesFromMetadata(user.user_metadata),
   });
 
   const systemPrompt = buildAssistantSystemPrompt(resolvedMode, todayISO);

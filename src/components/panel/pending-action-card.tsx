@@ -9,6 +9,7 @@ import { useMemo } from "react";
 import { ChangeChecklist, useChangeSelection } from "@/components/panel/change-checklist";
 import { CHANGE_SET_TOOLS, isChangeList, namerFor, type ChangeOpView } from "@/lib/chat/change-describe";
 import { describePriorityChange, parsePriorityChanges } from "@/lib/graph/priority-changes";
+import { describeSuggestedPreference } from "@/lib/planner/preferences";
 import type { PendingAction } from "@/types/chat";
 
 interface PendingActionCardProps {
@@ -29,6 +30,7 @@ const TOOL_LABELS: Record<string, { verb: string; noun: string }> = {
   // A suggestion the assistant made (source "suggestion") — waits for OK.
   update_priorities: { verb: "Suggested", noun: "priorities" },
   set_commitments: { verb: "Suggested", noun: "weekly times" },
+  set_preferences: { verb: "Suggested", noun: "preferences" },
   add_task_to_calendar: { verb: "Schedule", noun: "task" },
   reschedule_task: { verb: "Reschedule", noun: "task" },
   mark_task_done: { verb: "Mark done", noun: "task" },
@@ -48,6 +50,9 @@ function suggestionLines(action: PendingAction): string[] | null {
       const time = typeof c.start_time === "string" ? ` ${c.start_time}${typeof c.end_time === "string" ? `–${c.end_time}` : ""}` : "";
       return `${verb} ${typeof c.title === "string" ? c.title : "a weekly time"}${days}${time}`;
     });
+  }
+  if (action.toolName === "set_preferences" && Array.isArray(action.toolInput.changes)) {
+    return (action.toolInput.changes as Array<Record<string, unknown>>).map(describeSuggestedPreference);
   }
   return null;
 }
