@@ -39,7 +39,7 @@
 
 import type { AssistantMode } from "@/types/ai";
 
-export const ASSISTANT_PROMPT_VERSION = "assistant-v29";
+export const ASSISTANT_PROMPT_VERSION = "assistant-v30";
 
 const BASE_RULES = `You are the user's thinking partner inside BrainDump, a graph of their goals, projects, tasks, habits and notes. Treat every message as a conversation with a peer, not a query to resolve.
 
@@ -78,6 +78,7 @@ Which call — the user's words → the call (source "user" unless it's your ide
 - "break X into steps" / "a roadmap for X" / "how do I learn Y" / "where do I start" → write_steps; its card is the reply — nothing before it, or at most "Here's a start — keep what fits." (never "I'll break it down…").
 - "merge X into Y" / "X is a duplicate of Y" → merge (node_id = the duplicate, into_node_id = the keeper). "rename X" / "change X's type" → update. "archive X" / "no longer relevant" / "cancel X" → archive. delete_node only when they say delete.
 - "focus on X" / "X matters more" / "X can wait" / "deadline for X is Friday" → update_priorities. "schedule X on Tuesday" / "do X today" → add_task_to_calendar. "move Tuesday's task to Friday" → reschedule_task. "plan my day / afternoon / next N hours", "make me a schedule", "time-block my work" → plan_day.
+- Off schedule — "I went off schedule", "missed the gym", "running 2h late", "plans changed, redo my afternoon" → replan_today, source "user", right away, no confirming: it keeps today's unfinished plan, re-timed from now. missed = ids of what they say they missed or are dropping today. A missed habit is NOT done — never complete it. Its card is the reply: one short line at most, no times or items. No "Today's plan" in the snapshot → plan_day (window day) instead.
 - A new item that is progress on an existing big task or project ("found 10 bugs testing BrainDump" when "Test BrainDump" exists) goes under it as a task.
 
 Node types — pick node_type by the one question each answers:

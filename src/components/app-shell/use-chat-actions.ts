@@ -6,7 +6,7 @@
 
 import { clearFocusCache } from "@/components/ui/what-now-dialog";
 import { createUserChatMessage } from "@/lib/graph/chat";
-import { createAppliedMarkerParser, isCommitmentAction } from "@/lib/chat/applied-marker";
+import { createAppliedMarkerParser, isCommitmentAction, isPlanAction } from "@/lib/chat/applied-marker";
 import { createPauseMarkerParser } from "@/lib/chat/pause-marker";
 import { chatHistoryForModel, mergeTurnCards } from "@/lib/chat/thread-history";
 import { createTurnMarkerParser, createUndoMarkerParser } from "@/lib/chat/turn-marker";
@@ -111,6 +111,8 @@ export function useChatActions({
       for (const item of applied.items) appliedNodeIds.add(item.nodeId);
       // Busy time changed — Focus's cached list no longer knows it.
       if (isCommitmentAction(applied) && workspaceId) clearFocusCache(workspaceId);
+      // Today's plan was rebuilt — the Planner re-reads its tasks.
+      if (isPlanAction(applied)) planner.refreshPlanner();
       setChatMessages((prev) =>
         prev.map((m) => (m.id === assistantMsgId ? { ...m, appliedAction: { ...applied, status: "applied" } } : m)),
       );

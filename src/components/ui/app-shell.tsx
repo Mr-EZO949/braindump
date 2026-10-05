@@ -90,6 +90,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     analyzeNodes,
     submitMessage: chat.submitMessage,
     panels,
+    planner,
   });
 
   // Brain dumps and what they hand on: steps, the proposals review.

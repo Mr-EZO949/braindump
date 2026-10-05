@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { buildHint, looksLikePlainQuestion, routeChatMessage } from "./chat-router";
 
 describe("looksLikePlainQuestion", () => {
+  it("going off schedule is an action, not a question (#27)", () => {
+    for (const message of ["can you redo my afternoon?", "i'm running late, what now?", "i'm way behind today, what should i do?"]) {
+      expect(looksLikePlainQuestion(message)).toBe(false);
+    }
+  });
+
   it.each([
     "what should i focus on right now?",
     "why is the internship goal ranked so high?",

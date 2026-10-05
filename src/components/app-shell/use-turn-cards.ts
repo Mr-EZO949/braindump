@@ -6,7 +6,13 @@
 // question the card asks.
 
 import { clearFocusCache } from "@/components/ui/what-now-dialog";
-import { appliedActionFromPayload, appliedUndoEndpoint, isCommitmentAction, type AppliedMarkerPayload } from "@/lib/chat/applied-marker";
+import {
+  appliedActionFromPayload,
+  appliedUndoEndpoint,
+  isCommitmentAction,
+  isPlanAction,
+  type AppliedMarkerPayload,
+} from "@/lib/chat/applied-marker";
 import { turnCardFromApplied } from "@/lib/chat/turn-marker";
 import { undoAutoApplied } from "@/lib/graph/auto-apply-client";
 import { clientDayHints } from "@/lib/habits/streak";
@@ -16,7 +22,7 @@ import type { DumpTurn } from "@/types/ai";
 import type { ChatActions } from "./use-chat-actions";
 import type { ChatThread } from "./use-chat-thread";
 import type { ConnectionAnalysis } from "./use-connection-analysis";
-import type { ShellPanels } from "./use-shell-ui";
+import type { PlannerSync, ShellPanels } from "./use-shell-ui";
 import type { WorkspaceGraph } from "./use-workspace-graph";
 
 /** What a dump's answer carries besides its turn: changes applied, and one waiting on a card. */
@@ -39,6 +45,7 @@ export function useTurnCards({
   analyzeNodes,
   submitMessage,
   panels,
+  planner,
 }: {
   userId: string | null;
   workspaceId: string | null;
@@ -50,6 +57,7 @@ export function useTurnCards({
   analyzeNodes: ConnectionAnalysis["analyzeNodes"];
   submitMessage: ChatActions["submitMessage"];
   panels: Pick<ShellPanels, "openChatRail">;
+  planner?: Pick<PlannerSync, "refreshPlanner">;
 }) {
   const { chatMessages, setChatMessages, chatLoading, chatSendingRef } = thread;
   const { setGraphData, loadGraph, refreshAfterPriorityChange } = graph;
@@ -197,6 +205,8 @@ export function useTurnCards({
       if (!res.ok) throw new Error("undo failed");
       setStatus("undone");
       if (isCommitmentAction(action)) clearFocusCache(targetWorkspaceId);
+      // Back to the earlier plan — the Planner re-reads its tasks.
+      if (isPlanAction(action)) planner?.refreshPlanner();
     } catch {
       setStatus("error", "Couldn't undo that — try again.");
     }

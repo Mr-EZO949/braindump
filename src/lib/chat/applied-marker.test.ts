@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { appliedActionNote, createAppliedMarkerParser, encodeAppliedMarker } from "./applied-marker";
+import {
+  appliedActionNote,
+  appliedUndoEndpoint,
+  createAppliedMarkerParser,
+  encodeAppliedMarker,
+  isPlanAction,
+} from "./applied-marker";
 import { createPauseMarkerParser } from "./pause-marker";
 
 const payload = {
@@ -71,5 +77,17 @@ describe("applied marker", () => {
     expect(appliedActionNote({ ...action, status: "undone" })).toBe(
       "[The user UNDID these changes — they no longer apply; the Graph context shows the current state: Stats exam — Waiting for exam result]",
     );
+  });
+
+  it("a rebuilt day plan says so, and its Undo goes back to the earlier plan", () => {
+    const action = {
+      toolName: "replan_today",
+      items: [{ nodeId: "n1", title: "Essay", action: "moved", detail: "15:30–17:00 (was 09:00)", scoreBefore: null, scoreAfter: null }],
+      failed: [],
+      undo: { replacement_id: "r1" },
+    };
+    expect(isPlanAction(action)).toBe(true);
+    expect(appliedUndoEndpoint(action)).toBe("/api/assistant/plan/undo");
+    expect(appliedActionNote({ ...action, status: "applied" })).toBe("[Today's plan updated: Essay — 15:30–17:00 (was 09:00)]");
   });
 });

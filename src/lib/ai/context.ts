@@ -7,6 +7,7 @@ import { matchNodes, type MatchedNode } from "./embeddings";
 import { stakesLevel } from "@/lib/graph/priority-signals";
 import { describeCommitment, loadActiveCommitments } from "@/lib/planner/commitments";
 import { localDateISO } from "@/lib/time/local-date";
+import { DAY_TASK_SELECT, PLAN_REPLACE_ENTITY, describeDayPlan, type DayPlanTask } from "@/lib/planner/replan";
 
 // ---------------------------------------------------------------------------
 // Token estimator — chars/4 approximation (standard estimate for English prose)
@@ -122,6 +123,7 @@ export async function buildAssistantContext(params: {
       .select("event_type, entity_id, created_at")
       .eq("workspace_id", params.workspaceId)
       .eq("user_id", params.userId)
+      .neq("entity_type", PLAN_REPLACE_ENTITY)
       .order("created_at", { ascending: false })
       .limit(20),
 
@@ -135,15 +137,17 @@ export async function buildAssistantContext(params: {
       .order("completed_at", { ascending: false })
       .limit(10),
 
-    // Recent accepted plan session with its pending blocks (deferred 8.3)
+    // Today's plan as the Planner shows it — its tasks, with what's ticked
+    // (docs/replan.md). Until 2026-10-05 this was the latest accepted plan
+    // session's blocks, which never learn a tick and outlive a replaced plan.
     params.supabase
-      .from("plan_sessions")
-      .select("id, planning_window, plan_blocks(title, block_type, duration_minutes, completion_status, node_id, start_offset)")
+      .from("plan_tasks")
+      .select(DAY_TASK_SELECT)
       .eq("workspace_id", params.workspaceId)
       .eq("user_id", params.userId)
-      .eq("status", "accepted")
-      .order("created_at", { ascending: false })
-      .limit(1),
+      .eq("scheduled_date", params.today ?? localDateISO(new Date(), null))
+      .not("node_id", "is", null)
+      .limit(30),
 
     // User-level "about you" identity — small, stable, and always relevant, so
     // it's pinned near the top of the context (see below). Column-selected so a
@@ -159,8 +163,6 @@ export async function buildAssistantContext(params: {
     loadActiveCommitments(params.supabase, params.userId, params.today ?? localDateISO(new Date(), null)),
   ]);
 
-  type PlanBlockRow = { title: string; block_type: string; duration_minutes: number; completion_status: string; node_id: string | null; start_offset: number };
-  type PlanSessionRow = { id: string; planning_window: string; plan_blocks: PlanBlockRow[] };
 
   type NodeRow = {
     id: string;
@@ -189,7 +191,7 @@ export async function buildAssistantContext(params: {
   const edges: EdgeRow[] = edgesResult.data ?? [];
   const feedbackEvents: FeedbackRow[] = feedbackResult.data ?? [];
   const recentlyCompleted: CompletedRow[] = recentlyCompletedResult.data ?? [];
-  const recentPlanSession: PlanSessionRow | null = (planResult.data as PlanSessionRow[] | null)?.[0] ?? null;
+  const todayPlanTasks = (planResult.data ?? []) as DayPlanTask[];
 
   const nodeById = new Map(allNodes.map((n) => [n.id, n]));
   const activeNodes = allNodes.filter((n) => n.status !== "completed");
@@ -379,25 +381,18 @@ export async function buildAssistantContext(params: {
   }
 
   // ---------------------------------------------------------------------------
-  // 6. Active plan blocks from most recent accepted session (deferred 8.3)
+  // 6. Today's plan — what's ticked and what isn't, so "I went off schedule"
+  // can be answered with replan_today (docs/replan.md). Small; kept high.
   // ---------------------------------------------------------------------------
-  if (recentPlanSession) {
-    const pendingBlocks = [...recentPlanSession.plan_blocks]
-      .sort((blockA, blockB) => blockA.start_offset - blockB.start_offset)
-      .filter((b) => b.completion_status === "pending" && b.block_type === "focus");
-    if (pendingBlocks.length > 0) {
-      const blockLines = pendingBlocks
-        .slice(0, 6)
-        .map((b) => `  - ${b.title} (${b.duration_minutes}m)`);
-      const text = `Active plan (${recentPlanSession.planning_window}):\n${blockLines.join("\n")}`;
-      items.push({
-        kind: "event",
-        id: "plan",
-        text,
-        priority: 45,
-        tokens: estimateTokens(text),
-      });
-    }
+  const planText = describeDayPlan(todayPlanTasks, params.today ?? localDateISO(new Date(), null));
+  if (planText) {
+    items.push({
+      kind: "event",
+      id: "plan",
+      text: planText,
+      priority: 80,
+      tokens: estimateTokens(planText),
+    });
   }
 
   // ---------------------------------------------------------------------------

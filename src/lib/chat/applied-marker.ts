@@ -81,7 +81,11 @@ export function createAppliedMarkerParser(): MarkerParser<Omit<AppliedAction, "s
  */
 export function appliedActionNote(action: AppliedAction): string {
   const list = action.items.map((item) => `${item.title} — ${item.detail}`).join("; ");
-  const what = isCommitmentAction(action) ? "Fixed commitments" : "Priorities";
+  const what = isPlanAction(action)
+    ? "Today's plan"
+    : isCommitmentAction(action)
+      ? "Fixed commitments"
+      : "Priorities";
   // After an Undo the model kept stating the undone facts ("still on for
   // Friday", e2e 2026-09-29) — say outright that they no longer apply.
   return action.status === "undone"
@@ -94,7 +98,13 @@ export function isCommitmentAction(action: Pick<AppliedAction, "toolName">): boo
   return action.toolName === "set_commitments";
 }
 
+/** replan_today cards: today's plan rebuilt (docs/replan.md). */
+export function isPlanAction(action: Pick<AppliedAction, "toolName">): boolean {
+  return action.toolName === "replan_today";
+}
+
 /** Where an applied card's Undo goes. */
 export function appliedUndoEndpoint(action: Pick<AppliedAction, "toolName">): string {
+  if (isPlanAction(action)) return "/api/assistant/plan/undo";
   return isCommitmentAction(action) ? "/api/assistant/commitments/undo" : "/api/assistant/priorities/undo";
 }

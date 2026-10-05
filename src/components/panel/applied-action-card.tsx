@@ -4,7 +4,7 @@
 // Accept/Reject gate for priority changes — they're fully reversible, so the
 // safety net is after the fact instead of in the way.
 
-import { isCommitmentAction } from "@/lib/chat/applied-marker";
+import { isCommitmentAction, isPlanAction } from "@/lib/chat/applied-marker";
 import { PRIORITY_ACTION_GLYPH, type PriorityAction } from "@/lib/graph/priority-changes";
 import { COMMITMENT_ACTION_GLYPH, type CommitmentAction } from "@/lib/planner/commitment-changes";
 import type { AppliedAction, AppliedActionItem } from "@/types/chat";
@@ -22,6 +22,8 @@ interface AppliedActionCardProps {
 const RAISING = new Set(["focus", "resume", "deadline"]);
 // A finished or dropped node leaves the ranking — its score delta means nothing.
 const LEAVING = new Set(["complete", "drop"]);
+// replan_today rows (lib/planner/plan-replace.ts replanCardRows).
+const PLAN_GLYPH: Record<string, string> = { kept: "◷", moved: "→", missed: "✕", unplanned: "–" };
 
 function Delta({ item }: { item: AppliedActionItem }) {
   if (LEAVING.has(item.action) || item.scoreBefore === null || item.scoreAfter === null) return null;
@@ -44,7 +46,9 @@ export function AppliedActionCard({ action, onUndo, embedded, heading: headingOv
   const canUndo = status === "applied" || status === "error";
   // set_commitments: a schedule change — same card, its own words and glyphs.
   const schedule = isCommitmentAction(action);
-  const heading = headingOverride ?? (schedule ? "Schedule saved" : "Priorities updated");
+  // replan_today: today's plan rebuilt from now — Undo goes back to the earlier plan.
+  const plan = isPlanAction(action);
+  const heading = headingOverride ?? (plan ? "Rest of today replanned" : schedule ? "Schedule saved" : "Priorities updated");
 
   return (
     <div
@@ -56,7 +60,9 @@ export function AppliedActionCard({ action, onUndo, embedded, heading: headingOv
         <span className="applied-card-mark" aria-hidden="true">
           {undone ? "↺" : "✓"}
         </span>
-        <span className="applied-card-title">{undone ? "Undone — back to how it was" : heading}</span>
+        <span className="applied-card-title">
+          {undone ? (plan ? "Undone — back to the earlier plan" : "Undone — back to how it was") : heading}
+        </span>
         {canUndo ? (
           <button className="applied-card-undo" onClick={onUndo} type="button">
             Undo
@@ -68,10 +74,14 @@ export function AppliedActionCard({ action, onUndo, embedded, heading: headingOv
 
       <ul className="applied-card-list">
         {action.items.map((item, index) => {
-          const glyph = schedule
-            ? (COMMITMENT_ACTION_GLYPH[item.action as CommitmentAction] ?? "◷")
-            : (PRIORITY_ACTION_GLYPH[item.action as PriorityAction] ?? "•");
-          const raises = schedule
+          const glyph = plan
+            ? (PLAN_GLYPH[item.action] ?? "◷")
+            : schedule
+              ? (COMMITMENT_ACTION_GLYPH[item.action as CommitmentAction] ?? "◷")
+              : (PRIORITY_ACTION_GLYPH[item.action as PriorityAction] ?? "•");
+          const raises = plan
+            ? item.action === "moved"
+            : schedule
             ? item.action === "add"
             : item.action === "stakes"
               ? item.detail === "High stakes"
@@ -80,7 +90,7 @@ export function AppliedActionCard({ action, onUndo, embedded, heading: headingOv
           return (
             <li
               className="applied-card-row"
-              key={`${item.nodeId}-${item.action}`}
+              key={`${item.nodeId}-${item.action}-${index}`}
               style={{ animationDelay: `${index * 45}ms` }}
             >
               <span className={`applied-card-glyph applied-card-glyph--${tone}`} aria-hidden="true">

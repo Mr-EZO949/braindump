@@ -54,6 +54,13 @@ describe("tool registry classification", () => {
     expect(isPausingTool("set_commitments")).toBe(false);
   });
 
+  it("replan_today is a direct tool: the user's own request applies with Undo (#27)", () => {
+    expect(getToolSchemas().some((s) => s.name === "replan_today")).toBe(true);
+    expect(isDirectTool("replan_today")).toBe(true);
+    expect(isPausingTool("replan_today", { source: "user" })).toBe(false);
+    expect(isPausingTool("replan_today", { source: "suggestion" })).toBe(true);
+  });
+
   it("a direct tool's call that only suggests waits on a card (owner, 2026-10-02)", () => {
     expect(isPausingTool("update_priorities", { source: "user", changes: [] })).toBe(false);
     expect(isPausingTool("update_priorities", { source: "suggestion", changes: [] })).toBe(true);
