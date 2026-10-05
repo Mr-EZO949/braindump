@@ -1,6 +1,6 @@
 // In-memory stand-in for the slice of supabase-js the server libs use:
 // from(table).select/insert/update/upsert/delete with eq/neq/in/is/gt/gte/lt/
-// lte/or filters, order, limit, single/maybeSingle, and chained .select()
+// lte/or/ilike filters, order, limit, single/maybeSingle, and chained .select()
 // returning. Filters follow SQL NULL semantics (NULL never matches eq/neq/in),
 // which is what PostgREST does — `.neq("status", "archived")` drops NULL rows.
 //
@@ -38,10 +38,13 @@ export type FakeSupabase = {
 const isNull = (v: unknown) => v === null || v === undefined;
 
 function parseOr(expr: string): Filter {
-  // "source_node_id.eq.X,target_node_id.eq.X" — the only form the libs use.
+  // "source_node_id.eq.X,target_node_id.eq.X", and "ends_on.is.null,ends_on.gte.D"
+  // (loadActiveCommitments).
   const parts = expr.split(",").map((part) => {
     const [column, op, ...rest] = part.split(".");
     const value = rest.join(".");
+    if (op === "is" && value === "null") return (row: Row) => isNull(row[column]);
+    if (op === "gte") return (row: Row) => !isNull(row[column]) && String(row[column]) >= value;
     if (op !== "eq") throw new Error(`fake-supabase: unsupported or() op ${op}`);
     return (row: Row) => !isNull(row[column]) && String(row[column]) === value;
   });
@@ -200,6 +203,9 @@ export function createFakeSupabase(
       lt: (c: string, v: string | number) => addFilter((r) => !isNull(r[c]) && (r[c] as string | number) < v),
       lte: (c: string, v: string | number) => addFilter((r) => !isNull(r[c]) && (r[c] as string | number) <= v),
       or: (expr: string) => addFilter(parseOr(expr)),
+      // Case-insensitive equality (no % wildcards in what the libs send).
+      ilike: (c: string, v: string) =>
+        addFilter((r) => !isNull(r[c]) && String(r[c]).toLowerCase() === String(v).toLowerCase()),
       order(column: string, opts?: { ascending?: boolean }) {
         state.orderBy.push({ column, ascending: opts?.ascending ?? true });
         return chain;

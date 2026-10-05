@@ -29,6 +29,7 @@ import {
   type StaleItem,
   type StaleMarker,
 } from "@/lib/planner/skips";
+import { PLAN_REPLACE_ENTITY, replacementMarks, type ReplacementRow } from "@/lib/planner/replan";
 import {
   busyOn,
   freeTimeInBusy,
@@ -773,13 +774,14 @@ export async function buildPlannerCandidates(params: {
     // Fixed commitments → today's busy time (per user, fail-soft).
     loadActiveCommitments(params.supabase, params.userId, todayDate),
 
-    // "Does this still matter?" answers (lib/planner/skips.ts).
+    // "Does this still matter?" answers (lib/planner/skips.ts), and day plans
+    // replaced or rebuilt (lib/planner/replan.ts): their skips and missed habits.
     params.supabase
       .from("feedback_events")
-      .select("id, entity_id, created_at, metadata")
+      .select("id, entity_type, entity_id, created_at, metadata")
       .eq("workspace_id", params.workspaceId)
       .eq("user_id", params.userId)
-      .eq("entity_type", STALE_CHECK_ENTITY)
+      .in("entity_type", [STALE_CHECK_ENTITY, PLAN_REPLACE_ENTITY])
       .gte("created_at", skipWindowStart),
   ]);
 
@@ -895,6 +897,9 @@ export async function buildPlannerCandidates(params: {
       (habitCompletionsThisWeekByNode.get(row.node_id) ?? 0) + 1,
     );
   }
+  // Done today, or a habit the user said they missed today (filled below from
+  // replaced plans): out of today's picks and plans.
+  const offTodayIds = new Set<string>(doneTodayIds);
   // Nodes touched *yesterday* (strictly) — a completion/status change or a chat
   // scoped to them. Used for rotation: rotate away from yesterday's cluster.
   // Completed steps count (that's how a cluster usually gets worked).
@@ -1000,10 +1005,19 @@ export async function buildPlannerCandidates(params: {
       cur = clusterParentOf.get(cur);
     }
   }
+  const markerRows = (staleMarkersResult.data ?? []) as Array<StaleMarker & { entity_type: string }>;
+  const staleMarkers = markerRows.filter((row) => row.entity_type === STALE_CHECK_ENTITY);
+  // A plan task a new plan took off the day after its time passed is still a
+  // skip; a habit the user said they missed today is out of today's picks.
+  const planMarks = replacementMarks(
+    markerRows.filter((row) => row.entity_type === PLAN_REPLACE_ENTITY) as ReplacementRow[],
+    todayDate,
+  );
+  for (const nodeId of planMarks.missedToday) offTodayIds.add(nodeId);
   const skipDays = skipDaysByNode({
-    tasks: planTasks,
+    tasks: [...planTasks, ...planMarks.skipped],
     today: todayDate,
-    answeredAt: answeredAtByNode((staleMarkersResult.data ?? []) as StaleMarker[]),
+    answeredAt: answeredAtByNode(staleMarkers),
     tzOffsetMin,
     workedOn: (nodeId, day) => workedDays.get(nodeId)?.has(day) ?? false,
   });
@@ -1074,7 +1088,7 @@ export async function buildPlannerCandidates(params: {
   const actionableNodes = rawNodes.filter((node) => {
     if (NON_ACTIONABLE_TYPES.has(node.node_type)) return false;
     if (isClusterAnchor.has(node.id)) return false;
-    if (doneTodayIds.has(node.id)) return false; // today-awareness: hide what's done
+    if (offTodayIds.has(node.id)) return false; // today-awareness: hide what's done (or missed)
     if (rankCtx.hold(node.id) !== "none") return false;
     if (staleIds.has(node.id)) return false;
     return true;
@@ -1331,7 +1345,7 @@ export async function buildPlannerCandidates(params: {
     TIME_BLOCK_TYPES.has(node.node_type) &&
     (isClusterAnchor.has(node.id) || node.node_type === "class") &&
     rankCtx.hold(node.id) === "none" &&
-    !doneTodayIds.has(node.id) &&
+    !offTodayIds.has(node.id) &&
     !staleIds.has(node.id);
   // A wrapper around a single bigger thing adds no choice ("Statistics" holding
   // only "Pass Statistics Midterm"): list the inner one — unless it was asked for.
