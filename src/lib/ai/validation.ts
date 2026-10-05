@@ -5,7 +5,6 @@
 import { resolveRelativeDay } from "@/lib/time/relative-day";
 import type {
   BuilderChange,
-  BuilderLinkType,
   ExtractionOutput,
   EdgeInferenceOutput,
   PlanOutput,
@@ -16,6 +15,13 @@ import type {
   MergeCheckOutput,
 } from "@/types/ai";
 import { isNodeType } from "@/lib/graph/node-types";
+import {
+  LINK_KINDS,
+  isLegacyLinkType,
+  isReversedEdgeType,
+  normalizeEdgeType,
+  type LateralLinkKind,
+} from "@/lib/graph/edge-types";
 import { MERGE_CHECK_PROMPT_VERSION } from "./prompts/merge-check";
 
 // ---------------------------------------------------------------------------
@@ -43,29 +49,23 @@ function isBoolean(v: unknown): v is boolean {
 // ---------------------------------------------------------------------------
 
 
-const VALID_EXTRACTION_SOFT_LINK_TYPES = new Set([
-  "supports",
-  "related_to",
-  "prerequisite_for",
-  "useful_for",
-  "inspired_by",
-]);
+// Lateral links are the three non-parent kinds (lib/graph/edge-types.ts); a
+// retired name a model still sends (useful_for, prerequisite_for…) is read as
+// its kind.
+function lateralLinkKind(raw: unknown): LateralLinkKind | null {
+  if (!isString(raw)) return null;
+  const type = raw.trim().toLowerCase();
+  if (!(LINK_KINDS as readonly string[]).includes(type) && !isLegacyLinkType(type)) return null;
+  if (isReversedEdgeType(type)) return null; // depends_on: wrong way round for a soft link
+  const kind = normalizeEdgeType(type);
+  return kind === "belongs_to" ? null : kind;
+}
 
-const EXTRACTION_SOFT_LINK_PRIORITY: Record<string, number> = {
-  prerequisite_for: 5,
-  supports: 4,
-  useful_for: 3,
-  inspired_by: 2,
+const EXTRACTION_SOFT_LINK_PRIORITY: Record<LateralLinkKind, number> = {
+  required_for: 3,
+  supports: 2,
   related_to: 1,
 };
-
-const BUILDER_LINK_TYPES: ReadonlySet<string> = new Set([
-  "supports",
-  "useful_for",
-  "required_for",
-  "related_to",
-  "inspired_by",
-]);
 const UUID = /^[0-9a-fA-F-]{36}$/;
 const MAX_BUILDER_CHANGES = 20;
 const MAX_SOFT_LINKS_PER_NODE = 2;
@@ -120,14 +120,13 @@ export function parseBuilderChanges(raw: unknown): BuilderChange[] {
     } else if (entry.kind === "link") {
       const source = ref(entry.source);
       const target = ref(entry.target);
-      // "prerequisite_for" is the soft-link name for the same order.
-      const edgeType = entry.edge_type === "prerequisite_for" ? "required_for" : entry.edge_type;
-      if (source && target && source !== target && isString(edgeType) && BUILDER_LINK_TYPES.has(edgeType)) {
+      const edgeType = lateralLinkKind(entry.edge_type);
+      if (source && target && source !== target && edgeType) {
         changes.push({
           kind: "link",
           source,
           target,
-          edge_type: edgeType as BuilderLinkType,
+          edge_type: edgeType,
           rationale: isString(entry.rationale) && entry.rationale.trim() ? entry.rationale.trim() : null,
         });
       }
@@ -213,19 +212,14 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
       for (const rawLink of n.soft_links) {
         if (!isObject(rawLink)) continue;
         if (!isString(rawLink.target_local_ref) || !rawLink.target_local_ref.trim()) continue;
-        if (
-          !isString(rawLink.edge_type) ||
-          !VALID_EXTRACTION_SOFT_LINK_TYPES.has(rawLink.edge_type)
-        ) {
-          continue;
-        }
+        const linkKind = lateralLinkKind(rawLink.edge_type);
+        if (!linkKind) continue;
         const targetLocalRef = rawLink.target_local_ref.trim();
         if (targetLocalRef === localRef) continue;
 
         softLinks.push({
           target_local_ref: targetLocalRef,
-          edge_type:
-            rawLink.edge_type as ExtractionOutput["proposed_nodes"][number]["soft_links"][number]["edge_type"],
+          edge_type: linkKind,
           rationale:
             isString(rawLink.rationale) && rawLink.rationale.trim()
               ? rawLink.rationale.trim()
@@ -337,7 +331,7 @@ export function validateExtractionOutput(raw: unknown, session: ExtractionSessio
           kind: "link",
           source: node.local_ref,
           target: link.target_local_ref,
-          edge_type: link.edge_type === "prerequisite_for" ? "required_for" : link.edge_type,
+          edge_type: link.edge_type,
           rationale: link.rationale,
         });
       } else {

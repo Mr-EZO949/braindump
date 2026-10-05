@@ -46,8 +46,9 @@ function select(
 describe("selectEdgeProposals", () => {
   it("takes direction from the verdict, not from the link type", () => {
     // Asked from "Pass ML": Linear Algebra helps it → the link starts at LA.
+    // A retired type from the model ("useful_for") comes out as its kind.
     const [edge] = select([verdict("la", "useful_for", "candidate", 0.85)]);
-    expect(edge).toMatchObject({ source_node_id: "la", target_node_id: SOURCE, edge_type: "useful_for" });
+    expect(edge).toMatchObject({ source_node_id: "la", target_node_id: SOURCE, edge_type: "supports" });
     const [forward] = select([verdict("la", "useful_for", "source", 0.85)]);
     expect(forward).toMatchObject({ source_node_id: SOURCE, target_node_id: "la" });
   });
@@ -122,7 +123,7 @@ describe("selectEdgeProposals", () => {
     ]);
   });
 
-  it("never makes helping work a hard blocker: marketing supports a launch, a review is useful_for", () => {
+  it("never makes helping work a hard blocker: marketing supports a launch, a review supports", () => {
     const titleById = new Map([
       [SOURCE, "Market BrainDump"],
       ["brand", "Launch the BrainDump Beta"],
@@ -133,7 +134,7 @@ describe("selectEdgeProposals", () => {
       expect.objectContaining({ source_node_id: SOURCE, target_node_id: "brand", edge_type: "supports" }),
     ]);
     expect(select([verdict("la", "required_for", "candidate", 0.95)], { sourceType: "goal", titleById })).toEqual([
-      expect.objectContaining({ source_node_id: "la", target_node_id: SOURCE, edge_type: "useful_for" }),
+      expect.objectContaining({ source_node_id: "la", target_node_id: SOURCE, edge_type: "supports" }),
     ]);
     // Only the blocker's own title counts: launching can still block marketing.
     expect(select([verdict("brand", "required_for", "candidate", 0.95)], { sourceType: "big_task", titleById })[0]).toMatchObject({

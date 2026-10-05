@@ -253,8 +253,7 @@ export function builderToOps(params: {
         kind: "create_edge",
         source_node_id: node.local_ref,
         target_node_id: link.target_local_ref,
-        // The soft-link name for an order; chat's edges call it required_for.
-        edge_type: link.edge_type === "prerequisite_for" ? "required_for" : link.edge_type,
+        edge_type: link.edge_type,
         ...(link.rationale ? { explanation: link.rationale } : {}),
       });
     }

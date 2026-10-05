@@ -127,7 +127,7 @@ export const AI_CANDIDATES = {
   // input tokens + an output verdict each. Sharpens LLM judgment and cuts
   // ~30% of per-call tokens.
   INFERENCE_MAX: 5,
-  // Max lateral links (supports / useful_for / related_to / inspired_by)
+  // Max lateral links (supports / related_to)
   // proposed per analysed node. Was 1, which with the old dependency-first
   // prompt meant a 25-node dump got none at all.
   LATERAL_PER_NODE: 2,

@@ -12,6 +12,7 @@ import { ensureWorkspaceRoot } from "@/lib/graph/ensure-workspace-root";
 import { embedNewNodes, judgeAndRescore, newNodeRow } from "@/lib/graph/node-intake";
 import type { NodeType } from "@/types/graph";
 import { normalizeNodeType } from "@/lib/graph/node-types";
+import { normalizeEdgeType, type LinkKind } from "@/lib/graph/edge-types";
 import type { ExtractionSoftLink } from "@/types/ai";
 
 interface ReviewAction {
@@ -53,14 +54,7 @@ type AcceptedPair = {
   };
 };
 
-type SeededEdgeType =
-  | "belongs_to"
-  | "required_for"
-  | "supports"
-  | "related_to"
-  | "prerequisite_for"
-  | "useful_for"
-  | "inspired_by";
+type SeededEdgeType = LinkKind;
 
 function buildSeededEdgeExplanation(params: {
   edgeType: SeededEdgeType;
@@ -77,14 +71,8 @@ function buildSeededEdgeExplanation(params: {
       return `${params.sourceTitle} is a direct child of ${params.targetTitle} in the extracted brain dump.`;
     case "required_for":
       return `${params.sourceTitle} must happen before ${params.targetTitle}.`;
-    case "prerequisite_for":
-      return `${params.sourceTitle} is a prerequisite for ${params.targetTitle}.`;
     case "supports":
-      return `${params.sourceTitle} supports progress toward ${params.targetTitle}.`;
-    case "useful_for":
-      return `${params.sourceTitle} is useful for ${params.targetTitle}.`;
-    case "inspired_by":
-      return `${params.sourceTitle} is inspired by ${params.targetTitle}.`;
+      return `${params.sourceTitle} helps ${params.targetTitle}.`;
     case "related_to":
       return `${params.sourceTitle} is meaningfully related to ${params.targetTitle}.`;
   }
@@ -561,12 +549,14 @@ export async function POST(req: NextRequest) {
         for (const softLink of proposal.soft_links ?? []) {
           const target = acceptedByLocalRef.get(softLink.target_local_ref);
           if (!target) continue;
+          // A proposal stored before the four link kinds may carry a retired name.
+          const softKind = normalizeEdgeType(softLink.edge_type);
           queueEdge({
             ai_run_id: proposal.ai_run_id ?? target.aiRunId,
             confidence: Math.max(proposal.extraction_confidence ?? target.confidence ?? 0.68, 0.68),
-            edge_type: softLink.edge_type,
+            edge_type: softKind,
             explanation: buildSeededEdgeExplanation({
-              edgeType: softLink.edge_type,
+              edgeType: softKind,
               sourceTitle: created.title,
               targetTitle: target.title,
               rationale: softLink.rationale,

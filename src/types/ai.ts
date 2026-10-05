@@ -92,12 +92,8 @@ export type PlanBlockCompletionStatus = "pending" | "completed" | "skipped";
 
 export type PlanningWindow = "1h" | "2h" | "day" | "custom";
 
-export type ExtractionSoftLinkType =
-  | "supports"
-  | "related_to"
-  | "prerequisite_for"
-  | "useful_for"
-  | "inspired_by";
+// The lateral link kinds (lib/graph/edge-types.ts `LATERAL_LINK_KINDS`).
+export type ExtractionSoftLinkType = "supports" | "related_to" | "required_for";
 
 export interface ExtractionSoftLink {
   target_local_ref: string;
@@ -403,7 +399,7 @@ export interface TurnUndo {
 // An edit to an EXISTING node the builder asks for alongside the nodes it adds
 // (extract-v25 / extract-light-v5). `new_parent`, `source` and `target` take an
 // existing node id or the local_ref of a node proposed in the same output.
-export type BuilderLinkType = "supports" | "useful_for" | "required_for" | "related_to" | "inspired_by";
+export type BuilderLinkType = "supports" | "required_for" | "related_to";
 
 export type BuilderChange =
   | { kind: "move"; node_id: string; new_parent: string }

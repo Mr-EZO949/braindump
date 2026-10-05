@@ -28,6 +28,7 @@ import {
   type IntakeNode,
 } from "@/lib/graph/node-intake";
 import { embeddingTextChanged } from "@/lib/graph/node-draft";
+import { isLegacyLinkType, isReversedEdgeType, normalizeEdgeType } from "@/lib/graph/edge-types";
 import { NODE_TYPES } from "@/lib/graph/node-types";
 import { getStructuralSubtree } from "@/lib/graph/structure";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
@@ -154,17 +155,15 @@ export function toolNodeType(raw: unknown): string {
   return t === "concept" ? "note" : t;
 }
 
-// Edge types the assistant may propose. Keeps the surface small and
-// semantically meaningful — the inference pipeline uses a wider set, but
-// user-facing proposals should stay legible.
+// Edge types the assistant may write: the four link kinds
+// (lib/graph/edge-types.ts) plus "contains", the parent link said from the
+// parent's side. Legacy names a model still sends are mapped by `edgeOpArgs`.
 export const VALID_EDGE_TYPES: ReadonlySet<string> = new Set([
   "belongs_to", // child → parent: MOVES the source under the target
   "contains", // parent → child: the same move, said from the parent's side
-  "required_for", // dependency: source is required for target
-  "supports", // source reinforces target
-  "related_to", // loose lateral connection
-  "useful_for", // source is useful for target
-  "inspired_by", // source was inspired by target
+  "required_for", // needed for: source must be done before target
+  "supports", // helps: source helps target along
+  "related_to", // related: about the same thing
 ]);
 
 // A node's parent is a belongs_to edge, child → parent (lib/graph/hierarchy.ts).
@@ -568,7 +567,7 @@ async function removeLateralEdges(
     (e) =>
       e.source_node_id !== e.target_node_id &&
       !isHierarchyEdgeType(e.edge_type) &&
-      (!type || e.edge_type === type),
+      (!type || normalizeEdgeType(e.edge_type) === normalizeEdgeType(type)),
   );
   if (rows.length === 0) return { ok: false, error: "no link between those nodes" };
   const { error: deleteError } = await ctx.supabase
@@ -628,9 +627,14 @@ function edgeOpArgs(
   op: Extract<ChangeOp, { kind: "create_edge" }>,
   resolveRef: (value: unknown) => string,
 ): { sourceId: string; targetId: string; edgeType: string; explanation: string | null } | { error: string } {
-  const sourceId = resolveRef(op.source_node_id);
-  const targetId = resolveRef(op.target_node_id);
-  const edgeType = typeof op.edge_type === "string" ? op.edge_type.toLowerCase() : "";
+  let sourceId = resolveRef(op.source_node_id);
+  let targetId = resolveRef(op.target_node_id);
+  let edgeType = typeof op.edge_type === "string" ? op.edge_type.toLowerCase() : "";
+  // A legacy name (useful_for, prerequisite_for, depends_on…) is written as its kind.
+  if (isLegacyLinkType(edgeType)) {
+    if (isReversedEdgeType(edgeType)) [sourceId, targetId] = [targetId, sourceId];
+    edgeType = normalizeEdgeType(edgeType);
+  }
   if (!sourceId || !targetId || !VALID_EDGE_TYPES.has(edgeType)) {
     return { error: "source, target, and valid edge_type required" };
   }

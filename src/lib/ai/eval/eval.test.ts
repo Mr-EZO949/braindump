@@ -167,7 +167,7 @@ describe("builder checks", () => {
       {
         edit_requests: ["oh and clothes reselling isn't a money project anymore, it's just me selling my old stuff — move it under life admin."],
         proposed_nodes: [
-          { local_ref: "n1", proposed_title: "Portfolio Site", proposed_node_type: "project", existing_parent_node_id: S.career, extraction_confidence: 0.9, soft_links: [{ target_local_ref: S.internship, edge_type: "useful_for" }] },
+          { local_ref: "n1", proposed_title: "Portfolio Site", proposed_node_type: "project", existing_parent_node_id: S.career, extraction_confidence: 0.9, soft_links: [{ target_local_ref: S.internship, edge_type: "supports" }] },
           { local_ref: "n2", proposed_title: "Pick a Portfolio Template", proposed_node_type: "task", primary_parent_local_ref: "n1", extraction_confidence: 0.9 },
           { local_ref: "n3", proposed_title: "Write the About Page", proposed_node_type: "task", primary_parent_local_ref: "n1", extraction_confidence: 0.9 },
           { local_ref: "n4", proposed_title: "Add ML Project as a Case Study", proposed_node_type: "task", primary_parent_local_ref: "n1", extraction_confidence: 0.9 },
@@ -206,7 +206,7 @@ describe("runEval", () => {
         results: input.candidates.map((c) => ({
           candidate_id: c.id,
           related: c.id === "c-ml",
-          edge_type: c.id === "c-ml" ? ("useful_for" as const) : null,
+          edge_type: c.id === "c-ml" ? ("supports" as const) : null,
           from: "source" as const,
           confidence: 0.9,
           explanation: "",

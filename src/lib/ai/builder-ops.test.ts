@@ -57,14 +57,14 @@ describe("resolveBuilderChanges", () => {
       // The new parent was dropped as a copy of an existing node → move there.
       { kind: "move", node_id: FIXES, new_parent: "n9" },
       // …or as a copy of another proposal in the same output → the kept one.
-      { kind: "link", source: "n8", target: INTERN, edge_type: "useful_for" },
+      { kind: "link", source: "n8", target: INTERN, edge_type: "supports" },
       { kind: "update", node_id: FUSED, title: "Test BrainDump" },
     ];
     expect(resolveBuilderChanges({ ...base, changes })).toEqual({
       changes: [
         { kind: "move", node_id: FUSED, new_parent: "n1" },
         { kind: "move", node_id: FIXES, new_parent: MONEY },
-        { kind: "link", source: "n2", target: INTERN, edge_type: "useful_for" },
+        { kind: "link", source: "n2", target: INTERN, edge_type: "supports" },
         { kind: "update", node_id: FUSED, title: "Test BrainDump" },
       ],
       broken: [],
@@ -100,12 +100,12 @@ describe("resolveBuilderChanges", () => {
       { kind: "move", node_id: FIXES, new_parent: "n11" },
       // An unrelated, complete edit in the same output still applies.
       { kind: "move", node_id: INTERN, new_parent: MONEY },
-      { kind: "link", source: FUSED, target: INTERN, edge_type: "useful_for" },
+      { kind: "link", source: FUSED, target: INTERN, edge_type: "supports" },
     ];
     expect(resolveBuilderChanges({ ...base, changes })).toEqual({
       changes: [
         { kind: "move", node_id: INTERN, new_parent: MONEY },
-        { kind: "link", source: FUSED, target: INTERN, edge_type: "useful_for" },
+        { kind: "link", source: FUSED, target: INTERN, edge_type: "supports" },
       ],
       broken: [FUSED, FIXES],
     });
@@ -144,7 +144,7 @@ describe("splitRestructureSet", () => {
     const nodes = [node("n1", "Renew my passport")];
     const changes: BuilderChange[] = [
       { kind: "move", node_id: FUSED, new_parent: MONEY },
-      { kind: "link", source: "n1", target: INTERN, edge_type: "useful_for" },
+      { kind: "link", source: "n1", target: INTERN, edge_type: "supports" },
     ];
     const { plain, restructure } = splitRestructureSet(nodes, changes);
     expect(plain).toHaveLength(1);
@@ -160,7 +160,7 @@ describe("builderToOps", () => {
         proposed_node_type: "big_task",
         primary_parent_local_ref: "n1",
         proposed_target_date: "2026-11-01",
-        soft_links: [{ target_local_ref: "n3", edge_type: "prerequisite_for", rationale: null }],
+        soft_links: [{ target_local_ref: "n3", edge_type: "required_for", rationale: null }],
       }),
       node("n3", "Launch post", { primary_parent_local_ref: "n1", depends_on_local_refs: ["n2"] }),
     ];
@@ -169,7 +169,7 @@ describe("builderToOps", () => {
       changes: [
         { kind: "update", node_id: FUSED, title: "Test BrainDump" },
         { kind: "move", node_id: FUSED, new_parent: "n1" },
-        { kind: "link", source: FUSED, target: INTERN, edge_type: "useful_for", rationale: "shows real work" },
+        { kind: "link", source: FUSED, target: INTERN, edge_type: "supports", rationale: "shows real work" },
       ],
       completeExistingNodeIds: [FIXES],
       autoCompleteLocalRefs: ["n3", "n99"],
@@ -192,7 +192,7 @@ describe("builderToOps", () => {
         kind: "create_edge",
         source_node_id: FUSED,
         target_node_id: INTERN,
-        edge_type: "useful_for",
+        edge_type: "supports",
         explanation: "shows real work",
       },
       // "n2 prerequisite_for n3" and "n3 depends on n2" are both n2 → n3.
@@ -230,7 +230,7 @@ describe("mergeEditPass — the short prompt's edits joined to the long prompt's
   it("prefixes the edit pass's refs and puts its nodes first", () => {
     const main = output({
       proposed_nodes: [node("n1", "ML Course Project"), node("n2", "Pick a Dataset", { primary_parent_local_ref: "n1" })],
-      changes: [{ kind: "link", source: "n1", target: INTERN, edge_type: "useful_for" }],
+      changes: [{ kind: "link", source: "n1", target: INTERN, edge_type: "supports" }],
       edit_requests: ["braindump should be its own project with testing and marketing in it"],
       clarifying_questions: ["Which bank?"],
       complete_existing_node_ids: [FIXES],
@@ -243,7 +243,7 @@ describe("mergeEditPass — the short prompt's edits joined to the long prompt's
           depends_on_local_refs: ["n1"],
           soft_links: [
             { target_local_ref: "n1", edge_type: "supports", rationale: null },
-            { target_local_ref: INTERN, edge_type: "useful_for", rationale: null },
+            { target_local_ref: INTERN, edge_type: "supports", rationale: null },
           ],
         }),
       ],
@@ -272,7 +272,7 @@ describe("mergeEditPass — the short prompt's edits joined to the long prompt's
       { kind: "move", node_id: FUSED, new_parent: "e_n1" },
       { kind: "move", node_id: FIXES, new_parent: MONEY },
       { kind: "link", source: "e_n2", target: INTERN, edge_type: "supports" },
-      { kind: "link", source: "n1", target: INTERN, edge_type: "useful_for" },
+      { kind: "link", source: "n1", target: INTERN, edge_type: "supports" },
     ]);
     expect(merged.edit_requests).toEqual([]);
     expect(merged.clarifying_questions).toEqual(["Should the fixes move too?", "Which bank?"]);

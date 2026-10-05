@@ -11,9 +11,14 @@
 // (HELPING_WORDS): "Market BrainDump" → "Launch the beta" is supports. Haiku
 // calls that pair required_for at 0.92–0.95 whatever the prompt says (three
 // wordings tried: infer-edge-v5, the 10-04 try, a hard_need field on 10-05).
+//
+// Links come in four kinds (lib/graph/edge-types.ts): belongs_to, required_for,
+// supports, related_to. A verdict or stored edge with a retired name is read as
+// its kind, so proposals only ever carry the four.
 
 import { AI_CANDIDATES, AI_CONFIDENCE } from "@/lib/ai/config";
 import { ALLOWED_CHILDREN, normalizeNodeType } from "@/lib/graph/node-types";
+import { isReversedEdgeType, normalizeEdgeType, normalizeEdges } from "@/lib/graph/edge-types";
 import type { EdgeInferenceResult } from "@/types/ai";
 
 export interface EdgeProposal {
@@ -24,8 +29,7 @@ export interface EdgeProposal {
   explanation: string;
 }
 
-export const DEPENDENCY_TYPES = new Set(["required_for", "prerequisite_for", "depends_on", "blocks"]);
-export const LATERAL_TYPES = new Set(["supports", "useful_for", "related_to", "inspired_by"]);
+const LATERAL_TYPES = new Set<string>(["supports", "related_to"]);
 
 // A blocker is something you finish; what it blocks is something you start or
 // finish. A habit, area, idea or note never "has to be done first", and an
@@ -34,20 +38,17 @@ const BLOCKER_TYPES = new Set(["goal", "project", "big_task", "task"]);
 const BLOCKED_TYPES = new Set(["goal", "project", "big_task", "task", "class"]);
 
 // Work that makes something else go better but never makes it possible.
-// A title with one of these words is never a hard blocker; the learning ones
-// become useful_for, the rest supports. "prepare" is left out on purpose
+// A title with one of these words is never a hard blocker; it helps (supports). "prepare" is left out on purpose
 // ("Prepare the visa documents" does block the visa).
 const LEARNING_WORDS = ["learn", "learning", "study", "studying", "review", "revise", "revision", "practice", "practise", "practicing", "rehearse", "research", "tutoring"];
 const PROMOTION_WORDS = ["market", "marketing", "promote", "promotion", "promo", "advertise", "advertising", "ads", "outreach", "network", "networking", "publicize", "publicise"];
 const LEARNING = new Set(LEARNING_WORDS);
 const PROMOTION = new Set(PROMOTION_WORDS);
 
-// "supports" / "useful_for" when the title is helping work, else null.
-export function helpingWorkType(title: string | null | undefined): "supports" | "useful_for" | null {
+// "supports" when the title is helping work, else null.
+export function helpingWorkType(title: string | null | undefined): "supports" | null {
   const words = (title ?? "").toLowerCase().split(/[^a-z]+/).filter(Boolean);
-  if (words.some((w) => LEARNING.has(w))) return "useful_for";
-  if (words.some((w) => PROMOTION.has(w))) return "supports";
-  return null;
+  return words.some((w) => LEARNING.has(w) || PROMOTION.has(w)) ? "supports" : null;
 }
 
 // The tree around the nodes being linked: child → parent (the one active
@@ -60,8 +61,11 @@ type EdgeRow = { source_node_id: string; target_node_id: string; edge_type: stri
 
 export function buildLinkStructure(params: { edges: EdgeRow[] }): LinkStructure {
   const parentOf = new Map<string, string>();
-  for (const edge of params.edges) {
-    if (edge.edge_type === "belongs_to") parentOf.set(edge.source_node_id, edge.target_node_id);
+  for (const edge of normalizeEdges(params.edges)) {
+    // A legacy "contains" row never overrides the real belongs_to parent.
+    if (edge.edge_type === "belongs_to" && !parentOf.has(edge.source_node_id)) {
+      parentOf.set(edge.source_node_id, edge.target_node_id);
+    }
   }
   return { parentOf };
 }
@@ -94,7 +98,7 @@ export function treeRelation(structure: LinkStructure, id: string, other: string
 //     node whose type can hold it (no project under a big task);
 //   - a dependency blocks its target in Focus and the planner, so it has to be
 //     a real one: clear, between types that can block, and not helping work.
-//     Otherwise it is kept as supports / useful_for when clear enough for that;
+//     Otherwise it is kept as supports when clear enough for that;
 //   - no link to the node's own ancestor or descendant when `structure` is given;
 //   - at most one parent, DEPENDENCY_PER_NODE dependencies and
 //     LATERAL_PER_NODE lateral links.
@@ -130,7 +134,8 @@ export function selectEdgeProposals(params: {
     if (relation === "ancestor" || relation === "descendant") continue;
 
     // "depends_on" is the one legacy type written from the dependent's side.
-    const fromSource = (entry.from === "source") !== (entry.edge_type === "depends_on");
+    const fromSource = (entry.from === "source") !== isReversedEdgeType(entry.edge_type);
+    const kind = normalizeEdgeType(entry.edge_type);
     const linkFrom = () => ({
       source_node_id: fromSource ? sourceId : entry.candidate_id,
       target_node_id: fromSource ? entry.candidate_id : sourceId,
@@ -138,7 +143,7 @@ export function selectEdgeProposals(params: {
       explanation: entry.explanation,
     });
 
-    if (entry.edge_type === "belongs_to") {
+    if (kind === "belongs_to") {
       if (!fromSource || sourceHasParent) continue;
       const parentType = normalizeNodeType(candidateTypeById.get(entry.candidate_id));
       if (!ALLOWED_CHILDREN[parentType].has(normalizeNodeType(sourceType))) continue;
@@ -146,8 +151,8 @@ export function selectEdgeProposals(params: {
       continue;
     }
 
-    let edgeType: string = entry.edge_type;
-    if (DEPENDENCY_TYPES.has(edgeType)) {
+    let edgeType: string = kind;
+    if (kind === "required_for") {
       const link = linkFrom();
       const helping = helpingWorkType(params.titleById?.get(link.source_node_id));
       const real =

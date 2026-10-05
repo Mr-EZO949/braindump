@@ -19,6 +19,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { CHANGE_KINDS, VALID_EDGE_TYPES, isHierarchyEdgeType, type ChangeOp } from "@/lib/graph/change-set";
+import { isLegacyLinkType } from "@/lib/graph/edge-types";
 import { NODE_TYPES } from "@/lib/graph/node-types";
 import { getStructuralSubtree } from "@/lib/graph/structure";
 import type { GraphData } from "@/types/graph";
@@ -139,7 +140,8 @@ export function normalizeChangeOps(raw: unknown): { ops: ChangeOp[]; errors: str
         const edgeType = str(r.edge_type).toLowerCase();
         if (!source || !target) return fail("source_node_id and target_node_id are required");
         if (source === target) return fail("source and target must be different nodes");
-        if (!VALID_EDGE_TYPES.has(edgeType)) return fail(`edge_type must be one of ${[...VALID_EDGE_TYPES].join(", ")}`);
+        // A retired name (useful_for, prerequisite_for…) is written as its kind by applyChangeSet.
+        if (!VALID_EDGE_TYPES.has(edgeType) && !isLegacyLinkType(edgeType)) return fail(`edge_type must be one of ${[...VALID_EDGE_TYPES].join(", ")}`);
         if (isHierarchyEdgeType(edgeType)) {
           // A parent link is a move — the policy treats it as one.
           const child = edgeType === "contains" ? target : source;
@@ -450,7 +452,11 @@ const CHANGE: ToolDefinition = {
               new_parent_node_id: { type: "string", description: `move: the new parent. ${REF}` },
               source_node_id: { type: "string", description: REF },
               target_node_id: { type: "string", description: REF },
-              edge_type: { type: "string", enum: [...VALID_EDGE_TYPES].filter((t) => !isHierarchyEdgeType(t)) },
+              edge_type: {
+                type: "string",
+                enum: [...VALID_EDGE_TYPES].filter((t) => !isHierarchyEdgeType(t)),
+                description: "required_for: source must be done first. supports: source helps target. related_to: same topic.",
+              },
               explanation: { type: "string", description: "create_edge: one sentence why." },
               into_node_id: { type: "string", description: "merge: the node that is kept." },
             },

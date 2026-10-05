@@ -425,6 +425,26 @@ describe("validateExtractionOutput — changes to existing nodes (extract-v25)",
     ]);
   });
 
+  it("writes only the three lateral kinds: retired names fold in, depends_on is dropped", () => {
+    const out = validateExtractionOutput(
+      {
+        proposed_nodes: [newNode],
+        changes: [
+          { kind: "link", source: A, target: B, edge_type: "useful_for" },
+          { kind: "link", source: B, target: A, edge_type: "inspired_by" },
+          { kind: "link", source: A, target: "n1", edge_type: "blocks" },
+          { kind: "link", source: "n1", target: B, edge_type: "depends_on" },
+        ],
+      },
+      session,
+    );
+    expect(out.changes).toEqual([
+      { kind: "link", source: A, target: B, edge_type: "supports", rationale: null },
+      { kind: "link", source: B, target: A, edge_type: "related_to", rationale: null },
+      { kind: "link", source: A, target: "n1", edge_type: "required_for", rationale: null },
+    ]);
+  });
+
   it("drops malformed entries without failing the nodes around them", () => {
     const out = validateExtractionOutput(
       {

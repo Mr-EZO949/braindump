@@ -293,7 +293,7 @@ export const BUILDER_FIXTURES: BuilderFixture[] = [
         {
           source: "Italian Crash Course",
           target: "Land an Internship in Milan by November",
-          types: ["useful_for", "supports"],
+          types: ["supports"],
         },
       ],
       max_new_nodes: 0,
@@ -336,7 +336,7 @@ export const BUILDER_FIXTURES: BuilderFixture[] = [
         {
           source: "portfolio",
           target: "Land an Internship in Milan by November",
-          types: ["useful_for", "supports"],
+          types: ["supports"],
         },
       ],
       absent: ["exhausted", "sleep", "shift", "café", "cafe", "midterm", "gym", "clothes"],
@@ -405,7 +405,7 @@ export interface EdgeFixture {
 export const EDGE_FIXTURES: EdgeFixture[] = [
   {
     id: "edge-skill",
-    covers: "a skill is useful_for what needs it; a near-duplicate and an unrelated chore get nothing",
+    covers: "a skill supports what needs it; a near-duplicate and an unrelated chore get nothing",
     source: {
       title: "Linear Algebra Review",
       summary: "Vectors, matrices and eigenvalues before the ML material gets heavy.",
@@ -413,8 +413,8 @@ export const EDGE_FIXTURES: EdgeFixture[] = [
       has_parent: true,
     },
     candidates: [
-      { id: "c-ml", title: "Machine Learning", summary: "This term's ML class.", node_type: "class", expect: { types: ["useful_for", "supports"], from: "source" } },
-      { id: "c-torch", title: "Learn PyTorch", summary: "Tutorials plus a small practice model.", node_type: "project", expect: { types: ["useful_for", "supports", "required_for"], from: "source" } },
+      { id: "c-ml", title: "Machine Learning", summary: "This term's ML class.", node_type: "class", expect: { types: ["supports"], from: "source" } },
+      { id: "c-torch", title: "Learn PyTorch", summary: "Tutorials plus a small practice model.", node_type: "project", expect: { types: ["supports", "required_for"], from: "source" } },
       { id: "c-groceries", title: "Buy Groceries", summary: "Weekly shop.", node_type: "task", expect: null },
       { id: "c-dup", title: "Review Linear Algebra", summary: "Go over vectors and matrices again.", node_type: "task", expect: null },
     ],
@@ -430,7 +430,7 @@ export const EDGE_FIXTURES: EdgeFixture[] = [
     },
     candidates: [
       { id: "c-tiktok", title: "Faceless Productivity TikToks", summary: "Short videos about planning with ADHD.", node_type: "project", expect: { types: ["supports"], from: "candidate" } },
-      { id: "c-beta", title: "Launch the BrainDump Beta", summary: "Public beta with the first cohort of users.", node_type: "goal", expect: { types: ["supports", "useful_for"], from: "source" } },
+      { id: "c-beta", title: "Launch the BrainDump Beta", summary: "Public beta with the first cohort of users.", node_type: "goal", expect: { types: ["supports"], from: "source" } },
       { id: "c-k8s", title: "Kubernetes Cluster Setup", summary: "Multi-node cluster for the lab's servers.", node_type: "big_task", expect: null },
       { id: "c-gym", title: "Go to the Gym", summary: "3× a week.", node_type: "habit", expect: null },
     ],
@@ -460,7 +460,7 @@ export const EDGE_FIXTURES: EdgeFixture[] = [
       has_parent: true,
     },
     candidates: [
-      { id: "c-open", title: "Open the Bakery", summary: "Doors open in March on Via Roma.", node_type: "goal", expect: { types: ["supports", "useful_for"], from: "source" } },
+      { id: "c-open", title: "Open the Bakery", summary: "Doors open in March on Via Roma.", node_type: "goal", expect: { types: ["supports"], from: "source" } },
       { id: "c-permit", title: "Get the Food Permit", summary: "The city needs a permit before we can sell anything.", node_type: "task", expect: null },
       { id: "c-sourdough", title: "Daily Sourdough Practice", summary: "Bake one loaf a day to get the recipe right.", node_type: "habit", expect: null },
     ],
