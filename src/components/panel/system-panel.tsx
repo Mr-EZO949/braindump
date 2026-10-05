@@ -13,6 +13,8 @@ type Theme = "dark" | "light";
 // Dump-usage counters (#12) — mirrors /api/account/usage.
 type TierCounts = { small: number; medium: number; big: number; total: number };
 type DumpUsage = { all_time: TierCounts; this_month: TierCounts };
+// GET /api/preferences — one standing preference, in words.
+type TimePreferenceRow = { id: string; kind: string; label: string; detail: string };
 
 type SystemPanelProps = {
   onSignOut: () => void;
@@ -86,6 +88,10 @@ export function SystemPanel({
   // the server on every dump and chat turn. null until loaded.
   const [autoAdd, setAutoAdd] = useState<boolean | null>(null);
   const [autoAddError, setAutoAddError] = useState(false);
+  // Standing preferences ("4h a day coding", docs/preferences.md) — saved
+  // from chat or a dump; listed here, each removable. null until loaded.
+  const [timePrefs, setTimePrefs] = useState<TimePreferenceRow[] | null>(null);
+  const [timePrefsError, setTimePrefsError] = useState(false);
   // The pre-paint script in layout.tsx already applied the correct theme to
   // <html>. The apply-effect below must skip its first run so it doesn't
   // overwrite that with the SSR default before we've synced.
@@ -199,6 +205,37 @@ export function SystemPanel({
       cancelled = true;
     };
   }, [open]);
+
+  // Load the standing preferences when the panel opens.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setTimePrefsError(false);
+    fetch("/api/preferences")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("preferences fetch failed"))))
+      .then((data: { preferences?: TimePreferenceRow[] }) => {
+        if (!cancelled) setTimePrefs(data.preferences ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setTimePrefs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const forgetTimePref = async (id: string) => {
+    const before = timePrefs;
+    setTimePrefs((prev) => (prev ?? []).filter((p) => p.id !== id));
+    setTimePrefsError(false);
+    const ok = await fetch(`/api/preferences?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+      .then((r) => r.ok)
+      .catch(() => false);
+    if (!ok) {
+      setTimePrefs(before);
+      setTimePrefsError(true);
+    }
+  };
 
   const toggleAutoAdd = async () => {
     if (autoAdd === null) return;
@@ -773,6 +810,42 @@ export function SystemPanel({
             </button>
           </div>
           {autoAddError ? <p className="sp-error">Couldn&apos;t save that. Try again.</p> : null}
+        </div>
+
+        <div className="sp-divider" />
+
+        {/* Your time — standing preferences (docs/preferences.md). */}
+        <div className="px-5 py-4">
+          <p className="sp-section-label">Your time</p>
+          {timePrefs && timePrefs.length > 0 ? (
+            <ul className="sp-pref-list">
+              {timePrefs.map((p) => (
+                <li className="sp-pref-row" key={p.id}>
+                  <span className="sp-pref-text">
+                    <span className="sp-pref-label">{p.label}</span>
+                    <span className="sp-pref-detail">{p.detail}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="sp-goal-remove"
+                    aria-label={`Forget ${p.label}`}
+                    title="Forget this"
+                    onClick={() => void forgetTimePref(p.id)}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {timePrefs === null ? null : (
+            <p className="sp-switch-hint">
+              {timePrefs.length > 0
+                ? "Your plans and Focus follow these. Change one by telling the chat."
+                : "Tell the chat how you want to spend your time — “4h a day coding”, “no work after 10pm” — and your plans and Focus will remember it."}
+            </p>
+          )}
+          {timePrefsError ? <p className="sp-error">Couldn&apos;t remove that. Try again.</p> : null}
         </div>
 
         <div className="sp-divider" />
