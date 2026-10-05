@@ -33,6 +33,11 @@ describe("adviceRows (owner: advice stays advice)", () => {
     expect(adviceRows("the CV can wait. what should I do first?", [{ action: "deprioritize" }])).toEqual([]);
   });
 
+  it("stakes the user stated about a named thing stay theirs (#22 eval)", () => {
+    const message = "I really need the stats midterm for my scholarship, so I'm focusing on it this week. should I drop clothes reselling?";
+    expect(adviceRows(message, [{ action: "focus" }, { action: "stakes" }, { action: "deprioritize" }])).toEqual([2]);
+  });
+
   it("a message that asks nothing is left to the model", () => {
     expect(adviceRows("focus on stats, reselling can wait", [{ action: "focus" }, { action: "deprioritize" }])).toEqual([]);
     expect(adviceRows("I need the ML exam for my masters", [{ action: "stakes" }])).toEqual([]);

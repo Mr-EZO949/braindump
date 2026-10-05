@@ -19,7 +19,8 @@ const JUDGMENT_WORDS: Record<string, RegExp> = {
   focus: /\b(focus\w*|first|priorit\w*|main thing|most important|top priority|all in)\b/i,
   deprioritize:
     /\b(can wait|wait (till|until)|later|next (week|month)|not (now|urgent|a priority)|less important|deprioriti\w*|back ?burner|on hold|park\w*|push\w* (it |that )?back|put (it |that )?off|postpon\w*)\b/i,
-  stakes: /\b(matters?|important|rides on|depends on|need (it|this|that) for|pass\/fail|barely counts|counts?|high stakes|low stakes|big deal)\b/i,
+  // "need the stats midterm for my scholarship" too, not only "need it for" (#22 eval).
+  stakes: /\b(matters?|important|rides on|depends on|need (it|this|that|the [\w' -]{1,40}?) for|pass\/fail|barely counts|counts?|high stakes|low stakes|big deal)\b/i,
   drop: /\b(drop\w*|cancel\w*|not doing|quit\w*|giv\w* up|abandon\w*|no longer|forget (about )?it|scrap\w*)\b/i,
 };
 
