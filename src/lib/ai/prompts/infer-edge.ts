@@ -19,8 +19,10 @@
 //     Helping is supports / useful_for.
 //   - the model sees node types and whether the source already has a parent,
 //     with the nesting rules, so it stops proposing a project under a big task.
+// v6 (2026-10-05, owner: fewer link TYPES): four kinds only — supports absorbs
+//   useful_for (a skill or resource that helps is "supports"); the rest unchanged.
 
-export const INFER_EDGE_PROMPT_VERSION = "infer-edge-v5";
+export const INFER_EDGE_PROMPT_VERSION = "infer-edge-v6";
 
 // Stable rules/framework — caches across every edge inference call in a window.
 const RULES_BLOCK = `You link nodes in a personal planning graph. For one SOURCE node and a few CANDIDATE nodes, decide which pairs deserve a link the user would find useful when planning. Every link you return is shown to the user to accept or reject.
@@ -28,9 +30,8 @@ const RULES_BLOCK = `You link nodes in a personal planning graph. For one SOURCE
 The tree (what is part of what) already exists — don't rebuild it. Your job is the links ACROSS branches: what helps what, and what truly blocks what.
 
 Link types — each reads "A → B":
-- supports: doing A advances B. A is work or a routine whose result feeds B. ("Faceless productivity content" supports "Market BrainDump"; "Fix sleep schedule" supports "Retake exams".)
-- useful_for: A is a skill, resource or piece of knowledge that B benefits from. ("Italian crash course" useful_for "Internship in Milan"; "Linear Algebra" useful_for "Machine Learning".)
-- required_for: B CANNOT start or finish until A is done — a hard blocker, not "it would help". ("Get the visa" required_for "Move to Berlin".) If B could go ahead without A, it is supports or useful_for. Knowledge that makes another course easier is useful_for.
+- supports: A helps B — work, a routine, a skill or a resource that B benefits from. ("Faceless productivity content" supports "Market BrainDump"; "Italian crash course" supports "Internship in Milan"; "Linear Algebra" supports "Machine Learning".)
+- required_for: B CANNOT start or finish until A is done — a hard blocker, not "it would help". ("Get the visa" required_for "Move to Berlin".) If B could go ahead without A, it is supports. Knowledge that makes another course easier is supports.
 - related_to: neither helps the other, but they overlap enough that the user should see them together (same audience, same material, two takes on one idea). Use sparingly.
 - belongs_to: A is a part or step of B. ONLY when the source has no parent yet (the Source line says so), always with from = "source", and only when B can hold A: an area holds anything; a goal or project holds big tasks, tasks and habits; a big task holds only its steps; tasks, habits, ideas and notes hold nothing. A project or goal never belongs to a big task or task.
 
@@ -54,7 +55,7 @@ Respond with ONLY valid JSON (no markdown, no explanation):
     {
       "candidate_id": "the id from above",
       "related": true | false,
-      "edge_type": "supports | useful_for | required_for | related_to | belongs_to, or null if related is false",
+      "edge_type": "supports | required_for | related_to | belongs_to, or null if related is false",
       "from": "source | candidate",
       "confidence": 0.0,
       "explanation": "one sentence"

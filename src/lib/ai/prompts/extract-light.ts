@@ -35,7 +35,8 @@
 
 import { buildExtractionVariableBlock, type ExtractionPromptParams } from "./extract";
 
-export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v8";
+// v9 (2026-10-05): link kinds are supports / required_for / related_to (useful_for folded into supports).
+export const EXTRACT_LIGHT_PROMPT_VERSION = "extract-light-v9";
 
 const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to the user's existing knowledge graph. Most of these updates report things the user just did, plus a few new things to do; some ask to reorganize what is already there. Keep the graph sparse: propose only what the dump clearly states.
 
@@ -76,11 +77,11 @@ const LIGHT_RUBRIC_BLOCK = `You turn a short brain-dump UPDATE into changes to t
 - proposed_nodes only ADDS. When the dump asks to reorganize nodes that already EXIST — "move X under Y", "X should be its own project with A and B in it", "X isn't really a Y thing, it's more of a Z thing", "rename X to Y", "X is really a project" — put the edit in "changes", using ids from the existing-node list:
   - {"kind":"move","node_id":"<existing id>","new_parent":"<existing id, or the local_ref of a node you create in this dump>"} — replaces the node's current parent; whatever sits under the node moves with it.
   - {"kind":"update","node_id":"<existing id>","title":"New title","node_type":"big_task"} — rename and/or retype; give only the fields that change.
-  - {"kind":"link","source":"<id or local_ref>","target":"<id or local_ref>","edge_type":"supports | useful_for | required_for | related_to"} — a lateral link that leaves the tree alone.
+  - {"kind":"link","source":"<id or local_ref>","target":"<id or local_ref>","edge_type":"supports | required_for | related_to"} — a lateral link that leaves the tree alone (supports = helps; required_for = has to be done first; related_to = same topic).
 - A new parent over existing nodes: create the parent in proposed_nodes, placed where the things going into it sit NOW (existing_parent_node_id = their current parent — not the root unless that is where they are), then move the existing nodes under its local_ref. Example — existing "Test & Market BrainDump" [big_task] (under: Money Projects), dump "BrainDump should be its own project with testing and marketing as tasks in it" → proposed_nodes: project "BrainDump" n1 with existing_parent_node_id = Money Projects' id, big_task "Market BrainDump" n2 with primary_parent_local_ref n1; changes: update the existing node's title to "Test BrainDump", move it under n1. Existing nodes listed "(under: <the node being split or regrouped>)" move too, to whichever new home fits them.
 - Every part the user names must exist under the new parent afterwards. "X with A and B in it" / "A and B as two separate things" → A and B are each a node: rename the existing node into the ONE part it already is, create the others. WRONG: only renaming or retyping the existing node into the parent (update "Test & Market BrainDump" → project "BrainDump") and stopping — the project would then have no testing and no marketing in it. WRONG too: renaming it to "Test BrainDump" and creating neither the project nor "Market BrainDump".
 - NEVER create a second copy of a node that exists to stand in for a move or a rename — move or rename the one that is there. And never create an empty new parent without moving anything into it.
-- A node that leaves a parent it still HELPS keeps that as a link: "Italian is personal development really, but it helps the internship" → move "Italian Crash Course" under "Personal Development" + link it useful_for the internship goal.
+- A node that leaves a parent it still HELPS keeps that as a link: "Italian is personal development really, but it helps the internship" → move "Italian Crash Course" under "Personal Development" + link it supports the internship goal.
 - The new parent must be able to hold the node (a project never goes under a task or big task; tasks, habits, ideas and notes hold nothing). When the wording implies the opposite nesting from what exists, the bigger thing is the parent.
 - Only edit nodes the dump actually names. If it is unclear WHICH node is meant or WHERE it should go, ask in clarifying_questions instead of guessing. Deleting and marking done are not edits: done → complete_existing_node_ids; "drop X" → leave it.
 

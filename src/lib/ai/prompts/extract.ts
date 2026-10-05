@@ -81,10 +81,13 @@
 //   "goals for this semester: …" every item came out a goal — "Finish Thesis
 //   Proposal" (a big_task) and "Learn PyTorch" (a project) too. The user's
 //   label never sets the type; each item is typed by the Node types questions.
+// v28 (2026-10-05, owner: fewer link TYPES): soft_links take the three lateral
+//   kinds — supports (absorbs useful_for), required_for (was prerequisite_for),
+//   related_to (absorbs inspired_by).
 // Phase 9 will tune this against a benchmark dataset.
 // Keep version string in sync with any prompt text changes.
 
-export const EXTRACT_PROMPT_VERSION = "extract-v27";
+export const EXTRACT_PROMPT_VERSION = "extract-v28";
 
 // Stable rubric — identical across every extraction call at this prompt
 // version. Kept as a module constant so both Anthropic cache_control and
@@ -292,21 +295,20 @@ Structure rules:
 - Most nodes should have zero dependencies. Use at most 2 dependencies per node.
 - Do not create cycles.
 - soft_links are the cross-links between branches that the parent/dependency structure can't show: what helps what. A tree alone hides these, and only you see the dump text where the user says them — so capture them.
-- A soft link's target is another node from this dump (its local_ref) OR a node that already exists (its id from the existing-node list): "the ML project could double as a portfolio piece for the internship" → on the new ML project node, useful_for → the existing internship goal's id. NEVER propose a copy of an existing node just to have something to link to. (A link between two EXISTING nodes is an edit request — see below.)
-- Allowed soft_links edge types: "supports", "useful_for", "prerequisite_for", "related_to", "inspired_by".
-- ALWAYS add a soft link when the dump STATES a relation between two nodes that are not parent and child: "X so that Y", "X for Y", "X because of Y", "X is marketing for Y", "need X to get Y", "X and Y are connected". E.g. "faceless TikTok content … for BrainDump" → "Faceless Productivity Content" supports "Market BrainDump"; "learn Italian because the internship is in Milan" → "Italian Crash Course" useful_for "Get Internship by November" (when it isn't already that goal's child); "fix my sleep so I can study" → "Fix Sleep Schedule" supports the exams project.
-- Also add one when the link is obvious from what the nodes are, even if unsaid: a skill or course that a project needs (useful_for), a routine that feeds a goal in another branch (supports), two projects sharing one audience or one pipeline (related_to).
-- "supports" / "useful_for" mean it HELPS. Use "prerequisite_for" only for a real order ("finish the app, then market it") — never for "this would make that easier".
+- A soft link's target is another node from this dump (its local_ref) OR a node that already exists (its id from the existing-node list): "the ML project could double as a portfolio piece for the internship" → on the new ML project node, supports → the existing internship goal's id. NEVER propose a copy of an existing node just to have something to link to. (A link between two EXISTING nodes is an edit request — see below.)
+- Allowed soft_links edge types: "supports", "required_for", "related_to".
+- ALWAYS add a soft link when the dump STATES a relation between two nodes that are not parent and child: "X so that Y", "X for Y", "X because of Y", "X is marketing for Y", "need X to get Y", "X and Y are connected". E.g. "faceless TikTok content … for BrainDump" → "Faceless Productivity Content" supports "Market BrainDump"; "learn Italian because the internship is in Milan" → "Italian Crash Course" supports "Get Internship by November" (when it isn't already that goal's child); "fix my sleep so I can study" → "Fix Sleep Schedule" supports the exams project.
+- Also add one when the link is obvious from what the nodes are, even if unsaid: a skill or course that a project needs (supports), a routine that feeds a goal in another branch (supports), two projects sharing one audience or one pipeline (related_to).
+- "supports" means it HELPS. Use "required_for" only for a real order ("finish the app, then market it") — never for "this would make that easier".
 - A dump that spans several life areas usually has a handful of these (roughly one for every 4–6 nodes). Zero is right only for a short or single-topic dump.
 - Direction matters:
   - primary_parent_local_ref: the CURRENT node belongs to that parent.
   - depends_on_local_refs: those nodes must happen before the CURRENT node.
   - soft_links: the CURRENT node is always the SOURCE node.
   - "supports": CURRENT node helps the target.
-  - "useful_for": CURRENT node is useful for the target.
-  - "prerequisite_for": CURRENT node should come before the target.
-  - "inspired_by": CURRENT node is inspired by the target.
-- Good soft links: "Finish Thesis Proposal" supports "Get Into Honors Program"; "Statistics Course" useful_for "ML Project"; "Coursework Connection Visualizer" inspired_by "Statistics Course".
+  - "required_for": CURRENT node has to be done before the target.
+  - "related_to": CURRENT node is about the same thing as the target.
+- Good soft links: "Finish Thesis Proposal" supports "Get Into Honors Program"; "Statistics Course" supports "ML Project"; "Coursework Connection Visualizer" related_to "Statistics Course".
 - Bad soft links: anything based only on both being academic, both being tasks, or both being in the same dump; a link between a node and its own parent or sibling-by-default.
 - Use at most 2 soft links per node.
 
@@ -353,7 +355,7 @@ Write it compact: no indentation or line breaks. Leave out any field whose value
       "soft_links": [
         {
           "target_local_ref": "n4, or an existing node id",
-          "edge_type": "supports | useful_for | prerequisite_for | related_to | inspired_by",
+          "edge_type": "supports | required_for | related_to",
           "rationale": "string or null"
         }
       ],
