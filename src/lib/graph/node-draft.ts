@@ -67,11 +67,15 @@ export function newNodeRow(
   draft: CreateNodeInput,
   checked: { title: string; nodeType: string },
   scope: { userId: string; workspaceId: string },
+  now: () => string = () => new Date().toISOString(),
 ) {
   return {
     color: draftColor(draft),
     importance: getImportanceLabel(draft.importance_index),
     importance_index: draft.importance_index,
+    // An importance set on the slider is kept as a manual weight, as in the
+    // edit sheet — else the rescore after the node's intake replaces it.
+    ...(draft.manual_weight == null ? {} : { manual_weight: draft.manual_weight, manual_weight_set_at: now() }),
     node_type: checked.nodeType as Node["node_type"],
     raw_text: draft.raw_text.trim() || null,
     summary: draft.summary.trim() || null,
@@ -102,4 +106,21 @@ export function editedNodeFields(
     title: checked.title,
     updated_at: now(),
   };
+}
+
+// The text a node's embedding is read from, as a comparison key: case,
+// punctuation and spacing don't change what it means.
+function embeddingKey(title: string, summary: string | null | undefined): string {
+  return `${title} ${summary ?? ""}`
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/** Whether a title/summary edit changed the words enough to embed the node again. */
+export function embeddingTextChanged(
+  before: { title: string; summary?: string | null },
+  after: { title: string; summary?: string | null },
+): boolean {
+  return embeddingKey(before.title, before.summary) !== embeddingKey(after.title, after.summary);
 }

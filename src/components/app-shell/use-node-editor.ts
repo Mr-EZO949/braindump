@@ -9,12 +9,14 @@ import { useEffect, useState } from "react";
 
 import { createWorkspaceScope } from "@/lib/graph/chat";
 import { findFirstMatchingNode, persistLocalNodePosition, removeLocalNodePosition } from "@/lib/graph/data";
+import { withScores, type ScoreUpdate } from "@/lib/graph/graph-patches";
 import { setNodeParent } from "@/lib/graph/hierarchy";
 import {
   checkNodeDraft,
   createDraftFromNode,
   defaultCreateNodeDraft,
   editedNodeFields,
+  embeddingTextChanged,
   newNodeRow,
 } from "@/lib/graph/node-draft";
 import { buildEdgePayloadFromSelection, type EdgeRelationOptionId } from "@/lib/graph/relationships";
@@ -195,10 +197,39 @@ export function useNodeEditor({
   };
 
   const changeCreateField = <Field extends keyof CreateNodeInput>(field: Field, value: CreateNodeInput[Field]) => {
-    setCreateNodeDraft((currentDraft) => ({
-      ...(currentDraft ?? defaultCreateNodeDraft),
-      [field]: value,
-    }));
+    setCreateNodeDraft((currentDraft) => {
+      const next = { ...(currentDraft ?? defaultCreateNodeDraft), [field]: value };
+      // An importance picked on the slider is the user's call, as in the edit
+      // sheet — the rescore after the node's intake keeps it.
+      if (field === "importance_index") {
+        next.manual_weight = Math.max(0, Math.min(100, Number(value)));
+      }
+      return next;
+    });
+  };
+
+  // A hand-made or hand-edited node gets the intake an AI-made one gets
+  // (/api/nodes/[id]/intake, #25): fired after the save, never awaited by
+  // it. A new node's judgment → rescore comes back as scores, and the graph
+  // resizes when they land.
+  const runIntake = (nodeId: string, reason: "created" | "edited") => {
+    if (!workspaceId) return;
+    void fetch(`/api/nodes/${nodeId}/intake`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: workspaceId, reason }),
+    })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = (await res.json()) as { scores?: Array<ScoreUpdate & { importance_reason?: string | null }> };
+        if (data.scores && data.scores.length > 0) {
+          const scores = data.scores;
+          setGraphData((current) => withScores(current, scores));
+        }
+      })
+      .catch(() => {
+        // Best-effort: the nightly rescore and the embedding backfill catch up.
+      });
   };
 
   const closeCreateNode = () => {
@@ -332,6 +363,7 @@ export function useNodeEditor({
     setSelectedNodeId(createdNode.id);
     setRightPanelOpen(true);
     setActiveRailTab("details");
+    runIntake(createdNode.id, "created");
 
     // Sizing layer: only second-guess plain tasks. If the user explicitly
     // created a project/goal/etc., take it at face value. Runs after the
@@ -373,6 +405,9 @@ export function useNodeEditor({
     }
 
     const updatedNode = data as Node;
+    if (embeddingTextChanged(selectedNodeRecord, updatedNode)) {
+      runIntake(updatedNode.id, "edited");
+    }
 
     setGraphData((currentGraphData) => ({
       ...currentGraphData,

@@ -8,6 +8,7 @@ import {
   defaultCreateNodeDraft,
   draftTargetDate,
   editedNodeFields,
+  embeddingTextChanged,
   newNodeRow,
 } from "./node-draft";
 
@@ -104,5 +105,30 @@ describe("newNodeRow / editedNodeFields", () => {
       manual_weight_set_at: null,
       updated_at: "t",
     });
+  });
+});
+
+describe("newNodeRow keeps an importance the user picked (#25)", () => {
+  it("a slider value is a manual weight, so the intake's rescore keeps it", () => {
+    const row = newNodeRow(draft({ title: "x", manual_weight: 90, importance_index: 90 }), { title: "x", nodeType: "task" }, { userId: "u", workspaceId: "w" }, () => "t");
+    expect(row).toMatchObject({ manual_weight: 90, manual_weight_set_at: "t", importance_index: 90 });
+  });
+
+  it("no slider touch: no manual weight — the scorer sizes it", () => {
+    const row = newNodeRow(draft({ title: "x" }), { title: "x", nodeType: "task" }, { userId: "u", workspaceId: "w" });
+    expect(row).not.toHaveProperty("manual_weight");
+    expect(row).not.toHaveProperty("manual_weight_set_at");
+  });
+});
+
+describe("embeddingTextChanged", () => {
+  it("case, punctuation and spacing don't count", () => {
+    expect(embeddingTextChanged({ title: "Email the prof" }, { title: "email the prof." })).toBe(false);
+    expect(embeddingTextChanged({ title: "Update CV", summary: null }, { title: "Update  CV", summary: "" })).toBe(false);
+  });
+
+  it("new words in the title or the summary do", () => {
+    expect(embeddingTextChanged({ title: "Update CV" }, { title: "Update CV and LinkedIn" })).toBe(true);
+    expect(embeddingTextChanged({ title: "Update CV", summary: null }, { title: "Update CV", summary: "for Milan" })).toBe(true);
   });
 });

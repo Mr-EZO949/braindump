@@ -258,6 +258,13 @@ Each phase ships on its own and is testable from `testing-journal.md`.
      (chat wrote its own "critical").
    - Fixed on the way: a deadline or body on a batch `update` op was dropped while the op
      reported success.
+   - Hand-made nodes too (#25, 2026-10-05): the Create sheet writes its row, then fires
+     `POST /api/nodes/[id]/intake` (`intakeHandMadeNode`: embedding, `accept_node` with
+     `source: "manual"`, judgment → rescore, once per node; ≈$0.0006/node, ideas/notes skip
+     the judgment). The save never waits; the new scores come back and resize the graph. A
+     slider value on create is a manual weight (as in the edit sheet). A title/summary
+     change re-embeds the node — hand edit (`reason: "edited"`, only when the words changed,
+     `embeddingTextChanged`), a chat `update`, and an Undo that restores old words.
    - Checked: 17 unit tests on an in-memory DB (`change-set.test.ts`; the 7 tool-behaviour
      ones passed against the old code first), and one pass against the real DB on a throwaway
      user — 15/15 checks, $0.0014 (2 Haiku judgments + 4 embeddings).

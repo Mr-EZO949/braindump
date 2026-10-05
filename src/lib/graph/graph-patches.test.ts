@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import type { Edge, GraphData, Node } from "@/types/graph";
 
-import { placeAcceptedNodes, stepCandidates, withMergedNode, withoutNodes, withReviewedEdges } from "./graph-patches";
+import {
+  placeAcceptedNodes,
+  stepCandidates,
+  withMergedNode,
+  withoutNodes,
+  withReviewedEdges,
+  withScores,
+} from "./graph-patches";
 
 const node = (id: string, extra: Partial<Node> = {}) =>
   ({ id, title: id, node_type: "task", status: "active", position_x: 5, position_y: 5, manual_position: true, ...extra }) as Node;
@@ -84,5 +91,18 @@ describe("withMergedNode / withoutNodes", () => {
     const next = withoutNodes(graph, new Set(["keep"]));
     expect(next.nodes.map((n) => n.id)).toEqual(["dup", "other"]);
     expect(next.edges).toEqual([]);
+  });
+});
+
+describe("withScores", () => {
+  it("resizes the scored nodes, keeps the rest, carries the reason", () => {
+    const prev: GraphData = { nodes: [node("a"), node("b", { importance_reason: "old" })], edges: [] };
+    const next = withScores(prev, [
+      { id: "b", current_importance_score: 81, importance_index: 81, importance: "high", importance_reason: "due soon" },
+      { id: "gone", current_importance_score: 10, importance_index: 10, importance: "low" },
+    ]);
+    expect(next.nodes[0]).toBe(prev.nodes[0]);
+    expect(next.nodes[1]).toMatchObject({ current_importance_score: 81, importance_index: 81, importance: "high", importance_reason: "due soon" });
+    expect(withScores(prev, [])).toBe(prev);
   });
 });

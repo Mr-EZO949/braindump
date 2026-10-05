@@ -149,3 +149,26 @@ export function withoutNodes(prev: GraphData, removedIds: ReadonlySet<string>): 
     edges: prev.edges.filter((e) => !removedIds.has(e.source_node_id) && !removedIds.has(e.target_node_id)),
   };
 }
+
+/** New scores from the server (a rescore): node sizes and reasons follow. */
+export function withScores(
+  prev: GraphData,
+  scores: ReadonlyArray<ScoreUpdate & { importance_reason?: string | null }>,
+): GraphData {
+  if (scores.length === 0) return prev;
+  const scoreMap = new Map(scores.map((s) => [s.id, s]));
+  return {
+    ...prev,
+    nodes: prev.nodes.map((n) => {
+      const s = scoreMap.get(n.id);
+      if (!s) return n;
+      return {
+        ...n,
+        current_importance_score: s.current_importance_score,
+        importance_index: s.importance_index,
+        importance: s.importance as Node["importance"],
+        ...(s.importance_reason !== undefined ? { importance_reason: s.importance_reason } : {}),
+      };
+    }),
+  };
+}
