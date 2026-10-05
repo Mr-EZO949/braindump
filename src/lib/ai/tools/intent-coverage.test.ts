@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { MULTI_INTENT_CASES } from "@/lib/ai/eval/chat-intents";
-import { callCoverage, coverageNudge, mergeRetryCalls, missingIntents, statedIntents, statedOpSource } from "./intent-coverage";
+import { callCoverage, coverageNudge, mergeRetryCalls, forcesPlanDay, missingIntents, statedIntents, statedOpSource } from "./intent-coverage";
 
 const PM_CASE = "Did the gym. Also the CV update can wait till next week, should I focus on stats or the internship?";
 const kinds = (message: string) => statedIntents(message).map((s) => s.kind);
@@ -87,6 +87,20 @@ describe("missingIntents", () => {
 
   it("every eval case's stated kinds are found (the live set stays checkable)", () => {
     for (const c of MULTI_INTENT_CASES) expect(statedIntents(c.message).length, c.id).toBeGreaterThan(0);
+  });
+});
+
+describe("forcesPlanDay", () => {
+  it("a plain plan request goes straight to plan_day", () => {
+    expect(forcesPlanDay("plan the rest of my day")).toBe(true);
+    expect(forcesPlanDay("can you plan my afternoon?")).toBe(true);
+    expect(forcesPlanDay("make me a schedule")).toBe(true);
+  });
+  it("not with other things stated, off schedule, or no plan asked", () => {
+    expect(forcesPlanDay("did the gym, now plan my afternoon")).toBe(false);
+    expect(forcesPlanDay("i went off schedule, plan the rest of my day")).toBe(false);
+    expect(forcesPlanDay("missed the gym, redo my afternoon")).toBe(false);
+    expect(forcesPlanDay("what should I focus on today?")).toBe(false);
   });
 });
 

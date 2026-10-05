@@ -39,7 +39,7 @@ import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { pinSnapshot, snapshotText } from "@/lib/ai/snapshot-pin";
 import { getToolSchemas, isReadOnlyTool, runTurnTools, turnNeedsNoFollowUp } from "@/lib/ai/tools";
-import { coverageNudge, HELD_RESULT, mergeRetryCalls, missingIntents } from "@/lib/ai/tools/intent-coverage";
+import { coverageNudge, forcesPlanDay, HELD_RESULT, mergeRetryCalls, missingIntents } from "@/lib/ai/tools/intent-coverage";
 import { answerStillOwed, needsStepAfterChange } from "@/lib/ai/tools/confirmations";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
 import { encodeTurnMarker } from "@/lib/chat/turn-marker";
@@ -430,6 +430,8 @@ export async function POST(req: NextRequest) {
       }
 
       const { systemPromptBlocks, historyEnd, messages } = claudeTurn();
+      // "plan the rest of my day" → plan_day first, no questions (#29).
+      const planFirst = forcesPlanDay(message) && tools.some((t) => t.name === "plan_day");
       try {
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           if (aborted) break;
@@ -438,6 +440,7 @@ export async function POST(req: NextRequest) {
             model: assistantModel,
             max_tokens: 2048,
             ...claudeRequestTuning(assistantModel, AI_TEMPERATURE.ASSISTANT),
+            ...(round === 0 && planFirst ? { tool_choice: { type: "tool" as const, name: "plan_day" } } : {}),
             system: systemPromptBlocks,
             tools,
             messages: withCacheBreakpoints(messages, historyEnd),

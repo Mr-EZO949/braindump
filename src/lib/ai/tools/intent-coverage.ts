@@ -156,6 +156,18 @@ function rows(input: unknown): Array<Record<string, unknown>> {
 }
 
 // What a turn's calls carry, as counts per op kind / action / tool name.
+// A plain plan request ("plan the rest of my day", nothing else stated): the
+// chat route makes its first round call plan_day. Left free, Haiku first asks
+// what you're busy with (#29, on v29–v32), and that question has already
+// streamed by the time the coverage check adds the plan. Not when they went
+// off schedule — that is replan_today, which keeps today's plan.
+const OFF_SCHEDULE = /\b(off (schedule|track)|missed|running late|behind|redo|re-?plan\w*)\b/i;
+export function forcesPlanDay(message: string): boolean {
+  if (OFF_SCHEDULE.test(message)) return false;
+  const kinds = statedIntents(message).map((i) => i.kind);
+  return kinds.length > 0 && kinds.every((k) => k === "plan");
+}
+
 export function callCoverage(calls: ModelCall[]): Map<string, number> {
   const counts = new Map<string, number>();
   const bump = (key: string) => counts.set(key, (counts.get(key) ?? 0) + 1);
