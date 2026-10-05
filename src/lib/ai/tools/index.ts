@@ -22,6 +22,7 @@ import { BUILD_GRAPH_TOOL, BUILD_TOOLS, planBuild } from "./build";
 import { planSteps, STEP_TOOLS, WRITE_STEPS_TOOL } from "./steps";
 import { actionSucceeded, looksMultiStep } from "./confirmations";
 import { adviceRows } from "./advice-guard";
+import { statedOpSource } from "./intent-coverage";
 import type { AppliedMarkerPayload } from "@/lib/chat/applied-marker";
 import type { TurnApplied } from "@/types/ai";
 
@@ -232,7 +233,12 @@ export async function runTurnTools(modelBlocks: ToolUse[], ctx: ToolContext): Pr
   const turns: TurnApplied[] = [];
   let pending: ToolUse | null = null;
   const blocks: ToolUse[] = [];
-  for (const block of modelBlocks) blocks.push(await separateAdvice(asChangeOp(block), ctx, applied));
+  // CHAT_TRACE=1 (dev, evals): the model's calls as it made them — the trace
+  // to read before blaming the model or the guards (scripts/eval-chat-intents.ts).
+  if (process.env.CHAT_TRACE === "1") {
+    console.info(`[chat/trace] ${JSON.stringify({ message: ctx.userMessage, calls: modelBlocks.map(({ name, input }) => ({ name, input })) })}`);
+  }
+  for (const block of modelBlocks) blocks.push(await separateAdvice(asChangeOp(block, ctx.userMessage), ctx, applied));
 
   for (const block of blocks) {
     if (!isPausingTool(block.name, block.input)) continue;
@@ -346,13 +352,17 @@ async function separateAdvice(block: ToolUse, ctx: ToolContext, applied: Applied
 // A change op called as if it were a tool ("remove_edge" with the two ids —
 // Haiku did it once, 2026-10-04) is that op inside a change call, instead of
 // an "Unknown tool" error and a second model round. Without a source it is
-// treated as a suggestion, like a change call without one (planChange).
-export function asChangeOp(block: ToolUse): ToolUse {
+// the user's when their message states that kind of thing ("went to the gym
+// this morning, now plan my afternoon" → "complete" with no source, #22 eval
+// 2026-10-05: it waited as a suggestion and the plan behind it was dropped);
+// otherwise a suggestion, like a change call without one (planChange).
+export function asChangeOp(block: ToolUse, userMessage?: string): ToolUse {
   if (BY_NAME.has(block.name) || !(CHANGE_KINDS as readonly string[]).includes(block.name)) return block;
   const { source, ...op } = (block.input ?? {}) as Record<string, unknown>;
+  const resolved = source === "user" || source === "suggestion" ? source : statedOpSource(userMessage, block.name);
   return {
     ...block,
     name: CHANGE_TOOL,
-    input: { source: source === "user" ? "user" : "suggestion", changes: [{ kind: block.name, ...op }] },
+    input: { source: resolved, changes: [{ kind: block.name, ...op }] },
   };
 }

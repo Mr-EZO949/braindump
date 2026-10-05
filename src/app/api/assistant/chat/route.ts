@@ -38,7 +38,8 @@ import { persistAIRun, recordClaudeRun } from "@/lib/ai/telemetry";
 import { addUsage, EMPTY_USAGE, readClaudeUsage } from "@/lib/ai/usage";
 import { cachedSystem, withCacheBreakpoints } from "@/lib/ai/assistant-cache";
 import { pinSnapshot, snapshotText } from "@/lib/ai/snapshot-pin";
-import { getToolSchemas, runTurnTools, turnNeedsNoFollowUp } from "@/lib/ai/tools";
+import { getToolSchemas, isReadOnlyTool, runTurnTools, turnNeedsNoFollowUp } from "@/lib/ai/tools";
+import { coverageNudge, HELD_RESULT, mergeRetryCalls, missingIntents } from "@/lib/ai/tools/intent-coverage";
 import { answerStillOwed, needsStepAfterChange } from "@/lib/ai/tools/confirmations";
 import { encodeAppliedMarker } from "@/lib/chat/applied-marker";
 import { encodeTurnMarker } from "@/lib/chat/turn-marker";
@@ -367,6 +368,7 @@ export async function POST(req: NextRequest) {
       let newTextBlock = false;
       let streamError: ReturnType<typeof normalizeAIError> | null = null;
       let currentStream: ReturnType<typeof client.messages.stream> | null = null;
+      let coverageChecked = false;
 
       const encoder = new TextEncoder();
       const send = (chunk: string) => {
@@ -472,22 +474,77 @@ export async function POST(req: NextRequest) {
           const finalMessage = await currentStream.finalMessage();
           currentStream = null;
 
-          // Record the assistant turn (text + any tool_use blocks) so the
-          // next round's context is coherent.
-          messages.push({ role: "assistant", content: finalMessage.content });
+          let content: ContentBlock[] = finalMessage.content;
+          const firstCalls = content.filter((block: ContentBlock): block is ToolUseBlock => block.type === "tool_use");
 
-          if (finalMessage.stop_reason !== "tool_use") {
-            // end_turn / max_tokens / stop_sequence — we're done.
-            break;
+          // One message, every intent (#22, tools/intent-coverage.ts): the
+          // first response that acts (or ends the turn) is checked against
+          // what the user stated. Something left out → the model is asked
+          // once for only the missing calls, with its own calls held; they
+          // join its response and run as one turn.
+          if (
+            !coverageChecked &&
+            finalMessage.stop_reason !== "max_tokens" &&
+            (firstCalls.length === 0 || firstCalls.some((b) => !isReadOnlyTool(b.name)))
+          ) {
+            coverageChecked = true;
+            const missing = missingIntents(message, firstCalls);
+            if (missing.length > 0 && !aborted) {
+              try {
+                const retry = await client.messages.create(
+                  {
+                    model: assistantModel,
+                    max_tokens: 1024,
+                    ...claudeRequestTuning(assistantModel, AI_TEMPERATURE.ASSISTANT),
+                    system: systemPromptBlocks,
+                    tools,
+                    messages: withCacheBreakpoints(
+                      [
+                        ...messages,
+                        { role: "assistant", content },
+                        {
+                          role: "user",
+                          content: [
+                            ...firstCalls.map((b) => ({
+                              type: "tool_result" as const,
+                              tool_use_id: b.id,
+                              content: HELD_RESULT,
+                            })),
+                            { type: "text" as const, text: coverageNudge(missing, firstCalls.length > 0) },
+                          ],
+                        },
+                      ],
+                      historyEnd,
+                    ),
+                  },
+                  { signal: toolAbort.signal },
+                );
+                usage = addUsage(usage, readClaudeUsage(retry.usage));
+                const extra = retry.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
+                console.info(
+                  `[assistant/chat] intent check: missing ${[...new Set(missing.map((m) => m.kind))].join(", ")} → ${extra.length} more call(s)`,
+                );
+                if (extra.length > 0) {
+                  content = [...content.filter((b) => b.type !== "tool_use"), ...mergeRetryCalls(firstCalls, extra)];
+                }
+              } catch (err) {
+                // The check is a backstop: on failure the turn goes on as it was.
+                console.error("[assistant/chat] intent check failed:", err instanceof Error ? err.message : err);
+              }
+            }
           }
 
+          // Record the assistant turn (text + any tool_use blocks) so the
+          // next round's context is coherent.
+          messages.push({ role: "assistant", content });
+
           // Execute every tool_use block in this turn.
-          const toolUseBlocks = finalMessage.content.filter(
+          const toolUseBlocks = content.filter(
             (block: ContentBlock): block is ToolUseBlock => block.type === "tool_use",
           );
 
           if (toolUseBlocks.length === 0) {
-            // Shouldn't happen when stop_reason is tool_use, but bail safely.
+            // end_turn / max_tokens / stop_sequence with nothing to run — we're done.
             break;
           }
 

@@ -132,6 +132,15 @@ describe("asChangeOp", () => {
     });
   });
 
+  it("without a source: the user's when their message states it (#22), else a suggestion", () => {
+    const gym = { id: "t", name: "complete", input: { node_id: "gym" } };
+    expect(asChangeOp(gym, "went to the gym this morning, now plan my afternoon").input).toEqual({
+      source: "user",
+      changes: [{ kind: "complete", node_id: "gym" }],
+    });
+    expect((asChangeOp(gym, "what should I do next?").input as { source: string }).source).toBe("suggestion");
+  });
+
   it("leaves real tools and unknown names alone", () => {
     const real = { id: "t", name: "change", input: {} };
     expect(asChangeOp(real)).toBe(real);
