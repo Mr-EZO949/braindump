@@ -11,17 +11,15 @@
 // table from accumulating duplicate pending nudges for the same situation.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { storedTypesFor } from "@/lib/graph/edge-types";
 
 const STALE_DAYS = 14;
 const DUE_SOON_DAYS = 7;
 const DUE_SOON_INACTIVITY_DAYS = 3;
 const NEWLY_READY_LOOKBACK_HOURS = 24;
 
-const PREREQUISITE_EDGE_TYPES = [
-  "required_for",
-  "prerequisite_for",
-  "depends_on",
-];
+// "needed for" links as stored (lib/graph/edge-types.ts), same direction.
+const PREREQUISITE_EDGE_TYPES = storedTypesFor("required_for");
 
 export type NudgeKind = "stale" | "newly_ready" | "due_soon" | "top_priority";
 

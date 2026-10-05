@@ -47,7 +47,6 @@ describe("visibleGraph + shelvedCompletedNodes", () => {
       edge("e3", "old", "goal"),
       edge("e4", "arch", "goal"),
       edge("e5", "open", "goal", { status: "orphaned" }),
-      edge("e6", "open", "goal", { edge_type: "blocks" }),
     ],
   };
 

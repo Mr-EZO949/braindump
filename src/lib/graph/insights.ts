@@ -1,9 +1,9 @@
 import { getImportanceIndex } from "@/lib/graph/importance";
 import {
   getEdgeRelationOptionIdForSelection,
-  isEdgeHiddenInUi,
   type EdgeRelationOptionId,
 } from "@/lib/graph/relationships";
+import { isReversedEdgeType, normalizeEdge, normalizeEdgeType, type LinkKind } from "@/lib/graph/edge-types";
 import type { ChatNodeContext } from "@/types/chat";
 import type { Edge, EdgeType, GraphData, Node } from "@/types/graph";
 
@@ -48,19 +48,12 @@ type Perspective = "source" | "target";
  *   SUPPORTIVE (~70) — soft "helps with" relationships
  *   ASSOCIATIVE (30–60) — loose "related to" / "inspired by" links
  *
- * `blocks` ranks just below hard prereqs because it's a soft signal — and
- * remember it's hidden from UI anyway (see relationships.ts) so this value
- * only affects code paths that opt-in to hidden types.
+ * Legacy stored types read as their kind (lib/graph/edge-types.ts).
  */
-const RELATIONSHIP_PRIORITY: Record<EdgeType, number> = {
+const RELATIONSHIP_PRIORITY: Record<LinkKind, number> = {
   required_for: 98,
-  prerequisite_for: 98,
-  depends_on: 98,
-  blocks: 96,
   belongs_to: 90,
   supports: 70,
-  useful_for: 58,
-  inspired_by: 42,
   related_to: 30,
 };
 
@@ -141,7 +134,7 @@ export function calculateLinkedNodePriority(
   linkedNode: Node,
 ): number {
   return (
-    RELATIONSHIP_PRIORITY[edgeType] +
+    RELATIONSHIP_PRIORITY[normalizeEdgeType(edgeType)] +
     Math.round(getImportanceIndex(linkedNode) * IMPORTANCE_BONUS_DEFAULT)
   );
 }
@@ -173,24 +166,18 @@ export function getDirectionalRelationshipLabel(
   edgeType: EdgeType,
   perspective: Perspective,
 ): string {
-  switch (edgeType) {
+  // `depends_on` is stored from the other end; read it as its kind.
+  const fromSource =
+    isReversedEdgeType(edgeType) ? perspective === "target" : perspective === "source";
+  switch (normalizeEdgeType(edgeType)) {
     case "belongs_to":
-      return perspective === "source" ? "belongs to" : "contains";
+      return fromSource ? "belongs to" : "contains";
     case "required_for":
-    case "prerequisite_for":
-      return perspective === "source" ? "required for" : "depends on";
+      return fromSource ? "needed for" : "needs";
     case "supports":
-      return perspective === "source" ? "supports" : "supported by";
-    case "useful_for":
-      return perspective === "source" ? "useful for" : "helped by";
-    case "blocks":
-      return perspective === "source" ? "blocks" : "blocked by";
-    case "inspired_by":
-      return perspective === "source" ? "inspired by" : "inspires";
+      return fromSource ? "helps" : "helped by";
     case "related_to":
       return "related to";
-    case "depends_on":
-      return perspective === "source" ? "depends on" : "required for";
   }
 }
 
@@ -213,10 +200,7 @@ export function getLinkedNodePerspectives(
     }
   >();
 
-  graphData.edges.forEach((edge) => {
-    if (isEdgeHiddenInUi(edge.edge_type)) {
-      return;
-    }
+  graphData.edges.map(normalizeEdge).forEach((edge) => {
 
     if (edge.source_node_id !== selectedNodeId && edge.target_node_id !== selectedNodeId) {
       return;
@@ -273,10 +257,8 @@ export function getNodeConnections(
   const nodesById = new Map(graphData.nodes.map((node) => [node.id, node]));
 
   return graphData.edges
+    .map(normalizeEdge)
     .flatMap((edge) => {
-      if (isEdgeHiddenInUi(edge.edge_type)) {
-        return [];
-      }
 
       if (edge.source_node_id !== selectedNodeId && edge.target_node_id !== selectedNodeId) {
         return [];
@@ -367,10 +349,7 @@ export function getFocusItems(
   const nodesById = new Map(graphData.nodes.map((node) => [node.id, node]));
   const grouped = new Map<string, FocusItem>();
 
-  graphData.edges.forEach((edge) => {
-    if (isEdgeHiddenInUi(edge.edge_type)) {
-      return;
-    }
+  graphData.edges.map(normalizeEdge).forEach((edge) => {
 
     if (edge.source_node_id !== selectedNode.id && edge.target_node_id !== selectedNode.id) {
       return;
@@ -387,7 +366,6 @@ export function getFocusItems(
 
     switch (edge.edge_type) {
       case "required_for":
-      case "prerequisite_for":
         // Hard dependency from this node's perspective — must clear before
         // the focus node can move. Ranks above every child type.
         if (perspective === "target") {

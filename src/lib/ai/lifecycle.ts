@@ -12,6 +12,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { AI_DECAY } from "@/lib/ai/config";
 import type { EdgeStatus, NodeStatus } from "@/types/graph";
+import { storedTypesFor } from "@/lib/graph/edge-types";
+
+const NEEDED_FOR_STORED_TYPES = storedTypesFor("required_for");
 
 // ─── Public types ────────────────────────────────────────────────────────
 
@@ -242,7 +245,7 @@ export async function runPrerequisiteCascade(params: {
     .select("target_node_id")
     .eq("source_node_id", triggeredByNodeId)
     .eq("user_id", userId)
-    .in("edge_type", ["prerequisite_for", "required_for"])
+    .in("edge_type", NEEDED_FOR_STORED_TYPES)
     .eq("status", "active");
 
   if (!outEdges || outEdges.length === 0) {
@@ -281,7 +284,7 @@ export async function runPrerequisiteCascade(params: {
           .select("source_node_id, target_node_id")
           .in("target_node_id", downstreamIds)
           .eq("user_id", userId)
-          .in("edge_type", ["prerequisite_for", "required_for"])
+          .in("edge_type", NEEDED_FOR_STORED_TYPES)
           .eq("status", "active"),
         supabase
           .from("nodes")

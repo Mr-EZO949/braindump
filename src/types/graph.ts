@@ -18,6 +18,9 @@ export type EdgeStatus = "active" | "decayed" | "orphaned" | "user_rejected";
 
 export type Importance = "low" | "medium" | "high";
 
+// Types a stored edge row can carry. Only four are written since 2026-10-05
+// (belongs_to, required_for, supports, related_to); the rest are older rows,
+// read as one of the four by lib/graph/edge-types.ts `normalizeEdge`.
 export type EdgeType =
   | "supports"
   | "related_to"

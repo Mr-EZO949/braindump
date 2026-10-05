@@ -5,6 +5,7 @@
 import { AI_TOKEN_BUDGETS, AI_ASSISTANT } from "./config";
 import { matchNodes, type MatchedNode } from "./embeddings";
 import { stakesLevel } from "@/lib/graph/priority-signals";
+import { normalizeEdges } from "@/lib/graph/edge-types";
 import { describeCommitment, loadActiveCommitments } from "@/lib/planner/commitments";
 import { preferencesSnapshotBlock, type Preference } from "@/lib/planner/preferences";
 import { loadPreferences } from "@/lib/planner/preference-store";
@@ -195,7 +196,8 @@ export async function buildAssistantContext(params: {
   type CompletedRow = { id: string; title: string; completed_at: string | null };
 
   const allNodes: NodeRow[] = nodesResult.data ?? [];
-  const edges: EdgeRow[] = edgesResult.data ?? [];
+  // Legacy link types read as the four kinds (lib/graph/edge-types.ts).
+  const edges: EdgeRow[] = normalizeEdges(edgesResult.data ?? []);
   const feedbackEvents: FeedbackRow[] = feedbackResult.data ?? [];
   const recentlyCompleted: CompletedRow[] = recentlyCompletedResult.data ?? [];
   const todayPlanTasks = (planResult.data ?? []) as DayPlanTask[];

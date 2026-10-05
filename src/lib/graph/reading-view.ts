@@ -3,39 +3,30 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Edge, EdgeType, Node } from "@/types/graph";
 
 import { getDirectionalRelationshipLabel } from "./insights";
+import { normalizeEdgeType, normalizeEdges, type LinkKind } from "./edge-types";
 
 // Reading-view data assembly.
 //
 // The "direct vs hidden" split mirrors how the canvas draws edges: the
 // structural spine (hierarchy + hard dependencies) is drawn solid and prominent
-// — those are DIRECT connections. Everything associative (supports / useful /
-// inspired / related / blocks) is drawn faint and dashed — those are the HIDDEN
+// — those are DIRECT connections. Everything associative (helps /
+// related) is drawn faint and dashed — those are the HIDDEN
 // connections, the "find hidden connections in your life" links. Keep this in
 // sync with graph-canvas.tsx's `structuralCandidate`.
 
-const DIRECT_EDGE_TYPES = new Set<EdgeType>([
-  "belongs_to",
-  "required_for",
-  "prerequisite_for",
-  "depends_on",
-]);
+const DIRECT_EDGE_TYPES = new Set<LinkKind>(["belongs_to", "required_for"]);
 
 export function edgeFamily(edgeType: EdgeType): "direct" | "hidden" {
-  return DIRECT_EDGE_TYPES.has(edgeType) ? "direct" : "hidden";
+  return DIRECT_EDGE_TYPES.has(normalizeEdgeType(edgeType)) ? "direct" : "hidden";
 }
 
 // Strongest-connection ranking, used only for the Next fallback when a node has
 // no explicit reading_order. Mirrors the canvas priority ordering: hard
 // dependencies > hierarchy > supports > useful > inspired > related.
-const CONNECTION_STRENGTH: Record<EdgeType, number> = {
+const CONNECTION_STRENGTH: Record<LinkKind, number> = {
   required_for: 98,
-  prerequisite_for: 98,
-  depends_on: 98,
-  blocks: 96,
   belongs_to: 90,
   supports: 70,
-  useful_for: 58,
-  inspired_by: 42,
   related_to: 30,
 };
 
@@ -79,7 +70,7 @@ function buildConnections(
   neighborById: Map<string, MinimalNode>,
 ) {
   const connections: ReadingConnection[] = [];
-  for (const edge of edges) {
+  for (const edge of normalizeEdges(edges)) {
     const otherId =
       edge.source_node_id === nodeId ? edge.target_node_id : edge.source_node_id;
     const other = neighborById.get(otherId);
@@ -93,7 +84,7 @@ function buildConnections(
       label: getDirectionalRelationshipLabel(edge.edge_type, perspective),
       edge_type: edge.edge_type,
       family: edgeFamily(edge.edge_type),
-      strength: CONNECTION_STRENGTH[edge.edge_type] ?? 0,
+      strength: CONNECTION_STRENGTH[normalizeEdgeType(edge.edge_type)],
     });
   }
 

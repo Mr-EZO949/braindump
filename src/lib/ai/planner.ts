@@ -4,6 +4,7 @@
 
 import type { NodeType } from "@/types/graph";
 import { todayLocalISO } from "@/lib/habits/streak";
+import { normalizeEdges } from "@/lib/graph/edge-types";
 import { KNOWLEDGE_TYPES, STRUCTURE_TYPES } from "@/lib/graph/node-types";
 import {
   createRankingContext,
@@ -804,7 +805,7 @@ export async function buildPlannerCandidates(params: {
   const loadedNodes = (nodesResult.data ?? []) as NodeRow[];
   // Candidates come from active nodes; paused ones only feed holds/check-backs.
   const rawNodes = loadedNodes.filter((node) => (node.status ?? "active") === "active");
-  const edgeRows = (edgesResult.data ?? []) as EdgeRow[];
+  const edgeRows = normalizeEdges((edgesResult.data ?? []) as EdgeRow[]);
   const planTasks = (planTasksResult.data ?? []) as PlanTaskRow[];
   const feedbackEvents = (planFeedbackEventsResult.data ?? []) as PlanFeedbackEventRow[];
 

@@ -1,5 +1,6 @@
 
 import { getImportanceIndex, getImportanceLabel } from "@/lib/graph/importance";
+import { normalizeEdges } from "@/lib/graph/edge-types";
 import { supabase } from "@/lib/supabase/client";
 import type { ChatNodeContext } from "@/types/chat";
 import type { Edge, GraphData, Node, Workspace } from "@/types/graph";
@@ -381,7 +382,8 @@ export async function loadWorkspaceGraphData(
 
     return applyLocalPositions({
       nodes: normalizeNodes(nodes as Node[]),
-      edges: edges as Edge[],
+      // Legacy link types read as the four kinds (lib/graph/edge-types.ts).
+      edges: normalizeEdges(edges as Edge[]),
     }, userId, workspaceId);
   } catch {
     return emptyGraphData();

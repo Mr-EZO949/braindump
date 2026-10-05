@@ -15,6 +15,7 @@ import { checkAIRunRateLimitWindow } from "../rate-limit";
 import { computeWorkspaceScores } from "../scoring";
 import type { WorkspaceProfile } from "@/types/graph";
 import { addDaysISO, localDateISO } from "@/lib/time/local-date";
+import { normalizeEdges } from "@/lib/graph/edge-types";
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -188,7 +189,8 @@ const GET_NODE: ToolDefinition = {
         ),
       );
 
-      for (const e of edges ?? []) {
+      // Legacy link types read as the four kinds (lib/graph/edge-types.ts).
+      for (const e of normalizeEdges(edges ?? [])) {
         const isOut = e.source_node_id === id;
         const otherId = isOut ? e.target_node_id : e.source_node_id;
         const other = byId.get(otherId) as

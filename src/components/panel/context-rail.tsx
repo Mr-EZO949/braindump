@@ -44,11 +44,11 @@ type LinkCategory =
 const CATEGORY_DISPLAY: Record<LinkCategory, string> = {
   parent: "Parent",
   // What this node needs done first (its blockers/prerequisites).
-  depends_on: "Depends on",
+  depends_on: "Needs",
   // What is waiting on this node (its dependents).
-  required_for: "Required for",
+  required_for: "Needed for",
   children: "Children",
-  supports: "Supports",
+  supports: "Helps",
   related: "Related",
 };
 
@@ -65,11 +65,11 @@ function getLinkCategory(labels: string[]): LinkCategory {
   for (const label of labels) {
     if (label === "belongs to") return "parent";
     if (label === "contains") return "children";
-    // Directionality matters: "depends on" = this node is blocked by the other;
-    // "required for" = the other is blocked by this node. Keep them separate.
-    if (label === "depends on") return "depends_on";
-    if (label === "required for") return "required_for";
-    if (label === "supports" || label === "supported by") return "supports";
+    // Directionality matters: "needs" = this node is blocked by the other;
+    // "needed for" = the other is blocked by this node. Keep them separate.
+    if (label === "needs") return "depends_on";
+    if (label === "needed for") return "required_for";
+    if (label === "helps" || label === "helped by") return "supports";
   }
   return "related";
 }

@@ -1,4 +1,5 @@
 import type { Edge, GraphData } from "@/types/graph";
+import { normalizeEdge } from "@/lib/graph/edge-types";
 
 export type StructuralParentCandidate = {
   childId: string;
@@ -12,7 +13,8 @@ export type StructuralSubtree = {
   nodeIds: string[];
 };
 
-export function getStructuralParentCandidate(edge: Edge): StructuralParentCandidate | null {
+export function getStructuralParentCandidate(rawEdge: Edge): StructuralParentCandidate | null {
+  const edge = normalizeEdge(rawEdge);
   switch (edge.edge_type) {
     case "belongs_to":
       return {
@@ -21,7 +23,6 @@ export function getStructuralParentCandidate(edge: Edge): StructuralParentCandid
         priority: 100,
       };
     case "required_for":
-    case "prerequisite_for":
       return {
         childId: edge.target_node_id,
         parentId: edge.source_node_id,

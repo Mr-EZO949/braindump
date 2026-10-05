@@ -26,8 +26,9 @@ Every signal is deterministic — no model call when Focus opens or scores recom
    timing is signal 2, so it is never counted twice.
 2. **Deadline pressure** (0–100) — lead-time aware, not a 7-day cliff.
    - Effective deadline: the node's own `target_date`, else the nearest dated
-     ancestor (belongs_to chain), else a dated node it is `required_for` /
-     `prerequisite_for`. Habits, notes, ideas and areas never carry one.
+     ancestor (belongs_to chain), else a dated node it is `required_for` ("needed
+     for"; old `prerequisite_for` / `blocks` / `depends_on` rows read the same —
+     `lib/graph/edge-types.ts`). Habits, notes, ideas and areas never carry one.
    - Work left: open actionable nodes under the deadline's owner (task 1 session,
      big task without steps 3); an owner with nothing under it counts 3.
    - `slack = days_left − work_left / SESSIONS_PER_DAY`;

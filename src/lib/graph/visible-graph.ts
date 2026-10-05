@@ -2,7 +2,7 @@
 // loaded graph (moved out of AppShell, 2026-10-04). The shell memoizes them.
 
 import { isLiveEdge } from "@/lib/graph/archive-edges";
-import { getEdgeRelationOptionIdForSelection, isEdgeHiddenInUi, type EdgeRelationOptionId } from "@/lib/graph/relationships";
+import { getEdgeRelationOptionIdForSelection, type EdgeRelationOptionId } from "@/lib/graph/relationships";
 import { NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
 import type { Edge, GraphData, Node, NodeType } from "@/types/graph";
 
@@ -88,7 +88,6 @@ export function visibleGraph(graphData: GraphData, options: VisibleGraphOptions)
     nodes,
     edges: graphData.edges.filter(
       (edge) =>
-        !isEdgeHiddenInUi(edge.edge_type) &&
         edge.status !== "orphaned" &&
         visibleNodeIds.has(edge.source_node_id) &&
         visibleNodeIds.has(edge.target_node_id),
@@ -140,9 +139,6 @@ export function nodeConnections(
   }
   return (indexes.incidentEdgesByNode.get(nodeId) ?? [])
     .flatMap((edge) => {
-      if (isEdgeHiddenInUi(edge.edge_type)) {
-        return [];
-      }
 
       if (edge.source_node_id !== nodeId && edge.target_node_id !== nodeId) {
         return [];

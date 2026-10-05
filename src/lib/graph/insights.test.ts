@@ -155,14 +155,19 @@ describe("getLinkedNodePerspectives", () => {
     expect(result[0].edgeTypes).toHaveLength(2);
   });
 
-  it("excludes edges hidden in UI", () => {
+  it("reads legacy link types as their kind (blocks → needed for, depends_on flipped)", () => {
     const focus = makeNode("focus");
     const other = makeNode("other");
-    const graph: GraphData = {
+    const blocked: GraphData = {
       nodes: [focus, other],
       edges: [makeEdge("e1", "other", "focus", "blocks")],
     };
-    expect(getLinkedNodePerspectives(graph, "focus")).toHaveLength(0);
+    expect(getLinkedNodePerspectives(blocked, "focus").flatMap((p) => p.labels)).toEqual(["needs"]);
+    const dependsOn: GraphData = {
+      nodes: [focus, other],
+      edges: [makeEdge("e1", "focus", "other", "depends_on")],
+    };
+    expect(getLinkedNodePerspectives(dependsOn, "focus").flatMap((p) => p.labels)).toEqual(["needs"]);
   });
 });
 

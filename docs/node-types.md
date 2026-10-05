@@ -71,6 +71,21 @@ Tie-breakers the prompts and UI use:
 The rules are enforced softly: prompts follow them, and one deterministic fix runs on
 save (task gets a child step or phase → big_task). Nothing blocks the user from breaking them manually.
 
+
+## Link kinds (2026-10-05)
+
+Four, each clearly different (owner: the old nine overlapped in meaning). Every
+writer emits only these; `lib/graph/edge-types.ts` `normalizeEdge` reads older
+rows as their kind everywhere (layout, delete subtree, ranking, Focus, planner,
+chat snapshot, edit sheet). No migration — old rows keep their stored type.
+
+| Kind | Stored as | Absorbs (read-only) | Edit sheet |
+|---|---|---|---|
+| part of | `belongs_to` (child → parent) | `contains` (flipped) | Contains / Belongs to |
+| needed for | `required_for` — blocks its target in Focus / planner | `prerequisite_for`, `blocks`, `depends_on` (flipped) | Needs / Needed for |
+| helps | `supports` | `useful_for` | Helps / Helped by |
+| related | `related_to` | `inspired_by` | Related |
+
 ## Where each type shows up
 
 | Type | Todos | Focus / What now | Planner | Roadmap | Graph |

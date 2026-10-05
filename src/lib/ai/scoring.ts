@@ -6,6 +6,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RANKING } from "@/lib/ai/config";
+import { normalizeEdges } from "@/lib/graph/edge-types";
 import { recomputeWorkspaceEdgeDecay } from "@/lib/ai/lifecycle";
 import { getImportanceLabel } from "@/lib/graph/importance";
 import {
@@ -373,6 +374,9 @@ export function dependencyPressure(
 
 /**
  * blocks_penalty: small flat deduction for temporary obstacles (blocks edges).
+ * Since 2026-10-05 edges are read as the four link kinds before scoring, so a
+ * stored "blocks" row counts as required_for (dependencyPressure) and this
+ * never fires; kept for its tests until a cleanup migration retires the type.
  *
  * Kept separate from dependencyPressure — blocks is a soft signal, not a hard
  * structural dependency. The penalty is deliberately mild so blocked nodes stay
@@ -585,7 +589,8 @@ export async function computeWorkspaceScores(params: {
   // ---------------------------------------------------------------------------
 
   const nodeRows = nodes as NodeRow[];
-  const edgeRows = (edges ?? []) as EdgeRow[];
+  // Read every edge as one of the four link kinds (legacy types renamed).
+  const edgeRows = normalizeEdges((edges ?? []) as EdgeRow[]);
   const completedIds = new Set(nodeRows.filter((n) => n.status === "completed").map((n) => n.id));
   const goalIds = new Set(nodeRows.filter((n) => n.node_type === "goal").map((n) => n.id));
   // Active = not completed and not archived — these are nodes that still need doing.

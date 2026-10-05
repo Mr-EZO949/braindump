@@ -6,6 +6,7 @@
 // RANKING (src/lib/ai/config.ts).
 
 import { RANKING } from "@/lib/ai/config";
+import { normalizeEdges } from "./edge-types";
 import { formatShortDate } from "./short-date";
 
 export { formatShortDate };
@@ -58,7 +59,6 @@ export interface DeadlineInfo {
 const DEADLINE_FREE_TYPES = new Set(["habit", "area", "note", "idea"]);
 // Types whose own open work counts toward a deadline's sessions-left.
 const WORK_TYPES = new Set(["task", "big_task"]);
-const PREREQUISITE_EDGE_TYPES = new Set(["prerequisite_for", "required_for"]);
 
 const DAY_MS = 86_400_000;
 
@@ -183,10 +183,9 @@ export function createRankingContext(params: {
     childrenOf.set(parent, kids);
   };
 
-  for (const e of edges) {
+  for (const e of normalizeEdges(edges)) {
     if (e.edge_type === "belongs_to") link(e.source_node_id, e.target_node_id);
-    else if (e.edge_type === "contains") link(e.target_node_id, e.source_node_id);
-    else if (PREREQUISITE_EDGE_TYPES.has(e.edge_type)) {
+    else if (e.edge_type === "required_for") {
       const list = requiredFor.get(e.source_node_id) ?? [];
       list.push(e.target_node_id);
       requiredFor.set(e.source_node_id, list);

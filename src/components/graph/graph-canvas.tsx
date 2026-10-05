@@ -35,7 +35,8 @@ import {
   OBJECTIVE_TYPES,
   normalizeNodeType,
 } from "@/lib/graph/node-types";
-import type { Edge, EdgeType, GraphData, Node, NodeType } from "@/types/graph";
+import { normalizeEdgeType, normalizeEdges, type LinkKind } from "@/lib/graph/edge-types";
+import type { Edge, GraphData, Node, NodeType } from "@/types/graph";
 
 type GraphCanvasProps = {
   editMode: boolean;
@@ -176,16 +177,11 @@ const nodeTypeBranchOrder: Record<NodeType, number> = {
   note: 8,
 };
 
-const edgeStrengthMap: Record<EdgeType, number> = {
+const edgeStrengthMap: Record<LinkKind, number> = {
   belongs_to: 1,
   required_for: 0.88,
-  prerequisite_for: 0.88,
   supports: 0.56,
-  useful_for: 0.44,
-  blocks: 0.66,
-  inspired_by: 0.34,
   related_to: 0.24,
-  depends_on: 0.88,
 };
 
 const importanceVisualBounds = {
@@ -537,7 +533,9 @@ function getTreeBounds(nodes: GraphNode[]) {
   return { minX, minY, maxX, maxY };
 }
 
-function buildGraphLayout(graphData: GraphData) {
+function buildGraphLayout(rawGraphData: GraphData) {
+  // Every edge as one of the four link kinds (legacy types renamed / flipped).
+  const graphData = { ...rawGraphData, edges: normalizeEdges(rawGraphData.edges) };
   const nodesById = new Map(graphData.nodes.map((node) => [node.id, node]));
   const parentCandidates = new Map<
     string,
@@ -911,20 +909,14 @@ function buildGraphLayout(graphData: GraphData) {
 
   const laidOutLinks: GraphLink[] = graphData.edges.map((edge) => {
     const structuralCandidate =
-      edge.edge_type === "belongs_to" ||
-      edge.edge_type === "prerequisite_for" ||
-      edge.edge_type === "required_for";
-    const directional =
-      structuralCandidate ||
-      edge.edge_type === "blocks" ||
-      edge.edge_type === "useful_for" ||
-      edge.edge_type === "supports";
+      edge.edge_type === "belongs_to" || edge.edge_type === "required_for";
+    const directional = structuralCandidate || edge.edge_type === "supports";
     const primary = primaryEdgeIds.has(edge.id);
     const family = structuralCandidate && primary ? "structural" : "semantic";
     const layoutDirection =
       edge.edge_type === "belongs_to"
         ? "up"
-        : edge.edge_type === "required_for" || edge.edge_type === "prerequisite_for"
+        : edge.edge_type === "required_for"
           ? "down"
           : "free";
     let sourceAnchorOffset = 0;
@@ -966,7 +958,7 @@ function buildGraphLayout(graphData: GraphData) {
       semanticTotal: 1,
       sourceAnchorOffset,
       source: edge.source_node_id,
-      strength: edgeStrengthMap[edge.edge_type],
+      strength: edgeStrengthMap[normalizeEdgeType(edge.edge_type)],
       targetAnchorOffset,
       target: edge.target_node_id,
     };
@@ -1219,16 +1211,13 @@ function getLinkEndpoints(
   const startY = startAnchor.y + normalY * semanticSpread * 0.3;
   const endX = endAnchor.x + normalX * semanticSpread * 0.16;
   const endY = endAnchor.y + normalY * semanticSpread * 0.16;
-  // Dependency edges (required_for / prerequisite_for / depends_on) that don't
+  // Dependency edges (required_for) that don't
   // own the structural tree still carry hierarchy meaning, so they shouldn't
   // fan out randomly like loose associative links. Bow them consistently to one
   // side (downward on screen) so a chain of prerequisites reads as clean,
   // nested arcs instead of a scattered tangle. Other semantic edges keep the
   // hash-based side so overlapping associative links stay visually separable.
-  const isDependencyLink =
-    link.edge_type === "required_for" ||
-    link.edge_type === "prerequisite_for" ||
-    link.edge_type === "depends_on";
+  const isDependencyLink = link.edge_type === "required_for";
   const curveSign = isDependencyLink
     ? normalY >= 0
       ? 1
@@ -1360,7 +1349,6 @@ function getEdgeVisualStyle(
       stroke = structural ? ink(0.42) : ink(0.28);
       break;
     case "required_for":
-    case "prerequisite_for":
       opacity = structural ? 0.46 : 0.28;
       strokeWidth = structural ? 1.54 + link.strength * 0.96 : 0.8;
       stroke = structural ? ink(0.4) : ink(0.26);
@@ -1377,23 +1365,6 @@ function getEdgeVisualStyle(
       stroke = ink(0.26);
       dashArray = "3 6";
       break;
-    case "useful_for":
-      opacity = 0.22;
-      strokeWidth = 0.64;
-      stroke = ink(0.24);
-      break;
-    case "blocks":
-      opacity = 0.26;
-      strokeWidth = 0.72;
-      stroke = ink(0.28);
-      dashArray = "4 6";
-      break;
-    case "inspired_by":
-      opacity = 0.2;
-      strokeWidth = 0.58;
-      stroke = ink(0.22);
-      dashArray = "2 8";
-      break;
   }
 
   if (emphasized) {
@@ -1406,7 +1377,7 @@ function getEdgeVisualStyle(
       opacity = 0.36;
       strokeWidth = 1.4;
       stroke = "rgba(205,140,150,0.52)";
-    } else if (link.edge_type === "required_for" || link.edge_type === "prerequisite_for") {
+    } else if (link.edge_type === "required_for") {
       opacity = 0.38;
       strokeWidth = 1.6;
       stroke = "rgba(198,118,128,0.48)";
@@ -2041,7 +2012,6 @@ export function GraphCanvas({
           case "belongs_to":
             return Math.max(source.height, target.height) + 52;
           case "required_for":
-          case "prerequisite_for":
             return Math.max(source.width, target.width) * 0.44 + 120;
           case "supports":
             return Math.max(source.width, target.width) * 0.52 + 150;
@@ -2056,7 +2026,6 @@ export function GraphCanvas({
           case "belongs_to":
             return 0.24;
           case "required_for":
-          case "prerequisite_for":
             return 0.09;
           case "supports":
             return 0.025;
