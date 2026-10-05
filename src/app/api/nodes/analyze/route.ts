@@ -7,7 +7,7 @@ import { after } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import {
-  runConnectionAnalysis,
+  runConnectionBatch,
   fetchPendingEdges,
 } from "@/lib/ai/connection";
 import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
@@ -220,27 +220,19 @@ export async function POST(req: NextRequest) {
     batchWorkspaceContext = undefined;
   }
 
-  // Step 2: Run connection analysis for each node in parallel — failures are per-node.
+  // Step 2: Run connection analysis for each node in parallel — failures are
+  // per-node — with the weak-link cap across the batch (fewer links, #24).
   // Track which specific node IDs failed so the client can retry only those rather
   // than re-running the whole batch.
-  const results = await Promise.all(
-    analysisNodeIds.map(async (nodeId) => {
-      try {
-        const result = await runConnectionAnalysis({
-          nodeId,
-          excludeNodeIds: getPriorBatchNodeIds(analysisNodeIds, nodeId),
-          workspaceId: workspace_id,
-          userId: user.id,
-          supabase,
-          workspaceContext: batchWorkspaceContext,
-          embedding: vectors.get(nodeId),
-        });
-        return { nodeId, ...result };
-      } catch {
-        return { nodeId, proposed: 0, skipped: 0, failed: 1 };
-      }
-    })
-  );
+  const results = await runConnectionBatch({
+    nodeIds: analysisNodeIds,
+    excludeFor: (nodeId) => getPriorBatchNodeIds(analysisNodeIds, nodeId),
+    workspaceId: workspace_id,
+    userId: user.id,
+    supabase,
+    workspaceContext: batchWorkspaceContext,
+    embeddings: vectors,
+  });
 
   const totals = results.reduce(
     (acc, r) => ({

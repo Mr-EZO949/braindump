@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { AI_JOBS } from "@/lib/ai/config";
-import { runConnectionAnalysis } from "@/lib/ai/connection";
+import { runConnectionBatch } from "@/lib/ai/connection";
 import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
 import { backfillEmbeddings } from "@/lib/ai/embeddings";
 import {
@@ -165,18 +165,14 @@ async function runAIJob(params: {
         batchWorkspaceContext = undefined;
       }
 
-      const results = await Promise.all(
-        nodeIds.map((nodeId) =>
-          runConnectionAnalysis({
-            nodeId,
-            excludeNodeIds: nodeIds.filter((candidateId) => candidateId !== nodeId),
-            workspaceId,
-            userId: job.user_id,
-            supabase,
-            workspaceContext: batchWorkspaceContext,
-          }).catch(() => ({ proposed: 0, skipped: 0, failed: 1 })),
-        ),
-      );
+      const results = await runConnectionBatch({
+        nodeIds,
+        excludeFor: (nodeId) => nodeIds.filter((candidateId) => candidateId !== nodeId),
+        workspaceId,
+        userId: job.user_id,
+        supabase,
+        workspaceContext: batchWorkspaceContext,
+      });
 
       return results.reduce(
         (acc, result) => ({
