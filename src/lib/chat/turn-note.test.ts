@@ -50,7 +50,7 @@ describe("turnNote — what the chat model is told a dump changed", () => {
     });
     expect(note).toContain('Added to the graph: "Review Chapters 1-4" (big task, under Pass Statistics Midterm); "Call the Bank" (task)');
     expect(note).toContain("Marked done: Go to the gym; Update CV");
-    expect(note).toContain("Links: ML Course Project useful for Get Internship");
+    expect(note).toContain("Links: ML Course Project helps Get Internship");
     expect(note).toContain('Asked the user: "Tutoring ad — a task now?"');
     expect(note).toContain('Asked: "Which bank?" — the user answered: "Intesa"');
   });
@@ -84,7 +84,7 @@ describe("connectionsNote", () => {
   ];
   it("says which links the user kept, dismissed or has not answered", () => {
     expect(connectionsNote({ edges, status: "added", acceptedIds: ["e1"] })).toBe(
-      "[Links suggested after the dump — the user added: Test BrainDump supports Market BrainDump]",
+      "[Links suggested after the dump — the user added: Test BrainDump helps Market BrainDump]",
     );
     expect(connectionsNote({ edges, status: "dismissed" })).toContain("dismissed by the user");
     expect(connectionsNote({ edges, status: "awaiting" })).toContain("not answered yet");

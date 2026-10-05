@@ -2,6 +2,8 @@
 // (pending-action-card, turn-card) and by the note that tells the chat model
 // what a brain dump changed (turn-note.ts).
 
+import { normalizeEdgeType, type LinkKind } from "@/lib/graph/edge-types";
+
 // An op as it arrives in a tool input: untyped JSON.
 export type ChangeOpView = {
   kind?: unknown;
@@ -49,8 +51,19 @@ export const CHANGE_KIND_GLYPH: Record<string, string> = {
 
 export const HIERARCHY_EDGE_TYPES = new Set(["belongs_to", "contains"]);
 
+// The four link kinds in the user's words (lib/graph/edge-types.ts).
+const LINK_WORDS: Record<LinkKind, string> = {
+  belongs_to: "belongs to",
+  required_for: "needed for",
+  supports: "helps",
+  related_to: "related to",
+};
+
 export function edgeLabel(edgeType: unknown): string {
-  return typeof edgeType === "string" ? edgeType.replace(/_/g, " ") : "linked to";
+  if (typeof edgeType !== "string") return "linked to";
+  if (edgeType === "contains") return "contains";
+  if (edgeType === "depends_on") return "needs";
+  return LINK_WORDS[normalizeEdgeType(edgeType)];
 }
 
 export function typeLabel(nodeType: unknown): string {

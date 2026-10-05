@@ -48,7 +48,7 @@ describe("chatHistoryForModel", () => {
     );
     expect(turn.body.startsWith("Added it.\n\n[What this changed")).toBe(true);
     expect(turn.body).toContain('"Email professor"');
-    expect(links.body).toContain("A supports B");
+    expect(links.body).toContain("A helps B");
   });
 });
 

@@ -7,7 +7,12 @@ Run the eval before and after a change: `npx tsx --env-file=.env.local scripts/e
 
 ## Extraction (`extract.ts`)
 
-### extract-v27 (current) · extract-light-v8 (current) — the user's label never sets the type (2026-10-04)
+### extract-v28 (current) · extract-light-v9 (current) — four link kinds (2026-10-05)
+- Owner: fewer link TYPES (the old nine overlapped). soft_links / `link` changes take `supports` (helps; absorbs `useful_for`), `required_for` (needed for; was `prerequisite_for`), `related_to` (absorbs `inspired_by`). Validation folds a retired name into its kind, so nothing else is ever written. Spec: `docs/node-types.md` "Link kinds".
+- Size (countTokens): full rubric 9,105 → 9,057 (−48); light rubric 2,566 → 2,581 (+15, a one-line meaning per kind).
+- Eval (one round, synthetic): `full-scratch` links 1/1 (Linear Algebra → PyTorch required_for); the 3 misses are node typing/placement (Stats class anchor, "Learn PyTorch" a goal — open since v27), not links. $0.0425.
+
+### extract-v27 · extract-light-v8 — the user's label never sets the type (2026-10-04)
 - One tie-breaker in each builder prompt: under a heading like "goals for this semester:" (or after "my goal is to …") each item is typed by the Node types questions — "land the Stripe internship" → goal, "write the capstone report" → big_task, "learn Rust" → project; finishing, writing or learning something is work, not a result. The full prompt's "Goals for This Semester" grouping example now says it is an area whose items keep their own types.
 - Why: the eval's first live run (`full-scratch`) typed every item under "goals for this semester: get into the honors program, finish thesis proposal, learn pytorch" as a goal. By `docs/node-types.md` only the first is a result; the thesis proposal is a big task and PyTorch a project. A new light fixture (`light-goal-heading`, the same line on its own) showed the short prompt does it too: v7 made "Learn PyTorch" a goal ($0.0120).
 - Eval (one round, synthetic fixtures; examples in the prompt deliberately use other items than the fixtures):
@@ -97,7 +102,12 @@ Run the eval before and after a change: `npx tsx --env-file=.env.local scripts/e
 
 ## Edge inference (`infer-edge.ts`)
 
-### infer-edge-v5 (current)
+### infer-edge-v7 (current) — four link kinds (2026-10-05)
+- `useful_for` folded into `supports` (a skill or resource that helps is "supports"); output types supports / required_for / related_to / belongs_to. (v6 was the reverted `hard_need` try below, hence v7.) `edge-selection.ts` maps any retired name to its kind; the helping-work rule now always gives `supports`.
+- Size: rules block 830 → 784 tokens (−46). Chat `change` tool schema 745 → 763 (+18: the enum lost two names, gained a one-line meaning per kind).
+- Eval (one round, 3 calls): `edge-skill` 6/6, `edge-blocker` 5/5, `edge-helps-not-blocks` 3/4 — the miss is the known "Get the Food Permit" → required_for → "Run Instagram Ads" (open since v5). $0.0076. Real chat turn "the machine learning class really helps with getting the internship, connect them" → Linked "Machine Learning helps Get Internship by November" with Undo (stored `supports`), $0.0128.
+
+### infer-edge-v5
 - 2026-10-05, #24 "fewer, truer links" — fixed in code, prompt unchanged (`edge-selection.ts`, `connection.ts`):
   - Tried and NOT adopted: infer-edge-v6, a `hard_need` field ("which one literally can't happen without the other, or none") answered before the type, explanation first. Haiku's `hard_need` agreed with its wrong type every time (Market → Launch 0.92, Food Permit → Instagram Ads 0.98, and Linear Algebra Review → ML class flipped to required_for 0.95); +214 input tokens/call. Reverted. $0.0162 for 5 calls.
   - A hard blocker can't start at helping work: a blocker title with a learning word (learn, study, review, practice, research…) becomes `useful_for`, a promotion word (market, promote, ads, outreach, networking…) `supports`. A habit, area, idea or note is never a blocker; only goal/project/big task/task/class can be blocked.

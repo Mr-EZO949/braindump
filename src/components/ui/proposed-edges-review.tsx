@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ProposedEdgeWithNodes } from "@/lib/ai/connection";
+import { edgeLabel } from "@/lib/chat/change-describe";
 import { NODE_COLOR_BY_TYPE } from "@/lib/graph/node-colors";
 import type { NodeType } from "@/types/graph";
 
@@ -91,7 +92,7 @@ export function ProposedEdgesReview({ edges, onConfirm, onDismiss }: Props) {
                       {edge.source_title}
                     </span>
                     <span className="per-arrow">→</span>
-                    <span className="per-edge-type">{edge.edge_type.replace(/_/g, " ")}</span>
+                    <span className="per-edge-type">{edgeLabel(edge.edge_type)}</span>
                     <span className="per-arrow">→</span>
                     <span className="per-node-pill">
                       <span

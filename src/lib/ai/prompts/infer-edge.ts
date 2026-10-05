@@ -19,10 +19,10 @@
 //     Helping is supports / useful_for.
 //   - the model sees node types and whether the source already has a parent,
 //     with the nesting rules, so it stops proposing a project under a big task.
-// v6 (2026-10-05, owner: fewer link TYPES): four kinds only — supports absorbs
+// v7 (2026-10-05, owner: fewer link TYPES; v6 was the reverted hard_need try): four kinds only — supports absorbs
 //   useful_for (a skill or resource that helps is "supports"); the rest unchanged.
 
-export const INFER_EDGE_PROMPT_VERSION = "infer-edge-v6";
+export const INFER_EDGE_PROMPT_VERSION = "infer-edge-v7";
 
 // Stable rules/framework — caches across every edge inference call in a window.
 const RULES_BLOCK = `You link nodes in a personal planning graph. For one SOURCE node and a few CANDIDATE nodes, decide which pairs deserve a link the user would find useful when planning. Every link you return is shown to the user to accept or reject.
