@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { mentionsWeeklyTime, parseDumpPriorityResponse, saidInDump, statusTouchedIds } from "./dump-priorities";
+import {
+  mentionsTimePreference,
+  mentionsWeeklyTime,
+  parseDumpPriorityResponse,
+  saidInDump,
+  statusTouchedIds,
+} from "./dump-priorities";
 
 const TODAY = "2026-10-07"; // a Wednesday
 const nodes = [
@@ -55,6 +61,7 @@ describe("parseDumpPriorityResponse", () => {
     expect(parseDumpPriorityResponse("Sure! Here are the changes:", nodes, TODAY)).toEqual({
       changes: [],
       commitments: [],
+      preferences: [],
       unclear: [],
     });
   });
@@ -253,5 +260,44 @@ describe("parseDumpPriorityResponse — stakes and focus only from the user's wo
     expect(saidInDump("“It’s pass/fail.”", "honestly it's pass/fail so whatever")).toBe(true);
     expect(saidInDump("it is pass/fail", "honestly it's pass/fail so whatever")).toBe(false);
     expect(saidInDump("so", "so stressed")).toBe(false);
+  });
+});
+
+describe("standing preferences in a dump (docs/preferences.md)", () => {
+  const dump = "ok so I wanna spend 4h a day coding from now on. also no work after 10pm, I'm wrecked";
+  const coding = [{ ref: "n1", id: "11111111-1111-4111-8111-111111111111", title: "Coding" }];
+
+  it("the gate catches a time wish and nothing else", () => {
+    expect(mentionsTimePreference(dump)).toBe(true);
+    expect(mentionsTimePreference("I want 2 hours of Italian every weekday")).toBe(true);
+    expect(mentionsTimePreference("every day I need 30 min of reading")).toBe(true);
+    expect(mentionsTimePreference("I'm sharpest in the morning, 9 to 12")).toBe(true);
+    expect(mentionsTimePreference("gym in the mornings")).toBe(true);
+    expect(mentionsTimePreference("finished the CV, emailed the prof, need to buy milk")).toBe(false);
+    expect(mentionsTimePreference("the essay took 3 hours")).toBe(false);
+  });
+
+  it("keeps rows that quote the user, linked by ref; drops the rest", () => {
+    const read = parseDumpPriorityResponse(
+      JSON.stringify({
+        changes: [],
+        commitments: [],
+        preferences: [
+          { kind: "budget", title: "Coding", minutes: 240, node: "n1", said: "I wanna spend 4h a day coding" },
+          { kind: "hours", until: "22:00", said: "no work after 10pm" },
+          { kind: "peak", from: "09:00", until: "12:00", said: "I'm sharpest 9 to 12" }, // not in the dump
+          { kind: "budget", title: "Italian", said: "no work after 10pm" }, // no minutes
+        ],
+        unclear: [],
+      }),
+      coding,
+      TODAY,
+      [],
+      dump,
+    );
+    expect(read.preferences).toEqual([
+      { action: "add", kind: "budget", title: "Coding", minutes: 240, node_id: "11111111-1111-4111-8111-111111111111" },
+      { action: "add", kind: "hours", until: "22:00" },
+    ]);
   });
 });

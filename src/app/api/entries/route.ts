@@ -17,7 +17,7 @@ import { computeWorkspaceScores } from "@/lib/ai/scoring";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
 import { readDumpPriorities, statusTouchedIds, type DumpPriorityRead } from "@/lib/ai/dump-priorities";
 import { applyPriorityChanges } from "@/lib/ai/tools/priority-mutations";
-import { applyCommitmentChanges } from "@/lib/ai/tools/commitment-mutations";
+import { saveDumpSchedule } from "@/lib/ai/dump-schedule";
 import { suggestAreas } from "@/lib/ai/areas";
 import { getWorkspaceRootId } from "@/lib/graph/hierarchy";
 import { classifyDumpSize } from "@/lib/ai/dump-size";
@@ -411,16 +411,11 @@ export async function POST(req: NextRequest) {
     }
     return unclear.length > 0 ? { applied: [], failed: [], undo: null, unclear } : null;
   };
-  // Fixed weekly commitments the dump named ("stats every day at 2pm") —
-  // same engine as chat's set_commitments; shown as its own card with Undo.
+  // Fixed weekly commitments the dump named ("stats every day at 2pm") and the
+  // standing preferences it stated ("4h a day coding") — the same engines as
+  // chat's set_commitments / set_preferences; one "Your week" card with Undo.
   // Independent of extraction, so they save even if it fails.
-  const commitmentUpdate = await (async () => {
-    if (!priorities || priorities.commitments.length === 0) return null;
-    const applied = await applyCommitmentChanges(toolCtx, { changes: priorities.commitments }, "dump");
-    return applied.accepted && "undo" in applied
-      ? { applied: applied.applied, failed: applied.failed, undo: applied.undo }
-      : null;
-  })();
+  const commitmentUpdate = await saveDumpSchedule(toolCtx, priorities);
 
   if (!result.ok) {
     // Extraction failed — entry is saved, user can retry. The priority facts
@@ -713,13 +708,7 @@ async function dumpTurn(params: {
   // Fixed weekly times and priority facts don't depend on the builder, so
   // they save even when it fails. The weekly times don't touch the graph
   // either: they save while the change set is written.
-  const savingCommitments = timed("commitments", async () => {
-    if (!priorities || priorities.commitments.length === 0) return null;
-    const applied = await applyCommitmentChanges(toolCtx, { changes: priorities.commitments }, "dump");
-    return applied.accepted && "undo" in applied
-      ? { applied: applied.applied, failed: applied.failed, undo: applied.undo }
-      : null;
-  });
+  const savingCommitments = timed("commitments", () => saveDumpSchedule(toolCtx, priorities));
   // (awaited below; this only keeps a failure from counting as unhandled meanwhile)
   savingCommitments.catch(() => undefined);
   const applyPriorities = async () => {

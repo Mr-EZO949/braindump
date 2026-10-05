@@ -14,6 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { parsePriorityChanges, PRIORITY_ACTIONS, type PriorityAction } from "@/lib/graph/priority-changes";
 import { describeCommitment, loadActiveCommitments, type Commitment } from "@/lib/planner/commitments";
 import { parseCommitmentChanges } from "@/lib/planner/commitment-changes";
+import { parsePreferenceChanges } from "@/lib/planner/preferences";
 import { AI_MODELS } from "./config";
 import { hashText } from "./errors";
 import {
@@ -42,6 +43,8 @@ export interface DumpPriorityRead {
   changes: Record<string, unknown>[];
   /** set_commitments-shaped changes, each valid on its own; ready for applyCommitmentChanges. */
   commitments: Record<string, unknown>[];
+  /** set_preferences-shaped adds ("4h a day coding"), each valid on its own and quoted from the dump. */
+  preferences: Record<string, unknown>[];
   /** Ambiguous outcomes the model didn't act on — asked back in chat. */
   unclear: string[];
 }
@@ -59,6 +62,25 @@ const REPEAT_RE =
 
 export function mentionsWeeklyTime(dump: string): boolean {
   return CLOCK_RE.test(dump) && REPEAT_RE.test(dump);
+}
+
+// A standing wish about time (docs/preferences.md): an amount per day / week
+// ("4h a day", "2 hours every weekday"), an end or start of work ("no work
+// after 10pm", "not before 9"), best hours ("sharpest", "most productive"), or
+// a part of the day for something ("in the mornings"). Cheap gate, like
+// mentionsWeeklyTime: a fresh workspace's "I want to spend 4h a day coding"
+// must reach the read.
+const PREFERENCE_RES = [
+  /\b(?:\d+(?:[.,]\d+)?|an?|one|two|three|four|five|six)\s*(?:h|hrs?|hours?|mins?|minutes?)\b[^.!?\n]{0,40}?\b(?:a|per|each|every)\s+(?:day|week|weekday|morning|evening|night)\b/i,
+  /\b(?:a|per|each|every)\s+(?:day|week|weekday)\b[^.!?\n]{0,40}?\b(?:\d+(?:[.,]\d+)?|an?|one|two|three|four|five|six)\s*(?:h|hrs?|hours?|mins?|minutes?)\b/i,
+  /\b(?:no|not|never|stop)\s+(?:work(?:ing)?|studying|coding|screens?)\s+(?:after|past|before)\b/i,
+  /\bnot\s+before\s+\d/i,
+  /\b(?:sharpest|most productive|focus best|work best|best focus)\b/i,
+  /\bin the (?:mornings|evenings|afternoons)\b/i,
+];
+
+export function mentionsTimePreference(dump: string): boolean {
+  return PREFERENCE_RES.some((re) => re.test(dump));
 }
 
 function str(value: unknown): string {
@@ -82,10 +104,12 @@ export function saidInDump(said: string, dump: string): boolean {
   return quote.length >= MIN_SAID_CHARS && normalizeWords(dump).includes(quote);
 }
 
-function parseJson(text: string): { changes?: unknown; commitments?: unknown; unclear?: unknown } | null {
+type ReadJson = { changes?: unknown; commitments?: unknown; preferences?: unknown; unclear?: unknown };
+
+function parseJson(text: string): ReadJson | null {
   try {
     const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    return JSON.parse((fenced ? fenced[1] : text).trim()) as { changes?: unknown; commitments?: unknown; unclear?: unknown };
+    return JSON.parse((fenced ? fenced[1] : text).trim()) as ReadJson;
   } catch {
     return null;
   }
@@ -144,6 +168,26 @@ function commitmentRows(
   return rows;
 }
 
+// Model rows → set_preferences adds, checked one at a time. A row must quote
+// the user's words ("said") from the dump — a wish read into the dump's tone
+// isn't theirs (the same rule as stakes / focus, fix list #5).
+function preferenceRows(raw: unknown, nodes: RefNode[], dump?: string): Record<string, unknown>[] {
+  const byNodeRef = new Map(nodes.map((n) => [n.ref, n]));
+  const rows: Record<string, unknown>[] = [];
+  for (const item of Array.isArray(raw) ? raw.slice(0, 4) : []) {
+    const row = (item ?? {}) as Record<string, unknown>;
+    if (dump !== undefined && !saidInDump(str(row.said), dump)) continue;
+    const change: Record<string, unknown> = { action: "add", kind: str(row.kind) };
+    for (const key of ["title", "minutes", "per", "days", "from", "until", "part_of_day"] as const) {
+      if (row[key] !== undefined && row[key] !== null && row[key] !== "") change[key] = row[key];
+    }
+    const node = byNodeRef.get(str(row.node));
+    if (node) change.node_id = node.id;
+    if (parsePreferenceChanges({ changes: [change] }, []).ok) rows.push(change);
+  }
+  return rows;
+}
+
 /**
  * Model text → validated changes. Rows are checked one at a time so one bad
  * row (unknown ref, a date that doesn't resolve) never sinks the rest; a wait
@@ -159,7 +203,7 @@ export function parseDumpPriorityResponse(
   dump?: string,
 ): DumpPriorityRead {
   const parsed = parseJson(text);
-  if (!parsed) return { changes: [], commitments: [], unclear: [] };
+  if (!parsed) return { changes: [], commitments: [], preferences: [], unclear: [] };
   const byRef = new Map(nodes.map((n) => [n.ref, n]));
   const changes: Record<string, unknown>[] = [];
   // The question goes to the user: name items by title — Haiku sometimes
@@ -230,7 +274,12 @@ export function parseDumpPriorityResponse(
     changes.push(change);
   }
   const commitmentChanges = commitmentRows(rawCommitments, nodes, commitments, today, unclear);
-  return { changes, commitments: commitmentChanges, unclear: unclear.slice(0, MAX_UNCLEAR) };
+  return {
+    changes,
+    commitments: commitmentChanges,
+    preferences: preferenceRows(parsed.preferences, nodes, dump),
+    unclear: unclear.slice(0, MAX_UNCLEAR),
+  };
 }
 
 /**
@@ -258,7 +307,7 @@ export async function readDumpPriorities(params: {
 }): Promise<DumpPriorityRead | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   const ids = [...new Set(params.nodeIds)].slice(0, MAX_NODES);
-  const namesTime = mentionsWeeklyTime(params.dump);
+  const namesTime = mentionsWeeklyTime(params.dump) || mentionsTimePreference(params.dump);
   if (!apiKey || !params.dump.trim() || (ids.length === 0 && !namesTime)) return null;
 
   try {
