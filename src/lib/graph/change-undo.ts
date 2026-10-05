@@ -12,6 +12,7 @@
 import type { ChangeContext } from "@/lib/graph/change-set";
 import { changeNodeStatus } from "@/lib/graph/change-set";
 import { setNodeParent } from "@/lib/graph/hierarchy";
+import { reembedNodes } from "@/lib/graph/node-intake";
 import { VALID_TRANSITIONS } from "@/lib/graph/status-transition";
 import type { NodeStatus } from "@/types/graph";
 
@@ -252,10 +253,18 @@ export async function undoChangeSteps(
 ): Promise<{ undone: number; failed: string[] }> {
   let undone = 0;
   const failed: string[] = [];
+  const reworded = new Set<string>();
   for (const step of [...steps].reverse()) {
     const error = await runStep(ctx, step);
     if (error) failed.push(`${step.kind}: ${error}`);
     else undone += 1;
+    if (!error && step.kind === "restore_fields" && (step.fields.title !== undefined || "summary" in step.fields)) {
+      reworded.add(step.node_id);
+    }
+  }
+  // An old title or summary back: its embedding follows (#25).
+  if (reworded.size > 0) {
+    await reembedNodes({ supabase: ctx.supabase, userId: ctx.userId, workspaceId: ctx.workspaceId }, [...reworded]);
   }
   return { undone, failed };
 }

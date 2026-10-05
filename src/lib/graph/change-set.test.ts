@@ -600,3 +600,38 @@ describe("a long dump's change set doesn't wait on itself", () => {
     expect(db.stats.depth).toBe(one.stats.depth);
   });
 });
+
+describe("a rename keeps the node findable (#25)", () => {
+  it("new words in the title or summary re-embed the node; a case/punctuation fix doesn't", async () => {
+    const db = seed();
+    await applyChangeSet(ctxFor(db), [{ kind: "update", node_id: "fused", title: "Test & market braindump!" }]);
+    expect(embedded).toEqual([]);
+
+    await applyChangeSet(ctxFor(db), [
+      { kind: "update", node_id: "fused", title: "Beta test BrainDump with 5 friends" },
+      { kind: "update", node_id: "bugs", summary: "the ones from round 3" },
+      { kind: "update", node_id: "intern", target_date: "2026-11-15" },
+    ]);
+    expect(embedded.sort()).toEqual(["bugs", "fused"]);
+  });
+
+  it("is deferred with the rest of the slow work when the caller can defer", async () => {
+    const db = seed();
+    const deferred: Array<() => Promise<void>> = [];
+    await applyChangeSet(ctxFor(db, { defer: (work: () => Promise<void>) => deferred.push(work) }), [
+      { kind: "update", node_id: "fused", title: "Beta test BrainDump" },
+    ]);
+    expect(embedded).toEqual([]);
+    await deferred[0]();
+    expect(embedded).toEqual(["fused"]);
+  });
+
+  it("Undo of a rename re-embeds the old title", async () => {
+    const db = seed();
+    const outcome = await applyChangeSet(ctxFor(db), [{ kind: "update", node_id: "fused", title: "Beta test BrainDump" }]);
+    embedded.length = 0;
+    await undoChangeSteps(ctxFor(db), outcome.undo.map((u) => u.step));
+    expect(byTitle(db, "Test & Market BrainDump")).toBeDefined();
+    expect(embedded).toEqual(["fused"]);
+  });
+});

@@ -24,8 +24,10 @@ import {
   embedNewNodes,
   judgeAndRescore,
   newNodeRow,
+  reembedNodes,
   type IntakeNode,
 } from "@/lib/graph/node-intake";
+import { embeddingTextChanged } from "@/lib/graph/node-draft";
 import { NODE_TYPES } from "@/lib/graph/node-types";
 import { getStructuralSubtree } from "@/lib/graph/structure";
 import { transitionNodeStatus } from "@/lib/graph/status-transition";
@@ -686,6 +688,8 @@ export async function applyChangeSet(
   const undo: ChangeSetOutcome["undo"] = [];
   let scoresStale = false;
   let anchoredAtRoot = false;
+  // Existing nodes whose title or summary changed in words — embedded again.
+  const reworded = new Set<string>();
 
   // Pass 1 — create every new node, in one insert. The ids are made here, so
   // the parents (pass 2) can be looked up while the nodes go in.
@@ -880,6 +884,13 @@ export async function applyChangeSet(
           break;
         }
         if (typeof op.node_type === "string" || typeof op.target_date === "string") scoresStale = true;
+        if (
+          (typeof op.title === "string" && embeddingTextChanged({ title: before?.title ?? "" }, { title: op.title })) ||
+          (typeof op.summary === "string" &&
+            embeddingTextChanged({ title: "", summary: before?.summary }, { title: "", summary: op.summary }))
+        ) {
+          reworded.add(nodeId);
+        }
         if (before) undo.push({ index: i, step: { kind: "restore_fields", node_id: nodeId, fields: before } });
         results[i] = { kind: "update", ok: true, id: nodeId };
         break;
@@ -1007,6 +1018,17 @@ export async function applyChangeSet(
   }
 
   recordSpan("cs.other ops", passStart);
+  // A rename or a new summary: the stored embedding still reads the old
+  // words, so retrieval and dedup would look for the old node (#25).
+  // (A node made in this set is embedded by its intake below.)
+  for (const node of created) reworded.delete(node.id);
+  if (reworded.size > 0) {
+    const reembed = async () => {
+      await reembedNodes({ supabase: ctx.supabase, userId: ctx.userId, workspaceId: ctx.workspaceId }, [...reworded]);
+    };
+    if (ctx.defer) ctx.defer(reembed);
+    else await timed("cs.reembed", reembed);
+  }
   if (created.length === 0) {
     // One score recompute for the whole set (each op skipped its own).
     if (scoresStale && !ctx.rescoredByCaller) await timed("cs.rescore", () => recomputeScores(ctx));
