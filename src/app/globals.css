@@ -9067,114 +9067,70 @@ body:has(.graph-create-overlay-open) .freeze-nudge {
   color: var(--color-text-muted);
 }
 
-/* ─── Replan clarifying modal ────────────────────────────────
-   Shown when accepting a plan for a day that already has plan tasks.
-   Solid panel background + backdrop, mirroring .per-modal / .per-backdrop. */
+/* ─── One plan per day (docs/replan.md) ─────────────────────
+   "Replan from now" next to Today, and the Undo after a plan replaced the
+   day's earlier one. The modal that asked "replace or add?" is gone. */
 
-.replan-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+.planner-day-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  z-index: 70;
-  padding: 20px;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
-.replan-modal {
-  width: min(420px, 92vw);
-  background: var(--color-bg-panel);
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  border-radius: 14px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
-  overflow: hidden;
+.planner-day-head .planner-section-label {
+  margin-bottom: 0;
 }
 
-.replan-modal-header {
-  padding: 22px 24px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+.planner-replan-btn {
+  flex: none;
 }
 
-.replan-modal-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin: 0;
+.planner-replan-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
-.replan-modal-sub {
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--color-text-secondary);
-  margin: 8px 0 0;
-}
-
-.replan-modal-actions {
+.planner-replan-note {
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 14px 18px 18px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--color-border-subtle);
+  background: rgba(213, 58, 71, 0.05);
+  font-size: 12px;
+  color: var(--color-text-tertiary);
 }
 
-.replan-btn {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  background: var(--color-bg-surface-elevated);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 8px 14px;
-  cursor: pointer;
-  transition: background var(--motion-fast), border-color var(--motion-fast);
-}
-
-.replan-btn:hover {
-  background: var(--color-bg-surface-hover);
-  border-color: rgba(255, 255, 255, 0.16);
-}
-
-.replan-btn--primary {
-  background: rgb(213, 58, 71);
-  border-color: rgb(213, 58, 71);
-  color: #fff;
-}
-
-.replan-btn--primary:hover {
-  background: var(--color-accent-primary-hover);
-  border-color: var(--color-accent-primary-hover);
-}
-
-.replan-btn--ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--color-text-muted);
-}
-
-.replan-btn--ghost:hover {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.08);
+.planner-replan-undo {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--color-text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
 }
 
-/* Light-theme overrides — the dark white-on-dark borders/shadows are invisible
-   on light. Backgrounds already use theme-aware vars. */
-:root[data-theme="light"] .replan-modal {
-  border-color: var(--color-border-subtle);
-  box-shadow: 0 16px 48px rgba(20, 20, 24, 0.18);
+.planner-replan-undo:hover {
+  color: var(--color-text-primary);
 }
 
-:root[data-theme="light"] .replan-btn {
-  border-color: rgba(0, 0, 0, 0.12);
+.planner-replan-undo:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
 }
 
-:root[data-theme="light"] .replan-btn:hover {
-  border-color: rgba(0, 0, 0, 0.2);
-}
-
-:root[data-theme="light"] .replan-btn--ghost:hover {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: rgba(0, 0, 0, 0.08);
+.planner-replan-busy {
+  font-size: 12px;
+  color: var(--color-text-muted);
 }
 
 /* List */
