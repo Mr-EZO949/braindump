@@ -11,7 +11,6 @@ import { AI_CANDIDATES, AI_FLAGS } from "@/lib/ai/config";
 import { INFER_EDGE_PROMPT_VERSION } from "@/lib/ai/prompts/infer-edge";
 import {
   buildLinkStructure,
-  capWeakLinks,
   selectEdgeProposals,
   treeRelation,
   type EdgeProposal,
@@ -27,52 +26,30 @@ export interface ConnectionResult {
   proposed: number;
   skipped: number;
   failed: number;
-  // What was selected; with `insert: false` the caller writes them.
-  proposals?: EdgeProposal[];
 }
 
-// The workspace's tree, links and pending proposals — what edge-selection.ts
-// needs to cut links the graph already says. Batch callers load it once.
+// The workspace's tree — edge-selection.ts never links a node to its own
+// ancestor or descendant. Batch callers load it once.
 export async function loadLinkStructure(params: {
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
 }): Promise<LinkStructure> {
   const { workspaceId, userId, supabase } = params;
-  const [edges, pending, nodes, workspace] = await Promise.all([
-    supabase
-      .from("edges")
-      .select("source_node_id, target_node_id, edge_type, status")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId),
-    supabase
-      .from("proposed_edges")
-      .select("source_node_id, target_node_id, edge_type")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId)
-      .eq("proposal_status", "pending_review"),
-    supabase
-      .from("nodes")
-      .select("id, node_type")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId)
-      .neq("status", "archived"),
-    supabase.from("workspaces").select("bootstrap_root_node_id").eq("id", workspaceId).maybeSingle(),
-  ]);
-  const rows = (data: unknown) =>
-    ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+  const { data } = await supabase
+    .from("edges")
+    .select("source_node_id, target_node_id, edge_type, status")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", userId)
+    .eq("edge_type", "belongs_to");
+  // A null status is a live edge, so filter here, not with .neq (SQL drops nulls).
+  const live = ((data ?? []) as Array<Record<string, unknown>>).filter((r) => r.status !== "orphaned");
+  return buildLinkStructure({
+    edges: live.map((r) => ({
       source_node_id: r.source_node_id as string,
       target_node_id: r.target_node_id as string,
       edge_type: r.edge_type as string,
-      status: (r.status as string | null | undefined) ?? null,
-    }));
-  return buildLinkStructure({
-    edges: rows(edges.data).filter((e) => e.status !== "orphaned"),
-    pending: rows(pending.data),
-    nodeTypes: new Map(
-      ((nodes.data ?? []) as Array<{ id: string; node_type: string | null }>).map((n) => [n.id, n.node_type]),
-    ),
-    rootId: (workspace.data?.bootstrap_root_node_id as string | null | undefined) ?? null,
+    })),
   });
 }
 
@@ -129,12 +106,9 @@ export async function runConnectionAnalysis(params: {
   workspaceContext?: string;
   // The node's stored embedding when the caller already loaded it.
   embedding?: number[];
-  // The workspace's tree and links (loadLinkStructure) — batch callers load
+  // The workspace's tree (loadLinkStructure) — batch callers load
   // it once. Loaded here when omitted.
   structure?: LinkStructure;
-  // false: select only, return `proposals`, write nothing — the batch caller
-  // caps weak links across the whole batch (capWeakLinks) and inserts.
-  insert?: boolean;
 }): Promise<ConnectionResult> {
   if (!AI_FLAGS.EDGE_INFERENCE_ENABLED) {
     return { proposed: 0, skipped: 0, failed: 0 };
@@ -386,18 +360,12 @@ export async function runConnectionAnalysis(params: {
     failed += eligibleCandidates.length;
   }
 
-  if (params.insert === false) {
-    return { proposed: 0, skipped, failed, proposals: selected };
-  }
-  const capped = capWeakLinks(selected, structure?.weakCount ?? new Map());
-  skipped += selected.length - capped.length;
-  const written = await insertEdgeProposals({ proposals: capped, workspaceId, userId, supabase });
-  return { proposed: written.proposed, skipped, failed: failed + written.failed, proposals: capped };
+  const written = await insertEdgeProposals({ proposals: selected, workspaceId, userId, supabase });
+  return { proposed: written.proposed, skipped, failed: failed + written.failed };
 }
 
 // Connection analysis for a batch of nodes (a dump's accepted nodes): the
-// tree and links loaded once, every node analysed in parallel, then the
-// weak-link cap across the whole batch (best first) and the writes. Shared by
+// tree loaded once, every node analysed in parallel. Shared by
 // /api/nodes/analyze and the connection_batch job.
 export async function runConnectionBatch(params: {
   nodeIds: string[];
@@ -424,30 +392,14 @@ export async function runConnectionBatch(params: {
           workspaceContext: params.workspaceContext,
           embedding: params.embeddings?.get(nodeId),
           structure,
-          insert: false,
         });
         return { nodeId, ...result };
       } catch {
-        return { nodeId, proposed: 0, skipped: 0, failed: 1, proposals: [] as EdgeProposal[] };
+        return { nodeId, proposed: 0, skipped: 0, failed: 1 };
       }
     }),
   );
 
-  const selected = results.flatMap((r) => (r.proposals ?? []).map((p) => ({ ...p, nodeId: r.nodeId })));
-  const kept = capWeakLinks(selected, structure?.weakCount ?? new Map());
-  for (const r of results) {
-    const mine = kept.filter((p) => p.nodeId === r.nodeId);
-    r.skipped += (r.proposals ?? []).length - mine.length;
-    const written = await insertEdgeProposals({
-      proposals: mine, // insertEdgeProposals writes only the link's own fields
-      workspaceId,
-      userId,
-      supabase,
-    });
-    r.proposed += written.proposed;
-    r.failed += written.failed;
-    r.proposals = mine;
-  }
   return results;
 }
 

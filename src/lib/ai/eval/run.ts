@@ -347,7 +347,6 @@ async function evalEdges(fixture: EdgeFixture, provider: EvalProvider) {
             target_node_id: e.target === "source" ? EVAL_SOURCE_ID : e.target,
             edge_type: e.edge_type,
           })),
-          nodeTypes: new Map<string, string | null>(Object.entries(fixture.graph_types ?? {})),
         })
       : undefined,
   });

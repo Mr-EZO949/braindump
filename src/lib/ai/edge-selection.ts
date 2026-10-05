@@ -2,17 +2,10 @@
 // judgment calls are unit-tested (edge-selection.test.ts). Used by
 // connection.ts after the batched inferEdge call.
 //
-// "Fewer, truer links" (2026-10-05, #24): a link is only worth a line on the
-// graph when it says something the tree doesn't already say. Cut here, with no
-// model involved:
-//   - a link between a node and its own ancestor or descendant (the tree says it);
-//   - a lateral link between siblings — both parts of the same project, goal,
-//     big task or class (the shared parent says they go together); under an
-//     area only the vague related_to is cut, since an area holds unrelated work;
-//   - a link the graph already carries: the same direction one level up
-//     ("Tutoring supports Calculus II" covers "Tutoring supports Study for the
-//     calc midterm") or through one node in between (A → X → B covers A → B);
-//   - a lateral link to a node that already has WEAK_LINKS_MAX of them.
+// Links that restate the tree are never proposed: a node and its own ancestor
+// or descendant (the parent line already joins them, and a dependency on a
+// descendant would be a cycle). The NUMBER of links is not cut otherwise —
+// the owner, 2026-10-05: fewer link TYPES, not fewer links.
 // And a hard blocker (required_for) can't start at work that only makes the
 // other go better — marketing, practice, study, review, networking
 // (HELPING_WORDS): "Market BrainDump" → "Launch the beta" is supports. Haiku
@@ -57,51 +50,20 @@ export function helpingWorkType(title: string | null | undefined): "supports" | 
   return null;
 }
 
-// The graph around the nodes being linked — what the structural cuts read.
+// The tree around the nodes being linked: child → parent (the one active
+// belongs_to edge).
 export interface LinkStructure {
-  // child → parent (the one active belongs_to edge).
   parentOf: Map<string, string>;
-  typeOf: Map<string, string | null>;
-  // The workspace root: everything top-level sits under it, so being its
-  // children together says nothing.
-  rootId: string | null;
-  // Active non-parent edges, read source → target ("depends_on" already flipped).
-  links: Array<{ source: string; target: string; dependency: boolean }>;
-  // Lateral links per node: active edges plus proposals still waiting on review.
-  weakCount: Map<string, number>;
 }
 
 type EdgeRow = { source_node_id: string; target_node_id: string; edge_type: string };
 
-export function buildLinkStructure(params: {
-  edges: EdgeRow[];
-  pending?: EdgeRow[];
-  nodeTypes?: Map<string, string | null>;
-  rootId?: string | null;
-}): LinkStructure {
+export function buildLinkStructure(params: { edges: EdgeRow[] }): LinkStructure {
   const parentOf = new Map<string, string>();
-  const links: LinkStructure["links"] = [];
-  const weakCount = new Map<string, number>();
-  const countWeak = (edge: EdgeRow) => {
-    if (!LATERAL_TYPES.has(edge.edge_type)) return;
-    for (const id of [edge.source_node_id, edge.target_node_id]) weakCount.set(id, (weakCount.get(id) ?? 0) + 1);
-  };
   for (const edge of params.edges) {
-    if (edge.edge_type === "belongs_to") {
-      parentOf.set(edge.source_node_id, edge.target_node_id);
-      continue;
-    }
-    if (edge.edge_type === "contains") continue; // legacy, not structure
-    const flip = edge.edge_type === "depends_on";
-    links.push({
-      source: flip ? edge.target_node_id : edge.source_node_id,
-      target: flip ? edge.source_node_id : edge.target_node_id,
-      dependency: DEPENDENCY_TYPES.has(edge.edge_type),
-    });
-    countWeak(edge);
+    if (edge.edge_type === "belongs_to") parentOf.set(edge.source_node_id, edge.target_node_id);
   }
-  for (const edge of params.pending ?? []) countWeak(edge);
-  return { parentOf, typeOf: params.nodeTypes ?? new Map(), rootId: params.rootId ?? null, links, weakCount };
+  return { parentOf };
 }
 
 // The node's ancestors, nearest first (cycle-safe).
@@ -117,40 +79,13 @@ export function ancestorsOf(structure: LinkStructure, id: string): string[] {
   return out;
 }
 
-export type TreeRelation = "ancestor" | "descendant" | "sibling" | "sibling_in_area" | null;
+export type TreeRelation = "ancestor" | "descendant" | null;
 
 // How `other` sits relative to `id` in the tree.
 export function treeRelation(structure: LinkStructure, id: string, other: string): TreeRelation {
   if (ancestorsOf(structure, id).includes(other)) return "ancestor";
   if (ancestorsOf(structure, other).includes(id)) return "descendant";
-  const parent = structure.parentOf.get(id);
-  if (!parent || parent !== structure.parentOf.get(other) || parent === structure.rootId) return null;
-  return normalizeNodeType(structure.typeOf.get(parent), "project") === "area" ? "sibling_in_area" : "sibling";
-}
-
-// Does the graph already say "from → to"? The same direction between the two
-// nodes or their ancestors (not the root), or a path through one node in
-// between. A new dependency only counts as said by dependencies.
-export function isRedundantLink(
-  structure: LinkStructure,
-  from: string,
-  to: string,
-  dependency: boolean,
-): boolean {
-  const lift = (id: string) => [id, ...ancestorsOf(structure, id).filter((a) => a !== structure.rootId)];
-  const fromSide = new Set(lift(from));
-  const toSide = new Set(lift(to));
-  const out = new Map<string, Set<string>>();
-  for (const l of structure.links) {
-    if (dependency && !l.dependency) continue;
-    if (fromSide.has(l.source) && toSide.has(l.target)) return true;
-    if (!out.has(l.source)) out.set(l.source, new Set());
-    out.get(l.source)!.add(l.target);
-  }
-  for (const middle of out.get(from) ?? []) {
-    if (out.get(middle)?.has(to)) return true;
-  }
-  return false;
+  return null;
 }
 
 // Turns the model's per-candidate verdicts into the links worth proposing.
@@ -160,7 +95,7 @@ export function isRedundantLink(
 //   - a dependency blocks its target in Focus and the planner, so it has to be
 //     a real one: clear, between types that can block, and not helping work.
 //     Otherwise it is kept as supports / useful_for when clear enough for that;
-//   - the structural cuts above when `structure` is given;
+//   - no link to the node's own ancestor or descendant when `structure` is given;
 //   - at most one parent, DEPENDENCY_PER_NODE dependencies and
 //     LATERAL_PER_NODE lateral links.
 export function selectEdgeProposals(params: {
@@ -220,7 +155,6 @@ export function selectEdgeProposals(params: {
         canBlock(link.source_node_id, link.target_node_id) &&
         entry.confidence >= AI_CONFIDENCE.EDGE_DEPENDENCY_MIN;
       if (real) {
-        if (structure && isRedundantLink(structure, link.source_node_id, link.target_node_id, true)) continue;
         dependencies.push({ ...link, edge_type: "required_for" });
         continue;
       }
@@ -231,11 +165,7 @@ export function selectEdgeProposals(params: {
     const floor =
       edgeType === "related_to" ? AI_CONFIDENCE.EDGE_RELATED_MIN : AI_CONFIDENCE.EDGE_LATERAL_MIN;
     if (entry.confidence < floor) continue;
-    if (relation === "sibling") continue;
-    if (relation === "sibling_in_area" && edgeType === "related_to") continue;
-    const link = linkFrom();
-    if (structure && isRedundantLink(structure, link.source_node_id, link.target_node_id, false)) continue;
-    laterals.push({ ...link, edge_type: edgeType });
+    laterals.push({ ...linkFrom(), edge_type: edgeType });
   }
 
   const byConfidence = (a: EdgeProposal, b: EdgeProposal) => b.confidence - a.confidence;
@@ -244,28 +174,4 @@ export function selectEdgeProposals(params: {
     ...dependencies.sort(byConfidence).slice(0, AI_CANDIDATES.DEPENDENCY_PER_NODE),
     ...laterals.sort(byConfidence).slice(0, AI_CANDIDATES.LATERAL_PER_NODE),
   ];
-}
-
-// The weak-link cap across everything proposed in one go (a dump's nodes are
-// analysed in parallel): best first, a lateral link is kept only while both
-// ends have fewer than WEAK_LINKS_MAX lateral links, counting the ones already
-// on the graph or waiting on review. Parents and dependencies always pass.
-export function capWeakLinks<T extends EdgeProposal>(
-  proposals: T[],
-  weakCount: ReadonlyMap<string, number>,
-  max: number = AI_CANDIDATES.WEAK_LINKS_MAX,
-): T[] {
-  const count = new Map(weakCount);
-  const keep = new Set<T>();
-  for (const p of [...proposals].sort((a, b) => b.confidence - a.confidence)) {
-    if (!LATERAL_TYPES.has(p.edge_type)) {
-      keep.add(p);
-      continue;
-    }
-    const ends = [p.source_node_id, p.target_node_id];
-    if (ends.some((id) => (count.get(id) ?? 0) >= max)) continue;
-    for (const id of ends) count.set(id, (count.get(id) ?? 0) + 1);
-    keep.add(p);
-  }
-  return proposals.filter((p) => keep.has(p));
 }

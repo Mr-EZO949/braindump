@@ -4,12 +4,9 @@ import type { EdgeInferenceResult } from "@/types/ai";
 
 import {
   buildLinkStructure,
-  capWeakLinks,
   helpingWorkType,
-  isRedundantLink,
   selectEdgeProposals,
   treeRelation,
-  type EdgeProposal,
 } from "./edge-selection";
 
 const SOURCE = "src";
@@ -153,9 +150,8 @@ describe("selectEdgeProposals", () => {
   });
 });
 
-describe("structural cuts (fewer links, #24)", () => {
+describe("the tree (#24)", () => {
   // root ─ area "Uni" ─ project "Thesis" ─ src, sib
-  //                   └ lone
   //      └ "Side" (project) ─ far
   const structure = () =>
     buildLinkStructure({
@@ -163,32 +159,22 @@ describe("structural cuts (fewer links, #24)", () => {
         { source_node_id: "uni", target_node_id: "root", edge_type: "belongs_to" },
         { source_node_id: "side", target_node_id: "root", edge_type: "belongs_to" },
         { source_node_id: "thesis", target_node_id: "uni", edge_type: "belongs_to" },
-        { source_node_id: "lone", target_node_id: "uni", edge_type: "belongs_to" },
         { source_node_id: SOURCE, target_node_id: "thesis", edge_type: "belongs_to" },
         { source_node_id: "sib", target_node_id: "thesis", edge_type: "belongs_to" },
         { source_node_id: "far", target_node_id: "side", edge_type: "belongs_to" },
         { source_node_id: "tutor", target_node_id: "side", edge_type: "supports" },
-        { source_node_id: "a", target_node_id: "b", edge_type: "supports" },
-        { source_node_id: "b", target_node_id: "c", edge_type: "useful_for" },
-        { source_node_id: "c", target_node_id: "a", edge_type: "depends_on" },
       ],
-      pending: [{ source_node_id: "far", target_node_id: "lone", edge_type: "related_to" }],
-      nodeTypes: new Map([["uni", "area"], ["thesis", "project"], ["side", "project"], ["root", "area"]]),
-      rootId: "root",
     });
   const kinds = new Map<string, string | null>([
-    ["thesis", "project"], ["uni", "area"], ["sib", "task"], ["lone", "project"], ["side", "project"], ["far", "task"],
+    ["thesis", "project"], ["uni", "area"], ["sib", "task"], ["side", "project"], ["far", "task"], ["tutor", "task"],
   ]);
 
-  it("reads the tree: ancestors, descendants, siblings, the root doesn't count", () => {
+  it("reads ancestors and descendants from belongs_to only", () => {
     const s = structure();
     expect(treeRelation(s, SOURCE, "uni")).toBe("ancestor");
     expect(treeRelation(s, "uni", SOURCE)).toBe("descendant");
-    expect(treeRelation(s, SOURCE, "sib")).toBe("sibling");
-    expect(treeRelation(s, "thesis", "lone")).toBe("sibling_in_area");
-    expect(treeRelation(s, "uni", "side")).toBeNull(); // both under the root
-    expect(s.weakCount.get("far")).toBe(1); // pending proposals count
-    expect(s.links).toContainEqual({ source: "a", target: "c", dependency: true }); // depends_on flipped
+    expect(treeRelation(s, SOURCE, "sib")).toBeNull();
+    expect(treeRelation(s, "tutor", "side")).toBeNull(); // a supports link isn't the tree
   });
 
   it("drops links to the node's own ancestors and descendants", () => {
@@ -199,58 +185,9 @@ describe("structural cuts (fewer links, #24)", () => {
     expect(edges).toEqual([]);
   });
 
-  it("siblings in a project keep a real blocker but no lateral link; siblings in an area lose only related_to", () => {
-    const s = structure();
-    const opts = { structure: s, candidateTypeById: kinds, sourceType: "task" };
-    expect(select([verdict("sib", "supports", "candidate", 0.9)], opts)).toEqual([]);
-    expect(select([verdict("sib", "required_for", "candidate", 0.9)], opts)).toEqual([
-      expect.objectContaining({ source_node_id: "sib", edge_type: "required_for" }),
-    ]);
-    const asThesis = (r: EdgeInferenceResult[]) =>
-      selectEdgeProposals({ sourceId: "thesis", sourceType: "project", sourceHasParent: true, results: r, candidateTypeById: kinds, structure: s });
-    expect(asThesis([verdict("lone", "related_to", "source", 0.9)])).toEqual([]);
-    expect(asThesis([verdict("lone", "supports", "source", 0.9)])).toHaveLength(1);
-  });
-
-  it("skips a link the graph already says, one level up or through one node", () => {
-    const s = structure();
-    // tutor → supports → side covers tutor → far (far lives under side).
-    expect(isRedundantLink(s, "tutor", "far", false)).toBe(true);
-    // a → b → c covers a → c.
-    expect(isRedundantLink(s, "a", "c", false)).toBe(true);
-    // Not the other way round, and not when nothing links them.
-    expect(isRedundantLink(s, "far", "tutor", false)).toBe(false);
-    expect(isRedundantLink(s, "sib", "far", false)).toBe(false);
-    // A blocker is only covered by blockers: a supports path says less.
-    expect(isRedundantLink(s, "a", "c", true)).toBe(true); // c depends_on a
-    expect(isRedundantLink(s, "tutor", "far", true)).toBe(false);
-    // The root is not an ancestor that covers anything.
-    expect(isRedundantLink(s, "uni", "side", false)).toBe(false);
-  });
-});
-
-describe("capWeakLinks", () => {
-  const link = (source: string, target: string, edge_type: string, confidence: number): EdgeProposal => ({
-    source_node_id: source,
-    target_node_id: target,
-    edge_type,
-    confidence,
-    explanation: "x",
-  });
-
-  it("caps lateral links per node across a batch, best first; blockers and parents always pass", () => {
-    const proposals = [
-      link("a", "hub", "supports", 0.7),
-      link("b", "hub", "supports", 0.9),
-      link("c", "hub", "useful_for", 0.8),
-      link("d", "hub", "required_for", 0.95),
-      link("e", "f", "related_to", 0.85),
-    ];
-    const kept = capWeakLinks(proposals, new Map([["hub", 1]]), 3);
-    expect(kept.map((p) => p.source_node_id)).toEqual(["b", "c", "d", "e"]);
-  });
-
-  it("gives a node that is already a hub nothing new", () => {
-    expect(capWeakLinks([link("a", "hub", "supports", 0.99)], new Map([["hub", 3]]), 3)).toEqual([]);
+  it("keeps links between siblings and links the graph could already imply (owner: fewer types, not fewer links)", () => {
+    const opts = { structure: structure(), candidateTypeById: kinds, sourceType: "task" };
+    expect(select([verdict("sib", "supports", "candidate", 0.9)], opts)).toHaveLength(1);
+    expect(select([verdict("far", "related_to", "source", 0.75)], opts)).toHaveLength(1);
   });
 });
