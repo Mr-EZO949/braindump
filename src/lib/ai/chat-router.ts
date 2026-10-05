@@ -26,6 +26,7 @@
 import { looksLikeBrainDump, looksLikeBreakdownAsk, looksLikeRestructure } from "@/lib/graph/dump-heuristic";
 import type { AssistantMode } from "@/types/ai";
 import type { HistoryTurn } from "./chat-memory";
+import { statedIntents } from "./tools/intent-coverage";
 
 export type ChatRoute = "qa" | "haiku";
 
@@ -61,6 +62,9 @@ export function looksLikePlainQuestion(message: string, history: HistoryTurn[] =
   if (!text || text.length > QA_MAX_CHARS) return false;
   if (!text.includes("?") && !QUESTION_START.test(text)) return false;
   if (ACTION.test(text) || NEEDS_LOOKUP.test(text) || HOW_TO.test(text)) return false;
+  // A question next to a statement ("the CV can wait, should I focus on stats
+  // or the internship?") carries a change Gemini has no tool for (#22).
+  if (statedIntents(text).length > 0) return false;
   // Answering the assistant's own question ("under A or B?") usually means acting on it.
   const last = history[history.length - 1];
   if (last?.role === "assistant" && last.body.trim().endsWith("?")) return false;

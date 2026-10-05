@@ -49,6 +49,10 @@ describe("looksLikePlainQuestion", () => {
     "how do i learn linear algebra fast?",
     // not a question
     "the ML exam went badly",
+    // #22: a stated change next to a question — Gemini has no tool for it
+    "the CV can wait, should I focus on stats or the internship?",
+    "clothes reselling is on hold. what should I do first today?",
+    "Stats matters more than reselling right now — what's the first step?",
   ])("keeps %j on Claude", (message) => {
     expect(looksLikePlainQuestion(message)).toBe(false);
   });
