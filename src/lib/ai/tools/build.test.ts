@@ -343,6 +343,24 @@ describe("runTurnTools — other calls in the same turn", () => {
     expect(turn.deferred[0].result?.is_error).toBe(false);
   });
 
+  it("a change after the card is still planned: what's done applies, the plan stays the card (#22)", async () => {
+    const db = seed();
+    const turn = await runTurnTools(
+      [
+        { id: "t1", name: "plan_day", input: { window: "day", start_time: "12:00" } },
+        { id: "t2", name: "change", input: { source: "user", changes: [{ kind: "complete", node_id: FUSED }] } },
+      ],
+      ctxFor(db, "finished testing braindump, now plan my afternoon"),
+    );
+    expect(turn.pending).toMatchObject({ id: "t1", name: "plan_day" });
+    expect(db.tables.nodes.find((n) => n.id === FUSED)?.status).toBe("completed");
+    expect(turn.turns).toHaveLength(1);
+    // Replayed on resume, not turned down as a second action.
+    expect(turn.deferred).toHaveLength(1);
+    expect(turn.deferred[0]).toMatchObject({ id: "t2", name: "change" });
+    expect(turn.deferred[0].result?.is_error).toBe(false);
+  });
+
   it("runs everything eagerly when nothing needs the user", async () => {
     const db = seed();
     const turn = await runTurnTools(

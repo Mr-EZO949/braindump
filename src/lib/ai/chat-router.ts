@@ -76,6 +76,10 @@ export function looksLikePlainQuestion(message: string, history: HistoryTurn[] =
 // should come up with, build_graph for a restructure or a dump. The model
 // still decides: venting or a long question needs no tool at all.
 export function buildHint(message: string): string {
+  // "plan the rest of my day" in explain mode got questions back, not a plan (assistant-v29/v30).
+  if (statedIntents(message).some((s) => s.kind === "plan")) {
+    return "[Hint: they asked for a plan → call plan_day now, no questions first; at most one line after the card.]";
+  }
   if (looksLikeBreakdownAsk(message)) {
     return "[Hint: steps the user didn't list (a breakdown, a roadmap) → write_steps writes them for the node, as a card.]";
   }

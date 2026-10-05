@@ -10,6 +10,7 @@ import {
   turnNeedsNoFollowUp,
   asChangeOp,
   asPriorityOp,
+  asNodeCompletion,
 } from "./index";
 
 describe("tool registry classification", () => {
@@ -166,5 +167,42 @@ describe("asPriorityOp", () => {
     expect(asPriorityOp(real)).toBe(real);
     const change = { id: "t", name: "change", input: {} };
     expect(asPriorityOp(change)).toBe(change);
+  });
+});
+
+describe("asNodeCompletion", () => {
+  // A fake client: which ids exist in which table.
+  const ctxWith = (rows: Record<string, string[]>) =>
+    ({
+      userId: "u",
+      workspaceId: "w",
+      userMessage: "went to the gym this morning, now plan my afternoon",
+      supabase: {
+        from: (table: string) => {
+          let id = "";
+          const q = {
+            select: () => q,
+            eq: (col: string, value: string) => {
+              if (col === "id") id = value;
+              return q;
+            },
+            maybeSingle: async () => ({ data: (rows[table] ?? []).includes(id) ? { id } : null }),
+          };
+          return q;
+        },
+      },
+    }) as unknown as Parameters<typeof asNodeCompletion>[1];
+
+  it("mark_task_done on a node's id is that node done, the user's when stated", async () => {
+    const out = await asNodeCompletion({ id: "t", name: "mark_task_done", input: { task_id: "gym" } }, ctxWith({ nodes: ["gym"] }));
+    expect(out).toEqual({ id: "t", name: "change", input: { source: "user", changes: [{ kind: "complete", node_id: "gym" }] } });
+  });
+
+  it("leaves a real calendar task, an unknown id and an undo alone", async () => {
+    const task = { id: "t", name: "mark_task_done", input: { task_id: "x" } };
+    expect(await asNodeCompletion(task, ctxWith({ plan_tasks: ["x"], nodes: ["x"] }))).toBe(task);
+    expect(await asNodeCompletion(task, ctxWith({}))).toBe(task);
+    const undo = { id: "t", name: "mark_task_done", input: { task_id: "gym", done: false } };
+    expect(await asNodeCompletion(undo, ctxWith({ nodes: ["gym"] }))).toBe(undo);
   });
 });

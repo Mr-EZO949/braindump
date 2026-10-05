@@ -80,6 +80,16 @@ export const MULTI_INTENT_CASES: MultiIntentCase[] = [
     ],
   },
   {
+    id: "plan-rest-of-day",
+    message: "plan the rest of my day",
+    checks: [{ label: "plan on the card, no questions first", kind: "tool_waits", value: "plan_day" }],
+  },
+  {
+    id: "plan-with-time-block",
+    message: "plan my day, I want 3h on the Italian course",
+    checks: [{ label: "plan on the card", kind: "tool_waits", value: "plan_day" }],
+  },
+  {
     id: "wait-and-add",
     message: "Took the stats midterm today, now waiting on results. Also add 'apply to the Milan internship' under the internship goal.",
     checks: [

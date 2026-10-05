@@ -220,10 +220,11 @@ export interface TurnTools {
 
 // Decides what one assistant turn's tool calls come to. Shared by the chat
 // and resume routes, which used to carry a copy each.
-//   • The first pausing call becomes the card. change and build_graph are
-//     planned first: what the policy applies now goes on a turn card; with
-//     nothing left to confirm the call turns into a plain result and the next
-//     pausing call (if any) takes its place.
+//   • The first pausing call becomes the card. Every change / build_graph /
+//     write_steps call is planned, before or after it: what the policy
+//     applies now goes on a turn card; with nothing left to confirm the call
+//     turns into a plain result and the next pausing call (if any) takes its
+//     place.
 //   • Direct tools run even when a card is pending — "took the exam, waiting
 //     on the result, and add these three things" must not lose the first half
 //     (it used to be auto-rejected as a second action).
@@ -239,13 +240,23 @@ export async function runTurnTools(modelBlocks: ToolUse[], ctx: ToolContext): Pr
   if (process.env.CHAT_TRACE === "1") {
     console.info(`[chat/trace] ${JSON.stringify({ message: ctx.userMessage, calls: modelBlocks.map(({ name, input }) => ({ name, input })) })}`);
   }
-  for (const block of modelBlocks) blocks.push(await separateAdvice(asPriorityOp(asChangeOp(block, ctx.userMessage), ctx.userMessage), ctx, applied));
+  for (const block of modelBlocks) blocks.push(
+      await separateAdvice(asPriorityOp(asChangeOp(await asNodeCompletion(block, ctx), ctx.userMessage), ctx.userMessage), ctx, applied),
+    );
 
+  // A planned call's rows that wait while another card is already pending:
+  // deferred with that input (the resume turns it down, and the model can
+  // propose it again) — what it applies at once has applied.
+  const waitingLater = new Map<string, unknown>();
   for (const block of blocks) {
     if (!isPausingTool(block.name, block.input)) continue;
     if (!PLANNED_TOOLS.has(block.name)) {
-      pending = block;
-      break;
+      // The first card — but keep planning the change calls after it: "went
+      // to the gym, now plan my afternoon" came as plan_day THEN change, and
+      // the gym's done (which applies at once) waited behind the plan's card
+      // and was turned down on resume (#22 eval, 2026-10-05).
+      pending ??= block;
+      continue;
     }
     const plan: TurnPlan =
       block.name === BUILD_GRAPH_TOOL
@@ -255,8 +266,9 @@ export async function runTurnTools(modelBlocks: ToolUse[], ctx: ToolContext): Pr
           : await planChange(block.input, ctx);
     if (plan.turn) turns.push(plan.turn);
     if (plan.waiting) {
-      pending = { ...block, input: plan.waiting };
-      break;
+      if (pending) waitingLater.set(block.id, plan.waiting);
+      else pending = { ...block, input: plan.waiting };
+      continue;
     }
     done.set(block.id, {
       name: block.name,
@@ -286,7 +298,7 @@ export async function runTurnTools(modelBlocks: ToolUse[], ctx: ToolContext): Pr
     deferred.push({
       id: block.id,
       name: block.name,
-      input: block.input ?? {},
+      input: waitingLater.get(block.id) ?? block.input ?? {},
       ...(result ? { result: { content: result.content, is_error: result.is_error } } : {}),
     });
   }
@@ -377,4 +389,19 @@ export function asPriorityOp(block: ToolUse, userMessage?: string): ToolUse {
   const { source, ...row } = (block.input ?? {}) as Record<string, unknown>;
   const resolved = source === "user" || source === "suggestion" ? source : statedOpSource(userMessage, block.name);
   return { ...block, name: "update_priorities", input: { source: resolved, changes: [{ ...row, action: block.name }] } };
+}
+
+// mark_task_done is for the Planner's calendar tasks. Called with a NODE's id
+// ("went to the gym this morning, now plan my afternoon" → mark_task_done on
+// the gym habit, assistant-v31 eval 2026-10-05) it paused on a card that could
+// only fail ("task_id not found") and pushed the plan behind it off the card.
+// A node's id there means the node is done: a complete op inside change.
+export async function asNodeCompletion(block: ToolUse, ctx: ToolContext): Promise<ToolUse> {
+  const input = (block.input ?? {}) as { task_id?: unknown; done?: unknown };
+  if (block.name !== "mark_task_done" || typeof input.task_id !== "string" || input.done === false) return block;
+  const scoped = (table: string) =>
+    ctx.supabase.from(table).select("id").eq("id", input.task_id as string).eq("user_id", ctx.userId).eq("workspace_id", ctx.workspaceId).maybeSingle();
+  const [{ data: task }, { data: node }] = await Promise.all([scoped("plan_tasks"), scoped("nodes")]);
+  if (task || !node) return block;
+  return asChangeOp({ ...block, name: "complete", input: { node_id: input.task_id } }, ctx.userMessage);
 }

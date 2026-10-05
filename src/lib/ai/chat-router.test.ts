@@ -152,6 +152,12 @@ describe("buildHint", () => {
     expect(buildHint("what should i focus on?")).toBe("");
   });
 
+  it("points a plan request at plan_day — no questions first (PM, 2026-10-05)", () => {
+    expect(buildHint("plan the rest of my day")).toContain("plan_day");
+    expect(buildHint("did the gym, now plan my afternoon")).toContain("plan_day");
+    expect(buildHint("should I plan my day around the gym?")).toBe("");
+  });
+
   it("points a breakdown at write_steps, not build_graph", () => {
     expect(buildHint("break the thesis down into steps")).toContain("write_steps");
     expect(buildHint("give me a roadmap for the internship search")).not.toContain("build_graph");
