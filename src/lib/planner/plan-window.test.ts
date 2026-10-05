@@ -14,6 +14,16 @@ describe("plan window", () => {
     expect(planWindowMinutes("day", null, 8 * 60)).toBe(900);
   });
 
+  it("the user's own end of work ends a day plan (docs/preferences.md)", () => {
+    expect(dayPlanMinutes(8 * 60, 22 * 60)).toBe(14 * 60);
+    expect(planWindowMinutes("day", null, 8 * 60, 22 * 60)).toBe(14 * 60);
+    // Past their end of work: still an hour, as for a late start.
+    expect(dayPlanMinutes(22 * 60 + 15, 22 * 60)).toBe(60);
+    // Only a day plan: a 2-hour session keeps its length.
+    expect(planWindowMinutes("2h", null, 21 * 60, 22 * 60)).toBe(120);
+    expect(dayPlanMinutes(8 * 60, null)).toBe(15 * 60);
+  });
+
   it("without a start, a day is 08:00–23:00", () => {
     expect(planWindowMinutes("day")).toBe(900);
   });

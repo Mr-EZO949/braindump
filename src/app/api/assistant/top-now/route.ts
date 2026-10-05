@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { buildPlannerCandidates } from "@/lib/ai/planner";
+import { preferencesFromMetadata } from "@/lib/planner/preferences";
 
 export async function POST(req: NextRequest) {
   const supabase = await getSupabaseServerClient();
@@ -54,6 +55,8 @@ export async function POST(req: NextRequest) {
     supabase,
     clientToday: client_today,
     clientTzOffsetMinutes: client_tz_offset,
+    // A daily time budget not started today leans forward (docs/preferences.md).
+    preferences: preferencesFromMetadata(user.user_metadata),
   });
 
   return NextResponse.json({

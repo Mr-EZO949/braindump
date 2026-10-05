@@ -20,7 +20,14 @@ import { AI_MODELS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { PLAN_PROMPT_VERSION } from "@/lib/ai/prompts/plan";
 import { PLAN_MAX_MINUTES, planWindowMinutes } from "@/lib/planner/plan-window";
 import { busyOn, sessionBusyNote, timeToMinutes } from "@/lib/planner/commitments";
-import { isISODate } from "@/lib/time/local-date";
+import { isISODate, localDateISO } from "@/lib/time/local-date";
+import {
+  BUDGET_MIN_SESSION_MINUTES,
+  budgetRequestsFor,
+  planningPreferenceLines,
+  preferencesFromMetadata,
+  workdayEndMinute,
+} from "@/lib/planner/preferences";
 import {
   hashText,
   logFailedAIRun,
@@ -153,6 +160,29 @@ export async function POST(req: NextRequest) {
   // -------------------------------------------------------------------------
   // Build candidates + workspace context in parallel
   // -------------------------------------------------------------------------
+  // A day runs from the session start to 23:00 (lib/planner/plan-window.ts),
+  // or to the user's own end of work ("no work after 22:00"). Their standing
+  // time budgets ("4h a day coding") go in as requests on a long plan
+  // (docs/preferences.md).
+  const preferences = preferencesFromMetadata(user.user_metadata);
+  const sessionStartMinute = timeToMinutes(session_start);
+  const sessionMinutes = planWindowMinutes(
+    resolvedWindow,
+    custom_minutes,
+    sessionStartMinute,
+    workdayEndMinute(preferences),
+  );
+  const planDate = isISODate(session_date)
+    ? session_date
+    : isISODate(client_today)
+      ? client_today
+      : localDateISO(new Date(), null);
+  const userInclude = typeof include === "string" ? include.slice(0, 400) : null;
+  const budgetRequests =
+    sessionMinutes >= BUDGET_MIN_SESSION_MINUTES
+      ? budgetRequestsFor({ prefs: preferences, dateISO: planDate, sessionMinutes, include: userInclude })
+      : [];
+
   const [candidateBundle, profileCtx] = await Promise.all([
     buildPlannerCandidates({
       workspaceId: workspace_id,
@@ -160,17 +190,16 @@ export async function POST(req: NextRequest) {
       supabase,
       clientToday: client_today,
       clientTzOffsetMinutes: client_tz_offset,
-      include: typeof include === "string" ? include.slice(0, 400) : null,
+      include: userInclude,
+      preferences,
+      budgetRequests,
     }),
     buildWorkspaceProfileContext({ workspaceId: workspace_id, userId: user.id, supabase }),
   ]);
 
   const { candidates, manual_items, preference_hints, commitments, time_blocks, requests } = candidateBundle;
 
-  // A day runs from the session start to 23:00 (lib/planner/plan-window.ts).
   // A class inside the session: the planner fills only the free stretches.
-  const sessionStartMinute = timeToMinutes(session_start);
-  const sessionMinutes = planWindowMinutes(resolvedWindow, custom_minutes, sessionStartMinute);
   const busy =
     isISODate(session_date) && sessionStartMinute !== null
       ? sessionBusyNote(busyOn(commitments, session_date), sessionStartMinute, sessionMinutes)
@@ -189,6 +218,7 @@ export async function POST(req: NextRequest) {
     .map((c) => `"${c.title}"`)
     .join(", ");
   const manualPlannerItems = manual_items.map(formatManualPlannerItem).join(", ");
+  const standingLines = planningPreferenceLines(preferences, planDate);
 
   const workspaceContext = [
     profileCtx.workspaceContext,
@@ -202,6 +232,7 @@ export async function POST(req: NextRequest) {
       ? `Planner preferences from recent edits: ${preference_hints.join(" ")}`
       : null,
     scope ? `Planning scope: ${scope}` : null,
+    standingLines.length > 0 ? `Standing preferences (the user's own): ${standingLines.join(" ")}` : null,
   ]
     .filter(Boolean)
     .join("\n");

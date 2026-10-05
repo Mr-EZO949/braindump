@@ -27,6 +27,13 @@ import {
 } from "@/lib/planner/commitments";
 import { localDateISO, localMinuteOfDay } from "@/lib/time/local-date";
 import { getRequestTimeZone } from "@/lib/time/request-date";
+import {
+  BUDGET_MIN_SESSION_MINUTES,
+  budgetRequestsFor,
+  planningPreferenceLines,
+  workdayEndMinute,
+} from "@/lib/planner/preferences";
+import { loadPreferences } from "@/lib/planner/preference-store";
 
 // YYYY-MM-DD. Postgres `date` parses a broader set, but we want Claude to
 // emit ISO dates consistently so the UI formats them predictably.
@@ -338,16 +345,44 @@ const PLAN_DAY: ToolDefinition = {
       : "day") as "1h" | "2h" | "day" | "custom";
     const customMinutes = window === "custom" ? clampPlanMinutes(args.custom_minutes ?? 60) : null;
 
+    // Standing preferences (docs/preferences.md): the user's end of work
+    // shortens a day, their daily budgets go in as requests on a long plan,
+    // best hours / rules ride along as context — with the "About you" working
+    // hours, which the chat planner used to skip.
+    const today = ctx.today ?? localDateISO(new Date(), null);
+    const startMinute =
+      timeToMinutes(args.start_time) ??
+      nextSessionStartMinute(localMinuteOfDay(new Date(), await getRequestTimeZone()));
+    const [preferences, profile] = await Promise.all([
+      loadPreferences(ctx.userId, ctx.supabase),
+      ctx.supabase.from("profiles").select("working_hours").eq("user_id", ctx.userId).maybeSingle(),
+    ]);
+    const sessionMinutes = planWindowMinutes(window, customMinutes, startMinute, workdayEndMinute(preferences));
+    const include = typeof args.include === "string" ? args.include.slice(0, 400) : null;
+
     const bundle = await buildPlannerCandidates({
       workspaceId: ctx.workspaceId,
       userId: ctx.userId,
       supabase: ctx.supabase,
       clientToday: ctx.today,
-      include: typeof args.include === "string" ? args.include.slice(0, 400) : null,
+      include,
+      preferences,
+      budgetRequests:
+        sessionMinutes >= BUDGET_MIN_SESSION_MINUTES
+          ? budgetRequestsFor({ prefs: preferences, dateISO: today, sessionMinutes, include })
+          : [],
     });
     if (!bundle.candidates.length && !bundle.time_blocks.length) {
       return { accepted: false, error: "No active work items to plan — add a few tasks or goals first." };
     }
+    const workingHours = (profile.data as { working_hours?: string | null } | null)?.working_hours?.trim();
+    const standing = planningPreferenceLines(preferences, today);
+    const workspaceContext = [
+      workingHours ? `Working hours / energy: ${workingHours.slice(0, 200)}` : null,
+      standing.length > 0 ? `Standing preferences (the user's own): ${standing.join(" ")}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     // Plan only the free time of the session: today's saved commitments plus
     // the busy time the user named in chat. The session starts where Accept
@@ -356,11 +391,6 @@ const PLAN_DAY: ToolDefinition = {
     // Until 2026-10-02 only a full day saw commitments and nothing could say
     // "I have lectures 2:30–6:30 today", so "schedule 2:30–11pm" filled the
     // lectures; until 2026-10-03 a day was 09:00–17:00.
-    const today = ctx.today ?? localDateISO(new Date(), null);
-    const startMinute =
-      timeToMinutes(args.start_time) ??
-      nextSessionStartMinute(localMinuteOfDay(new Date(), await getRequestTimeZone()));
-    const sessionMinutes = planWindowMinutes(window, customMinutes, startMinute);
     const busyToday = [...busyOn(bundle.commitments, today), ...oneOffBusy(args.busy)].sort(
       (a, b) => a.start - b.start,
     );
@@ -384,6 +414,7 @@ const PLAN_DAY: ToolDefinition = {
           node_type: c.node_type,
           planning_signals: c.planning_signals,
         })),
+        workspace_context: workspaceContext || undefined,
         busy,
         time_blocks: bundle.time_blocks,
         requests: bundle.requests,

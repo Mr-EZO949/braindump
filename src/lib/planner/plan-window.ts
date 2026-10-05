@@ -27,26 +27,33 @@ export function clampPlanMinutes(minutes: number): number {
 }
 
 /**
- * A day plan's length from its start: to 23:00, at least an hour when the
- * evening is late, never past midnight, never over 18 h.
+ * A day plan's length from its start: to 23:00 (or the user's own end of
+ * work, "no work after 22:00" — docs/preferences.md), at least an hour when
+ * the evening is late, never past midnight, never over 18 h.
  */
-export function dayPlanMinutes(startMinute: number): number {
+export function dayPlanMinutes(startMinute: number, endMinute?: number | null): number {
   const start = Math.max(0, Math.min(MINUTES_IN_DAY - PLAN_MIN_MINUTES, Math.round(startMinute)));
-  const toEnd = Math.max(60, DAY_PLAN_END_MINUTE - start);
+  const end =
+    typeof endMinute === "number" && Number.isFinite(endMinute) && endMinute > 0
+      ? Math.min(MINUTES_IN_DAY, Math.round(endMinute))
+      : DAY_PLAN_END_MINUTE;
+  const toEnd = Math.max(60, end - start);
   return clampPlanMinutes(Math.min(toEnd, MINUTES_IN_DAY - start));
 }
 
 /**
  * A planning window's length in minutes. `startMinute` (minutes from local
  * midnight) sizes a day plan; without it a day is assumed to start at 08:00.
+ * `dayEndMinute` replaces 23:00 as a day plan's end.
  */
 export function planWindowMinutes(
   window: string,
   customMinutes?: number | null,
   startMinute?: number | null,
+  dayEndMinute?: number | null,
 ): number {
   if (window === "custom") return clampPlanMinutes(customMinutes ?? 60);
-  if (window === "day") return dayPlanMinutes(startMinute ?? DAY_PLAN_START_MINUTE);
+  if (window === "day") return dayPlanMinutes(startMinute ?? DAY_PLAN_START_MINUTE, dayEndMinute);
   return window === "2h" ? 120 : 60;
 }
 

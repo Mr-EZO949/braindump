@@ -17,6 +17,7 @@ import {
   parsePlanRequests,
   formatRequestMinutes,
 } from "@/lib/planner/plan-requests";
+import { budgetsBehindToday, sameTopic, type BudgetRequest, type Preference } from "@/lib/planner/preferences";
 import {
   SKIP_WINDOW_DAYS,
   STALE_CHECK_ENTITY,
@@ -142,6 +143,12 @@ const PLANNER_BONUSES = {
   NEGLECT_MAX: 80,
   /** A waiting node whose check-back date arrived: one quick decision. */
   CHECK_BACK: 330,
+  /**
+   * Inside something the user set a daily time budget for ("4h a day
+   * coding", docs/preferences.md) that hasn't been worked on today — Focus
+   * leans toward it. Under CARRIED_OVER: it nudges, a deadline still wins.
+   */
+  BUDGET_BEHIND: 150,
 } as const;
 
 /** Momentum replaces rotation when the cluster's deadline pressure is at least this. */
@@ -605,6 +612,10 @@ export async function buildPlannerCandidates(params: {
   fitToFreeTime?: boolean;
   /** Plans only: what the user asked to fit in, their words ("3h of Italian, 2h of math"). */
   include?: string | null;
+  /** Standing preferences (docs/preferences.md): a daily budget not started today leans Focus toward it. */
+  preferences?: Preference[];
+  /** Plans only: the day's budgets as requests (budgetRequestsFor), after the user's own. */
+  budgetRequests?: BudgetRequest[];
 }): Promise<PlannerCandidateBundle> {
   const unblockedAfter = new Date(
     Date.now() - RECENTLY_UNBLOCKED_WINDOW_HOURS * 60 * 60 * 1000,
@@ -1038,6 +1049,22 @@ export async function buildPlannerCandidates(params: {
       node_type: node?.node_type ?? null,
     };
   });
+  // The day's time budgets ("Coding — your 4h a day"): their linked node when
+  // it can be planned, else matched by name like a typed request. A budget for
+  // a node the user already asked for is left out — what they typed wins.
+  for (const budget of params.budgetRequests ?? []) {
+    const linked = budget.node_id ? requestable.find((node) => node.id === budget.node_id) : undefined;
+    const node = linked ?? matchRequest(budget.phrase, requestable);
+    if (node && requests.some((r) => r.node_id === node.id)) continue;
+    if (!node && requests.some((r) => sameTopic(r.text, budget.phrase))) continue;
+    requests.push({
+      text: budget.text,
+      minutes: budget.minutes,
+      node_id: node?.id ?? null,
+      title: node?.title ?? null,
+      node_type: node?.node_type ?? null,
+    });
+  }
   const requestedMinutes = new Map<string, number | null>();
   for (const request of requests) {
     if (request.node_id && !requestedMinutes.has(request.node_id)) {
@@ -1120,6 +1147,26 @@ export async function buildPlannerCandidates(params: {
     (node) => !clustersTouchedYesterday.has(belongsToParentOf(node.id)),
   );
 
+  // Standing time budgets for today (docs/preferences.md) on something not
+  // worked on yet today ("4h a day coding", nothing under Coding done today):
+  // the work inside it leans forward in Focus. The budget's linked node, else
+  // the node its name matches (areas included — "Coding" is often one).
+  const budgetBehind = budgetsBehindToday({
+    prefs: params.preferences ?? [],
+    dateISO: todayDate,
+    nodes: rawNodes,
+    workedToday: (nodeId) => workedDays.get(nodeId)?.has(todayDate) ?? false,
+  });
+  const budgetSignalFor = (nodeId: string): string | null => {
+    let cur: string | undefined = nodeId;
+    for (let depth = 0; cur && depth < 8; depth += 1) {
+      const signal = budgetBehind.get(cur);
+      if (signal) return signal;
+      cur = clusterParentOf.get(cur);
+    }
+    return null;
+  };
+
   const candidates = actionableNodes
     .map((node) => {
       const incoming = incomingEdgesByNode.get(node.id) ?? [];
@@ -1198,6 +1245,9 @@ export async function buildPlannerCandidates(params: {
         planningSignals.push("You asked to focus on this");
       }
 
+      const budgetSignal = budgetSignalFor(node.id);
+      if (budgetSignal) planningSignals.push(budgetSignal);
+
       if (dueSoon && dueSoonDate) {
         planningSignals.push(`On your calendar (${dueSoonDate})`);
       }
@@ -1254,7 +1304,9 @@ export async function buildPlannerCandidates(params: {
         siblingFactor,
         steer,
         neglectDays,
-      }) + (requested ? REQUESTED_PRIORITY : 0);
+      }) +
+        (requested ? REQUESTED_PRIORITY : 0) +
+        (budgetSignal ? PLANNER_BONUSES.BUDGET_BEHIND : 0);
 
       return {
         candidate: {

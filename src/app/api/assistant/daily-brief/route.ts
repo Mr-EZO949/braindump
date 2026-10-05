@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { buildPlannerCandidates } from "@/lib/ai/planner";
+import { preferencesFromMetadata } from "@/lib/planner/preferences";
 import type { Nudge } from "@/types/chat";
 import { isISODate } from "@/lib/time/local-date";
 import { getRequestToday } from "@/lib/time/request-date";
@@ -92,6 +93,8 @@ export async function POST(req: NextRequest) {
       clientTzOffsetMinutes: client_tz_offset,
       // A short gap before a class → what fits it leads (docs/commitments.md).
       fitToFreeTime: true,
+      // A daily time budget not started today leans forward (docs/preferences.md).
+      preferences: preferencesFromMetadata(user.user_metadata),
     }).catch(() => ({ candidates: [], busy_today: [], stale_check: [] })),
 
     supabase
