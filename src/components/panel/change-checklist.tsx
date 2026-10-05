@@ -30,6 +30,14 @@ export interface ChangeSelection {
 // Every row starts ticked — accepting everything stays one tap.
 export function useChangeSelection(ops: ChangeOpView[]): ChangeSelection {
   const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set(ops.map((_, i) => i)));
+  // Every row starts ticked. A card can render before its rows arrive (the
+  // stream, a reload), so when the rows change, tick them all again — before
+  // this a late card read "Apply 0 of 1".
+  const [seenOps, setSeenOps] = useState(ops);
+  if (seenOps !== ops && seenOps.length !== ops.length) {
+    setSeenOps(ops);
+    setSelected(new Set(ops.map((_, i) => i)));
+  }
   const blocked = useMemo(
     () => new Set(blockedBySkips(ops as ChangeOp[], [...selected])),
     [ops, selected],
