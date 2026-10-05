@@ -14,6 +14,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { dayPlanMinutes } from "@/lib/planner/plan-window";
 import { busyOn, loadActiveCommitments } from "@/lib/planner/commitments";
+import { loadPreferences } from "@/lib/planner/preference-store";
+import { workdayEndMinute } from "@/lib/planner/preferences";
 import {
   DAY_TASK_SELECT,
   PLAN_REPLACE_ENTITY,
@@ -341,7 +343,10 @@ export async function replanToday(
     return { ok: false, reason: "no_plan", error: "Today has no plan yet." };
   }
 
-  const commitments = await loadActiveCommitments(supabase, userId, params.today);
+  const [commitments, preferences] = await Promise.all([
+    loadActiveCommitments(supabase, userId, params.today),
+    loadPreferences(userId, supabase),
+  ]);
   // Busy: fixed commitments, and the user's own timed tasks still to do.
   const ownTasks = tasks.flatMap((t) => {
     const start = clockToMinutes(t.start_time);
@@ -350,7 +355,8 @@ export async function replanToday(
       : [];
   });
   const startMinute = params.startMinute ?? replanStartMinute(params.nowMinute);
-  const endMinute = Math.min(24 * 60, startMinute + dayPlanMinutes(startMinute));
+  // The user's own end of work ("no work after 22:00", docs/preferences.md) ends it too.
+  const endMinute = Math.min(24 * 60, startMinute + dayPlanMinutes(startMinute, workdayEndMinute(preferences)));
   const result = replanRestOfDay({
     tasks: open,
     date: params.today,

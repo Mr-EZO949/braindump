@@ -40,6 +40,7 @@ per user) · `peak` (start–end, one per user) · `rule` (title).
 | Surface | What changes |
 |---|---|
 | Day plan (Planner screen `/api/assistant/plan`, chat `plan_day`) | "no work after 22:00" ends a day plan there instead of 23:00 (`planWindowMinutes(…, dayEndMinute)`). On a plan of 4h+, each budget for that weekday becomes a request ("Coding — your 3h a day" → container blocks on the linked node), after what the user typed (a budget for something they named is skipped); all budgets ≤ 60% of the session, scaled in 15-min steps. Best hours, working hours, rules and a budget's part of day go to the plan model as context lines. Chat's `plan_day` now also passes the "About you" working hours. No plan prompt change. |
+| Replan (`replan_today`, the Replan button — docs/replan.md) | The rest of today ends at the user's end of work, not 23:00. |
 | Focus (`daily-brief`, `top-now`) | A budget for today on something nothing inside was finished on today: its work gets +150 (under carried-over) and the line "Your 3h a day on Coding — not started today". |
 | Chat snapshot | `[STANDING PREFERENCES]` block (priority 91, ordered by kind then id). |
 
