@@ -13,7 +13,6 @@
 // what the user only ASKED about is not applied. Costs ≈ $0.005–0.015 a case
 // (Haiku, measured from ai_runs). Never point it at a real account.
 
-/* eslint-disable no-console */
 
 import { mkdirSync, writeFileSync } from "node:fs";
 
