@@ -15,6 +15,10 @@ checks how they look, not that the data path works.
 Pure logic: `src/lib/planner/commitments.ts` (schedule math, words, loading) and
 `src/lib/planner/commitment-changes.ts` (tool/dump validation, Undo), both unit-tested.
 
+Time budgets and working hours the user wants ("4h a day coding", "no work
+after 10pm") are not busy time — they're standing preferences,
+`docs/preferences.md`.
+
 "Stats every day at 2pm" used to live only as free text on a node, so Focus and the
 planner didn't know when the user is busy. Now it's a weekly row, and every surface
 that suggests *when* to work reads it as busy time.
