@@ -30,6 +30,16 @@ export const DURATION_BY_TYPE: Record<string, number> = {
   area: 30,
 };
 
+/**
+ * How long one sitting on a node should be: today's plan if it has it, else
+ * the per-type estimate. Focus's "about N min" and the Focus Zone's timer
+ * both read this, so they always agree.
+ */
+export function suggestedFocusMinutes(nodeType: string, plannedMinutes?: number | null): number {
+  if (typeof plannedMinutes === "number" && plannedMinutes > 0) return Math.round(plannedMinutes);
+  return DURATION_BY_TYPE[nodeType] ?? 30;
+}
+
 export const BREAK_MINUTES = 10;
 export const DAY_START_MINUTE = 9 * 60;
 export const DAY_END_MINUTE = 21 * 60;

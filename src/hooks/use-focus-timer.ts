@@ -31,6 +31,8 @@ export type FocusTimerControls = {
   pause: () => void;
   resume: () => void;
   stop: () => void;
+  /** Add minutes to the running session ("10 more minutes"); a finished one runs again. */
+  extend: (minutes: number) => void;
 };
 
 // Mirrors the per-workspace key shape used elsewhere; null workspace gets its
@@ -187,5 +189,27 @@ export function useFocusTimer(workspaceId: string | null): FocusTimerControls {
     persist(null);
   }, [persist]);
 
-  return { timer, remainingSeconds, start, pause, resume, stop };
+  const extend = useCallback(
+    (minutes: number) => {
+      setTimer((current) => {
+        if (!current) return current;
+        const now = Date.now();
+        // Past the end, the session restarts from what has run so far plus the extra.
+        const ranMinutes = elapsedMs(current, now) / 60_000;
+        const base = Math.max(current.durationMinutes, ranMinutes);
+        const next: FocusTimer = {
+          ...current,
+          durationMinutes: base + minutes,
+          ...(current.pausedAt !== null
+            ? { accumulatedPausedMs: current.accumulatedPausedMs + (now - current.pausedAt), pausedAt: null }
+            : {}),
+        };
+        saveTimer(workspaceId, next);
+        return next;
+      });
+    },
+    [workspaceId],
+  );
+
+  return { timer, remainingSeconds, start, pause, resume, stop, extend };
 }

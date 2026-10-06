@@ -3,7 +3,7 @@
 
 import { isLiveEdge } from "@/lib/graph/archive-edges";
 import { getEdgeRelationOptionIdForSelection, type EdgeRelationOptionId } from "@/lib/graph/relationships";
-import { NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
+import { CHECKABLE_TYPES, NODE_TYPE_INFO, normalizeNodeType } from "@/lib/graph/node-types";
 import type { Edge, GraphData, Node, NodeType } from "@/types/graph";
 
 // How long a completed node stays on the graph board before moving to the
@@ -176,6 +176,34 @@ export function indexIncidentEdges(graphData: GraphData) {
     }
   }
   return { incidentEdgesByNode, nodesById };
+}
+
+/**
+ * The Focus Zone's step list: a node's direct belongs_to children that can be
+ * ticked off, open and done, in the user's reading order.
+ */
+export function zoneStepsOf(
+  graphData: GraphData,
+  nodeId: string,
+): Array<{ id: string; title: string; done: boolean }> {
+  const childIds = new Set(
+    graphData.edges
+      .filter((edge) => edge.edge_type === "belongs_to" && edge.target_node_id === nodeId && isLiveEdge(edge))
+      .map((edge) => edge.source_node_id),
+  );
+  return graphData.nodes
+    .filter(
+      (node) =>
+        childIds.has(node.id) &&
+        CHECKABLE_TYPES.has(node.node_type) &&
+        (node.status === "active" || node.status === "completed" || !node.status),
+    )
+    .sort(
+      (a, b) =>
+        (a.reading_order ?? Number.MAX_SAFE_INTEGER) - (b.reading_order ?? Number.MAX_SAFE_INTEGER) ||
+        a.created_at.localeCompare(b.created_at),
+    )
+    .map((node) => ({ id: node.id, title: node.title, done: node.status === "completed" }));
 }
 
 /**

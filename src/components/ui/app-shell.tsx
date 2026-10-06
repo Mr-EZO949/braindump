@@ -6,6 +6,7 @@
 // src/components/app-shell/; this file composes them.
 
 import { useMemo } from "react";
+import { AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 
 import { useBrainDump } from "@/components/app-shell/use-brain-dump";
@@ -42,12 +43,12 @@ import { ShellViews } from "@/components/app-shell/shell-views";
 import { ClusterSuggestionStack } from "@/components/clustering/cluster-suggestion-stack";
 import { NudgeRibbon } from "@/components/nudges/nudge-ribbon";
 import { SystemPanel } from "@/components/panel/system-panel";
-import { FocusTimerPill } from "@/components/ui/focus-timer-pill";
+import { FocusReturnChip, FocusZone } from "@/components/focus/focus-zone";
 import { isWeeklyReflectionAvailable } from "@/lib/time/weekly-unlock";
 import { MergeAlert } from "@/components/ui/merge-alert";
 import { ProposedEdgesReview } from "@/components/ui/proposed-edges-review";
 import { TopCommandBar } from "@/components/ui/top-command-bar";
-import { parentContextTitle } from "@/lib/graph/visible-graph";
+import { parentContextTitle, zoneStepsOf } from "@/lib/graph/visible-graph";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type AppShellProps = {
@@ -134,7 +135,9 @@ export function AppShell({ initialUser }: AppShellProps) {
     showToast,
   });
   const { changeStatus, mirrorPlannerStatus } = useNodeStatus({ graph, planner, showToast });
-  const focus = useFocusSession({ supabase, userId, workspaceId, graph, planner, showToast });
+  const focus = useFocusSession({ supabase, userId, workspaceId, graph, planner, changeStatus, showToast });
+  // The node the Focus Zone is open on (gone from the graph → the Zone closes).
+  const zoneNode = focus.zone ? graph.graphData.nodes.find((n) => n.id === focus.zone?.nodeId) ?? null : null;
   const freeze = useFreezeNudge({
     userId,
     workspaceId,
@@ -259,7 +262,7 @@ export function AppShell({ initialUser }: AppShellProps) {
           dump={dump}
           nudges={nudges}
           changeStatus={changeStatus}
-          startFocus={focus.startFocus}
+          startFocus={(nodeId) => focus.openZone(nodeId)}
           selectNode={editor.selectNode}
         />
       </div>
@@ -372,13 +375,15 @@ export function AppShell({ initialUser }: AppShellProps) {
           panels.setAppMode("graph");
           dialogs.setWhatNowOpen(false);
           editor.selectNode(nodeId);
-          // "Pick something to work on" is the focus intent — set up the
-          // timer (paused) on the chosen node. We do NOT auto-break the
-          // node into subtasks anymore (testing journal #4): pressing
-          // Focus should never silently fire an AI breakdown. If the node
-          // needs steps, the user breaks it down from the details panel
-          // (which selectNode just opened).
-          void focus.startFocus(nodeId);
+        }}
+        onWorkOn={(nodeId, minutes, reason) => {
+          // "Work on this" → the Focus Zone, with the minutes Focus showed.
+          // Nothing runs until Start there, and no AI breakdown fires
+          // (testing journal #4). The node is selected behind it, so
+          // stepping out lands on its details.
+          dialogs.setWhatNowOpen(false);
+          editor.selectNode(nodeId);
+          void focus.openZone(nodeId, { minutes, reason });
         }}
         onScheduledToPlanner={() => {
           dialogs.setWhatNowOpen(false);
@@ -404,19 +409,42 @@ export function AppShell({ initialUser }: AppShellProps) {
         workspaceName={workspaceName}
       />
 
-      {/* Focus timer pill — persistent across every mode/view. */}
-      {focus.focusTimer.timer && (
-        <FocusTimerPill
-          timer={focus.focusTimer.timer}
-          remainingSeconds={focus.focusTimer.remainingSeconds}
-          onPause={focus.focusTimer.pause}
-          onResume={focus.focusTimer.resume}
-          onStop={focus.focusTimer.stop}
-          onDone={() => {
-            void focus.finishFocus();
-          }}
-        />
-      )}
+      {/* The Focus Zone — fullscreen, one thing; stepping out of a running
+          session leaves a small chip to come back. */}
+      <AnimatePresence>
+        {zoneNode ? (
+          <FocusZone
+            key={zoneNode.id}
+            title={zoneNode.title}
+            context={parentContextTitle(graph.graphData, zoneNode.id, selectedWorkspace?.bootstrap_root_node_id)}
+            reason={focus.zone?.reason ?? null}
+            suggestedMinutes={focus.zone?.minutes ?? 30}
+            timer={focus.focusTimer.timer?.nodeId === zoneNode.id ? focus.focusTimer.timer : null}
+            remainingSeconds={focus.focusTimer.remainingSeconds}
+            steps={zoneStepsOf(graph.graphData, zoneNode.id)}
+            onStart={focus.startZoneTimer}
+            onPause={focus.focusTimer.pause}
+            onResume={focus.focusTimer.resume}
+            onExtend={focus.focusTimer.extend}
+            onFinish={(completed) => void focus.finishFocus({ completed })}
+            onStepOut={focus.stepOutOfZone}
+            onToggleStep={(stepId, done) => void changeStatus(stepId, done ? "completed" : "active")}
+          />
+        ) : null}
+      </AnimatePresence>
+      <AnimatePresence>
+        {!zoneNode && focus.focusTimer.timer ? (
+          <FocusReturnChip
+            key="focus-return"
+            title={focus.focusTimer.timer.title}
+            remainingSeconds={focus.focusTimer.remainingSeconds}
+            paused={focus.focusTimer.timer.pausedAt !== null}
+            onReturn={() => {
+              if (focus.focusTimer.timer) void focus.openZone(focus.focusTimer.timer.nodeId);
+            }}
+          />
+        ) : null}
+      </AnimatePresence>
       {toast && <div className="app-toast">{toast}</div>}
     </div>
   );

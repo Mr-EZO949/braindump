@@ -16517,163 +16517,695 @@ body:has(.app-shell[data-app-mode="graph"]) {
 }
 
 
-/* ── Focus timer pill ──────────────────────────────────────────────────────
-   Persistent, fixed bottom-center pill that survives every mode/view switch.
-   Counts down a focus session; "Done" completes it (scarlet accent). */
-.focus-pill {
-  /* Bottom-right, not bottom-center — the mode-dock owns the bottom-center and
-     the pill was overlapping it, making the dock buttons unclickable while a
-     timer ran. */
+/* ── Focus Zone ────────────────────────────────────────────────────────────
+   Fullscreen, lights down whatever the theme: the task, the time, one button.
+   The ember field drifts slowly when ready, breathes (~11 s, a calm breath)
+   while the timer runs, and stills when paused. One bold thing: the clock. */
+.fz {
+  --fz-ink: #0b0b0d;
+  --fz-cream: #f2efe9;
+  --fz-cream-2: rgba(242, 239, 233, 0.62);
+  --fz-cream-3: rgba(242, 239, 233, 0.38);
+  --fz-red: #d53a47;
+  --fz-ember: #f0a35e;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden auto;
+  background: var(--fz-ink);
+  color: var(--fz-cream);
+  font-family: var(--font-geist-sans), sans-serif;
+}
+
+.fz-field {
+  position: absolute;
+  inset: -20%;
+  pointer-events: none;
+  opacity: 0.55;
+  transition: opacity 1.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.fz[data-phase="running"] .fz-field {
+  opacity: 1;
+  animation: fz-breathe 11s ease-in-out infinite;
+}
+
+.fz[data-phase="running"][data-paused] .fz-field {
+  opacity: 0.4;
+  animation-play-state: paused;
+}
+
+.fz[data-phase="done"] .fz-field {
+  opacity: 1;
+  animation: fz-bloom 2.4s cubic-bezier(0.16, 1, 0.3, 1) 1;
+}
+
+.fz-ember {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  mix-blend-mode: screen;
+  will-change: transform;
+}
+
+.fz-ember--a {
+  width: 58vmax;
+  height: 58vmax;
+  left: 8%;
+  top: 30%;
+  background: radial-gradient(circle, rgba(213, 58, 71, 0.55), rgba(213, 58, 71, 0) 68%);
+  animation: fz-drift-a 46s ease-in-out infinite alternate;
+}
+
+.fz-ember--b {
+  width: 46vmax;
+  height: 46vmax;
+  right: 6%;
+  top: 12%;
+  background: radial-gradient(circle, rgba(240, 163, 94, 0.32), rgba(240, 163, 94, 0) 66%);
+  animation: fz-drift-b 58s ease-in-out infinite alternate;
+}
+
+.fz-ember--c {
+  width: 52vmax;
+  height: 52vmax;
+  left: 34%;
+  bottom: 2%;
+  background: radial-gradient(circle, rgba(122, 22, 44, 0.7), rgba(122, 22, 44, 0) 70%);
+  animation: fz-drift-c 64s ease-in-out infinite alternate;
+}
+
+.fz[data-paused] .fz-ember {
+  animation-play-state: paused;
+}
+
+/* Film grain, so the dark never looks flat. */
+.fz-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.07;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes fz-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.78;
+  }
+  50% {
+    transform: scale(1.07);
+    opacity: 1;
+  }
+}
+
+@keyframes fz-bloom {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  35% {
+    transform: scale(1.12);
+    filter: brightness(1.45);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes fz-drift-a {
+  to {
+    transform: translate(12vmax, -8vmax) scale(1.12);
+  }
+}
+
+@keyframes fz-drift-b {
+  to {
+    transform: translate(-14vmax, 10vmax) scale(0.9);
+  }
+}
+
+@keyframes fz-drift-c {
+  to {
+    transform: translate(-8vmax, -12vmax) scale(1.08);
+  }
+}
+
+.fz-stepout {
+  position: fixed;
+  top: max(18px, env(safe-area-inset-top, 0px));
+  right: 20px;
+  z-index: 2;
+  padding: 8px 14px;
+  border: 1px solid rgba(242, 239, 233, 0.12);
+  border-radius: 999px;
+  background: rgba(11, 11, 13, 0.35);
+  backdrop-filter: blur(10px);
+  color: var(--fz-cream-2);
+  font-size: 13px;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition:
+    color var(--motion-fast),
+    border-color var(--motion-fast);
+}
+
+.fz-stepout:hover {
+  color: var(--fz-cream);
+  border-color: rgba(242, 239, 233, 0.28);
+}
+
+.fz-stage {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(20px, 4vh, 36px);
+  width: min(640px, 100%);
+  margin: auto;
+  padding: 72px 16px 48px;
+  text-align: center;
+}
+
+.fz-task {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+}
+
+.fz-context {
+  color: var(--fz-cream-3);
+  font-size: 14px;
+  letter-spacing: -0.005em;
+}
+
+.fz-title {
+  margin: 0;
+  font-size: clamp(26px, 4.4vw, 40px);
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+  color: var(--fz-cream);
+  max-width: 20ch;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  transition: font-size 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.fz[data-phase="running"] .fz-title {
+  font-size: clamp(20px, 3vw, 28px);
+  color: var(--fz-cream-2);
+}
+
+.fz-reason {
+  max-width: 52ch;
+  margin: 4px 0 0;
+  text-wrap: balance;
+  color: rgba(240, 163, 94, 0.9);
+  font-size: 14px;
+  line-height: 1.45;
+  letter-spacing: -0.005em;
+}
+
+.fz-ring-wrap {
+  position: relative;
+  width: min(72vmin, 400px);
+  aspect-ratio: 1;
+}
+
+.fz-ring {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.fz-ring-track {
+  fill: none;
+  stroke: rgba(242, 239, 233, 0.08);
+  stroke-width: 2;
+}
+
+.fz-ring-arc {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+  filter: drop-shadow(0 0 10px rgba(213, 58, 71, 0.55));
+}
+
+.fz-ring-head {
+  fill: #fff4ea;
+  filter: drop-shadow(0 0 8px rgba(240, 163, 94, 0.95)) drop-shadow(0 0 22px rgba(213, 58, 71, 0.8));
+  transition:
+    cx 1s linear,
+    cy 1s linear;
+}
+
+.fz-time {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Thin Inter tabular figures: steady width as they count, open zeros. */
+.fz-digits {
+  font-size: clamp(60px, 13vmin, 112px);
+  font-weight: 200;
+  line-height: 1;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+  color: var(--fz-cream);
+}
+
+.fz-colon {
+  display: inline-block;
+  margin: 0 0.04em;
+  transform: translateY(-0.08em);
+}
+
+.fz[data-phase="running"]:not([data-paused]) .fz-colon {
+  animation: fz-tick 2s ease-in-out infinite;
+}
+
+.fz[data-paused] .fz-digits {
+  color: var(--fz-cream-2);
+}
+
+@keyframes fz-tick {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.fz-time-up {
+  font-size: clamp(34px, 7vmin, 56px);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  color: var(--fz-cream);
+}
+
+.fz-time-sub {
+  color: var(--fz-cream-3);
+  font-size: 13px;
+  letter-spacing: -0.005em;
+}
+
+.fz-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.fz-controls--row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.fz-length {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(242, 239, 233, 0.12);
+  border-radius: 999px;
+  background: rgba(242, 239, 233, 0.04);
+}
+
+.fz-length-btn {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fz-cream-2);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.fz-length-btn:hover:not(:disabled) {
+  background: rgba(242, 239, 233, 0.08);
+  color: var(--fz-cream);
+}
+
+.fz-length-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.fz-length-value {
+  min-width: 78px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fz-cream);
+}
+
+.fz-start {
+  min-height: 54px;
+  padding: 0 34px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fz-red);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+    0 14px 44px rgba(213, 58, 71, 0.42);
+  transition:
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.fz-start:hover {
+  background: #e14654;
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+    0 18px 54px rgba(213, 58, 71, 0.55);
+}
+
+.fz-start:active {
+  transform: scale(0.98);
+}
+
+.fz-ghost {
+  min-height: 44px;
+  padding: 0 20px;
+  border: 1px solid rgba(242, 239, 233, 0.14);
+  border-radius: 999px;
+  background: rgba(242, 239, 233, 0.04);
+  color: var(--fz-cream);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition:
+    background var(--motion-fast),
+    border-color var(--motion-fast);
+}
+
+.fz-ghost:hover {
+  background: rgba(242, 239, 233, 0.09);
+  border-color: rgba(242, 239, 233, 0.26);
+}
+
+.fz-ghost--strong {
+  border-color: rgba(213, 58, 71, 0.55);
+  background: rgba(213, 58, 71, 0.16);
+}
+
+.fz-ghost--strong:hover {
+  border-color: rgba(213, 58, 71, 0.8);
+  background: rgba(213, 58, 71, 0.26);
+}
+
+.fz-quiet {
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--fz-cream-3);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color var(--motion-fast);
+}
+
+.fz-quiet:hover {
+  color: var(--fz-cream-2);
+}
+
+.fz-ask {
+  margin: 0;
+  color: var(--fz-cream-2);
+  font-size: 16px;
+}
+
+.fz :is(button):focus-visible {
+  outline: 2px solid rgba(240, 163, 94, 0.9);
+  outline-offset: 3px;
+}
+
+.fz-steps {
+  width: min(420px, 100%);
+  text-align: left;
+}
+
+.fz-steps-count {
+  margin: 0 0 8px;
+  color: var(--fz-cream-3);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.fz-steps ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid rgba(242, 239, 233, 0.07);
+}
+
+.fz-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 4px;
+  border: 0;
+  border-bottom: 1px solid rgba(242, 239, 233, 0.07);
+  background: transparent;
+  color: var(--fz-cream-2);
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--motion-fast);
+}
+
+.fz-step:hover {
+  color: var(--fz-cream);
+}
+
+.fz-step-box {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1.5px solid rgba(242, 239, 233, 0.35);
+  border-radius: 50%;
+  transition:
+    background 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.fz-step[data-done] {
+  color: var(--fz-cream-3);
+}
+
+.fz-step[data-done] .fz-step-title {
+  text-decoration: line-through;
+  text-decoration-color: rgba(242, 239, 233, 0.3);
+}
+
+.fz-step[data-done] .fz-step-box {
+  border-color: var(--fz-red);
+  background: var(--fz-red);
+  box-shadow: 0 0 12px rgba(213, 58, 71, 0.6);
+}
+
+@media (max-width: 640px) {
+  .fz-stage {
+    padding-top: 64px;
+  }
+
+  .fz-ring-wrap {
+    width: min(78vw, 320px);
+  }
+
+  .fz-start {
+    width: 100%;
+    min-width: 240px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fz-field,
+  .fz-ember,
+  .fz-colon {
+    animation: none !important;
+  }
+
+  .fz-ring-arc,
+  .fz-ring-head {
+    transition: none;
+  }
+}
+
+/* Stepped out of a running session: a small way back in. Bottom-right, not
+   bottom-center — the mode dock owns the bottom-center. */
+.fz-return {
   position: fixed;
   bottom: 18px;
   right: 24px;
   z-index: 60;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 10px 8px 16px;
+  gap: 10px;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 9px 16px 9px 14px;
+  border: 1px solid rgba(213, 58, 71, 0.4);
   border-radius: 999px;
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-surface-elevated);
-  box-shadow: var(--shadow-shell);
-  max-width: calc(100vw - 24px);
+  background: #0b0b0d;
+  color: #f2efe9;
+  font-size: 13px;
+  box-shadow: 0 10px 30px rgba(213, 58, 71, 0.22);
+  cursor: pointer;
 }
 
-.focus-pill__title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  max-width: 200px;
+.fz-return:hover {
+  border-color: rgba(213, 58, 71, 0.75);
+}
+
+.fz-return-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d53a47;
+  animation: lockin-pip-pulse 2.6s ease-out infinite;
+}
+
+.fz-return[data-paused] .fz-return-dot {
+  animation: none;
+  background: rgba(242, 239, 233, 0.4);
+}
+
+.fz-return-title {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.focus-pill__time {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text-secondary);
+.fz-return-time {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
+  color: rgba(242, 239, 233, 0.62);
 }
 
-.focus-pill__actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.focus-pill__btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background var(--motion-fast),
-    color var(--motion-fast),
-    border-color var(--motion-fast);
-}
-
-.focus-pill__btn--ghost {
-  border-color: rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.025);
-  color: var(--color-text-secondary);
-}
-.focus-pill__btn--ghost:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--color-text-primary);
-  border-color: rgba(255, 255, 255, 0.14);
-}
-
-.focus-pill__btn--done {
-  background: var(--color-accent-primary);
-  color: #fff;
-}
-.focus-pill__btn--done:hover {
-  background: var(--color-accent-primary-hover);
-}
-
-:root[data-theme="light"] .focus-pill {
-  background: var(--color-bg-surface-elevated);
-  border-color: var(--color-border-subtle);
-}
-:root[data-theme="light"] .focus-pill__btn--ghost {
-  border-color: rgba(0, 0, 0, 0.1);
-  background: rgba(0, 0, 0, 0.02);
-}
-:root[data-theme="light"] .focus-pill__btn--ghost:hover {
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.16);
-}
-
-/* Phones: the pill sat bottom-right on top of the tab bar (Start, Stop and
-   Done over Focus / Dump). It is one full-width row just above the bar now,
-   rides above the Details sheet, and steps aside for full-screen surfaces. */
 @media (max-width: 640px) {
-  .focus-pill {
+  .fz-return {
     left: 8px;
     right: 8px;
-    /* The tab bar's top edge is 80px up (one row). */
     bottom: calc(88px + env(safe-area-inset-bottom, 0px));
-    gap: 8px;
-    padding: 6px 6px 6px 14px;
     max-width: none;
   }
 
-  .focus-pill__title {
-    flex: 1 1 auto;
-    min-width: 0;
-    max-width: none;
-  }
-
-  .focus-pill__actions {
-    gap: 4px;
-  }
-
-  .focus-pill__btn {
-    min-height: 32px;
-    padding: 5px 11px;
-  }
-
-  /* The Details bottom sheet starts at 40dvh: sit just above its edge. */
-  body:has(.context-rail-responsive[data-open="true"][data-tab="details"]) .focus-pill {
+  body:has(.context-rail-responsive[data-open="true"][data-tab="details"]) .fz-return {
     bottom: calc(60dvh + 8px);
   }
 
-  /* Full-height chat, the create/edit sheet, the account panel, the Focus
-     card and the Brain Dump card own the bottom: the pill steps aside. */
-  body:has(.context-rail-responsive[data-open="true"]:not([data-tab="details"])) .focus-pill,
-  body:has(.graph-create-overlay-open) .focus-pill,
-  body:has(.system-panel[aria-hidden="false"]) .focus-pill,
-  body:has(.lockin-card) .focus-pill,
-  body:has(.brain-dump-card) .focus-pill {
+  body:has(.context-rail-responsive[data-open="true"]:not([data-tab="details"])) .fz-return,
+  body:has(.graph-create-overlay-open) .fz-return,
+  body:has(.system-panel[aria-hidden="false"]) .fz-return,
+  body:has(.lockin-card) .fz-return,
+  body:has(.brain-dump-card) .fz-return {
     display: none;
   }
 
-  /* The "N items look ready" nudge and the done shelf stack above it. */
-  body:has(.focus-pill) .freeze-nudge {
-    bottom: calc(142px + env(safe-area-inset-bottom, 0px));
-  }
-
-  body:has(.focus-pill) .history-shelf-anchor {
+  body:has(.fz-return) .freeze-nudge,
+  body:has(.fz-return) .history-shelf-anchor {
     bottom: calc(142px + env(safe-area-inset-bottom, 0px));
   }
 }
 
+/* ── Safe to ignore today (Focus card, Planner) ─────────────────────────── */
+.set-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.set-aside-head {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.set-aside-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.set-aside-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 12px;
+  border-left: 2px solid var(--color-border-subtle);
+}
+
+.set-aside-title {
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.set-aside-why {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.set-aside--plan {
+  margin: 4px 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-faint);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+}
+
 /* ── App toast ─────────────────────────────────────────────────────────────
-   Minimal hand-rolled toast (no library). Fixed bottom-center, sits above the
-   focus pill so a "Done." confirmation doesn't overlap it. */
+   Minimal hand-rolled toast (no library). Fixed bottom-center, above the
+   Focus Zone's return chip and the Zone itself. */
 .app-toast {
   position: fixed;
   bottom: 74px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 61;
+  z-index: 1001;
   padding: 10px 18px;
   border-radius: 999px;
   border: 1px solid var(--color-border-subtle);

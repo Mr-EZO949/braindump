@@ -6,15 +6,16 @@ import { CloseIcon, TargetIcon } from "@/components/ui/icons";
 import { StaleCheckCard } from "@/components/ui/stale-check-card";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
-  DURATION_BY_TYPE,
   minutesToHHMM,
   nowMinutesFloor,
   parseHHMM,
   planSchedule,
+  suggestedFocusMinutes,
   todayIsoDate,
 } from "@/lib/planner/auto-schedule";
 import { describeFreeTime, freeTimeInBusy, type BusyInterval } from "@/lib/planner/commitments";
 import { clientDayHints } from "@/lib/habits/streak";
+import type { SetAsideLine } from "@/lib/planner/set-aside";
 import type { StaleItem } from "@/lib/planner/skips";
 import type { NodeType } from "@/types/graph";
 import type { Nudge } from "@/types/chat";
@@ -28,6 +29,8 @@ type TopNode = {
   planning_signals: string[];
   // A waiting item whose check-back day arrived — a decision, not a work block.
   check_back?: boolean;
+  // Today's plan gives it this long — "about N min" and the Focus Zone use it.
+  planned_minutes?: number | null;
 };
 
 type LockInData = {
@@ -38,6 +41,8 @@ type LockInData = {
   busy_today?: BusyInterval[];
   // Planned and skipped on 2+ days, no deadline: out of `top` until answered.
   stale_check?: StaleItem[];
+  // "Safe to ignore today": what isn't picked and why that's fine (lib/planner/set-aside.ts).
+  set_aside?: SetAsideLine[];
 };
 
 // Focus is a $0 SQL brief, but pressing Focus still fired the endpoint on every
@@ -172,7 +177,10 @@ type WhatNowDialogProps = {
   // it changes, the Focus cache is treated as stale and re-fetched.
   graphSignature?: string;
   onClose: () => void;
+  // Selects the node (the check-back card's title).
   onFocusNode: (nodeId: string) => void;
+  // "Work on this": opens the Focus Zone with the minutes shown here.
+  onWorkOn: (nodeId: string, minutes: number, reason: string | null) => void;
   onScheduledToPlanner?: () => void;
   onSelectNudge?: (nudge: Nudge) => void;
   // A waiting item whose check-back day came: one tap settles it ($0).
@@ -190,10 +198,10 @@ function checkBackLine(node: TopNode): string {
   return rest ? rest.charAt(0).toUpperCase() + rest.slice(1) : "On hold — any news?";
 }
 
-// About how long a sitting on it takes — the same per-type estimate Focus
-// uses to fit work into a free window (lib/ai/planner.ts estimateMinutes).
-function estimateMinutes(nodeType: string): number {
-  return DURATION_BY_TYPE[nodeType] ?? 30;
+// About how long a sitting on it takes: today's plan if it has it, else the
+// per-type estimate. The Focus Zone starts from the same number.
+function sittingMinutes(node: TopNode): number {
+  return suggestedFocusMinutes(node.node_type, node.planned_minutes);
 }
 
 export function WhatNowDialog({
@@ -203,6 +211,7 @@ export function WhatNowDialog({
   graphSignature = "",
   onClose,
   onFocusNode,
+  onWorkOn,
   onScheduledToPlanner,
   onSelectNudge,
   onCheckBack,
@@ -358,6 +367,8 @@ export function WhatNowDialog({
         return;
       }
 
+      // The picks' "about N min" now come from these plan rows.
+      clearFocusCache(workspaceId);
       onScheduledToPlanner?.();
     } catch {
       setScheduleError("Could not add to planner.");
@@ -374,7 +385,8 @@ export function WhatNowDialog({
   // brief never shows a stale countdown.
   const free = freeTimeInBusy(data?.busy_today ?? [], nowMinutesFloor());
   const timeLine = describeFreeTime(free);
-  const heroMinutes = hero ? estimateMinutes(hero.node_type) : 0;
+  const heroMinutes = hero ? sittingMinutes(hero) : 0;
+  const setAside = data?.set_aside ?? [];
   const heroFits =
     !free.current && free.next && free.freeMinutes !== null && free.freeMinutes >= 15 && heroMinutes <= free.freeMinutes;
   const heroContext = hero ? contextFor?.(hero.id) ?? null : null;
@@ -517,8 +529,9 @@ export function WhatNowDialog({
               </motion.div>
             ) : (
               /* The ONE next action: what it is, where it lives, why now, how
-                 big — and one button. The button opens it and sets up the
-                 timer PAUSED (R1 #4); nothing here breaks it down or runs AI. */
+                 big — and one button. The button opens the Focus Zone with the
+                 same minutes; nothing runs until Start there, and nothing here
+                 breaks it down or runs AI (R1 #4). */
               <motion.div
                 animate={{ opacity: 1, y: 0 }}
                 className="lockin-hero lockin-hero--next"
@@ -543,7 +556,7 @@ export function WhatNowDialog({
                 <button
                   autoFocus
                   className="lockin-start"
-                  onClick={() => onFocusNode(hero.id)}
+                  onClick={() => onWorkOn(hero.id, heroMinutes, heroReason)}
                   type="button"
                 >
                   Work on this
@@ -567,6 +580,21 @@ export function WhatNowDialog({
                 {heroPosition + 1}/{top.length}
               </span>
             </motion.button>
+          ) : null}
+
+          {/* What it's fine to leave today, and why — relief, not a list to do. */}
+          {setAside.length > 0 ? (
+            <motion.div className="set-aside set-aside--focus" variants={ITEM_VARIANTS}>
+              <p className="set-aside-head">Safe to ignore today</p>
+              <ul className="set-aside-list">
+                {setAside.map((line) => (
+                  <li className="set-aside-row" key={line.id}>
+                    <span className="set-aside-title">{line.title}</span>
+                    <span className="set-aside-why">{line.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
           ) : null}
 
           {/* Quiet footer — plan the day, and at most one nudge */}

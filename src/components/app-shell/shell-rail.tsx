@@ -44,6 +44,7 @@ export function ShellRail({
   dump: Pick<BrainDump, "dumpProgress" | "submitChatInput">;
   nudges: Nudge[];
   changeStatus: (nodeId: string, status: Node["status"]) => Promise<void>;
+  // "Start working" opens the Focus Zone on the node.
   startFocus: (nodeId: string) => Promise<void>;
   selectNode: (nodeId: string | null) => void;
 }) {

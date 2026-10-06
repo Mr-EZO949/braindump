@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { buildPlannerCandidates } from "@/lib/ai/planner";
 import { preferencesFromMetadata } from "@/lib/planner/preferences";
+import { SET_ASIDE_FOCUS_MAX, setAsideFor } from "@/lib/planner/set-aside";
 import type { Nudge } from "@/types/chat";
 import { isISODate } from "@/lib/time/local-date";
 import { getRequestToday } from "@/lib/time/request-date";
@@ -95,7 +96,7 @@ export async function POST(req: NextRequest) {
       fitToFreeTime: true,
       // A daily time budget not started today leans forward (docs/preferences.md).
       preferences: preferencesFromMetadata(user.user_metadata),
-    }).catch(() => ({ candidates: [], busy_today: [], stale_check: [] })),
+    }).catch(() => ({ candidates: [], busy_today: [], stale_check: [], set_aside: [] })),
 
     supabase
       .from("lifecycle_events")
@@ -142,6 +143,8 @@ export async function POST(req: NextRequest) {
     current_importance_score: c.current_importance_score,
     planning_signals: c.planning_signals,
     check_back: c.check_back ?? false,
+    // Today's plan length for it — the hero's "about N min" and the Focus Zone's timer.
+    planned_minutes: c.planned_minutes ?? null,
   }));
 
   // ── yesterday wins ───────────────────────────────────────────────────────
@@ -223,5 +226,8 @@ export async function POST(req: NextRequest) {
     // "Does this still matter?" — work planned and skipped on 2+ days with no
     // deadline; it's out of the picks above until answered (lib/planner/skips.ts).
     stale_check: plannerResult.stale_check,
+    // "Safe to ignore today": what Focus isn't picking and why that's fine
+    // (lib/planner/set-aside.ts) — none of the picks above, a few lines.
+    set_aside: setAsideFor(plannerResult.set_aside, top.map((t) => t.id), SET_ASIDE_FOCUS_MAX),
   });
 }

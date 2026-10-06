@@ -22,6 +22,7 @@ export function ShellDialogs({
   graphSignature,
   contextFor,
   onFocusNode,
+  onWorkOn,
   onScheduledToPlanner,
   onCheckBack,
   onGraphChanged,
@@ -34,6 +35,7 @@ export function ShellDialogs({
   graphSignature: string;
   contextFor: WhatNowProps["contextFor"];
   onFocusNode: WhatNowProps["onFocusNode"];
+  onWorkOn: WhatNowProps["onWorkOn"];
   onScheduledToPlanner: WhatNowProps["onScheduledToPlanner"];
   onCheckBack: WhatNowProps["onCheckBack"];
   onGraphChanged: WhatNowProps["onGraphChanged"];
@@ -75,6 +77,7 @@ export function ShellDialogs({
               contextFor={contextFor}
               onClose={() => dialogs.setWhatNowOpen(false)}
               onFocusNode={onFocusNode}
+              onWorkOn={onWorkOn}
               onScheduledToPlanner={onScheduledToPlanner}
               onCheckBack={onCheckBack}
               onGraphChanged={onGraphChanged}
