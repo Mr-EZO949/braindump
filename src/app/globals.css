@@ -12993,6 +12993,42 @@ body:has(.graph-create-overlay-open) .freeze-nudge {
   margin: 12px 20px 0;
 }
 
+/* "Stats exam is due tomorrow and isn't in this plan" + Build around it */
+.planner-due-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 20px 0;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+}
+
+.planner-due-note p {
+  flex: 1;
+  margin: 0;
+}
+
+.planner-due-note button {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 560;
+  color: var(--color-text-primary);
+  background: none;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+
+.planner-due-note button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Loading */
 .planner-loading {
   display: flex;

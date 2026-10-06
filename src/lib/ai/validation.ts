@@ -497,6 +497,8 @@ export interface PlanBlockContext {
 const REQUEST_DEFAULT_MINUTES = 60;
 const REQUEST_UNMATCHED_DEFAULT_MINUTES = 45;
 const REQUEST_UNMATCHED_MIN_MINUTES = 30;
+/** Squeezed to fit, an ask keeps at least this much — a smaller block isn't a block. */
+const REQUEST_SQUEEZE_MIN_MINUTES = 15;
 // A request planned shorter than asked by more than this is topped up.
 const REQUEST_SLACK_MINUTES = 15;
 const REQUEST_BLOCK_MAX_MINUTES = 180;
@@ -724,6 +726,24 @@ export function makeRoomForRequests<T extends ParsedBlock>(blocks: T[], requeste
     const cut = b.duration_minutes - over >= 30 ? over : b.duration_minutes;
     b.duration_minutes -= cut;
     over -= cut;
+  }
+  // They asked for more than fits ("1h leetcode, 30 min CV" + the due exam in
+  // 90 min): breaks go, then each ask shrinks by the same share — not the
+  // last one cut to a 5-minute stub (owner e2e 10-06).
+  for (const b of byLatest) {
+    if (over <= 0) break;
+    if (b.block_type !== "break" && b.block_type !== "buffer") continue;
+    const cut = Math.min(over, b.duration_minutes);
+    b.duration_minutes -= cut;
+    over -= cut;
+  }
+  if (over > 0) {
+    const asked = blocks.filter((b) => requested.has(b) && b.duration_minutes > 0);
+    const askedTotal = asked.reduce((sum, b) => sum + b.duration_minutes, 0);
+    const share = askedTotal > 0 ? Math.max(0, (askedTotal - over) / askedTotal) : 1;
+    for (const b of asked) {
+      b.duration_minutes = Math.max(REQUEST_SQUEEZE_MIN_MINUTES, Math.floor((b.duration_minutes * share) / 5) * 5);
+    }
   }
   for (let i = blocks.length - 1; i >= 0; i -= 1) if (blocks[i].duration_minutes <= 0) blocks.splice(i, 1);
 }

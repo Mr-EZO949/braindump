@@ -108,6 +108,16 @@ describe("pinFromMessage — a time the chat model dropped", () => {
     expect(out.include).toBe("look into selectives, update CV");
   });
 
+  it("the plan's own span is not an item's time: 'rebuild 18:00 to 19:30: 1h of leetcode'", () => {
+    const message = "rebuild just 18:00 to 19:30 for me: 1h of leetcode and 30 min on my cv";
+    const out = pinFromMessage("1h of leetcode, 30 min on CV", message, { start: 18 * 60, end: 19 * 60 + 30 });
+    expect(out.fixed).toEqual([]);
+    expect(out.include).toBe("1h of leetcode, 30 min on CV");
+    // The Tuesday case keeps working with its window (12:30–23:00).
+    const tuesday = pinFromMessage("1.5h mealprep", "i want 1.5h mealprep right now from like 12:30", { start: 750, end: 1380 });
+    expect(tuesday.fixed).toHaveLength(1);
+  });
+
   it("an item in the same sentence as another time doesn't take that time", () => {
     const out = pinFromMessage(
       "Look into selectives, update CV",

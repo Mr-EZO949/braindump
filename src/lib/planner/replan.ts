@@ -70,17 +70,52 @@ function sameDay(task: Pick<DayPlanTask, "scheduled_date">, date: string): boole
  * What a new plan for `date` replaces: the plan's unfinished tasks that start
  * before the new plan ends (null = it runs to the end of the day). A task with
  * no time is replaced too. Ticked tasks and hand-typed ones stay.
+ *
+ * `keepBefore`: the new plan covers only part of the day from `startMinute`
+ * ("rebuild 19:00–21:00"), so what ends by then and hasn't happened yet by
+ * `nowMinute` stays (null = a later day: all of it). Past unfinished tasks
+ * still go — they're skips. Until 10-06 a 19–21 plan wiped the afternoon.
  */
 export function supersededTasks(
   tasks: DayPlanTask[],
   date: string,
   planEndMinute: number | null,
   planMade?: ReadonlySet<string>,
+  keepBefore?: { startMinute: number; nowMinute: number | null },
 ): DayPlanTask[] {
   return tasks.filter((task) => {
     if (!sameDay(task, date) || task.done || !isPlanTask(task, planMade)) return false;
     const start = clockToMinutes(task.start_time);
+    if (start !== null && keepBefore) {
+      const end = start + taskMinutes(task);
+      const notYet = keepBefore.nowMinute === null || end > keepBefore.nowMinute;
+      if (end <= keepBefore.startMinute && notYet) return false;
+    }
     return planEndMinute === null || start === null || start < planEndMinute;
+  });
+}
+
+/**
+ * The unfinished tasks on `date` a plan for [startMinute, endMinute) leaves
+ * where they are: they end by its start and haven't happened yet by
+ * `nowMinute` (null = a later day), or start at or after its end. Their work
+ * is planned already — a plan for 14–17 must not book a second "Update CV"
+ * when one sits at 20:00.
+ */
+export function keptOutsideWindow(
+  tasks: DayPlanTask[],
+  date: string,
+  startMinute: number,
+  endMinute: number,
+  nowMinute: number | null,
+): DayPlanTask[] {
+  return tasks.filter((task) => {
+    if (!sameDay(task, date) || task.done) return false;
+    const start = clockToMinutes(task.start_time);
+    if (start === null) return false;
+    const end = start + taskMinutes(task);
+    if (start >= endMinute) return true;
+    return end <= startMinute && (nowMinute === null || end > nowMinute);
   });
 }
 

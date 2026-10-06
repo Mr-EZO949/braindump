@@ -355,12 +355,15 @@ export function timedRequests(text: string | null | undefined): Array<{ id: stri
 export function pinFromMessage(
   include: string | null | undefined,
   message: string | null | undefined,
+  // The plan's own span (minutes): "rebuild 18:00 to 19:30: 1h of leetcode"
+  // names the window, not leetcode's time.
+  window?: { start: number | null; end: number | null },
 ): { include: string | null; fixed: Array<{ id: string; title: string; start: number; end: number }> } {
   const fixed = timedRequests(include);
   // Sentence by sentence: "a lecture at 15:30 to 18:30. Other than that look
   // into the selectives" must not give the selectives the lecture's time.
   const said = parsePlanRequests((message ?? "").replace(/[.!?]+\s+/g, ", ")).filter(
-    (r) => r.start !== null && r.end !== null,
+    (r) => r.start !== null && r.end !== null && !(r.start === window?.start && r.end === window?.end),
   );
   const rest: string[] = [];
   for (const request of parsePlanRequests(include)) {

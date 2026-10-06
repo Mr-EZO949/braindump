@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   describeDayPlan,
+  keptOutsideWindow,
   liveReplacements,
   pastUnfinished,
   replacementMarks,
@@ -28,6 +29,30 @@ function task(id: string, start: string | null, minutes: number, extra: Partial<
 }
 
 const h = (hh: number, mm = 0) => hh * 60 + mm;
+
+describe("a plan for part of the day", () => {
+  // 15:00 now; the day has a 10:00 block (missed), 16:00 and 20:00 blocks.
+  const tasks = [task("morning", "10:00", 60, { node_id: "a" }), task("afternoon", "16:00", 60, { node_id: "b" }), task("evening", "20:00", 60, { node_id: "c" })];
+
+  it("rebuilding 19:00–21:00 keeps the afternoon, drops the missed morning (a skip)", () => {
+    const gone = supersededTasks(tasks, DAY, h(21), undefined, { startMinute: h(19), nowMinute: h(15) });
+    expect(gone.map((t) => t.id)).toEqual(["morning", "evening"]);
+  });
+
+  it("without a start, as before: everything before the plan's end goes", () => {
+    expect(supersededTasks(tasks, DAY, h(21)).map((t) => t.id)).toEqual(["morning", "afternoon", "evening"]);
+  });
+
+  it("on a later day nothing has happened yet, so all before the start stays", () => {
+    const gone = supersededTasks(tasks, DAY, null, undefined, { startMinute: h(19), nowMinute: null });
+    expect(gone.map((t) => t.id)).toEqual(["evening"]);
+  });
+
+  it("the planner skips what stays outside 14:00–17:00: the 20:00 block, not the missed morning", () => {
+    expect(keptOutsideWindow(tasks, DAY, h(14), h(17), h(13)).map((t) => t.id)).toEqual(["evening"]);
+    expect(keptOutsideWindow(tasks, DAY, h(17), h(19), h(15)).map((t) => t.id)).toEqual(["afternoon", "evening"]);
+  });
+});
 
 describe("supersededTasks — what a new plan for a day replaces", () => {
   const tasks = [

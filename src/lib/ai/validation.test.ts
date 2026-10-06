@@ -264,6 +264,31 @@ describe("validatePlanOutput — time blocks (plan-v8)", () => {
     ]);
   });
 
+  it("asked for more than fits: the break goes and every ask shrinks alike, no 5-minute stub", () => {
+    const out = validatePlanOutput(
+      planRaw([
+        block({ title: "Update CV", node_id: "cv", start_offset: 0, duration_minutes: 30 }),
+        block({ title: "Stats exam prep", node_id: "exam", start_offset: 30, duration_minutes: 45 }),
+        block({ title: "Break", node_id: null, start_offset: 75, duration_minutes: 10, block_type: "break" }),
+        block({ title: "Leetcode practice", node_id: "lc", start_offset: 85, duration_minutes: 5 }),
+      ]),
+      90,
+      [],
+      {
+        requests: [
+          { node_id: "lc", title: "Leetcode practice", minutes: 60 },
+          { node_id: "cv", title: "Update CV", minutes: 30 },
+          { node_id: "exam", title: "Stats exam prep", minutes: null },
+        ],
+      },
+    );
+    expect(out.blocks.map((b) => [b.node_id, b.duration_minutes])).toEqual([
+      ["cv", 20],
+      ["exam", 30],
+      ["lc", 40],
+    ]);
+  });
+
   it("without a context it behaves exactly as before", () => {
     const raw = planRaw([
       block({ title: "Italian Crash Course", node_id: "it", duration_minutes: 120 }),

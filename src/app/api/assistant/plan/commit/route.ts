@@ -5,7 +5,8 @@
 // and hand-typed ones stay.
 //
 // Body: { workspace_id, date, tasks: [{ title, node_id, start_time, duration_minutes, fixed? }],
-//         session_id?, plan_end? ("HH:MM", where the new plan ends; omitted = end of day),
+//         session_id?, plan_start? / plan_end? ("HH:MM", where the new plan starts / ends;
+//         omitted = the whole day / to the end of it),
 //         now_minute?, client_today? }
 
 import { NextRequest, NextResponse } from "next/server";
@@ -76,7 +77,11 @@ export async function POST(req: NextRequest) {
 
   const planEnd = clockToMinutes(typeof body.plan_end === "string" ? body.plan_end : null);
   const [dayTasks, planMade] = await Promise.all([loadDayTasks(scope, date), loadPlanMadeIds(scope, date)]);
-  const superseded = tasks.length > 0 ? supersededTasks(dayTasks, date, planEnd, planMade) : [];
+  // A plan for part of the day keeps what's planned before it (19–21 keeps the afternoon).
+  const planStart = clockToMinutes(typeof body.plan_start === "string" ? body.plan_start : null);
+  const keepBefore =
+    planStart === null || date < today ? undefined : { startMinute: planStart, nowMinute: date > today ? null : nowMinute };
+  const superseded = tasks.length > 0 ? supersededTasks(dayTasks, date, planEnd, planMade, keepBefore) : [];
   const skipped = pastUnfinished(superseded, date, today, nowMinute).map((t) => ({
     node_id: t.node_id as string,
     title: t.title,

@@ -21,6 +21,7 @@ import type { GraphData, NodeStatus } from "@/types/graph";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { clientDayHints } from "@/lib/habits/streak";
 import { localDateISO } from "@/lib/time/local-date";
+import type { LeftOutDue } from "@/lib/planner/due-left-out";
 import {
   busyOn,
   layoutAroundBusy,
@@ -1323,6 +1324,7 @@ type AssistantModeProps = {
   // start time starts then) — the server planned the free time around them.
   draftPlanHint?: {
     startTime: unknown;
+    endTime?: unknown;
     busy: unknown;
     window: unknown;
     acceptedAt: number;
@@ -1639,6 +1641,10 @@ export function AssistantMode({
       ...pinFromMessage(
         typeof draftPlanHint?.include === "string" ? draftPlanHint.include : null,
         typeof draftPlanHint?.userMessage === "string" ? draftPlanHint.userMessage : null,
+        {
+          start: parseTimeToMinutes(planStartTimeRef.current),
+          end: parseTimeToMinutes(typeof draftPlanHint?.endTime === "string" ? draftPlanHint.endTime : null),
+        },
       ).fixed,
     ];
     // "plan wednesday": the plan lands on that day.
@@ -1995,15 +2001,18 @@ export function AssistantMode({
 
   // ── AI planner operations ──────────────────────────────────────────────────
 
-  const handlePlanGenerate = async (options: GeneratePlanOptions) => {
+  // "Build around it" plans again with the same window plus one more ask.
+  const lastPlanOptionsRef = useRef<GeneratePlanOptions | null>(null);
+  const handlePlanGenerate = async (options: GeneratePlanOptions, include = planInclude) => {
     if (!workspaceId) return;
+    lastPlanOptionsRef.current = options;
     const { window, start_time, custom_minutes } = options;
     planAbortRef.current?.abort(); // cancel any in-flight plan first
     const ac = new AbortController();
     planAbortRef.current = ac;
     planStartTimeRef.current = isValidTimeString(start_time ?? "") ? start_time : null;
     // "Mealprep from 12:30" typed in the box: planned around, put on the day.
-    planOneOffBusyRef.current = timedRequests(planInclude);
+    planOneOffBusyRef.current = timedRequests(include);
     setPlannerState((prev) => ({ ...prev, loading: true, error: null }));
     // Where Accept will put this plan — the server plans around the fixed
     // commitments inside it (docs/commitments.md).
@@ -2025,7 +2034,7 @@ export function AssistantMode({
           ...clientDayHints(),
           session_date: sessionDate,
           session_start: sessionStart,
-          ...(planInclude.trim() ? { include: planInclude.trim() } : {}),
+          ...(include.trim() ? { include: include.trim() } : {}),
         }),
         signal: ac.signal,
       });
@@ -2034,6 +2043,7 @@ export function AssistantMode({
         session?: PlanSession;
         blocks?: PlanBlock[];
         recently_unblocked_node_ids?: string[];
+        left_out_due?: LeftOutDue[];
         error?: string;
       };
 
@@ -2053,6 +2063,7 @@ export function AssistantMode({
         loading: false,
         error: null,
         finalised: false,
+        leftOutDue: data.left_out_due ?? [],
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return; // user cancelled
@@ -2062,6 +2073,14 @@ export function AssistantMode({
         error: "Network error. Try again.",
       }));
     }
+  };
+
+  const handlePlanBuildAround = (title: string) => {
+    const options = lastPlanOptionsRef.current;
+    if (!options) return;
+    const include = planInclude.trim() ? `${planInclude.trim()}, ${title}` : title;
+    setPlanInclude(include);
+    void handlePlanGenerate(options, include);
   };
 
   const handlePlanCancel = () => {
@@ -2094,7 +2113,7 @@ export function AssistantMode({
     async (
       newTasks: PlanTask[],
       targetDate: string,
-      options: { sessionId: string | null; planEnd: string | null },
+      options: { sessionId: string | null; planStart: string | null; planEnd: string | null },
     ): Promise<boolean> => {
       if (newTasks.length === 0) return true;
 
@@ -2120,6 +2139,7 @@ export function AssistantMode({
             ...(task.id.startsWith("plan-fixed-") ? { fixed: true } : {}),
           })),
           session_id: options.sessionId,
+          plan_start: options.planStart,
           plan_end: options.planEnd,
           now_minute: getCurrentTimeOfDayMinutes(new Date()),
           ...clientDayHints(),
@@ -2234,11 +2254,13 @@ export function AssistantMode({
         });
       }
 
-      // A day plan replaces the whole day's unfinished plan; a 1–2 h session
-      // only what starts before it ends.
+      // A day plan replaces the rest of the day's unfinished plan; a 1–2 h
+      // session only what starts before it ends. Either keeps what's planned
+      // before it starts (an evening plan keeps the afternoon).
       const isDayPlan = plannerState.session?.planning_window === "day";
       const ok = await commitPlanTasks(newTasks, targetDate, {
         sessionId: isChatPlan ? null : sessionId,
+        planStart: formatMinutesToTaskTime(anchorMinutes),
         planEnd: isDayPlan ? null : formatMinutesToTaskTime(Math.min(planEndMinutes, 24 * 60 - 1)),
       });
       if (!ok) {
@@ -2447,6 +2469,7 @@ export function AssistantMode({
               onReject={() => void handlePlanReject()}
               onReset={handlePlanReset}
               onCancel={handlePlanCancel}
+              onBuildAround={handlePlanBuildAround}
               accepting={planAccepting}
             />
           ) : (

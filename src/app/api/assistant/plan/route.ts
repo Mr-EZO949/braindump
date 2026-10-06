@@ -14,14 +14,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { aiProvider } from "@/lib/ai";
 import { checkAIRunRateLimit, rateLimitResponse } from "@/lib/ai/rate-limit";
-import { buildPlannerCandidates } from "@/lib/ai/planner";
+import { buildPlannerCandidates, withoutPlannedElsewhere } from "@/lib/ai/planner";
 import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
 import { AI_MODELS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { PLAN_PROMPT_VERSION } from "@/lib/ai/prompts/plan";
 import { PLAN_MAX_MINUTES, planWindowMinutes } from "@/lib/planner/plan-window";
 import { busyOn, sessionBusyNote, timeToMinutes, withoutSaved } from "@/lib/planner/commitments";
+import { dueLeftOut } from "@/lib/planner/due-left-out";
 import { timedRequests } from "@/lib/planner/plan-requests";
-import { isISODate, localDateISO } from "@/lib/time/local-date";
+import { loadDayTasks } from "@/lib/planner/plan-replace";
+import { keptOutsideWindow } from "@/lib/planner/replan";
+import { isISODate, localDateISO, localMinuteOfDay } from "@/lib/time/local-date";
+import { getRequestTimeZone } from "@/lib/time/request-date";
 import {
   BUDGET_MIN_SESSION_MINUTES,
   budgetRequestsFor,
@@ -184,7 +188,7 @@ export async function POST(req: NextRequest) {
       ? budgetRequestsFor({ prefs: preferences, dateISO: planDate, sessionMinutes, include: userInclude })
       : [];
 
-  const [candidateBundle, profileCtx] = await Promise.all([
+  const [fullBundle, profileCtx, dayTasks] = await Promise.all([
     buildPlannerCandidates({
       workspaceId: workspace_id,
       userId: user.id,
@@ -196,7 +200,20 @@ export async function POST(req: NextRequest) {
       budgetRequests,
     }),
     buildWorkspaceProfileContext({ workspaceId: workspace_id, userId: user.id, supabase }),
+    loadDayTasks({ supabase, userId: user.id, workspaceId: workspace_id }, planDate),
   ]);
+  // A plan for part of the day doesn't book again what is already planned
+  // outside it (an evening session next to the afternoon's blocks).
+  const today = isISODate(client_today) ? client_today : localDateISO(new Date(), null);
+  const nowMinute = planDate === today ? localMinuteOfDay(new Date(), await getRequestTimeZone()) : null;
+  const keptTasks =
+    sessionStartMinute === null || planDate < today
+      ? []
+      : keptOutsideWindow(dayTasks, planDate, sessionStartMinute, sessionStartMinute + sessionMinutes, nowMinute);
+  const candidateBundle = withoutPlannedElsewhere(
+    fullBundle,
+    new Set(keptTasks.flatMap((task) => (task.node_id ? [task.node_id] : []))),
+  );
 
   const { candidates, manual_items, preference_hints, commitments, time_blocks, requests } = candidateBundle;
 
@@ -396,5 +413,13 @@ export async function POST(req: NextRequest) {
     session: sessionRow,
     blocks: insertedBlocks ?? [],
     recently_unblocked_node_ids: recentlyUnblockedNodeIds,
+    // Due soon and not in this plan: the Planner offers "Build around it".
+    left_out_due: dueLeftOut({
+      dueSoon: candidateBundle.due_soon,
+      blocks: [...output.blocks, ...keptTasks],
+      timeBlocks: time_blocks,
+      today,
+      planDate,
+    }),
   });
 }

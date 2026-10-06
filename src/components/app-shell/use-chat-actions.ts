@@ -415,6 +415,7 @@ export function useChatActions({
           panels.setAppMode("assistant");
           planner.setDraftPlanHint({
             startTime: action.toolInput?.start_time,
+            endTime: action.toolInput?.end_time,
             busy: action.toolInput?.busy,
             window: action.toolInput?.window,
             include: action.toolInput?.include,

@@ -5,7 +5,7 @@
 // the "jot one task on my calendar" path that comes up naturally in chat.
 
 import type { ToolContext, ToolDefinition } from "./read-only";
-import { buildPlannerCandidates } from "../planner";
+import { buildPlannerCandidates, withoutPlannedElsewhere } from "../planner";
 import { aiProvider } from "../index";
 import { persistAIRun } from "../telemetry";
 import { PLAN_PROMPT_VERSION } from "../prompts/plan";
@@ -26,6 +26,9 @@ import {
   timeToMinutes,
   withoutSaved,
 } from "@/lib/planner/commitments";
+import { describeLeftOut, dueLeftOut, leftOutQuestion } from "@/lib/planner/due-left-out";
+import { loadDayTasks } from "@/lib/planner/plan-replace";
+import { keptOutsideWindow } from "@/lib/planner/replan";
 import { pinFromMessage } from "@/lib/planner/plan-requests";
 import { resolveRelativeDay } from "@/lib/time/relative-day";
 import { DAY_PLAN_START_MINUTE } from "@/lib/planner/plan-window";
@@ -371,11 +374,10 @@ const PLAN_DAY: ToolDefinition = {
     // "plan wednesday": the day is resolved here, not by the model; until
     // 10-06 a plan for tomorrow saw today's weekly times.
     const planDate = (typeof args.day === "string" && resolveRelativeDay(args.day, today)) || today;
+    const nowMinute = planDate === today ? localMinuteOfDay(new Date(), await getRequestTimeZone()) : null;
     const startMinute =
       timeToMinutes(args.start_time) ??
-      (planDate === today
-        ? nextSessionStartMinute(localMinuteOfDay(new Date(), await getRequestTimeZone()))
-        : DAY_PLAN_START_MINUTE);
+      (nowMinute !== null ? nextSessionStartMinute(nowMinute) : DAY_PLAN_START_MINUTE);
     // "until 11pm": the length comes from the end time — Haiku made 12:30 →
     // 23:00 570 minutes (owner 10-06).
     const endMinute = timeToMinutes(args.end_time);
@@ -391,21 +393,34 @@ const PLAN_DAY: ToolDefinition = {
     const sessionMinutes = planWindowMinutes(window, customMinutes, startMinute, workdayEndMinute(preferences));
     // Timed items — in include, or given a time in the user's own words — are
     // fixed time; the rest is what to fit in.
-    const pinned = pinFromMessage(typeof args.include === "string" ? args.include.slice(0, 400) : null, ctx.userMessage);
+    const pinned = pinFromMessage(typeof args.include === "string" ? args.include.slice(0, 400) : null, ctx.userMessage, {
+      start: startMinute,
+      end: startMinute + sessionMinutes,
+    });
     const include = pinned.include;
 
-    const bundle = await buildPlannerCandidates({
-      workspaceId: ctx.workspaceId,
-      userId: ctx.userId,
-      supabase: ctx.supabase,
-      clientToday: ctx.today,
-      include,
-      preferences,
-      budgetRequests:
-        sessionMinutes >= BUDGET_MIN_SESSION_MINUTES
-          ? budgetRequestsFor({ prefs: preferences, dateISO: planDate, sessionMinutes, include })
-          : [],
-    });
+    const [candidates, dayTasks] = await Promise.all([
+      buildPlannerCandidates({
+        workspaceId: ctx.workspaceId,
+        userId: ctx.userId,
+        supabase: ctx.supabase,
+        clientToday: ctx.today,
+        include,
+        preferences,
+        budgetRequests:
+          sessionMinutes >= BUDGET_MIN_SESSION_MINUTES
+            ? budgetRequestsFor({ prefs: preferences, dateISO: planDate, sessionMinutes, include })
+            : [],
+      }),
+      loadDayTasks(ctx, planDate),
+    ]);
+    // A plan for part of the day ("rebuild 2–5pm") doesn't book again what is
+    // already planned outside it.
+    const keptTasks = keptOutsideWindow(dayTasks, planDate, startMinute, startMinute + sessionMinutes, nowMinute);
+    const bundle = withoutPlannedElsewhere(
+      candidates,
+      new Set(keptTasks.flatMap((task) => (task.node_id ? [task.node_id] : []))),
+    );
     if (!bundle.candidates.length && !bundle.time_blocks.length) {
       return { accepted: false, error: "No active work items to plan — add a few tasks or goals first." };
     }
@@ -520,11 +535,22 @@ const PLAN_DAY: ToolDefinition = {
     }));
     await ctx.supabase.from("plan_blocks").insert(blockRows);
 
+    // Due soon and not in it → the reply asks "build around it?" (assistant prompt).
+    const leftOutItems = dueLeftOut({
+      dueSoon: bundle.due_soon,
+      blocks: [...output.blocks, ...keptTasks],
+      timeBlocks: bundle.time_blocks,
+      today,
+      planDate,
+    });
+    const leftOut = describeLeftOut(leftOutItems);
+
     return {
       accepted: true,
       planning_window: window,
       block_count: output.blocks.length,
       plan_date: planDate,
+      ...(leftOut ? { left_out_due: leftOut } : {}),
       message: `Drafted a ${window === "day" ? "day " : window === "custom" ? "" : `${window} `}plan for ${
         planDate === today ? "" : `${planDate} `
       }${describeSessionSpan(
@@ -532,7 +558,7 @@ const PLAN_DAY: ToolDefinition = {
         sessionMinutes,
       )} with ${output.blocks.length} blocks${
         plannedAround.length > 0 ? `, around ${plannedAround.join(", ")}` : ""
-      }. Open the Planner to review and adjust.`,
+      }. Open the Planner to review and adjust.${leftOut ? ` ${leftOutQuestion(leftOutItems)}` : ""}`,
     };
   },
 };

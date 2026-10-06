@@ -25,6 +25,7 @@ import { useState } from "react";
 
 import { GripVerticalIcon } from "@/components/ui/icons";
 import { DAY_PLAN_END_MINUTE, PLAN_MAX_MINUTES, PLAN_MIN_MINUTES } from "@/lib/planner/plan-window";
+import type { LeftOutDue } from "@/lib/planner/due-left-out";
 import type { PlanBlock, PlanSession, PlanningWindow } from "@/types/ai";
 import type { GraphData } from "@/types/graph";
 
@@ -39,6 +40,8 @@ export interface PlannerState {
   loading: boolean;
   error: string | null;
   finalised: boolean; // accepted or rejected
+  // Due in a day or two and not in this plan (lib/planner/due-left-out.ts).
+  leftOutDue?: LeftOutDue[];
 }
 
 export const INITIAL_PLANNER_STATE: PlannerState = {
@@ -68,6 +71,8 @@ type PlannerPanelProps = {
   onReject: () => void;
   onReset: () => void;
   onCancel: () => void;
+  // Plan again with this item asked for ("Build around it").
+  onBuildAround?: (title: string) => void;
   // True while an accept is being written (tasks saved). Disables the
   // Accept/Reject buttons so a second click can't apply the plan twice —
   // which stacked duplicate, overlapping tasks on the day (journal #6a).
@@ -229,6 +234,7 @@ export function PlannerPanel({
   onReject,
   onReset,
   onCancel,
+  onBuildAround,
   accepting = false,
 }: PlannerPanelProps) {
   const [selectedWindow, setSelectedWindow] = useState<PlanningWindow>("2h");
@@ -247,7 +253,7 @@ export function PlannerPanel({
   );
 
   const nodeById = new Map(graphData.nodes.map((n) => [n.id, n]));
-  const { session, blocks, recentlyUnblockedNodeIds, loading, error, finalised } = plannerState;
+  const { session, blocks, recentlyUnblockedNodeIds, loading, error, finalised, leftOutDue } = plannerState;
   const sortableBlockIds = blocks.map((block) => block.id);
 
   // Total time accounted for in current block list
@@ -442,6 +448,19 @@ export function PlannerPanel({
       {error ? (
         <p className="planner-error planner-error-inline">{error}</p>
       ) : null}
+
+      {!finalised && onBuildAround
+        ? (leftOutDue ?? []).map((item) => (
+            <div className="planner-due-note" key={item.id}>
+              <p>
+                “{item.title}” is {item.label} and isn’t in this plan.
+              </p>
+              <button disabled={accepting} onClick={() => onBuildAround(item.title)} type="button">
+                Build around it
+              </button>
+            </div>
+          ))
+        : null}
 
       {/* Block list */}
       <DndContext

@@ -21,15 +21,21 @@ let planError: Error | null = null;
 
 const candidateCalls: Array<{ include?: string | null }> = [];
 const timeBlocks = [{ id: "it", title: "Italian Crash Course", node_type: "big_task", open_steps: 3, start_with: ["Greetings"], step_ids: ["g"] }];
-const requests = [{ text: "3h of Italian", minutes: 180, node_id: "it", title: "Italian Crash Course", node_type: "big_task" }];
-vi.mock("../planner", () => ({
+const requests = [{ text: "3h of Italian", minutes: 180, node_id: "it", title: "Italian Crash Course", node_type: "big_task", related: [] }];
+let dueSoon: Array<{ id: string; title: string; days_left: number; node_ids: string[] }> = [];
+vi.mock("../planner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../planner")>()),
   buildPlannerCandidates: vi.fn(async (params: { include?: string | null }) => {
     candidateCalls.push(params);
     return {
-      candidates: [{ id: "n1", title: "ML project", summary: null, body: null, node_type: "task", planning_signals: {} }],
+      candidates: [
+        { id: "n1", title: "ML project", summary: null, body: null, node_type: "task", planning_signals: {} },
+        { id: "cv", title: "Update CV", summary: null, body: null, node_type: "task", planning_signals: {} },
+      ],
       commitments,
       time_blocks: params.include ? timeBlocks : [],
       requests: params.include ? requests : [],
+      due_soon: dueSoon,
     };
   }),
 }));
@@ -57,13 +63,14 @@ import { PLANNER_MUTATION_TOOLS } from "./planner-mutations";
 const PLAN_DAY = PLANNER_MUTATION_TOOLS.find((t) => t.schema.name === "plan_day")!;
 const WED = "2026-10-07";
 
-function ctx() {
-  const { client } = createFakeSupabase({ plan_sessions: [], plan_blocks: [] });
+function ctx(planTasks: Record<string, unknown>[] = []) {
+  const { client } = createFakeSupabase({ plan_sessions: [], plan_blocks: [], plan_tasks: planTasks });
   return { supabase: client, userId: "u1", workspaceId: "w1", selectedNodeId: null, today: WED };
 }
 
 beforeEach(() => {
   commitments = [];
+  dueSoon = [];
   planCalls.length = 0;
   candidateCalls.length = 0;
   planError = null;
@@ -230,5 +237,33 @@ describe("plan_day — owner 10-06 (sick day, mealprep, until 11pm, plan wednesd
     expect(planCalls[0].session_minutes).toBe(900);
     expect(planCalls[0].busy).toBeNull();
     expect(result.message).toContain("2026-10-07 08:00–23:00");
+  });
+});
+
+describe("plan_day — due work left out, part of a day", () => {
+  type Result = { message: string; left_out_due?: string };
+
+  it("names work due soon that isn't in the plan, so the reply can offer to build around it", async () => {
+    dueSoon = [{ id: "exam", title: "Stats exam", days_left: 1, node_ids: ["exam", "ch3"] }];
+    const result = (await PLAN_DAY.handler({ window: "2h" }, ctx())) as Result;
+    expect(result.left_out_due).toBe('"Stats exam" (due tomorrow)');
+    // Ends on a question: "yes" then reaches the model with tools and re-plans.
+    expect(result.message).toMatch(/"Stats exam" is due tomorrow and isn't in it — want me to build around it\?$/);
+  });
+
+  it("says nothing when a block covers it", async () => {
+    dueSoon = [{ id: "ml", title: "ML deadline", days_left: 0, node_ids: ["ml", "n1"] }];
+    const result = (await PLAN_DAY.handler({ window: "2h" }, ctx())) as Result;
+    expect(result.left_out_due).toBeUndefined();
+    expect(result.message).not.toContain("build around");
+  });
+
+  it("a plan for 14:00–17:00 doesn't plan again what sits at 20:00, and counts it as covered", async () => {
+    dueSoon = [{ id: "cv", title: "Update CV", days_left: 0, node_ids: ["cv"] }];
+    const evening = { id: "t1", user_id: "u1", workspace_id: "w1", title: "Update CV", node_id: "cv", scheduled_date: WED, start_time: "20:00:00", duration_minutes: 45, done: false };
+    const result = (await PLAN_DAY.handler({ window: "custom", start_time: "14:00", end_time: "17:00" }, ctx([evening]))) as Result;
+    const sent = (planCalls[0] as unknown as { candidate_nodes: { id: string }[] }).candidate_nodes.map((c) => c.id);
+    expect(sent).toEqual(["n1"]);
+    expect(result.left_out_due).toBeUndefined();
   });
 });

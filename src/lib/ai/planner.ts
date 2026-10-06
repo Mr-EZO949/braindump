@@ -32,6 +32,7 @@ import {
   type StaleItem,
   type StaleMarker,
 } from "@/lib/planner/skips";
+import { DUE_NUDGE_DAYS, DUE_NUDGE_OVERDUE_DAYS, type DueSoonItem } from "@/lib/planner/due-left-out";
 import { PLAN_REPLACE_ENTITY, replacementMarks, type ReplacementRow } from "@/lib/planner/replan";
 import {
   busyOn,
@@ -273,6 +274,8 @@ export interface PlannerCandidateBundle {
   time_blocks: TimeBlockCandidate[];
   /** Skipped on 2+ days with no deadline — held out until the user answers. */
   stale_check: StaleItem[];
+  /** Plans only: deadlines within a few days — a plan without them says so (due-left-out.ts). */
+  due_soon: DueSoonItem[];
   /** The plan request's items (`include`), matched to nodes where possible. */
   requests: PlanRequestItem[];
 }
@@ -1502,6 +1505,20 @@ export async function buildPlannerCandidates(params: {
     })
     .sort((a, b) => b.skipped_on.length - a.skipped_on.length || a.title.localeCompare(b.title));
 
+  // Deadlines a few days out, with the open work under each: a plan that has
+  // none of it says "X is due tomorrow — build around it?" (due-left-out.ts).
+  const dueSoon = new Map<string, DueSoonItem>();
+  for (const node of requestable) {
+    const deadline = rankCtx.deadline(node.id);
+    if (!deadline) continue;
+    if (deadline.daysLeft > DUE_NUDGE_DAYS + DUE_SOON_WINDOW_DAYS || deadline.daysLeft < -DUE_NUDGE_OVERDUE_DAYS) continue;
+    const owner = nodeById.get(deadline.ownerId);
+    if (!owner) continue;
+    const item = dueSoon.get(owner.id) ?? { id: owner.id, title: owner.title, days_left: deadline.daysLeft, node_ids: [] };
+    item.node_ids.push(node.id);
+    dueSoon.set(owner.id, item);
+  }
+
   return {
     candidates: diversifyHead(fitted, FOCUS_HEAD_SIZE)
       .slice(0, MAX_CANDIDATES)
@@ -1513,6 +1530,25 @@ export async function buildPlannerCandidates(params: {
     time_blocks: timeBlocks.slice(0, Math.max(MAX_TIME_BLOCKS, requestedBlocks)).map((entry) => entry.block),
     stale_check: staleCheck,
     requests,
+    due_soon: [...dueSoon.values()],
+  };
+}
+
+/**
+ * A plan for part of a day leaves out work already on that day outside it
+ * (replan.ts keptOutsideWindow) — unless the user asked for it by name.
+ */
+export function withoutPlannedElsewhere(
+  bundle: PlannerCandidateBundle,
+  plannedNodeIds: ReadonlySet<string>,
+): PlannerCandidateBundle {
+  if (plannedNodeIds.size === 0) return bundle;
+  const asked = new Set(bundle.requests.flatMap((r) => [r.node_id, ...r.related.map((t) => t.id)]));
+  const keep = (id: string) => !plannedNodeIds.has(id) || asked.has(id);
+  return {
+    ...bundle,
+    candidates: bundle.candidates.filter((c) => keep(c.id)),
+    time_blocks: bundle.time_blocks.filter((t) => keep(t.id)),
   };
 }
 

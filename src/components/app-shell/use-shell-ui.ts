@@ -106,6 +106,7 @@ export function usePlannerSync() {
   // the Planner lays the blocks where the plan was made for.
   const [draftPlanHint, setDraftPlanHint] = useState<{
     startTime: unknown;
+    endTime?: unknown;
     busy: unknown;
     window: unknown;
     acceptedAt: number;
