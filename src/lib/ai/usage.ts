@@ -66,6 +66,11 @@ export function totalInputTokens(t: UsageTotals): number {
   return t.input + t.cacheWrite5m + t.cacheWrite1h + t.cacheRead;
 }
 
+// The cache columns of an ai_runs row (migration 20261006000000).
+export function cacheTokenFields(t: UsageTotals): { cache_read_tokens: number; cache_write_tokens: number } {
+  return { cache_read_tokens: t.cacheRead, cache_write_tokens: t.cacheWrite5m + t.cacheWrite1h };
+}
+
 function claudeRates(model: string): { input: number; output: number } {
   if (model.includes("haiku")) {
     return {
@@ -126,4 +131,13 @@ export function geminiCostUSD(model: string, u: GeminiUsage): number {
   const r = geminiRates(model);
   const cached = Math.min(u.cached, u.prompt);
   return ((u.prompt - cached) * r.input + cached * r.input * 0.1 + u.output * r.output) / 1_000_000;
+}
+
+// What a run's output tokens cost — the rest of estimated_cost is input
+// (cached or not). For the spend drill-down; 0 for providers without output.
+export function outputCostUSD(provider: string, model: string, outputTokens: number | null): number {
+  if (!outputTokens) return 0;
+  if (provider === "claude") return (outputTokens * claudeRates(model).output) / 1_000_000;
+  if (provider === "gemini" && !model.includes("embedding")) return (outputTokens * geminiRates(model).output) / 1_000_000;
+  return 0;
 }

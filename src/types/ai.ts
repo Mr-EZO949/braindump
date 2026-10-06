@@ -173,8 +173,12 @@ export interface AIRun {
   prompt_version: string;
   input_hash: string | null;
   output_hash: string | null;
+  // Every input token the model saw, cached or not.
   input_tokens: number | null;
   output_tokens: number | null;
+  // Of input_tokens: read from / written to the prompt cache (null = not reported).
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
   latency_ms: number | null;
   estimated_cost: number | null;
   status: AIRunStatus;

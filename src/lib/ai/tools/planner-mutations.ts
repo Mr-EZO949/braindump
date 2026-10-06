@@ -497,6 +497,8 @@ const PLAN_DAY: ToolDefinition = {
         output_hash: runMeta.output_hash,
         input_tokens: runMeta.input_tokens,
         output_tokens: runMeta.output_tokens,
+        cache_read_tokens: runMeta.cache_read_tokens,
+        cache_write_tokens: runMeta.cache_write_tokens,
         latency_ms: runMeta.latency_ms,
         estimated_cost: runMeta.estimated_cost,
         status: "success",

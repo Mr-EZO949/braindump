@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { AIRunStatus, AIRunType } from "@/types/ai";
 
-import { claudeCostUSD, totalInputTokens, type UsageTotals } from "./usage";
+import { cacheTokenFields, claudeCostUSD, totalInputTokens, type UsageTotals } from "./usage";
 
 export type AIRunErrorCode =
   | "rate_limit"
@@ -26,6 +26,8 @@ export interface PersistAIRunParams {
     output_hash?: string | null;
     input_tokens?: number | null;
     output_tokens?: number | null;
+    cache_read_tokens?: number | null;
+    cache_write_tokens?: number | null;
     latency_ms?: number | null;
     estimated_cost?: number | null;
     status?: AIRunStatus;
@@ -344,6 +346,9 @@ export async function persistAIRun(params: PersistAIRunParams): Promise<string |
     estimated_cost: run.estimated_cost ?? null,
     status: run.status ?? "success",
     error_text: run.error_text ? run.error_text.slice(0, 1000) : null,
+    // Only when reported: runs without them (Cohere, embeddings) insert as before.
+    ...(run.cache_read_tokens != null ? { cache_read_tokens: run.cache_read_tokens } : {}),
+    ...(run.cache_write_tokens != null ? { cache_write_tokens: run.cache_write_tokens } : {}),
   };
 
   try {
@@ -429,6 +434,7 @@ export async function recordClaudeRun(params: {
       output_hash: params.outputHash ?? null,
       input_tokens: totalInputTokens(params.usage),
       output_tokens: params.usage.output,
+      ...cacheTokenFields(params.usage),
       latency_ms: params.latencyMs,
       estimated_cost: claudeCostUSD(params.model, params.usage),
       status: params.status ?? "success",

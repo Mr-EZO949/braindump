@@ -413,6 +413,8 @@ export async function POST(req: NextRequest) {
             output_hash: answered ? hashText(qa.text).slice(0, 16) : null,
             input_tokens: qa.usage.prompt,
             output_tokens: qa.usage.output,
+            // Gemini caches implicitly: reads are reported, writes are free.
+            cache_read_tokens: qa.usage.cached,
             latency_ms: Date.now() - qaStart,
             estimated_cost: qa.costUSD,
             status: qa.kind === "error" ? "failed" : "success",

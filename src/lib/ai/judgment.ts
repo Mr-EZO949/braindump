@@ -10,7 +10,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AI_MODELS } from "./config";
-import { claudeCostUSD, readClaudeUsage, totalInputTokens, type UsageTotals } from "./usage";
+import { cacheTokenFields, claudeCostUSD, readClaudeUsage, totalInputTokens, type UsageTotals } from "./usage";
 import { persistAIRun } from "./telemetry";
 import type { AIRunType } from "@/types/ai";
 import type { WorkspaceProfile } from "@/types/graph";
@@ -203,6 +203,7 @@ async function judgeChunk(params: {
       output_hash: null,
       input_tokens: usage ? totalInputTokens(usage) : null,
       output_tokens: usage?.output ?? null,
+      ...(usage ? cacheTokenFields(usage) : {}),
       latency_ms: Date.now() - startedAt,
       estimated_cost: usage ? claudeCostUSD(AI_MODELS.CLAUDE_HAIKU, usage) : null,
       status,
