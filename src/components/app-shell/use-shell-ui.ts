@@ -109,6 +109,9 @@ export function usePlannerSync() {
     busy: unknown;
     window: unknown;
     acceptedAt: number;
+    include?: unknown;
+    day?: unknown;
+    userMessage?: unknown;
   } | null>(null);
 
   const refreshPlanner = () => setPlannerRefreshKey((v) => v + 1);

@@ -45,6 +45,8 @@ export interface NewPlanTask {
   node_id: string | null;
   start_time: string | null;
   duration_minutes: number | null;
+  /** The user's own fixed-time item ("mealprep 12:30–14:00"): a replan plans around it, never moves it. */
+  fixed?: boolean;
 }
 
 interface NodeRef {
@@ -77,6 +79,11 @@ export async function loadDayTasks(scope: PlanScope, date: string): Promise<DayP
  * (`created`), so a block with no node is still known as the plan's.
  */
 export async function loadPlanMadeIds(scope: PlanScope, date: string): Promise<Set<string>> {
+  return (await loadPlanMade(scope, date)).made;
+}
+
+/** loadPlanMadeIds, plus which of them are fixed-time items (`fixed` in the record). */
+export async function loadPlanMade(scope: PlanScope, date: string): Promise<{ made: Set<string>; fixed: Set<string> }> {
   const { data } = await scope.supabase
     .from("feedback_events")
     .select("metadata")
@@ -84,12 +91,15 @@ export async function loadPlanMadeIds(scope: PlanScope, date: string): Promise<S
     .eq("workspace_id", scope.workspaceId)
     .eq("entity_type", PLAN_REPLACE_ENTITY)
     .eq("metadata->>date", date);
-  const ids = new Set<string>();
+  const made = new Set<string>();
+  const fixed = new Set<string>();
   for (const row of (data ?? []) as { metadata: Record<string, unknown> | null }[]) {
     const created = row.metadata?.created;
-    if (Array.isArray(created)) for (const id of created) if (typeof id === "string") ids.add(id);
+    if (Array.isArray(created)) for (const id of created) if (typeof id === "string") made.add(id);
+    const pinned = row.metadata?.fixed;
+    if (Array.isArray(pinned)) for (const id of pinned) if (typeof id === "string") fixed.add(id);
   }
-  return ids;
+  return { made, fixed };
 }
 
 function uniqueRefs(refs: NodeRef[]): NodeRef[] {
@@ -117,11 +127,13 @@ export async function commitDayPlan(
   const { supabase, userId, workspaceId } = scope;
   const createdAt = new Date().toISOString();
   let inserted: DayPlanTask[] = [];
+  let fixedIds: string[] = [];
   if (params.tasks.length > 0) {
+    const tasks = params.tasks.slice(0, MAX_TASKS);
     const { data, error } = await supabase
       .from("plan_tasks")
       .insert(
-        params.tasks.slice(0, MAX_TASKS).map((task) => ({
+        tasks.map((task) => ({
           user_id: userId,
           workspace_id: workspaceId,
           title: task.title,
@@ -136,6 +148,8 @@ export async function commitDayPlan(
       .select(DAY_TASK_SELECT);
     if (error || !data) return { ok: false, error: error?.message ?? "tasks not saved" };
     inserted = (data as DayPlanTask[]).map((row) => ({ ...row, done: Boolean(row.done) }));
+    // Rows come back in insert order.
+    fixedIds = inserted.filter((_, i) => tasks[i]?.fixed).map((t) => t.id);
   }
   const rollback = async () => {
     if (inserted.length > 0) {
@@ -164,6 +178,7 @@ export async function commitDayPlan(
           kind: params.kind,
           superseded: params.superseded,
           created: inserted.map((t) => t.id),
+          ...(fixedIds.length > 0 ? { fixed: fixedIds } : {}),
           skipped: uniqueRefs(params.skipped ?? []),
           missed,
           session_id: params.sessionId ?? null,
@@ -323,8 +338,10 @@ export async function replanToday(
   params: { today: string; nowMinute: number; startMinute?: number | null; missed?: string[] },
 ): Promise<ReplanOutcome | { ok: false; reason: "no_plan" | "error"; error: string }> {
   const { supabase, userId, workspaceId } = scope;
-  const [tasks, planMade] = await Promise.all([loadDayTasks(scope, params.today), loadPlanMadeIds(scope, params.today)]);
-  const open = tasks.filter((t) => !t.done && isPlanTask(t, planMade));
+  const [tasks, plan] = await Promise.all([loadDayTasks(scope, params.today), loadPlanMade(scope, params.today)]);
+  // A fixed-time item stays where it is: busy time for the rest of the day.
+  const planMade = new Set([...plan.made].filter((id) => !plan.fixed.has(id)));
+  const open = tasks.filter((t) => !t.done && !plan.fixed.has(t.id) && isPlanTask(t, planMade));
 
   // Nodes involved: today's plan + whatever the user said they missed.
   const refs = (params.missed ?? []).map((r) => String(r).trim()).filter(Boolean).slice(0, 8);
@@ -377,7 +394,7 @@ export async function replanToday(
   // Busy: fixed commitments, and the user's own timed tasks still to do.
   const ownTasks = tasks.flatMap((t) => {
     const start = clockToMinutes(t.start_time);
-    return !isPlanTask(t, planMade) && !t.done && start !== null
+    return (plan.fixed.has(t.id) || !isPlanTask(t, planMade)) && !t.done && start !== null
       ? [{ start, end: start + (t.duration_minutes && t.duration_minutes > 0 ? t.duration_minutes : 30) }]
       : [];
   });

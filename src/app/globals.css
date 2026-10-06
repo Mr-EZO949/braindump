@@ -10464,6 +10464,24 @@ body:has(.graph-create-overlay-open) .freeze-nudge {
     border-color var(--motion-fast);
 }
 
+.timeline-event-compact {
+  align-items: center;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-radius: 5px;
+}
+
+.timeline-event-compact .timeline-event-check {
+  width: 11px;
+  height: 11px;
+  margin-top: 0;
+}
+
+.timeline-event-compact .timeline-event-title {
+  font-size: 11px;
+  line-height: 1.1;
+}
+
 .timeline-event:hover {
   background: rgba(213, 58, 71, 0.2);
   border-color: rgba(213, 58, 71, 0.38);

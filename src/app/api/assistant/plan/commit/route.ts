@@ -4,7 +4,7 @@
 // response carries the Undo handle ("back to the earlier plan"). Ticked tasks
 // and hand-typed ones stay.
 //
-// Body: { workspace_id, date, tasks: [{ title, node_id, start_time, duration_minutes }],
+// Body: { workspace_id, date, tasks: [{ title, node_id, start_time, duration_minutes, fixed? }],
 //         session_id?, plan_end? ("HH:MM", where the new plan ends; omitted = end of day),
 //         now_minute?, client_today? }
 
@@ -34,6 +34,7 @@ function parseTasks(raw: unknown): NewPlanTask[] | null {
       node_id: typeof row.node_id === "string" && row.node_id ? row.node_id : null,
       start_time: start === null ? null : minutesToClock(start),
       duration_minutes: duration,
+      ...(row.fixed === true && start !== null ? { fixed: true } : {}),
     });
   }
   return tasks;

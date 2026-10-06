@@ -180,6 +180,31 @@ describe("one plan per day", () => {
   });
 });
 
+describe("fixed-time items (owner 10-06: mealprep 12:30–14:00)", () => {
+  it("'Replan from now' leaves a fixed item where it is and plans around it; a rebuilt plan still replaces it", async () => {
+    const fake = createFakeSupabase({ plan_tasks: [], nodes: [node("cv", "Update CV", "task")], feedback_events: [], commitments: [] });
+    const scope = { supabase: fake.client, userId: U, workspaceId: W };
+    await commitDayPlan(scope, {
+      date: DAY,
+      kind: "plan",
+      superseded: [],
+      tasks: [
+        { title: "Mealprep", node_id: null, start_time: "12:30", duration_minutes: 90, fixed: true },
+        { title: "Update CV", node_id: "n-cv", start_time: "11:00", duration_minutes: 45 },
+      ],
+    });
+    // 12:20 → the CV moves on from now, around the mealprep.
+    const outcome = await replanToday(scope, { today: DAY, nowMinute: 12 * 60 + 20 });
+    expect(outcome.ok).toBe(true);
+    const byTitle = (title: string) => fake.tables.plan_tasks.find((t) => t.title === title);
+    expect(byTitle("Mealprep")).toMatchObject({ start_time: "12:30", duration_minutes: 90 });
+    expect(byTitle("Update CV")).toMatchObject({ start_time: "14:00" });
+
+    const superseded = supersededTasks(await loadDayTasks(scope, DAY), DAY, null, await loadPlanMadeIds(scope, DAY));
+    expect(superseded.map((t) => t.title).sort()).toEqual(["Mealprep", "Update CV"]);
+  });
+});
+
 describe("replanToday — 'bro i went off schedule and missed my workout'", () => {
   it("carries the unfinished plan from now, around the lecture; the missed workout is off and not done", async () => {
     const fake = setup();

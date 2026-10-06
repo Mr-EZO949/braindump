@@ -28,9 +28,12 @@ import {
   minutesToTime,
   nextSessionStartMinute,
   oneOffBusy,
+  withoutSaved,
   type BusyInterval,
   type Commitment,
 } from "@/lib/planner/commitments";
+import { pinFromMessage, timedRequests } from "@/lib/planner/plan-requests";
+import { resolveRelativeDay } from "@/lib/time/relative-day";
 import { DAY_PLAN_START_MINUTE, planWindowMinutes } from "@/lib/planner/plan-window";
 import { hasOpenSteps, planTaskCompletesNode } from "@/lib/planner/sessions";
 import type { StaleItem } from "@/lib/planner/skips";
@@ -864,8 +867,11 @@ function TimelineEvent({
 }: TimelineEventProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const top = (startMinutes / 60 - startHour) * HOUR_HEIGHT;
-  const height = Math.max((durationMinutes / 60) * HOUR_HEIGHT, 28);
+  // Its own slot, never taller: a 20-min block drawn at 28px ran into the
+  // next one (owner's screenshot 10-06). Under 28px it goes one-line compact.
+  const height = Math.max((durationMinutes / 60) * HOUR_HEIGHT, 14);
   const isShort = height < 46;
+  const isCompact = height < 28;
   const timeLabel = formatTimeRange(formatMinutesToTaskTime(startMinutes), durationMinutes);
 
   // When events overlap in time, split them into side-by-side columns instead
@@ -882,7 +888,7 @@ function TimelineEvent({
 
   return (
     <div
-      className={`timeline-event${task.done ? " timeline-event-done" : ""}${confirmDelete ? " timeline-event-confirming" : ""}`}
+      className={`timeline-event${isCompact ? " timeline-event-compact" : ""}${task.done ? " timeline-event-done" : ""}${confirmDelete ? " timeline-event-confirming" : ""}`}
       data-interacting={isInteracting || undefined}
       style={{ top, height, ...laneStyle }}
     >
@@ -1315,7 +1321,15 @@ type AssistantModeProps = {
   // The accepted plan_day's start_time ("HH:MM"), the busy time named in
   // chat (oneOffBusy), its window and when it was accepted (a plan with no
   // start time starts then) — the server planned the free time around them.
-  draftPlanHint?: { startTime: unknown; busy: unknown; window: unknown; acceptedAt: number } | null;
+  draftPlanHint?: {
+    startTime: unknown;
+    busy: unknown;
+    window: unknown;
+    acceptedAt: number;
+    include?: unknown;
+    day?: unknown;
+    userMessage?: unknown;
+  } | null;
   onAskInChat?: (message: string) => void;
   // Called after the planner toggles a task that has a linked graph node,
   // so app-shell can mirror the new status into its local graphData state
@@ -1618,11 +1632,22 @@ export function AssistantMode({
       : isDay && acceptedAt
         ? minutesToTime(nextSessionStartMinute(getCurrentTimeOfDayMinutes(acceptedAt)))
         : null;
-    planOneOffBusyRef.current = oneOffBusy(draftPlanHint?.busy);
+    // Fixed time named in chat — busy, and timed items in include ("mealprep
+    // from 12:30") — goes on the day at its time on Accept.
+    planOneOffBusyRef.current = [
+      ...oneOffBusy(draftPlanHint?.busy),
+      ...pinFromMessage(
+        typeof draftPlanHint?.include === "string" ? draftPlanHint.include : null,
+        typeof draftPlanHint?.userMessage === "string" ? draftPlanHint.userMessage : null,
+      ).fixed,
+    ];
+    // "plan wednesday": the plan lands on that day.
+    const planDay = typeof draftPlanHint?.day === "string" ? resolveRelativeDay(draftPlanHint.day, today) : null;
+    if (planDay) setSelectedDate(planDay);
     void loadLatestDraftPlan().catch(() => {
       // ignore — the draft stays in the DB; the user can re-open the planner
     });
-  }, [draftPlanRefreshKey, draftPlanHint, loadLatestDraftPlan]);
+  }, [draftPlanRefreshKey, draftPlanHint, loadLatestDraftPlan, today]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -1977,7 +2002,8 @@ export function AssistantMode({
     const ac = new AbortController();
     planAbortRef.current = ac;
     planStartTimeRef.current = isValidTimeString(start_time ?? "") ? start_time : null;
-    planOneOffBusyRef.current = [];
+    // "Mealprep from 12:30" typed in the box: planned around, put on the day.
+    planOneOffBusyRef.current = timedRequests(planInclude);
     setPlannerState((prev) => ({ ...prev, loading: true, error: null }));
     // Where Accept will put this plan — the server plans around the fixed
     // commitments inside it (docs/commitments.md).
@@ -2090,6 +2116,8 @@ export function AssistantMode({
             node_id: task.node_id ?? null,
             start_time: task.start_time,
             duration_minutes: task.duration_minutes,
+            // The user's own fixed-time items: "Replan from now" leaves them.
+            ...(task.id.startsWith("plan-fixed-") ? { fixed: true } : {}),
           })),
           session_id: options.sessionId,
           plan_end: options.planEnd,
@@ -2156,13 +2184,34 @@ export function AssistantMode({
       const createdAt = new Date().toISOString();
       const newTasks: PlanTask[] = [];
       // Back to back from the anchor, but never over a fixed commitment: a
-      // block that would run into a class starts after it.
+      // block that would run into a class starts after it, and a shorter
+      // work block fills the time before the class instead of leaving it empty.
+      const saved = busyOn(commitments, targetDate);
+      const ownFixed = withoutSaved(planOneOffBusyRef.current, saved);
       const starts = layoutAroundBusy(
         keptBlocks.map((block) => block.duration_minutes),
         anchorMinutes,
-        [...busyOn(commitments, targetDate), ...planOneOffBusyRef.current],
+        [...saved, ...ownFixed],
+        keptBlocks.map((block) => block.block_type === "focus" || block.block_type === "admin"),
       );
       let planEndMinutes = anchorMinutes;
+
+      // The user's own fixed items (mealprep 12:30–14:00, gym, a one-off
+      // lecture) are part of the day: on it at their time. Saved weekly
+      // commitments already show as bands.
+      for (const fixed of ownFixed) {
+        newTasks.push({
+          id: `plan-fixed-${fixed.id}`,
+          title: fixed.title,
+          done: false,
+          date: targetDate,
+          start_time: formatMinutesToTaskTime(fixed.start),
+          duration_minutes: fixed.end - fixed.start,
+          created_at: createdAt,
+          completed_at: null,
+          node_id: null,
+        });
+      }
 
       for (const [index, block] of keptBlocks.entries()) {
         const startMinutes = clampTaskStartMinutes(starts[index], block.duration_minutes);

@@ -417,6 +417,13 @@ export function useChatActions({
             startTime: action.toolInput?.start_time,
             busy: action.toolInput?.busy,
             window: action.toolInput?.window,
+            include: action.toolInput?.include,
+            day: action.toolInput?.day,
+            // The words the plan was asked in: a time the tool input dropped
+            // ("mealprep from 12:30") still pins the item (pinFromMessage).
+            userMessage: [...chatMessages.slice(0, chatMessages.indexOf(target!))]
+              .reverse()
+              .find((m) => m.role === "user")?.body,
             acceptedAt,
           });
           planner.setDraftPlanRefreshKey((v) => v + 1);
