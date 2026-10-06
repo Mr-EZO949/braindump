@@ -138,7 +138,7 @@ export default async function OwnerUsersCostPage() {
                   overview.users.map((row) => (
                     <tr key={row.user_id}>
                       <td>
-                        {row.email ?? "unknown"}
+                        <Link href={`/app/observability/users/${row.user_id}`}>{row.email ?? "unknown"}</Link>
                         {row.failed_runs > 0 ? (
                           <>
                             <br />
