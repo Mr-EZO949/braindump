@@ -24,7 +24,11 @@ import {
   oneOffBusy,
   sessionBusyNote,
   timeToMinutes,
+  withoutSaved,
 } from "@/lib/planner/commitments";
+import { pinFromMessage } from "@/lib/planner/plan-requests";
+import { resolveRelativeDay } from "@/lib/time/relative-day";
+import { DAY_PLAN_START_MINUTE } from "@/lib/planner/plan-window";
 import { localDateISO, localMinuteOfDay } from "@/lib/time/local-date";
 import { getRequestTimeZone } from "@/lib/time/request-date";
 import {
@@ -291,24 +295,36 @@ const PLAN_DAY: ToolDefinition = {
   schema: {
     name: "plan_day",
     description:
-      "Draft a time-blocked plan from their active work in the Planner, for review. Saved weekly commitments are planned around; busy time they name for today (\"lectures 2:30–6:30\", \"dentist at 4\") goes in busy — plan right away, don't ask whether it repeats. It avoids only what is saved or passed here; never say otherwise. Waits for Accept.",
+      "Draft a time-blocked plan from their active work in the Planner, for review. Saved weekly commitments are planned around; anything else at a clock time that day (\"lectures 2:30–6:30\", \"dentist at 4\", \"mealprep from 12:30 for 1.5h\") goes in busy — it shows on the plan at that time; plan right away, don't ask whether it repeats. Things to fit in without a time go in include, even ones not in the graph. It avoids only what is saved or passed here; never say otherwise. Waits for Accept.",
     input_schema: {
       type: "object",
       properties: {
         window: {
           type: "string",
           enum: ["1h", "2h", "day", "custom"],
-          description: "day = from start_time (or now) to 23:00; 1h / 2h = short sessions; custom needs custom_minutes",
+          description: "day = from start_time (or now) to end_time or 23:00; 1h / 2h = short sessions; custom = a span they name",
+        },
+        day: {
+          type: "string",
+          description: "Their words for another day (\"tomorrow\", \"wednesday\"); omitted = today",
+        },
+        start_time: {
+          type: "string",
+          description: "24h HH:MM, only when they say it (\"from 8am\" → \"08:00\"); omitted = now (08:00 on another day)",
+        },
+        end_time: {
+          type: "string",
+          description: "24h HH:MM when they name an end (\"until 11pm\" / \"to 11\" in the evening → \"23:00\"); the length is worked out from it",
         },
         custom_minutes: {
           type: "integer",
           minimum: 15,
           maximum: PLAN_MAX_MINUTES,
-          description: "custom only, when they name an end: minutes from start_time (\"2:30 to 11pm\" = 510)",
+          description: "Only for a length with no end time (\"plan 3 hours\" = 180)",
         },
-        start_time: {
+        note: {
           type: "string",
-          description: "24h HH:MM, only when they say it (\"from 8am\" → \"08:00\"); omitted = now",
+          description: "What they said about the day that should shape it — health, energy, mood (\"sick, not much deep work\")",
         },
         include: {
           type: "string",
@@ -337,28 +353,46 @@ const PLAN_DAY: ToolDefinition = {
       window?: string;
       custom_minutes?: number;
       start_time?: string;
+      end_time?: string;
+      day?: string;
+      note?: string;
       busy?: unknown;
       include?: string;
     };
-    const window = (["1h", "2h", "day", "custom"].includes(args.window ?? "")
+    let window = (["1h", "2h", "day", "custom"].includes(args.window ?? "")
       ? args.window
       : "day") as "1h" | "2h" | "day" | "custom";
-    const customMinutes = window === "custom" ? clampPlanMinutes(args.custom_minutes ?? 60) : null;
 
     // Standing preferences (docs/preferences.md): the user's end of work
     // shortens a day, their daily budgets go in as requests on a long plan,
     // best hours / rules ride along as context — with the "About you" working
     // hours, which the chat planner used to skip.
     const today = ctx.today ?? localDateISO(new Date(), null);
+    // "plan wednesday": the day is resolved here, not by the model; until
+    // 10-06 a plan for tomorrow saw today's weekly times.
+    const planDate = (typeof args.day === "string" && resolveRelativeDay(args.day, today)) || today;
     const startMinute =
       timeToMinutes(args.start_time) ??
-      nextSessionStartMinute(localMinuteOfDay(new Date(), await getRequestTimeZone()));
+      (planDate === today
+        ? nextSessionStartMinute(localMinuteOfDay(new Date(), await getRequestTimeZone()))
+        : DAY_PLAN_START_MINUTE);
+    // "until 11pm": the length comes from the end time — Haiku made 12:30 →
+    // 23:00 570 minutes (owner 10-06).
+    const endMinute = timeToMinutes(args.end_time);
+    let customMinutes = window === "custom" ? clampPlanMinutes(args.custom_minutes ?? 60) : null;
+    if (endMinute !== null && endMinute > startMinute) {
+      window = "custom";
+      customMinutes = clampPlanMinutes(endMinute - startMinute);
+    }
     const [preferences, profile] = await Promise.all([
       loadPreferences(ctx.userId, ctx.supabase),
       ctx.supabase.from("profiles").select("working_hours").eq("user_id", ctx.userId).maybeSingle(),
     ]);
     const sessionMinutes = planWindowMinutes(window, customMinutes, startMinute, workdayEndMinute(preferences));
-    const include = typeof args.include === "string" ? args.include.slice(0, 400) : null;
+    // Timed items — in include, or given a time in the user's own words — are
+    // fixed time; the rest is what to fit in.
+    const pinned = pinFromMessage(typeof args.include === "string" ? args.include.slice(0, 400) : null, ctx.userMessage);
+    const include = pinned.include;
 
     const bundle = await buildPlannerCandidates({
       workspaceId: ctx.workspaceId,
@@ -369,17 +403,19 @@ const PLAN_DAY: ToolDefinition = {
       preferences,
       budgetRequests:
         sessionMinutes >= BUDGET_MIN_SESSION_MINUTES
-          ? budgetRequestsFor({ prefs: preferences, dateISO: today, sessionMinutes, include })
+          ? budgetRequestsFor({ prefs: preferences, dateISO: planDate, sessionMinutes, include })
           : [],
     });
     if (!bundle.candidates.length && !bundle.time_blocks.length) {
       return { accepted: false, error: "No active work items to plan — add a few tasks or goals first." };
     }
     const workingHours = (profile.data as { working_hours?: string | null } | null)?.working_hours?.trim();
-    const standing = planningPreferenceLines(preferences, today);
+    const standing = planningPreferenceLines(preferences, planDate);
+    const note = typeof args.note === "string" ? args.note.trim().slice(0, 200) : "";
     const workspaceContext = [
       workingHours ? `Working hours / energy: ${workingHours.slice(0, 200)}` : null,
       standing.length > 0 ? `Standing preferences (the user's own): ${standing.join(" ")}` : null,
+      note ? `The user about today: ${note}` : null,
     ]
       .filter(Boolean)
       .join("\n");
@@ -391,9 +427,13 @@ const PLAN_DAY: ToolDefinition = {
     // Until 2026-10-02 only a full day saw commitments and nothing could say
     // "I have lectures 2:30–6:30 today", so "schedule 2:30–11pm" filled the
     // lectures; until 2026-10-03 a day was 09:00–17:00.
-    const busyToday = [...busyOn(bundle.commitments, today), ...oneOffBusy(args.busy)].sort(
-      (a, b) => a.start - b.start,
-    );
+    // Their own timed items ("mealprep from 12:30") are fixed time too; a
+    // one-off that repeats a saved weekly time counts once.
+    const saved = busyOn(bundle.commitments, planDate);
+    const busyToday = [
+      ...saved,
+      ...withoutSaved([...oneOffBusy(args.busy), ...pinned.fixed], saved),
+    ].sort((a, b) => a.start - b.start);
     const busy = sessionBusyNote(busyToday, startMinute, sessionMinutes);
     const plannedAround = busyWithin(busyToday, startMinute, startMinute + sessionMinutes).map(
       (b) => `${b.title} ${minutesToTime(b.start)}–${minutesToTime(b.end)}`,
@@ -484,7 +524,10 @@ const PLAN_DAY: ToolDefinition = {
       accepted: true,
       planning_window: window,
       block_count: output.blocks.length,
-      message: `Drafted a ${window === "day" ? "day " : window === "custom" ? "" : `${window} `}plan for ${describeSessionSpan(
+      plan_date: planDate,
+      message: `Drafted a ${window === "day" ? "day " : window === "custom" ? "" : `${window} `}plan for ${
+        planDate === today ? "" : `${planDate} `
+      }${describeSessionSpan(
         startMinute,
         sessionMinutes,
       )} with ${output.blocks.length} blocks${

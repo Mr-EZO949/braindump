@@ -14,6 +14,7 @@ type PlanCall = {
   requests?: unknown[];
   session_minutes?: number | null;
   session_start_minute?: number | null;
+  workspace_context?: string;
 };
 const planCalls: PlanCall[] = [];
 let planError: Error | null = null;
@@ -178,5 +179,56 @@ describe("plan_day — what the user asks to fit in (plan-v8)", () => {
     await PLAN_DAY.handler({ window: "day", start_time: "08:00" }, ctx());
     expect(candidateCalls[0].include).toBeNull();
     expect(planCalls[0].requests).toEqual([]);
+  });
+});
+
+describe("plan_day — owner 10-06 (sick day, mealprep, until 11pm, plan wednesday)", () => {
+  const lecture = {
+    id: "ir",
+    title: "Information Retrieval lecture",
+    node_id: null,
+    days: [3], // Wednesdays (WED is the test's today)
+    start_time: "15:30:00",
+    end_time: "18:30:00",
+    starts_on: null,
+    ends_on: null,
+  };
+
+  it("end_time sets the length; a timed item in include is fixed time; a busy repeat of a saved lecture counts once; the note reaches the plan", async () => {
+    commitments = [lecture];
+    const result = (await PLAN_DAY.handler(
+      {
+        window: "custom",
+        custom_minutes: 570, // what Haiku wrote for 12:30 → 23:00
+        start_time: "12:30",
+        end_time: "23:00",
+        include: "1.5h mealprep from 12:30, clean room fully",
+        busy: [{ title: "Information Retrieval lecture", start: "15:30", end: "18:30" }],
+        note: "sick, not much deep work",
+      },
+      ctx(),
+    )) as { message: string };
+    expect(planCalls[0].session_minutes).toBe(630);
+    // 630 − mealprep 90 − lecture 180.
+    expect(planCalls[0].busy?.free_minutes).toBe(360);
+    expect(planCalls[0].busy?.lines[0]).toContain("Mealprep 12:30–14:00");
+    expect(planCalls[0].busy?.lines[0].match(/Information Retrieval/g)).toHaveLength(1);
+    expect(planCalls[0].workspace_context).toContain("The user about today: sick, not much deep work");
+    expect(result.message).toContain("12:30–23:00");
+  });
+
+  it("\"plan wednesday\" on a Tuesday plans Wednesday from 08:00 with Wednesday's weekly times", async () => {
+    vi.setSystemTime(new Date("2026-10-06T10:00:00Z"));
+    commitments = [{ ...lecture, days: [2] }]; // Tuesdays only
+    const { client } = createFakeSupabase({ plan_sessions: [], plan_blocks: [] });
+    const result = (await PLAN_DAY.handler(
+      { window: "day", day: "wednesday" },
+      { supabase: client, userId: "u1", workspaceId: "w1", selectedNodeId: null, today: "2026-10-06" },
+    )) as { message: string; plan_date: string };
+    expect(result.plan_date).toBe("2026-10-07");
+    expect(planCalls[0].session_start_minute).toBe(8 * 60);
+    expect(planCalls[0].session_minutes).toBe(900);
+    expect(planCalls[0].busy).toBeNull();
+    expect(result.message).toContain("2026-10-07 08:00–23:00");
   });
 });

@@ -43,4 +43,26 @@ describe("plan prompt (plan-v8)", () => {
     expect(variableBlock).toContain(`- "3h of Italian" → 180 min on [big_task] "Italian Crash Course" (id: it)`);
     expect(variableBlock).toContain(`- "2h of math" → 120 min; no item matched by name`);
   });
+
+  it("plan-v9: related tasks and the title for something not in the graph", () => {
+    const { variableBlock } = buildPlanPromptParts({
+      ...base,
+      requests: [
+        {
+          text: "2h of leetcode",
+          minutes: 120,
+          node_id: "lc1",
+          title: "LeetCode arrays",
+          node_type: "task",
+          label: "Leetcode",
+          related: [{ id: "lc2", title: "LeetCode DP" }],
+        },
+        { text: "clean room fully", minutes: null, node_id: null, title: null, node_type: null, label: "Clean room fully" },
+      ],
+    });
+    expect(variableBlock).toContain(
+      `- "2h of leetcode" → 120 min on [task] "LeetCode arrays" (id: lc1); related open tasks: "LeetCode DP" (id: lc2)`,
+    );
+    expect(variableBlock).toContain(`- "clean room fully" → a sensible length; no item matched by name — title: "Clean room fully"`);
+  });
 });

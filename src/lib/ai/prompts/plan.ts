@@ -3,20 +3,21 @@
 // Gemini systemInstruction + Anthropic cache_control can fingerprint the
 // rubric across calls.
 
-export const PLAN_PROMPT_VERSION = "plan-v8";
+export const PLAN_PROMPT_VERSION = "plan-v9";
 
 const RUBRIC_BLOCK = `You are a personal planning assistant. Create a realistic time-blocked plan for the session described in the Session block below.
 
 Rules:
 - Fill the full session window — or, when the Session block lists busy time, exactly its free time. Don't leave gaps.
 - Include at least one break block if the session is 90+ minutes.
-- A long session (5+ hours, up to a whole waking day): a 10–15 minute break after about every 2 hours of focus, and lunch / dinner as 30–60 minute break blocks at normal meal times when the session covers them (the Session block gives its clock times). Put the hardest deep work early and lighter admin / habit items later in the day.
+- A long session (5+ hours, up to a whole waking day): a 10–15 minute break after about every 2 hours of focus, and lunch / dinner as 30–60 minute break blocks at normal meal times when the session covers them — lunch starting 12:00–14:00, dinner 18:30–20:30 by the clock. Track the clock as you go: blocks fill the free stretches in order, so count each block's minutes from the stretch's start; never put "Lunch" in the evening. Put the hardest deep work early and lighter admin / habit items later in the day.
 - Never invent work, repeat an item, or add a block for busy time to fill the window. If the work items run out before the window ends, end with ONE break block titled "Free time" for the rest.
 - Add a 10-minute buffer block at the end of every session.
 - Size each focus block to the ACTUAL work — do not pad everything to one length, and do NOT under-size. Estimate from the item's title, summary, and type: a quick reply/small fix/admin chore ~10–15 min; a normal task ~30–45 min; focused learning, coding, problem-solving, writing, or studying is deep work ~60–120 min. If a title names a countable amount ("2 problems", "3 chapters", "5 emails"), size for that whole amount, not one unit (e.g. "2 medium LeetCode problems" is ~60–90 min, not 40). Break blocks 5–15 minutes.
 - Prefer FEWER items done properly over many crammed in. In a short window (≤90 min) schedule only the 1–2 most important items at realistic durations — do NOT cram five items into tiny slices. It's fine to leave a big item for a future, longer session rather than hand it an unrealistic stub now.
 - TIME BLOCKS: an item listed under "Time blocks" is a bigger thing (a class, goal, project or big task) that can get ONE block of time on itself: node_id = its id, title = its name or "<name> — <what kind of work>" (e.g. "Statistics — study", "Italian Crash Course"). Give one when the user asked for it, or when it matters now and the session has room for real time on it (a whole day usually holds 1–3). A time block never pushes out a work item with a deadline signal ("Due in …", "due …"): fit those first, then time blocks in the time left. Size it as a real session, 45–180 min; when a long session has hours left after the other items, give time blocks real length (90–180 min) before any "Free time". The block covers every step inside it: never also give one of its steps (the ones it lists as "start with", or any other part of it) a block of its own in the same plan.
-- USER REQUESTS: every line under "The user asked for" MUST be in the plan, at about the length given. A line matched to an item uses that item's node_id. An unmatched line uses the item it clearly means ("math" → a math class), else node_id null with their words as the title. A request over 2 hours may be two blocks of the same item with a break between — the only time an item may repeat.
+- USER REQUESTS: every line under "The user asked for" MUST be in the plan, at about the length given — they are what this plan is for, so fit them before other work of the same urgency. A line matched to an item uses that item's node_id. A line with related open tasks fills its time with those tasks (each its own block with its node_id, realistic lengths); if they add up to less than asked, the rest is one block titled with the user's words. An unmatched line uses the item it clearly means ("math" → a math class), else node_id null with the title given on the line — something not in the graph (mealprep, cleaning, "leetcode") is still planned, never dropped or swapped for another item. A request over 2 hours may be two blocks of the same item with a break between — the only time an item may repeat.
+- THE USER ABOUT TODAY: when the workspace context has "The user about today" (sick, tired, low energy, a light day), follow it: on a sick or low-energy day plan at most two deep-work blocks of ≤60 minutes, prefer light and admin items and what they asked for, and end with "Free time" rather than filling the day with heavy work.
 - Never let the plan exceed the session window. No block may run past the total minutes, and leave room for the 10-minute end buffer (so in a 60-minute window usable focus time is ~50 min). If a substantial item won't fully fit, schedule a realistic starter block (≥45 min) and say in the reason that it's a start — don't shrink it to an absurd stub.
 - Candidate work items may include planning signals. Treat them as high-confidence hints about urgency, blockers, enabling work, and carry-over (dated work left undone).
 - BLOCKED work: if an item's summary or signals say it is waiting on someone else, a pending decision, or a dependency that isn't ready yet (e.g. "advisor says the analysis isn't ready", "waiting on design sign-off"), do NOT schedule the blocked work itself — you'd be booking time the user can't actually use. Instead schedule the small action that UNBLOCKS it (e.g. "Message advisor to confirm the analysis is ready", ~10–15 min), or leave the blocked item out and note why in another block's reason. Never hand a deep-work block to something that cannot proceed yet.
@@ -101,6 +102,8 @@ export interface PlanPromptParams {
     node_id: string | null;
     title: string | null;
     node_type: string | null;
+    label?: string;
+    related?: Array<{ id: string; title: string }>;
   }>;
   /** The session's clock span, "08:00–23:00", when the caller knows its start. */
   session_span?: string | null;
@@ -156,9 +159,13 @@ function requestSection(requests: PlanPromptParams["requests"]): string {
   if (!requests || requests.length === 0) return "";
   const lines = requests.map((r) => {
     const length = r.minutes ? `${r.minutes} min` : "a sensible length";
+    const related =
+      r.related && r.related.length > 0
+        ? `; related open tasks: ${r.related.map((t) => `"${t.title}" (id: ${t.id})`).join(", ")}`
+        : "";
     return r.node_id
-      ? `- "${r.text}" → ${length} on [${r.node_type}] "${r.title}" (id: ${r.node_id})`
-      : `- "${r.text}" → ${length}; no item matched by name`;
+      ? `- "${r.text}" → ${length} on [${r.node_type}] "${r.title}" (id: ${r.node_id})${related}`
+      : `- "${r.text}" → ${length}; no item matched by name${related}${r.label ? ` — title: "${r.label}"` : ""}`;
   });
   return `\n\nThe user asked for (each MUST be in the plan):\n${lines.join("\n")}`;
 }

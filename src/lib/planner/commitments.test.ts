@@ -104,6 +104,23 @@ describe("planning around busy time", () => {
     // 13:00 start: 45 fits, 30 would run 13:45–14:15 → 15:00, then 20.
     expect(layoutAroundBusy([45, 30, 20], h(13), busyOn([stats, lab], WED))).toEqual([h(13), h(16, 30), h(17)]);
   });
+
+  it("owner 10-06: short tasks fill the time before a lecture a long block doesn't fit; breaks don't jump ahead", () => {
+    const lecture = [{ start: h(15, 30), end: h(18, 30) }];
+    // research 10, core dev 120, break 10, test 60, CV 30, companies 20
+    const durations = [10, 120, 10, 60, 30, 20];
+    const fills = [true, true, false, true, true, true];
+    // 14:00–15:30 holds research, the test pass and companies; core dev, the
+    // break and the CV follow the lecture in order.
+    expect(layoutAroundBusy(durations, h(14), lecture, fills)).toEqual([
+      h(14),
+      h(18, 30),
+      h(20, 30),
+      h(14, 10),
+      h(20, 40),
+      h(15, 10),
+    ]);
+  });
 });
 
 describe("words", () => {

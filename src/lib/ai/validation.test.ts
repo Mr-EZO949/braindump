@@ -190,6 +190,80 @@ describe("validatePlanOutput — time blocks (plan-v8)", () => {
     ]);
   });
 
+  it("owner 10-06: an unmatched request is planned under their words; a short one is topped up; requests survive a full window", () => {
+    const out = validatePlanOutput(
+      planRaw([
+        block({ title: "Build engine MVP", node_id: "eng", start_offset: 0, duration_minutes: 120 }),
+        block({ title: "Update CV", start_offset: 120, duration_minutes: 15, block_type: "admin" }),
+        block({ title: "Start Mealprepping", node_id: "meal", start_offset: 135, duration_minutes: 20 }),
+        block({ title: "Test the app", node_id: "test", start_offset: 155, duration_minutes: 60 }),
+        block({ title: "Free time", start_offset: 215, duration_minutes: 60, block_type: "break" }),
+      ]),
+      240,
+      [],
+      {
+        requests: [
+          { node_id: "meal", title: "Start Mealprepping", minutes: 90, label: "Mealprep" },
+          { node_id: null, title: null, minutes: null, label: "Clean room fully" },
+          { node_id: null, title: null, minutes: null, label: "Update CV" },
+        ],
+      },
+    );
+    expect(out.blocks.map((b) => [b.title, b.duration_minutes])).toEqual([
+      ["Clean room fully", 45],
+      ["Build engine MVP", 90],
+      ["Update CV", 15],
+      ["Start Mealprepping", 90],
+    ]);
+  });
+
+  it("one item split into 5 + 20 minutes becomes one block; a 3h request may stay two", () => {
+    const out = validatePlanOutput(
+      planRaw([
+        block({ title: "Look into selectives", start_offset: 0, duration_minutes: 5, block_type: "admin" }),
+        block({ title: "Clean room", start_offset: 5, duration_minutes: 30, block_type: "admin" }),
+        block({ title: "Look into selectives", start_offset: 35, duration_minutes: 20, block_type: "admin" }),
+        block({ title: "Italian", node_id: "it", start_offset: 55, duration_minutes: 90 }),
+        block({ title: "Break", start_offset: 145, duration_minutes: 10, block_type: "break" }),
+        block({ title: "Italian", node_id: "it", start_offset: 155, duration_minutes: 90 }),
+      ]),
+      600,
+    );
+    expect(out.blocks.map((b) => [b.title, b.duration_minutes])).toEqual([
+      ["Look into selectives", 25],
+      ["Clean room", 30],
+      ["Italian", 90],
+      ["Break", 10],
+      ["Italian", 90],
+    ]);
+  });
+
+  it("something not in the graph with no length gets at least 30 minutes", () => {
+    const out = validatePlanOutput(
+      planRaw([block({ title: "Look into selectives", start_offset: 0, duration_minutes: 10, block_type: "admin" })]),
+      300,
+      [],
+      { requests: [{ node_id: null, title: null, minutes: null, label: "Look into the selectives" }] },
+    );
+    expect(out.blocks.map((b) => b.duration_minutes)).toEqual([30]);
+  });
+
+  it("'2h of leetcode': the related tasks the model planned count toward the 2h", () => {
+    const out = validatePlanOutput(
+      planRaw([
+        block({ title: "LeetCode arrays", node_id: "lc1", start_offset: 0, duration_minutes: 45 }),
+        block({ title: "LeetCode DP", node_id: "lc2", start_offset: 45, duration_minutes: 45 }),
+      ]),
+      300,
+      [],
+      { requests: [{ node_id: "lc1", title: "LeetCode arrays", minutes: 120, label: "Leetcode", related: [{ id: "lc2", title: "LeetCode DP" }] }] },
+    );
+    expect(out.blocks.map((b) => [b.node_id, b.duration_minutes])).toEqual([
+      ["lc1", 75],
+      ["lc2", 45],
+    ]);
+  });
+
   it("without a context it behaves exactly as before", () => {
     const raw = planRaw([
       block({ title: "Italian Crash Course", node_id: "it", duration_minutes: 120 }),

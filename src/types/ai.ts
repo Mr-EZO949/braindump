@@ -546,6 +546,10 @@ export interface PlanRequestInput {
   node_id: string | null;
   title: string | null;
   node_type: NodeType | null;
+  /** Their words without the length ("Leetcode") — the title when nothing matched. */
+  label?: string;
+  /** Other open tasks their words name; the asked time goes to these. */
+  related?: Array<{ id: string; title: string }>;
 }
 
 export interface PlanOutput {

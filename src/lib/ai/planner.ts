@@ -5,7 +5,7 @@
 import type { NodeType } from "@/types/graph";
 import { todayLocalISO } from "@/lib/habits/streak";
 import { normalizeEdges } from "@/lib/graph/edge-types";
-import { KNOWLEDGE_TYPES, STRUCTURE_TYPES } from "@/lib/graph/node-types";
+import { CHECKABLE_TYPES, KNOWLEDGE_TYPES, STRUCTURE_TYPES } from "@/lib/graph/node-types";
 import {
   createRankingContext,
   daysBetween,
@@ -15,6 +15,7 @@ import {
 import { DURATION_BY_TYPE } from "@/lib/planner/auto-schedule";
 import {
   matchRequest,
+  matchRequestAll,
   parsePlanRequests,
   formatRequestMinutes,
 } from "@/lib/planner/plan-requests";
@@ -246,6 +247,10 @@ export interface PlanRequestItem {
   node_id: string | null;
   title: string | null;
   node_type: NodeType | null;
+  /** Their words without the length — the block's title when nothing matched. */
+  label: string;
+  /** Other open tasks their words name ("2h of leetcode" → each LeetCode task): the time goes to these. */
+  related: Array<{ id: string; title: string }>;
 }
 
 export interface PlannerManualItem {
@@ -1040,16 +1045,34 @@ export async function buildPlannerCandidates(params: {
     (node) =>
       node.node_type !== "area" && !KNOWLEDGE_TYPES.has(node.node_type) && rankCtx.hold(node.id) === "none",
   );
-  const requests: PlanRequestItem[] = parsePlanRequests(params.include).map((request) => {
-    const node = matchRequest(request.phrase, requestable);
-    return {
-      text: request.text,
-      minutes: request.minutes,
-      node_id: node?.id ?? null,
-      title: node?.title ?? null,
-      node_type: node?.node_type ?? null,
-    };
-  });
+  // One with a clock time ("mealprep from 12:30") is fixed time, not a
+  // request: the callers plan around it and put it on the day (timedRequests).
+  const requests: PlanRequestItem[] = parsePlanRequests(params.include)
+    .filter((request) => request.start === null)
+    .map((request) => {
+      const matches = matchRequestAll(request.phrase, requestable);
+      const node = matches[0] ?? null;
+      // A container (class, project) gets a time block; a task-like match
+      // brings the other tasks the same words name ("2h of leetcode").
+      const taskLike = (n: (typeof requestable)[number]) => CHECKABLE_TYPES.has(n.node_type);
+      const related = [
+        ...(node && taskLike(node) ? matches.slice(1).filter(taskLike) : []),
+        // "6h academics (Calculus, Probability, ML)": each listed item.
+        ...(node ? [] : request.parts.flatMap((part) => matchRequest(part, requestable) ?? [])),
+      ]
+        .filter((n, i, all) => n.id !== node?.id && all.findIndex((m) => m.id === n.id) === i)
+        .slice(0, 4)
+        .map((n) => ({ id: n.id, title: n.title }));
+      return {
+        text: request.text,
+        minutes: request.minutes,
+        node_id: node?.id ?? null,
+        title: node?.title ?? null,
+        node_type: node?.node_type ?? null,
+        label: request.label,
+        related,
+      };
+    });
   // The day's time budgets ("Coding — your 4h a day"): their linked node when
   // it can be planned, else matched by name like a typed request. A budget for
   // a node the user already asked for is left out — what they typed wins.
@@ -1064,12 +1087,17 @@ export async function buildPlannerCandidates(params: {
       node_id: node?.id ?? null,
       title: node?.title ?? null,
       node_type: node?.node_type ?? null,
+      label: budget.phrase,
+      related: [],
     });
   }
   const requestedMinutes = new Map<string, number | null>();
   for (const request of requests) {
     if (request.node_id && !requestedMinutes.has(request.node_id)) {
       requestedMinutes.set(request.node_id, request.minutes);
+    }
+    for (const related of request.related) {
+      if (!requestedMinutes.has(related.id)) requestedMinutes.set(related.id, null);
     }
   }
   const requestSignal = (nodeId: string): string | null => {

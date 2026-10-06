@@ -139,6 +139,18 @@ export function oneOffBusy(raw: unknown): BusyInterval[] {
   });
 }
 
+/**
+ * One-off busy time minus what a saved commitment already covers: chat named
+ * "Information Retrieval lecture 15:30–18:30" for a day that has it saved,
+ * and the plan listed it twice.
+ */
+export function withoutSaved(oneOff: BusyInterval[], saved: BusyInterval[]): BusyInterval[] {
+  return oneOff.filter((b) => {
+    const length = b.end - b.start;
+    return !saved.some((s) => Math.min(b.end, s.end) - Math.max(b.start, s.start) >= length / 2);
+  });
+}
+
 /** Where a session that starts "now" begins: 15 min out, on the half hour. */
 export function nextSessionStartMinute(nowMinute: number): number {
   return Math.min(23 * 60 + 30, Math.ceil((nowMinute + 15) / 30) * 30);
@@ -147,29 +159,41 @@ export function nextSessionStartMinute(nowMinute: number): number {
 /**
  * Start minutes for blocks laid out in order from `anchor`, skipping busy
  * time: a block that would run into a commitment starts after it instead.
+ * With `fillsGaps`, the free time before a commitment isn't left empty when
+ * the next block is too long for it: the first later block that fits (and may
+ * fill a gap — not a break) goes there, the rest keep their order. Owner
+ * 10-06: a 2-hour block didn't fit before a 15:30 lecture, so 14:10–15:30
+ * stayed empty while three short tasks were pushed to 22:10–23:20.
  */
 export function layoutAroundBusy(
   durations: number[],
   anchor: number,
   busy: { start: number; end: number }[],
+  fillsGaps?: boolean[],
 ): number[] {
-  const sorted = [...busy].sort((a, b) => a.start - b.start);
+  const sorted = [...busy].filter((b) => b.end > b.start).sort((a, b) => a.start - b.start);
+  const starts = new Array<number>(durations.length).fill(anchor);
+  const queue = durations.map((_, i) => i);
   let cursor = anchor;
-  return durations.map((duration) => {
-    let moved = true;
-    while (moved) {
-      moved = false;
-      for (const b of sorted) {
-        if (cursor < b.end && cursor + duration > b.start) {
-          cursor = b.end;
-          moved = true;
-        }
-      }
+  while (queue.length > 0) {
+    const inside = sorted.find((b) => cursor >= b.start && cursor < b.end);
+    if (inside) {
+      cursor = inside.end;
+      continue;
     }
-    const start = cursor;
-    cursor += duration;
-    return start;
-  });
+    const next = sorted.find((b) => b.start >= cursor);
+    const gap = next ? next.start - cursor : Infinity;
+    let pick = durations[queue[0]] <= gap ? 0 : -1;
+    if (pick < 0 && fillsGaps) pick = queue.findIndex((i, k) => k > 0 && fillsGaps[i] && durations[i] <= gap);
+    if (pick < 0) {
+      cursor = next!.end;
+      continue;
+    }
+    const [index] = queue.splice(pick, 1);
+    starts[index] = cursor;
+    cursor += durations[index];
+  }
+  return starts;
 }
 
 /**

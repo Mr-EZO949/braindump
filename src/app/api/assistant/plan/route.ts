@@ -19,7 +19,8 @@ import { buildWorkspaceProfileContext } from "@/lib/ai/workspace-profile";
 import { AI_MODELS, AI_RATE_LIMITS } from "@/lib/ai/config";
 import { PLAN_PROMPT_VERSION } from "@/lib/ai/prompts/plan";
 import { PLAN_MAX_MINUTES, planWindowMinutes } from "@/lib/planner/plan-window";
-import { busyOn, sessionBusyNote, timeToMinutes } from "@/lib/planner/commitments";
+import { busyOn, sessionBusyNote, timeToMinutes, withoutSaved } from "@/lib/planner/commitments";
+import { timedRequests } from "@/lib/planner/plan-requests";
 import { isISODate, localDateISO } from "@/lib/time/local-date";
 import {
   BUDGET_MIN_SESSION_MINUTES,
@@ -200,9 +201,16 @@ export async function POST(req: NextRequest) {
   const { candidates, manual_items, preference_hints, commitments, time_blocks, requests } = candidateBundle;
 
   // A class inside the session: the planner fills only the free stretches.
+  // "Mealprep from 12:30" typed in the box is fixed time too (the Planner
+  // puts it on the day at that time).
+  const saved = isISODate(session_date) ? busyOn(commitments, session_date) : [];
   const busy =
     isISODate(session_date) && sessionStartMinute !== null
-      ? sessionBusyNote(busyOn(commitments, session_date), sessionStartMinute, sessionMinutes)
+      ? sessionBusyNote(
+          [...saved, ...withoutSaved(timedRequests(userInclude), saved)].sort((a, b) => a.start - b.start),
+          sessionStartMinute,
+          sessionMinutes,
+        )
       : null;
 
   if (candidates.length === 0 && time_blocks.length === 0) {

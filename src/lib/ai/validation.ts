@@ -3,6 +3,7 @@
 // If validation fails the caller catches the error, logs the failure, and does not write.
 
 import { resolveRelativeDay } from "@/lib/time/relative-day";
+import { titleCoversRequest } from "@/lib/planner/plan-requests";
 import type {
   BuilderChange,
   ExtractionOutput,
@@ -488,12 +489,17 @@ const normalizeTitle = (title: string) => title.toLowerCase().replace(/[^a-z0-9�
 /** What a plan was given beyond its work items (PlanInput.time_blocks / requests). */
 export interface PlanBlockContext {
   timeBlocks?: Pick<PlanTimeBlockInput, "id" | "start_with" | "step_ids">[];
-  requests?: Pick<PlanRequestInput, "node_id" | "title" | "minutes">[];
+  requests?: Pick<PlanRequestInput, "node_id" | "title" | "minutes" | "label" | "related">[];
 }
 
 // A requested item the model left out still gets its time; an hour when they
-// gave no length.
+// gave no length (45 min for one that names nothing in the graph).
 const REQUEST_DEFAULT_MINUTES = 60;
+const REQUEST_UNMATCHED_DEFAULT_MINUTES = 45;
+const REQUEST_UNMATCHED_MIN_MINUTES = 30;
+// A request planned shorter than asked by more than this is topped up.
+const REQUEST_SLACK_MINUTES = 15;
+const REQUEST_BLOCK_MAX_MINUTES = 180;
 
 /**
  * `busyTitles`: the fixed commitments inside the session. An unlinked block
@@ -543,13 +549,18 @@ export function validatePlanOutput(
   });
 
   const busy = new Set(busyTitles.map(normalizeTitle).filter(Boolean));
-  const planned = withRequests(
-    dropCoveredSteps(
-      parsed.filter((block) => !(block.node_id === null && busy.has(normalizeTitle(block.title)))),
-      context.timeBlocks ?? [],
+  const { blocks: planned, requested } = withRequests(
+    mergeRepeats(
+      dropCoveredSteps(
+        parsed.filter((block) => !(block.node_id === null && busy.has(normalizeTitle(block.title)))),
+        context.timeBlocks ?? [],
+      ),
     ),
     context.requests ?? [],
   );
+  if (requested.size > 0 && typeof totalMinutes === "number" && totalMinutes > 0) {
+    makeRoomForRequests(planned, requested, totalMinutes);
+  }
 
   // Re-sequence so blocks NEVER overlap or overflow. The LLM uses start_offset
   // as an intended ORDER but sometimes collides blocks (e.g. a break and a
@@ -575,6 +586,42 @@ export function validatePlanOutput(
 
 type ParsedBlock = Omit<PlanOutput["blocks"][number], "id" | "plan_session_id">;
 
+// Over this, one item may take two blocks with a break between (a 3h request).
+const SPLIT_MIN_MINUTES = 120;
+
+/**
+ * One item, one block: the model split "Look into the selectives" into 5 + 20
+ * minutes to fill the gap before a lecture (owner e2e 10-06). Repeats of a
+ * work block (same node, or same title with none) fold into the first — unless
+ * together they run over 2 hours, the one split the prompt allows.
+ */
+export function mergeRepeats<T extends ParsedBlock>(blocks: T[]): T[] {
+  const key = (b: T) =>
+    b.block_type === "break" || b.block_type === "buffer" ? null : (b.node_id ?? `t:${normalizeTitle(b.title)}`);
+  const total = new Map<string, number>();
+  for (const b of blocks) {
+    const k = key(b);
+    if (k) total.set(k, (total.get(k) ?? 0) + b.duration_minutes);
+  }
+  const first = new Map<string, T>();
+  const out: T[] = [];
+  for (const b of blocks) {
+    const k = key(b);
+    if (!k || (total.get(k) ?? 0) > SPLIT_MIN_MINUTES) {
+      out.push(b);
+      continue;
+    }
+    const kept = first.get(k);
+    if (kept) {
+      kept.duration_minutes += b.duration_minutes;
+      continue;
+    }
+    first.set(k, b);
+    out.push(b);
+  }
+  return out;
+}
+
 /** A block on a step inside a time block that is ALSO in this plan: the time block covers it. */
 export function dropCoveredSteps<T extends Pick<ParsedBlock, "node_id">>(
   blocks: T[],
@@ -590,27 +637,95 @@ export function dropCoveredSteps<T extends Pick<ParsedBlock, "node_id">>(
   return blocks.filter((b) => !b.node_id || !(coveredBy.get(b.node_id) ?? []).some((owner) => owner !== b.node_id));
 }
 
-/** Requested items the model left out go first, at the length asked. */
+/**
+ * Every request is in the plan, at about the length asked (owner 10-06: the
+ * model dropped "clean room" and "look into the electives" twice and gave a
+ * 90-min mealprep 20 min). A request is covered by blocks on its node or its
+ * related tasks, or whose title names it ("Clean room" for "clean room
+ * fully"); one left out goes first, titled with the user's words when it
+ * names nothing in the graph; one planned short is topped up. `requested`:
+ * the blocks that carry a request, which room is made for.
+ */
 export function withRequests<T extends ParsedBlock>(
   blocks: T[],
-  requests: Pick<PlanRequestInput, "node_id" | "title" | "minutes">[],
-): T[] {
-  const planned = new Set(blocks.map((b) => b.node_id).filter(Boolean));
+  requests: Pick<PlanRequestInput, "node_id" | "title" | "minutes" | "label" | "related">[],
+): { blocks: T[]; requested: Set<ParsedBlock> } {
+  const requested = new Set<ParsedBlock>();
   const missing: ParsedBlock[] = [];
+  const add = (block: ParsedBlock) => {
+    missing.push(block);
+    requested.add(block);
+  };
   for (const request of requests) {
-    if (!request.node_id || !request.title || planned.has(request.node_id)) continue;
-    planned.add(request.node_id);
-    missing.push({
-      node_id: request.node_id,
-      title: request.title,
-      start_offset: -1, // sorts first; packing starts it at 0
-      duration_minutes: request.minutes ?? REQUEST_DEFAULT_MINUTES,
-      reason: "You asked for this",
-      block_type: "focus",
-      completion_status: "pending",
-    });
+    const ids = new Set([request.node_id, ...(request.related ?? []).map((r) => r.id)].filter(Boolean));
+    const words = request.label || request.title || "";
+    const covering = [...blocks, ...(missing as T[])].filter(
+      (b) =>
+        b.block_type !== "break" &&
+        b.block_type !== "buffer" &&
+        !requested.has(b) &&
+        ((b.node_id !== null && ids.has(b.node_id)) || (words !== "" && titleCoversRequest(b.title, words))),
+    );
+    for (const b of covering) requested.add(b);
+    const title = request.title ?? request.label ?? "";
+    if (covering.length === 0) {
+      if (!title) continue;
+      add({
+        node_id: request.node_id,
+        title,
+        start_offset: -1, // sorts first; packing starts it at 0
+        duration_minutes: request.minutes ?? (request.node_id ? REQUEST_DEFAULT_MINUTES : REQUEST_UNMATCHED_DEFAULT_MINUTES),
+        reason: "You asked for this",
+        block_type: "focus",
+        completion_status: "pending",
+      });
+      continue;
+    }
+    // Something not in the graph with no length asked gets a real block: the
+    // model gave "look into the selectives" 10 minutes twice (owner 10-06).
+    const wanted = request.minutes ?? (request.node_id ? null : REQUEST_UNMATCHED_MIN_MINUTES);
+    if (!wanted) continue;
+    let deficit = wanted - covering.reduce((sum, b) => sum + b.duration_minutes, 0);
+    if (deficit <= REQUEST_SLACK_MINUTES) continue;
+    for (const b of covering) {
+      const more = Math.min(deficit, Math.max(0, REQUEST_BLOCK_MAX_MINUTES - b.duration_minutes));
+      b.duration_minutes += more;
+      deficit -= more;
+      if (deficit <= 0) break;
+    }
+    if (deficit > REQUEST_SLACK_MINUTES) {
+      // Over 3 hours on one item: a second block of it, as the prompt allows.
+      add({ ...covering[0], start_offset: covering[0].start_offset + 0.5, duration_minutes: deficit, reason: "The rest of the time you asked for" });
+    }
   }
-  return [...(missing as T[]), ...blocks];
+  return { blocks: [...(missing as T[]), ...blocks], requested };
+}
+
+/**
+ * A plan longer than its window after the requests went in: "Free time"
+ * shrinks first, then work nobody asked for is shortened or leaves, from the
+ * end of the day — so the packer never cuts a request off.
+ */
+export function makeRoomForRequests<T extends ParsedBlock>(blocks: T[], requested: Set<ParsedBlock>, totalMinutes: number): void {
+  let over = blocks.reduce((sum, b) => sum + b.duration_minutes, 0) - totalMinutes;
+  if (over <= 0) return;
+  const byLatest = [...blocks].sort((a, b) => b.start_offset - a.start_offset);
+  for (const b of byLatest) {
+    if (over <= 0) return;
+    if (b.block_type !== "break" || !/free time/i.test(b.title)) continue;
+    const cut = Math.min(over, b.duration_minutes);
+    b.duration_minutes -= cut;
+    over -= cut;
+  }
+  for (const b of byLatest) {
+    if (over <= 0) break;
+    if (requested.has(b) || b.block_type === "break" || b.block_type === "buffer") continue;
+    // Shortened when a real block is left (30+ min), else it goes.
+    const cut = b.duration_minutes - over >= 30 ? over : b.duration_minutes;
+    b.duration_minutes -= cut;
+    over -= cut;
+  }
+  for (let i = blocks.length - 1; i >= 0; i -= 1) if (blocks[i].duration_minutes <= 0) blocks.splice(i, 1);
 }
 
 /** A time block's reason starts with where to begin: its next open steps (its first block only). */

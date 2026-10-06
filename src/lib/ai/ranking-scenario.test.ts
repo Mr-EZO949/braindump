@@ -513,8 +513,8 @@ describe("time blocks — bigger things a plan can give time to (plans only)", (
       include: "2h of psychology, 1h of math",
     });
     expect(bundle.requests).toEqual([
-      { text: "2h of psychology", minutes: 120, node_id: "psych", title: "Pass Psychology", node_type: "goal" },
-      { text: "1h of math", minutes: 60, node_id: null, title: null, node_type: null },
+      { text: "2h of psychology", minutes: 120, node_id: "psych", title: "Pass Psychology", node_type: "goal", label: "Psychology", related: [] },
+      { text: "1h of math", minutes: 60, node_id: null, title: null, node_type: null, label: "Math", related: [] },
     ]);
     expect(bundle.time_blocks[0].id).toBe("psych");
     expect(bundle.time_blocks[0].planning_signals[0]).toBe("You asked for 2h");
