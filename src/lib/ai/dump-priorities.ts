@@ -13,7 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { parsePriorityChanges, PRIORITY_ACTIONS, type PriorityAction } from "@/lib/graph/priority-changes";
 import { describeCommitment, loadActiveCommitments, type Commitment } from "@/lib/planner/commitments";
-import { parseCommitmentChanges } from "@/lib/planner/commitment-changes";
+import { parseCommitmentChanges, saysItRepeats } from "@/lib/planner/commitment-changes";
 import { parsePreferenceChanges } from "@/lib/planner/preferences";
 import { AI_MODELS } from "./config";
 import { hashText } from "./errors";
@@ -57,11 +57,8 @@ type RefCommitment = Commitment & { ref: string };
 // node: without it, "stats every day at 2pm" in a fresh workspace would never
 // reach the read.
 const CLOCK_RE = /\b(?:[01]?\d|2[0-3])(?::[0-5]\d)?\s?(?:am|pm|a\.m\.|p\.m\.)(?![a-z])|\b(?:[01]?\d|2[0-3])[:.][0-5]\d\b|\bnoon\b/i;
-const REPEAT_RE =
-  /\b(?:every|each|daily|weekdays?|weekends?|(?:mon|tues?|wednes|thurs?|fri|satur|sun)days?|mon|tue|wed|thu|fri|sat|sun)\b/i;
-
 export function mentionsWeeklyTime(dump: string): boolean {
-  return CLOCK_RE.test(dump) && REPEAT_RE.test(dump);
+  return CLOCK_RE.test(dump) && saysItRepeats(dump);
 }
 
 // A standing wish about time (docs/preferences.md): an amount per day / week
@@ -123,9 +120,12 @@ function commitmentRows(
   commitments: RefCommitment[],
   today: string,
   unclear: string[],
+  dump?: string,
 ): Record<string, unknown>[] {
   const byNodeRef = new Map(nodes.map((n) => [n.ref, n]));
   const byRef = new Map(commitments.map((c) => [c.ref, c]));
+  // A new weekly time needs the user's words to say it repeats.
+  const mayAdd = dump === undefined || saysItRepeats(dump);
   const rows: Record<string, unknown>[] = [];
   const touched = new Set<string>();
   for (const item of Array.isArray(raw) ? raw : []) {
@@ -133,6 +133,7 @@ function commitmentRows(
     const action = str(row.action);
     const change: Record<string, unknown> = { action };
     if (action === "add") {
+      if (!mayAdd) continue;
       change.title = str(row.title);
       change.days = row.days;
       change.start_time = str(row.start);
@@ -273,7 +274,7 @@ export function parseDumpPriorityResponse(
     if (STATUS_ACTIONS.has(action)) statusMoved.add(node.id);
     changes.push(change);
   }
-  const commitmentChanges = commitmentRows(rawCommitments, nodes, commitments, today, unclear);
+  const commitmentChanges = commitmentRows(rawCommitments, nodes, commitments, today, unclear, dump);
   return {
     changes,
     commitments: commitmentChanges,

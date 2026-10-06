@@ -178,6 +178,17 @@ function activityWords(title: string): Set<string> {
 }
 
 /** True unless the two titles clearly name different activities. */
+// Words that make a time weekly: "every tuesday", "weekdays", "on mondays",
+// "daily". Without one, a time is for one day — owner 10-06: "mealprep is
+// from 12:30 to 14:00 like i said" was saved as "Mealprep Mon–Fri 12:30–14:00".
+const REPEAT_RE =
+  /\b(?:every|each|daily|weekly|weekdays?|weekends?|mon(?:day)?s?|tue(?:s(?:day)?)?s?|wed(?:nesday)?s?|thu(?:r(?:s(?:day)?)?)?s?|fri(?:day)?s?|sat(?:urday)?s?|sun(?:day)?s?|semester|term)\b/i;
+
+/** Do the user's words say a time repeats? A NEW weekly commitment needs them to. */
+export function saysItRepeats(text: string | null | undefined): boolean {
+  return typeof text === "string" && REPEAT_RE.test(text);
+}
+
 export function sameActivity(a: string, b: string): boolean {
   const wordsA = activityWords(a);
   const wordsB = activityWords(b);

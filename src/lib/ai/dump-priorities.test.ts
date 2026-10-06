@@ -141,6 +141,23 @@ describe("parseDumpPriorityResponse — fixed commitments", () => {
   });
 });
 
+describe("parseDumpPriorityResponse — a time for one day is not weekly (owner 10-06)", () => {
+  const raw = JSON.stringify({
+    changes: [],
+    commitments: [{ action: "add", title: "Mealprep", days: ["mon", "tue", "wed", "thu", "fri"], start: "12:30", end: "14:00" }],
+  });
+
+  it("'mealprep is from 12:30 to 14:00 like i said' adds no weekly time", () => {
+    const read = parseDumpPriorityResponse(raw, [], TODAY, [], "no wait, mealprep is from 12:30 to 14:00 like i said");
+    expect(read.commitments).toEqual([]);
+  });
+
+  it("'mealprep every weekday 12:30–14:00' still does", () => {
+    const read = parseDumpPriorityResponse(raw, [], TODAY, [], "mealprep every weekday 12:30 to 14:00");
+    expect(read.commitments).toHaveLength(1);
+  });
+});
+
 describe("mentionsWeeklyTime", () => {
   it("needs a clock time and a weekday or repeat word", () => {
     expect(mentionsWeeklyTime("I have stats every day at 2pm")).toBe(true);

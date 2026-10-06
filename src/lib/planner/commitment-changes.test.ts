@@ -7,6 +7,7 @@ import {
   parseDateBound,
   parseDays,
   sameActivity,
+  saysItRepeats,
 } from "./commitment-changes";
 import type { Commitment } from "./commitments";
 
@@ -154,5 +155,18 @@ describe("parseCommitmentUndo", () => {
     expect(parseCommitmentUndo({ created: [], before: [fromDump] })).toEqual({ ok: true, undo: { created: [], before: [fromDump] } });
     const forged = parseCommitmentUndo({ created: [], before: [{ ...practice, source: "admin" }] });
     expect(forged.ok && forged.undo.before[0]).toEqual(practice);
+  });
+});
+
+describe("saysItRepeats — a new weekly time needs the user's words to say so", () => {
+  it("weekly words", () => {
+    for (const text of ["stats every day at 2pm", "I work Tue/Thu 9–5", "a lecture i have every tuesday", "practice on mondays", "weekdays 12:30"]) {
+      expect(saysItRepeats(text)).toBe(true);
+    }
+  });
+  it("a time for one day", () => {
+    for (const text of ["mealprep is from 12:30 to 14:00 like i said", "dentist at 4", "lectures 2:30-6:30 today", ""]) {
+      expect(saysItRepeats(text)).toBe(false);
+    }
   });
 });

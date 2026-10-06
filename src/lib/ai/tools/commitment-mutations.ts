@@ -16,6 +16,7 @@ import {
 import {
   COMMITMENT_SOURCES,
   parseCommitmentChanges,
+  saysItRepeats,
   type CommitmentChange,
   type CommitmentFields,
   type CommitmentSource,
@@ -95,6 +96,13 @@ export async function applyCommitmentChanges(ctx: ToolContext, input: unknown, s
   const existing = await loadActiveCommitments(ctx.supabase, ctx.userId, today);
   const parsed = parseCommitmentChanges(input, { today, existing });
   if (!parsed.ok) return { accepted: false, error: parsed.error };
+  if (ctx.userMessage && !saysItRepeats(ctx.userMessage) && parsed.changes.some((c) => c.action === "add")) {
+    return {
+      accepted: false,
+      error:
+        "They didn't say this repeats. A time for one day goes in plan_day busy (or add_task_to_calendar), not a weekly commitment.",
+    };
+  }
 
   // Links: keep only the user's own nodes. A class node's end date doubles as
   // the commitment's when the user didn't say one.
