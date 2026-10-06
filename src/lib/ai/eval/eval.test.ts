@@ -203,14 +203,19 @@ describe("runEval", () => {
     inferEdge: async (input) => ({
       output: {
         prompt_version: "test",
-        results: input.candidates.map((c) => ({
-          candidate_id: c.id,
-          related: c.id === "c-ml",
-          edge_type: c.id === "c-ml" ? ("supports" as const) : null,
-          from: "source" as const,
-          confidence: 0.9,
-          explanation: "",
-        })),
+        results: input.sources.flatMap((s) =>
+          s.candidates
+            .filter((c) => c.id === "c-ml")
+            .map((c) => ({
+              source_id: s.source_node.id,
+              candidate_id: c.id,
+              related: true,
+              edge_type: "supports" as const,
+              from: "source" as const,
+              confidence: 0.9,
+              explanation: "",
+            })),
+        ),
       },
       run: run(0.003, "infer_edge"),
     }),

@@ -434,12 +434,8 @@ export class GeminiProvider implements AIProvider {
   async inferEdge(
     input: EdgeInferenceInput
   ): Promise<AIProviderResult<EdgeInferenceOutput>> {
-    const { stablePrefix, variableBlock } = buildEdgeInferencePromptParts({
-      source_title: input.source_node.title,
-      source_summary: input.source_node.summary,
-      source_node_type: input.source_node.node_type,
-      source_has_parent: input.source_node.has_parent,
-      candidates: input.candidates,
+    const { stablePrefix, variableBlock, refs } = buildEdgeInferencePromptParts({
+      sources: input.sources,
       workspace_context: input.workspace_context,
     });
     const fullPrompt = `${stablePrefix}\n\n${variableBlock}`;
@@ -448,9 +444,9 @@ export class GeminiProvider implements AIProvider {
     const start = Date.now();
 
     // Stable prefix (rules + hoisted workspace context) → systemInstruction
-    // for implicit caching. A full edge-inference batch fires one call per
-    // source node, all sharing the same prefix when the caller hoists
-    // workspace_context once per batch.
+    // for implicit caching. A large edge-inference batch fires one call per
+    // group of source nodes, all sharing the same prefix when the caller
+    // hoists workspace_context once per batch.
     const model = this.genAI.getGenerativeModel({
       model: AI_MODELS.GEMINI_PRO,
       generationConfig: {
@@ -473,7 +469,7 @@ export class GeminiProvider implements AIProvider {
     let output: EdgeInferenceOutput;
     try {
       const parsed = JSON.parse(text);
-      output = validateEdgeInferenceOutput(parsed);
+      output = validateEdgeInferenceOutput(parsed, refs);
     } catch (error) {
       throw malformedResponse({
         message:

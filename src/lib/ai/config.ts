@@ -127,6 +127,9 @@ export const AI_CANDIDATES = {
   // input tokens + an output verdict each. Sharpens LLM judgment and cuts
   // ~30% of per-call tokens.
   INFERENCE_MAX: 5,
+  // Analysed nodes per edge-inference call (infer-edge-v8, connection.ts):
+  // a 28-node dump is 4 calls, not 28. 8 × 5 candidates = 40 pairs a call.
+  INFERENCE_SOURCES_PER_CALL: 8,
   // Max lateral links (supports / related_to)
   // proposed per analysed node. Was 1, which with the old dependency-first
   // prompt meant a 25-node dump got none at all.

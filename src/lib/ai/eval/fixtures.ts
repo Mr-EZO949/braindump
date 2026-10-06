@@ -380,7 +380,8 @@ export const BUILDER_FIXTURES: BuilderFixture[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Edge inference fixtures — one batched call per source, like connection.ts
+// Edge inference fixtures — one source per call here; connection.ts groups
+// up to AI_CANDIDATES.INFERENCE_SOURCES_PER_CALL sources in one
 // ---------------------------------------------------------------------------
 
 export interface EdgeFixture {

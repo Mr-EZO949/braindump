@@ -323,14 +323,18 @@ const EVAL_SOURCE_ID = "eval-source";
 
 async function evalEdges(fixture: EdgeFixture, provider: EvalProvider) {
   const result = await provider.inferEdge({
-    source_node: {
-      id: EVAL_SOURCE_ID,
-      title: fixture.source.title,
-      summary: fixture.source.summary,
-      node_type: fixture.source.node_type,
-      has_parent: fixture.source.has_parent,
-    },
-    candidates: fixture.candidates.map(({ id, title, summary, node_type }) => ({ id, title, summary, node_type })),
+    sources: [
+      {
+        source_node: {
+          id: EVAL_SOURCE_ID,
+          title: fixture.source.title,
+          summary: fixture.source.summary,
+          node_type: fixture.source.node_type,
+          has_parent: fixture.source.has_parent,
+        },
+        candidates: fixture.candidates.map(({ id, title, summary, node_type }) => ({ id, title, summary, node_type })),
+      },
+    ],
   });
   // What connection.ts would propose from these verdicts.
   const selected = selectEdgeProposals({
@@ -359,7 +363,7 @@ async function evalEdges(fixture: EdgeFixture, provider: EvalProvider) {
       ? `model: ${verdict.related ? `${verdict.edge_type} from ${verdict.from} (${verdict.confidence})` : "unrelated"}; proposed: ${
           proposal ? `${proposal.source_node_id === EVAL_SOURCE_ID ? "source" : "candidate"} -${proposal.edge_type}->` : "nothing"
         }`
-      : "no verdict returned";
+      : "model: no link";
     const want = candidate.expect;
     items.push({
       check: "related",

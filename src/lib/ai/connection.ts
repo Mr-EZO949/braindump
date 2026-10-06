@@ -1,7 +1,7 @@
 // Connection pipeline — Phase 5
 // Retrieve similar nodes → rerank → infer edges → save proposed_edges
-// Called after a node is accepted and embedded.
-// Never blocks node acceptance — all failures are caught per-pair.
+// Called after nodes are accepted and embedded, for the batch at once.
+// Never blocks node acceptance — a failed call only costs its group's links.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aiProvider, aiRerankProvider } from "@/lib/ai/index";
@@ -93,29 +93,31 @@ export interface ProposedEdgeWithNodes {
   proposal_status: string;
 }
 
-export async function runConnectionAnalysis(params: {
+// One node's side of the connection analysis, no model involved: its
+// candidates after retrieval, rerank and the already-decided pairs.
+interface PreparedSource {
   nodeId: string;
-  excludeNodeIds?: string[];
+  title: string;
+  summary: string | null;
+  type: string | null;
+  hasParent: boolean;
+  candidates: { id: string; title: string; summary: string | null; node_type: string | null }[];
+  // Shown to the model, with their similarity — for "why didn't it link X?".
+  shown: { node_id: string; title: string | undefined; similarity: number }[];
+  skipped: number;
+}
+
+async function prepareConnectionSource(params: {
+  nodeId: string;
+  excludeNodeIds: string[];
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
-  // Optional pre-built workspace context. Batch callers should build this once
-  // and pass the same snapshot to every call in the batch so the shared prefix
-  // becomes stable bytes across calls — enabling prompt-cache hits on Claude.
-  // If omitted, each call builds its own (legacy path, safe fallback).
-  workspaceContext?: string;
-  // The node's stored embedding when the caller already loaded it.
   embedding?: number[];
-  // The workspace's tree (loadLinkStructure) — batch callers load
-  // it once. Loaded here when omitted.
   structure?: LinkStructure;
-}): Promise<ConnectionResult> {
-  if (!AI_FLAGS.EDGE_INFERENCE_ENABLED) {
-    return { proposed: 0, skipped: 0, failed: 0 };
-  }
-
-  const { nodeId, workspaceId, userId, supabase } = params;
-  const excludedNodeIds = new Set(params.excludeNodeIds ?? []);
+}): Promise<PreparedSource | null> {
+  const { nodeId, workspaceId, userId, supabase, structure } = params;
+  const excludedNodeIds = new Set(params.excludeNodeIds);
 
   // 1. Fetch source node
   const { data: sourceNode } = await supabase
@@ -125,26 +127,11 @@ export async function runConnectionAnalysis(params: {
     .eq("user_id", userId)
     .single();
 
-  if (!sourceNode || (sourceNode.status as string) === "archived") {
-    return { proposed: 0, skipped: 0, failed: 0 };
-  }
+  if (!sourceNode || (sourceNode.status as string) === "archived") return null;
 
   const sourceTitle = sourceNode.title as string;
   const sourceSummary = sourceNode.summary as string | null;
   const sourceType = (sourceNode.node_type as string | null) ?? null;
-  let workspaceContext: string | undefined = params.workspaceContext;
-  if (workspaceContext === undefined) {
-    try {
-      const context = await buildWorkspaceProfileContext({
-        workspaceId,
-        userId,
-        supabase,
-      });
-      workspaceContext = context.workspaceContext;
-    } catch {
-      workspaceContext = undefined;
-    }
-  }
 
   // 2. The node's embedding: the stored one (it is the vector of this same
   // title + summary, so it is also the query below), or a new one.
@@ -174,9 +161,6 @@ export async function runConnectionAnalysis(params: {
     includeCompleted: false,
     limit: AI_CANDIDATES.RETRIEVAL_K,
   }).catch(() => []);
-  const structure =
-    params.structure ??
-    (await loadLinkStructure({ workspaceId, userId, supabase }).catch(() => undefined));
   // A node's own ancestors and descendants are never asked about: the tree
   // already links them (and a parent link to a descendant would be a cycle).
   const candidates = matchedCandidates.filter((candidate) => {
@@ -185,9 +169,7 @@ export async function runConnectionAnalysis(params: {
     return relation !== "ancestor" && relation !== "descendant";
   });
 
-  if (candidates.length === 0) {
-    return { proposed: 0, skipped: 0, failed: 0 };
-  }
+  if (candidates.length === 0) return null;
 
   // 4. Rerank — fallback to embedding similarity order if Cohere fails
   let topIds: string[];
@@ -203,6 +185,8 @@ export async function runConnectionAnalysis(params: {
     topIds = reranked.output.ranked
       .slice(0, AI_CANDIDATES.RERANK_N)
       .map((r) => r.id);
+    // Cohere bills per search (~$0.002): one per analysed node, unlogged until 2026-10-06.
+    await persistAIRun({ supabase, userId, workspaceId, source: "connection", run: reranked.run });
   } catch {
     // Cohere down or quota — use embedding similarity order as fallback
     topIds = candidates.slice(0, AI_CANDIDATES.RERANK_N).map((c) => c.node_id);
@@ -250,16 +234,9 @@ export async function runConnectionAnalysis(params: {
       (edge.status as string | null) !== "orphaned"
   );
 
-  let skipped = 0;
-  let failed = 0;
-
   // 6. Build the eligible candidate set — skip pairs already decided on
-  const eligibleCandidates: {
-    id: string;
-    title: string;
-    summary: string | null;
-    node_type: string | null;
-  }[] = [];
+  let skipped = 0;
+  const eligibleCandidates: PreparedSource["candidates"] = [];
   for (const candidateId of topIds) {
     const candidate = candidateMap.get(candidateId);
     if (!candidate) { skipped++; continue; }
@@ -279,24 +256,49 @@ export async function runConnectionAnalysis(params: {
     });
   }
 
-  if (eligibleCandidates.length === 0) {
-    return { proposed: 0, skipped, failed };
-  }
+  return {
+    nodeId,
+    title: sourceTitle,
+    summary: sourceSummary,
+    type: sourceType,
+    hasParent: alreadyHasParent,
+    candidates: eligibleCandidates,
+    shown: topIds.map((id) => ({
+      node_id: id,
+      title: candidateMap.get(id)?.title,
+      similarity: candidateMap.get(id)?.similarity ?? 0,
+    })),
+    skipped,
+  };
+}
 
-  // 7. Single batched inference call — evaluates all eligible candidates at once
-  let selected: EdgeProposal[] = [];
+// One model call for a group of prepared nodes, then each node's links
+// through edge-selection.ts and into proposed_edges.
+async function inferGroup(params: {
+  group: PreparedSource[];
+  workspaceId: string;
+  userId: string;
+  supabase: SupabaseClient;
+  workspaceContext?: string;
+  structure?: LinkStructure;
+}): Promise<Array<{ nodeId: string } & ConnectionResult>> {
+  const { group, workspaceId, userId, supabase, structure } = params;
+  let output;
   try {
     const result = await aiProvider().inferEdge({
-      source_node: {
-        id: nodeId,
-        title: sourceTitle,
-        summary: sourceSummary,
-        node_type: sourceType,
-        has_parent: alreadyHasParent,
-      },
-      candidates: eligibleCandidates,
-      workspace_context: workspaceContext,
+      sources: group.map((source) => ({
+        source_node: {
+          id: source.nodeId,
+          title: source.title,
+          summary: source.summary,
+          node_type: source.type,
+          has_parent: source.hasParent,
+        },
+        candidates: source.candidates,
+      })),
+      workspace_context: params.workspaceContext,
     });
+    output = result.output;
 
     // Awaited: a supabase-js query only runs once it is awaited. The old
     // `void supabase.from("ai_runs").insert(...)` never sent anything, so no
@@ -313,7 +315,7 @@ export async function runConnectionAnalysis(params: {
         status: "success",
       },
     });
-    // What the model was shown for this node — for "why didn't it link X?".
+    // What the model was shown for these nodes — for "why didn't it link X?".
     if (runId) {
       await supabase
         .from("ai_artifacts")
@@ -321,16 +323,11 @@ export async function runConnectionAnalysis(params: {
           ai_run_id: runId,
           user_id: userId,
           artifact_type: "connection_candidates",
-          linked_entity_ids: [nodeId],
+          linked_entity_ids: group.map((source) => source.nodeId),
           payload: {
-            source_node_id: nodeId,
             workspace_id: workspaceId,
-            candidates: topIds.map((id) => ({
-              node_id: id,
-              title: candidateMap.get(id)?.title,
-              similarity: candidateMap.get(id)?.similarity ?? 0,
-            })),
-            verdicts: result.output.results,
+            sources: group.map((source) => ({ source_node_id: source.nodeId, candidates: source.shown })),
+            links: output.results,
           },
         })
         .then(
@@ -338,34 +335,45 @@ export async function runConnectionAnalysis(params: {
           () => undefined,
         );
     }
-
-    selected = selectEdgeProposals({
-      sourceId: nodeId,
-      sourceType,
-      sourceHasParent: alreadyHasParent,
-      results: result.output.results,
-      candidateTypeById: new Map(eligibleCandidates.map((c) => [c.id, c.node_type])),
-      titleById: new Map([[nodeId, sourceTitle], ...eligibleCandidates.map((c) => [c.id, c.title] as [string, string])]),
-      structure,
-    });
-
-    // Account for any candidates the model failed to return a verdict for
-    const returnedIds = new Set(result.output.results.map((r) => r.candidate_id));
-    for (const c of eligibleCandidates) {
-      if (!returnedIds.has(c.id)) failed++;
-    }
-    skipped += Math.max(eligibleCandidates.length - failed - selected.length, 0);
   } catch (err) {
     console.error("[connection] inferEdge failed:", err instanceof Error ? err.message : err);
-    failed += eligibleCandidates.length;
+    return group.map((source) => ({
+      nodeId: source.nodeId,
+      proposed: 0,
+      skipped: source.skipped,
+      failed: source.candidates.length,
+    }));
   }
 
-  const written = await insertEdgeProposals({ proposals: selected, workspaceId, userId, supabase });
-  return { proposed: written.proposed, skipped, failed: failed + written.failed };
+  return Promise.all(
+    group.map(async (source) => {
+      const selected = selectEdgeProposals({
+        sourceId: source.nodeId,
+        sourceType: source.type,
+        sourceHasParent: source.hasParent,
+        results: output.results.filter((link) => link.source_id === source.nodeId),
+        candidateTypeById: new Map(source.candidates.map((c) => [c.id, c.node_type])),
+        titleById: new Map([
+          [source.nodeId, source.title],
+          ...source.candidates.map((c) => [c.id, c.title] as [string, string]),
+        ]),
+        structure,
+      });
+      const written = await insertEdgeProposals({ proposals: selected, workspaceId, userId, supabase });
+      return {
+        nodeId: source.nodeId,
+        proposed: written.proposed,
+        skipped: source.skipped + Math.max(source.candidates.length - selected.length, 0),
+        failed: written.failed,
+      };
+    }),
+  );
 }
 
 // Connection analysis for a batch of nodes (a dump's accepted nodes): the
-// tree loaded once, every node analysed in parallel. Shared by
+// tree and the workspace context loaded once, every node's candidates found
+// in parallel, then ONE model call per group of
+// AI_CANDIDATES.INFERENCE_SOURCES_PER_CALL nodes (infer-edge-v8). Shared by
 // /api/nodes/analyze and the connection_batch job.
 export async function runConnectionBatch(params: {
   nodeIds: string[];
@@ -375,32 +383,64 @@ export async function runConnectionBatch(params: {
   workspaceId: string;
   userId: string;
   supabase: SupabaseClient;
+  // Built once per batch; built here when omitted.
   workspaceContext?: string;
   embeddings?: Map<string, number[]>;
 }): Promise<Array<{ nodeId: string } & ConnectionResult>> {
+  if (!AI_FLAGS.EDGE_INFERENCE_ENABLED) {
+    return params.nodeIds.map((nodeId) => ({ nodeId, proposed: 0, skipped: 0, failed: 0 }));
+  }
+
   const { workspaceId, userId, supabase } = params;
-  const structure = await loadLinkStructure({ workspaceId, userId, supabase }).catch(() => undefined);
-  const results = await Promise.all(
+  const [structure, workspaceContext] = await Promise.all([
+    loadLinkStructure({ workspaceId, userId, supabase }).catch(() => undefined),
+    params.workspaceContext !== undefined
+      ? Promise.resolve(params.workspaceContext)
+      : buildWorkspaceProfileContext({ workspaceId, userId, supabase }).then(
+          (context) => context.workspaceContext,
+          () => undefined,
+        ),
+  ]);
+
+  const prepared = await Promise.all(
     params.nodeIds.map(async (nodeId) => {
       try {
-        const result = await runConnectionAnalysis({
+        const source = await prepareConnectionSource({
           nodeId,
           excludeNodeIds: params.excludeFor(nodeId),
           workspaceId,
           userId,
           supabase,
-          workspaceContext: params.workspaceContext,
           embedding: params.embeddings?.get(nodeId),
           structure,
         });
-        return { nodeId, ...result };
+        return { nodeId, source, failed: 0 };
       } catch {
-        return { nodeId, proposed: 0, skipped: 0, failed: 1 };
+        return { nodeId, source: null, failed: 1 };
       }
     }),
   );
 
-  return results;
+  const results = new Map<string, ConnectionResult>();
+  const ready: PreparedSource[] = [];
+  for (const { nodeId, source, failed } of prepared) {
+    if (source && source.candidates.length > 0) ready.push(source);
+    else results.set(nodeId, { proposed: 0, skipped: source?.skipped ?? 0, failed });
+  }
+
+  const groups: PreparedSource[][] = [];
+  for (let i = 0; i < ready.length; i += AI_CANDIDATES.INFERENCE_SOURCES_PER_CALL) {
+    groups.push(ready.slice(i, i + AI_CANDIDATES.INFERENCE_SOURCES_PER_CALL));
+  }
+  const inferred = await Promise.all(
+    groups.map((group) => inferGroup({ group, workspaceId, userId, supabase, workspaceContext, structure })),
+  );
+  for (const { nodeId, ...result } of inferred.flat()) results.set(nodeId, result);
+
+  return params.nodeIds.map((nodeId) => ({
+    nodeId,
+    ...(results.get(nodeId) ?? { proposed: 0, skipped: 0, failed: 0 }),
+  }));
 }
 
 // Fetch pending proposed edges with joined node details.

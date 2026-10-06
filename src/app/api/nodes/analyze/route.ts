@@ -205,9 +205,8 @@ export async function POST(req: NextRequest) {
     return !(isLeafType && parentedNodeIds.has(id));
   });
 
-  // Build workspace context ONCE for the whole batch. Passing the same snapshot
-  // to every runConnectionAnalysis keeps the inferEdge prompt prefix stable
-  // across calls, which lets Anthropic's prompt cache hit on calls 2…N.
+  // Build workspace context ONCE for the whole batch: every inferEdge call of
+  // the batch (one per group of nodes) gets the same prompt prefix.
   let batchWorkspaceContext: string | undefined;
   try {
     const context = await buildWorkspaceProfileContext({
@@ -220,8 +219,9 @@ export async function POST(req: NextRequest) {
     batchWorkspaceContext = undefined;
   }
 
-  // Step 2: Run connection analysis for each node in parallel — failures are
-  // per-node — with the weak-link cap across the batch (fewer links, #24).
+  // Step 2: connection analysis — each node's candidates in parallel, then one
+  // model call per group of nodes (infer-edge-v8); a failed call costs only
+  // its group.
   // Track which specific node IDs failed so the client can retry only those rather
   // than re-running the whole batch.
   const results = await runConnectionBatch({

@@ -128,12 +128,15 @@ async function testClaudeInferEdge() {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
   const { stablePrefix, variableBlock } = buildEdgeInferencePromptParts({
-    source_title: "Finish Thesis Proposal",
-    source_summary: "Draft the honors-program proposal by Friday",
-    candidates: [
-      { id: "c1", title: "Stats 302", summary: "Statistics course this semester" },
-      { id: "c2", title: "Get Into Honors Program", summary: "Submit application by May 1" },
-      { id: "c3", title: "Gym Routine", summary: "3x per week" },
+    sources: [
+      {
+        source_node: { id: "s1", title: "Finish Thesis Proposal", summary: "Draft the honors-program proposal by Friday" },
+        candidates: [
+          { id: "c1", title: "Stats 302", summary: "Statistics course this semester" },
+          { id: "c2", title: "Get Into Honors Program", summary: "Submit application by May 1" },
+          { id: "c3", title: "Gym Routine", summary: "3x per week" },
+        ],
+      },
     ],
   });
 

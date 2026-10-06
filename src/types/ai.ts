@@ -454,7 +454,7 @@ export interface RerankOutput {
   ranked: { id: string; score: number }[];
 }
 
-export interface EdgeInferenceInput {
+export interface EdgeInferenceSource {
   source_node: {
     id: string;
     title: string;
@@ -464,6 +464,13 @@ export interface EdgeInferenceInput {
     has_parent?: boolean;
   };
   candidates: { id: string; title: string; summary: string | null; node_type?: string | null }[];
+}
+
+// Several source nodes, each with its own candidates, in ONE call
+// (infer-edge-v8). Until 2026-10-06 every analysed node was its own call:
+// a 28-node dump made 28 Haiku calls ($0.13).
+export interface EdgeInferenceInput {
+  sources: EdgeInferenceSource[];
   workspace_context?: string;
 }
 
@@ -477,8 +484,14 @@ export interface EdgeInferenceResult {
   explanation: string;
 }
 
+// The model returns only the links it would make (v8), each naming the
+// source it was asked about; a pair it leaves out is "no link".
+export interface EdgeInferenceLink extends EdgeInferenceResult {
+  source_id: string;
+}
+
 export interface EdgeInferenceOutput {
-  results: EdgeInferenceResult[];
+  results: EdgeInferenceLink[];
   prompt_version: string;
 }
 

@@ -102,7 +102,13 @@ Run the eval before and after a change: `npx tsx --env-file=.env.local scripts/e
 
 ## Edge inference (`infer-edge.ts`)
 
-### infer-edge-v7 (current) — four link kinds (2026-10-05)
+### infer-edge-v8 (current) — several nodes per call, "none" for no link (2026-10-06)
+- One call checks up to 8 analysed nodes (`AI_CANDIDATES.INFERENCE_SOURCES_PER_CALL`), each against its own ≤5 candidates; nodes go by short refs (n1, n2…), each listed once. Output: `{"checks":{"n1":{"n4":"none","n5":{type,from,confidence,why}}}}` — every asked pair answered, a "no" is just `"none"`, the sentence only on a link. `validateEdgeInferenceOutput` maps refs back, drops pairs that weren't asked, turns back a pair filed under the other node. Rules unchanged from v7.
+- Why (owner 10-06, "why the fuck are we sending 28 different calls"): v4 batched one node's candidates, but each analysed node was still its own call writing a verdict + sentence for every candidate (~550 output tokens). A 28-node dump made 28 calls — $0.130 of that dump's $0.22, more than the extraction.
+- Eval: (1) the 4 edge fixtures as ONE batched call, links-only output (no "none" verdicts): 10/14 — missed Linear Algebra → PyTorch, linked the near-duplicate, Passport → Visa came as supports. (2) Same call with a verdict per pair: **14/14**, incl. the Food Permit case open since v5; $0.0040. (3) Real pipeline (`runConnectionBatch`, throwaway user, synthetic 19-node graph, 10 new nodes, links-only version): 2 calls, $0.0083 (v7: 10 calls ≈ $0.047), 10 links, all plausible but one (a recommendation-letter task put under the ML class as `belongs_to`). Expected per node now ≈ $0.001 vs $0.0047.
+- Also found: Cohere rerank runs once per analysed node (~$0.002 each, more than the batched Haiku call) and was never logged — `connection.ts` now logs it as `rerank`.
+
+### infer-edge-v7 — four link kinds (2026-10-05)
 - `useful_for` folded into `supports` (a skill or resource that helps is "supports"); output types supports / required_for / related_to / belongs_to. (v6 was the reverted `hard_need` try below, hence v7.) `edge-selection.ts` maps any retired name to its kind; the helping-work rule now always gives `supports`.
 - Size: rules block 830 → 784 tokens (−46). Chat `change` tool schema 745 → 763 (+18: the enum lost two names, gained a one-line meaning per kind).
 - Eval (one round, 3 calls): `edge-skill` 6/6, `edge-blocker` 5/5, `edge-helps-not-blocks` 3/4 — the miss is the known "Get the Food Permit" → required_for → "Run Instagram Ads" (open since v5). $0.0076. Real chat turn "the machine learning class really helps with getting the internship, connect them" → Linked "Machine Learning helps Get Internship by November" with Undo (stored `supports`), $0.0128.

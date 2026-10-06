@@ -340,7 +340,7 @@ async function claudeInferEdge(client: Anthropic): Promise<PhaseResult> {
   console.log(`\n=== ${phase} (3 calls w/ same rules block) ===`);
 
   const sharedRubric = buildEdgeInferencePromptParts({
-    source_title: "dummy", source_summary: null, candidates: [{ id: "x", title: "y", summary: null }],
+    sources: [{ source_node: { id: "s", title: "dummy", summary: null }, candidates: [{ id: "x", title: "y", summary: null }] }],
   }).stablePrefix;
   console.log(`  stable prefix ~chars: ${sharedRubric.length}, min-cache-prefix-tokens: 1024 for Sonnet`);
 
@@ -384,7 +384,10 @@ async function claudeInferEdge(client: Anthropic): Promise<PhaseResult> {
   const accuracy: string[] = [];
 
   for (let i = 0; i < calls.length; i++) {
-    const { stablePrefix, variableBlock } = buildEdgeInferencePromptParts(calls[i]);
+    const { source_title, source_summary, candidates } = calls[i];
+    const { stablePrefix, variableBlock } = buildEdgeInferencePromptParts({
+      sources: [{ source_node: { id: "source", title: source_title, summary: source_summary }, candidates }],
+    });
     const r = await client.messages.create({
       model: AI_MODELS.CLAUDE_SONNET,
       max_tokens: 1024,

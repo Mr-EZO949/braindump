@@ -271,20 +271,16 @@ export class ClaudeProvider {
   async inferEdge(
     input: EdgeInferenceInput,
   ): Promise<AIProviderResult<EdgeInferenceOutput>> {
-    const { stablePrefix, variableBlock } = buildEdgeInferencePromptParts({
-      source_title: input.source_node.title,
-      source_summary: input.source_node.summary,
-      source_node_type: input.source_node.node_type,
-      source_has_parent: input.source_node.has_parent,
-      candidates: input.candidates,
+    const { stablePrefix, variableBlock, refs } = buildEdgeInferencePromptParts({
+      sources: input.sources,
       workspace_context: input.workspace_context,
     });
     // Hash tracks the full prompt so duplicate-detection and telemetry match
     // what the old single-string form produced.
     const fullPrompt = `${stablePrefix}\n\n${variableBlock}`;
 
-    // inferEdge runs on Haiku — a structured binary-plus-enum verdict per
-    // candidate, which Haiku handles at Sonnet-parity in offline comparison
+    // inferEdge runs on Haiku — a structured link-plus-enum judgment per
+    // pair, which Haiku handles at Sonnet-parity in offline comparison
     // (100% cross-model agreement on related-flag, ~100% on edge_type in the
     // haiku-vs-sonnet-inferedge.ts test). 3× cheaper, and this fires on every
     // new node so it dominates inferEdge cost. Extract stays on Sonnet
@@ -293,7 +289,9 @@ export class ClaudeProvider {
     const run = baseRun("infer_edge", INFER_EDGE_PROMPT_VERSION, fullPrompt, inferModel);
     const start = Date.now();
 
-    const maxTokens = Math.min(4096, 256 + input.candidates.length * 180);
+    // A truncation guard (~45 tokens a link): billed only for what's written.
+    const pairs = input.sources.reduce((n, s) => n + s.candidates.length, 0);
+    const maxTokens = Math.min(4096, 256 + pairs * 60);
 
     const response = await this.client.messages.create({
       model: inferModel,
@@ -326,7 +324,7 @@ export class ClaudeProvider {
     let output: EdgeInferenceOutput;
     try {
       const parsed = JSON.parse(extractJson(text));
-      output = validateEdgeInferenceOutput(parsed);
+      output = validateEdgeInferenceOutput(parsed, refs);
     } catch (error) {
       throw malformedResponse({
         message:

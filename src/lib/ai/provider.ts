@@ -65,7 +65,8 @@ export interface AIProvider {
   ): Promise<AIProviderResult<RerankOutput>>;
 
   /**
-   * Infer whether two nodes should be connected and what edge type applies.
+   * Infer which links several source nodes should get to their candidates —
+   * one call for the whole group, only the links come back.
    * Output must be validated before creating a proposed_edge.
    */
   inferEdge(

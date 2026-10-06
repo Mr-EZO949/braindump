@@ -149,10 +149,8 @@ async function runAIJob(params: {
         throw new Error("connection_batch job missing workspace_id or node_ids");
       }
 
-      // Build workspace context ONCE for the batch — the same snapshot is
-      // threaded into every runConnectionAnalysis call so the shared prompt
-      // prefix is stable bytes, enabling Anthropic prompt-cache hits on
-      // calls 2…N within the 5-minute TTL.
+      // Build workspace context ONCE for the batch — the same snapshot goes
+      // into every inferEdge call of the batch (one per group of nodes).
       let batchWorkspaceContext: string | undefined;
       try {
         const context = await buildWorkspaceProfileContext({

@@ -24,6 +24,7 @@ import {
   type LateralLinkKind,
 } from "@/lib/graph/edge-types";
 import { MERGE_CHECK_PROMPT_VERSION } from "./prompts/merge-check";
+import { INFER_EDGE_PROMPT_VERSION, type EdgeInferenceRefs } from "./prompts/infer-edge";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -430,52 +431,55 @@ const VALID_EDGE_TYPES = new Set([
   "depends_on",
 ]);
 
+// infer-edge-v8: one verdict per asked pair, by the prompt's refs —
+// {"checks":{"n1":{"n4":"none","n5":{type, from, confidence, why}}}}. Only
+// the links come out; a pair the prompt didn't ask about is dropped, one
+// filed under the other node is turned back, with its direction kept.
 export function validateEdgeInferenceOutput(
-  raw: unknown
+  raw: unknown,
+  refs: EdgeInferenceRefs,
 ): EdgeInferenceOutput {
   if (!isObject(raw))
     throw new Error("Edge inference output must be an object");
-  if (!Array.isArray(raw.results))
-    throw new Error("Edge inference output missing results array");
-  if (!isString(raw.prompt_version))
-    throw new Error("Edge inference output missing prompt_version");
+  if (!isObject(raw.checks))
+    throw new Error("Edge inference output missing checks object");
 
   const results: EdgeInferenceOutput["results"] = [];
-  for (const entry of raw.results) {
-    if (!isObject(entry)) continue;
-    if (!isString(entry.candidate_id) || !entry.candidate_id.trim()) continue;
-    if (!isBoolean(entry.related)) continue;
-    if (!isString(entry.explanation) || !entry.explanation.trim()) continue;
-
-    const confidence = isNumber(entry.confidence)
-      ? Math.min(1, Math.max(0, entry.confidence))
-      : 0;
-
-    let edge_type: EdgeInferenceOutput["results"][number]["edge_type"] = null;
-    if (entry.related) {
-      if (!isString(entry.edge_type) || !VALID_EDGE_TYPES.has(entry.edge_type)) {
-        edge_type = "related_to";
-      } else {
-        edge_type = entry.edge_type as EdgeInferenceOutput["results"][number]["edge_type"];
+  const seen = new Set<string>();
+  for (const [nodeRef, verdicts] of Object.entries(raw.checks)) {
+    if (!isObject(verdicts)) continue;
+    for (const [otherRef, verdict] of Object.entries(verdicts)) {
+      if (!isObject(verdict)) continue; // "none"
+      let sourceId = refs.idByRef.get(nodeRef.trim());
+      let candidateId = refs.idByRef.get(otherRef.trim());
+      if (!sourceId || !candidateId) continue;
+      let fromSource = verdict.from !== "other";
+      if (!refs.asked.get(sourceId)?.has(candidateId)) {
+        if (!refs.asked.get(candidateId)?.has(sourceId)) continue;
+        [sourceId, candidateId] = [candidateId, sourceId];
+        fromSource = !fromSource;
       }
-    }
+      const pair = `${sourceId}:${candidateId}`;
+      if (seen.has(pair)) continue;
+      seen.add(pair);
 
-    results.push({
-      candidate_id: entry.candidate_id.trim(),
-      related: entry.related,
-      edge_type,
-      // Anything but an explicit "candidate" reads source → candidate, which
-      // is also what prompts before v5 (no "from" field) meant.
-      from: entry.from === "candidate" ? "candidate" : "source",
-      confidence,
-      explanation: entry.explanation.trim(),
-    });
+      const edge_type =
+        isString(verdict.type) && VALID_EDGE_TYPES.has(verdict.type)
+          ? (verdict.type as EdgeInferenceOutput["results"][number]["edge_type"])
+          : "related_to";
+      results.push({
+        source_id: sourceId,
+        candidate_id: candidateId,
+        related: true,
+        edge_type,
+        from: fromSource ? "source" : "candidate",
+        confidence: isNumber(verdict.confidence) ? Math.min(1, Math.max(0, verdict.confidence)) : 0,
+        explanation: isString(verdict.why) ? verdict.why.trim() : "",
+      });
+    }
   }
 
-  return {
-    results,
-    prompt_version: raw.prompt_version as string,
-  };
+  return { results, prompt_version: INFER_EDGE_PROMPT_VERSION };
 }
 
 // ---------------------------------------------------------------------------
