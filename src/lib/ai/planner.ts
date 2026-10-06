@@ -33,6 +33,7 @@ import {
   type StaleMarker,
 } from "@/lib/planner/skips";
 import { DUE_NUDGE_DAYS, DUE_NUDGE_OVERDUE_DAYS, type DueSoonItem } from "@/lib/planner/due-left-out";
+import { buildSetAside, type SetAsideItem } from "@/lib/planner/set-aside";
 import { PLAN_REPLACE_ENTITY, replacementMarks, type ReplacementRow } from "@/lib/planner/replan";
 import {
   busyOn,
@@ -223,6 +224,8 @@ export interface PlannerCandidate {
   planning_signals: string[];
   /** A waiting node whose check-back date arrived — a decision, not work to schedule. */
   check_back?: boolean;
+  /** Minutes today's plan gives it — Focus and the Focus Zone suggest the same. */
+  planned_minutes?: number;
 }
 
 /** A bigger thing a plan may give a block of time on itself (see TIME_BLOCK_TYPES). */
@@ -278,6 +281,8 @@ export interface PlannerCandidateBundle {
   due_soon: DueSoonItem[];
   /** The plan request's items (`include`), matched to nodes where possible. */
   requests: PlanRequestItem[];
+  /** "Safe to ignore today" reasons — filter with setAsideFor against what was picked. */
+  set_aside: SetAsideItem[];
 }
 
 // Focus fits its head to a short free window: with 15–90 min before the next
@@ -941,6 +946,13 @@ export async function buildPlannerCandidates(params: {
   }
 
   const dueSoonNodeDates = new Map<string, string>();
+  // Today's plan says how long a sitting is: Focus suggests the same.
+  const plannedMinutesToday = new Map<string, number>();
+  for (const task of planTasks) {
+    if (task.node_id && task.scheduled_date === todayDate && (task.duration_minutes ?? 0) > 0) {
+      plannedMinutesToday.set(task.node_id, task.duration_minutes!);
+    }
+  }
   const manualItems = planTasks
     .filter((task) => !task.node_id)
     .sort(sortManualItems)
@@ -1350,6 +1362,7 @@ export async function buildPlannerCandidates(params: {
           current_importance_score: node.current_importance_score,
           recently_unblocked: recentlyUnblocked,
           planning_signals: planningSignals,
+          ...(plannedMinutesToday.has(node.id) ? { planned_minutes: plannedMinutesToday.get(node.id) } : {}),
         } satisfies PlannerCandidate,
         priority,
         deadlineOwner: deadline?.ownerId ?? null,
@@ -1519,6 +1532,44 @@ export async function buildPlannerCandidates(params: {
     dueSoon.set(owner.id, item);
   }
 
+  // "Safe to ignore today": a reason per node that has a clear one. "Worked
+  // on" counts completions only (a chat about it isn't work), and a step's
+  // project is its parent unless that's an area ("You worked on Life" says
+  // nothing).
+  const setAsideCluster = (nodeId: string): string => {
+    const parent = clusterParentOf.get(nodeId);
+    const parentNode = parent ? nodeById.get(parent) : undefined;
+    return parentNode && parentNode.node_type !== "area" ? parentNode.id : nodeId;
+  };
+  const workedDay = new Map<string, "today" | "yesterday">();
+  for (const row of lifecycleRows) {
+    if (row.new_status !== "completed" || row.created_at < yesterdayStart || !inWorkspace(row.node_id)) continue;
+    const day = row.created_at >= todayStart ? "today" : "yesterday";
+    for (const key of [row.node_id, setAsideCluster(row.node_id)]) {
+      if (workedDay.get(key) !== "today") workedDay.set(key, day);
+    }
+  }
+  const setAside = buildSetAside({
+    nodes: loadedNodes,
+    ctx: rankCtx,
+    skip: (id) => {
+      const node = nodeById.get(id);
+      return !node || NON_ACTIONABLE_TYPES.has(node.node_type) || offTodayIds.has(id) || staleIds.has(id);
+    },
+    clusterOf: setAsideCluster,
+    workedOn: (key) => workedDay.get(key) ?? null,
+    waitsOn: (id) =>
+      (incomingEdgesByNode.get(id) ?? [])
+        .filter(
+          (edge) =>
+            (PREREQUISITE_EDGE_TYPES.has(edge.edge_type) || BLOCKER_EDGE_TYPES.has(edge.edge_type)) &&
+            activeIds.has(edge.source_node_id),
+        )
+        .map((edge) => nodeById.get(edge.source_node_id)?.title ?? "")
+        .filter(Boolean),
+    habitDoneThisWeek: (id) => habitCompletionsThisWeekByNode.get(id) ?? 0,
+  });
+
   return {
     candidates: diversifyHead(fitted, FOCUS_HEAD_SIZE)
       .slice(0, MAX_CANDIDATES)
@@ -1531,6 +1582,7 @@ export async function buildPlannerCandidates(params: {
     stale_check: staleCheck,
     requests,
     due_soon: [...dueSoon.values()],
+    set_aside: setAside,
   };
 }
 

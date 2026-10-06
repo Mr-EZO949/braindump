@@ -27,6 +27,7 @@ import {
   withoutSaved,
 } from "@/lib/planner/commitments";
 import { describeLeftOut, dueLeftOut, leftOutQuestion } from "@/lib/planner/due-left-out";
+import { describeSetAside, plannedIds, setAsideFor } from "@/lib/planner/set-aside";
 import { loadDayTasks } from "@/lib/planner/plan-replace";
 import { keptOutsideWindow } from "@/lib/planner/replan";
 import { pinFromMessage } from "@/lib/planner/plan-requests";
@@ -546,6 +547,10 @@ const PLAN_DAY: ToolDefinition = {
       planDate,
     });
     const leftOut = describeLeftOut(leftOutItems);
+    // Left out on purpose: one short line on why that's fine (lib/planner/set-aside.ts).
+    const ignorable = describeSetAside(
+      setAsideFor(bundle.set_aside, plannedIds([...output.blocks, ...keptTasks], bundle.time_blocks), 2),
+    );
 
     return {
       accepted: true,
@@ -553,6 +558,7 @@ const PLAN_DAY: ToolDefinition = {
       block_count: output.blocks.length,
       plan_date: planDate,
       ...(leftOut ? { left_out_due: leftOut } : {}),
+      ...(ignorable ? { safe_to_ignore_today: ignorable } : {}),
       message: `Drafted a ${window === "day" ? "day " : window === "custom" ? "" : `${window} `}plan for ${
         planDate === today ? "" : `${planDate} `
       }${describeSessionSpan(
@@ -560,7 +566,9 @@ const PLAN_DAY: ToolDefinition = {
         sessionMinutes,
       )} with ${output.blocks.length} blocks${
         plannedAround.length > 0 ? `, around ${plannedAround.join(", ")}` : ""
-      }. Open the Planner to review and adjust.${leftOut ? ` ${leftOutQuestion(leftOutItems)}` : ""}`,
+      }. Open the Planner to review and adjust.${
+        ignorable ? ` Safe to leave out today: ${ignorable}.` : ""
+      }${leftOut ? ` ${leftOutQuestion(leftOutItems)}` : ""}`,
     };
   },
 };

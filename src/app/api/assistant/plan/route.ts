@@ -21,6 +21,7 @@ import { PLAN_PROMPT_VERSION } from "@/lib/ai/prompts/plan";
 import { PLAN_MAX_MINUTES, planWindowMinutes } from "@/lib/planner/plan-window";
 import { busyOn, sessionBusyNote, timeToMinutes, withoutSaved } from "@/lib/planner/commitments";
 import { dueLeftOut } from "@/lib/planner/due-left-out";
+import { plannedIds, SET_ASIDE_PLAN_MAX, setAsideFor } from "@/lib/planner/set-aside";
 import { timedRequests } from "@/lib/planner/plan-requests";
 import { loadDayTasks } from "@/lib/planner/plan-replace";
 import { keptOutsideWindow } from "@/lib/planner/replan";
@@ -423,5 +424,11 @@ export async function POST(req: NextRequest) {
       today,
       planDate,
     }),
+    // Left out on purpose and why that's fine — "Safe to ignore today" under the plan.
+    set_aside: setAsideFor(
+      candidateBundle.set_aside,
+      plannedIds([...output.blocks, ...keptTasks], time_blocks),
+      SET_ASIDE_PLAN_MAX,
+    ),
   });
 }

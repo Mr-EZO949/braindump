@@ -116,6 +116,15 @@ one leaf step.
 The score refreshes on every graph event and nightly (the `node-cleanup` cron),
 because pressure moves with the calendar even when nothing is touched.
 
+**Safe to ignore today (2026-10-06, `lib/planner/set-aside.ts`).** Focus (the
+brief) and a day plan (Planner, chat `plan_day`) also say what they left out and
+why that's fine, from the same signals — a hold ("Waiting for X — nothing to do
+until Oct 20"), a far deadline (≥ 7 days, pressure < 20), yesterday's / today's
+completed work in the same project (pressure < 40), the user's "it can wait",
+an open prerequisite, a habit's weekly target met, low stakes. One line per
+owner (the deadline's owner, the project, the node), none that names or contains
+a pick, ≤ 2 per kind, 3 in Focus / 4 under a plan / 2 in chat. No model call.
+
 ## Chat → priorities (`update_priorities`)
 
 What the user says in chat that changes *what matters*, not *what exists*:

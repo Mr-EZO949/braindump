@@ -26,6 +26,7 @@ import { useState } from "react";
 import { GripVerticalIcon } from "@/components/ui/icons";
 import { DAY_PLAN_END_MINUTE, PLAN_MAX_MINUTES, PLAN_MIN_MINUTES } from "@/lib/planner/plan-window";
 import type { LeftOutDue } from "@/lib/planner/due-left-out";
+import type { SetAsideLine } from "@/lib/planner/set-aside";
 import type { PlanBlock, PlanSession, PlanningWindow } from "@/types/ai";
 import type { GraphData } from "@/types/graph";
 
@@ -42,6 +43,8 @@ export interface PlannerState {
   finalised: boolean; // accepted or rejected
   // Due in a day or two and not in this plan (lib/planner/due-left-out.ts).
   leftOutDue?: LeftOutDue[];
+  // Left out on purpose and why that's fine (lib/planner/set-aside.ts).
+  setAside?: SetAsideLine[];
 }
 
 export const INITIAL_PLANNER_STATE: PlannerState = {
@@ -253,7 +256,7 @@ export function PlannerPanel({
   );
 
   const nodeById = new Map(graphData.nodes.map((n) => [n.id, n]));
-  const { session, blocks, recentlyUnblockedNodeIds, loading, error, finalised, leftOutDue } = plannerState;
+  const { session, blocks, recentlyUnblockedNodeIds, loading, error, finalised, leftOutDue, setAside } = plannerState;
   const sortableBlockIds = blocks.map((block) => block.id);
 
   // Total time accounted for in current block list
@@ -499,6 +502,20 @@ export function PlannerPanel({
           ) : null}
         </div>
       </DndContext>
+
+      {(setAside ?? []).length > 0 ? (
+        <div className="set-aside set-aside--plan">
+          <p className="set-aside-head">Safe to ignore today</p>
+          <ul className="set-aside-list">
+            {(setAside ?? []).map((line) => (
+              <li className="set-aside-row" key={line.id}>
+                <span className="set-aside-title">{line.title}</span>
+                <span className="set-aside-why">{line.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {/* Actions */}
       {!finalised ? (

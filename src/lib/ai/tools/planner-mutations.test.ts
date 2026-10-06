@@ -36,6 +36,7 @@ vi.mock("../planner", async (importOriginal) => ({
       time_blocks: params.include ? timeBlocks : [],
       requests: params.include ? requests : [],
       due_soon: dueSoon,
+      set_aside: [],
     };
   }),
 }));

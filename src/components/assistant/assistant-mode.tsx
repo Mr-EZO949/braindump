@@ -22,6 +22,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { clientDayHints } from "@/lib/habits/streak";
 import { localDateISO } from "@/lib/time/local-date";
 import type { LeftOutDue } from "@/lib/planner/due-left-out";
+import type { SetAsideLine } from "@/lib/planner/set-aside";
 import {
   busyOn,
   layoutAroundBusy,
@@ -2055,6 +2056,7 @@ export function AssistantMode({
         blocks?: PlanBlock[];
         recently_unblocked_node_ids?: string[];
         left_out_due?: LeftOutDue[];
+        set_aside?: SetAsideLine[];
         error?: string;
       };
 
@@ -2075,6 +2077,7 @@ export function AssistantMode({
         error: null,
         finalised: false,
         leftOutDue: data.left_out_due ?? [],
+        setAside: data.set_aside ?? [],
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return; // user cancelled
