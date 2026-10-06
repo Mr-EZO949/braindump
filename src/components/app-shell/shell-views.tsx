@@ -72,6 +72,7 @@ export function ShellViews({
             draftPlanHint={planner.draftPlanHint}
             onAskInChat={onAskInChat}
             onLinkedNodeStatusChange={onLinkedNodeStatusChange}
+            onNodeStatusChange={onToggleStatus}
           />
         </motion.div>
       ) : appMode === "todos" ? (

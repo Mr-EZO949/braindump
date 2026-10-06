@@ -1337,6 +1337,9 @@ type AssistantModeProps = {
   // so app-shell can mirror the new status into its local graphData state
   // (avoids a refetch and keeps the graph view consistent in real time).
   onLinkedNodeStatusChange?: (nodeId: string, nextStatus: NodeStatus) => void;
+  // Ticking a linked task: the shell completes / reopens the node itself,
+  // exactly as the graph and Todos do (use-node-status changeStatus).
+  onNodeStatusChange?: (nodeId: string, nextStatus: NodeStatus) => void;
 };
 
 export function AssistantMode({
@@ -1348,6 +1351,7 @@ export function AssistantMode({
   draftPlanHint,
   onAskInChat,
   onLinkedNodeStatusChange,
+  onNodeStatusChange,
 }: AssistantModeProps) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const planTaskSelectClause =
@@ -1422,8 +1426,9 @@ export function AssistantMode({
   const planStartTimeRef = useRef<string | null>(null);
   // Busy time named in chat for a chat-drafted plan (not saved commitments).
   const planOneOffBusyRef = useRef<BusyInterval[]>([]);
-  // "Anything to fit in?" — the user's words, sent with the next plan
-  // ("3h of Italian, 2h of math"); cleared once a plan is accepted or rejected.
+  // What the next plan must fit in: set by "Build around it" (asks in your
+  // own words go through chat — the Planner's box went 10-06); cleared once a
+  // plan is accepted or rejected.
   const [planInclude, setPlanInclude] = useState("");
   // "Does this still matter?" — work planned and skipped on 2+ days with no
   // deadline; new plans leave it out until it's answered (lib/planner/skips.ts).
@@ -1886,22 +1891,28 @@ export function AssistantMode({
         );
       }
 
-      // Phase 10.3 — mark linked graph node as completed when task is checked off.
-      // Notify the parent shell so it can update its cached graphData immediately,
-      // not just after a refetch. A block of time on a bigger thing (a class,
-      // goal, project, or a big task with steps) only marks the session done.
+      // A ticked task completes its node the way the graph's own "done" does
+      // (the shell's changeStatus): it stays on the board as done, its parent
+      // and scores follow. Until 10-06 the Planner set the status alone, with
+      // no completed time — the node dropped off the board as an old one. A
+      // block of time on a bigger thing (a class, goal, project, or a big task
+      // with steps) only marks the session done.
       const linkedType = task.node_id ? graphData.nodes.find((n) => n.id === task.node_id)?.node_type : null;
       if (task.node_id && planTaskCompletesNode(linkedType, hasOpenSteps(task.node_id, graphData))) {
         const nextStatus: NodeStatus = nowDone ? "completed" : "active";
-        onLinkedNodeStatusChange?.(task.node_id, nextStatus);
-        void fetch(`/api/nodes/${task.node_id}/status`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: nextStatus }),
-        });
+        if (onNodeStatusChange) {
+          onNodeStatusChange(task.node_id, nextStatus);
+        } else {
+          onLinkedNodeStatusChange?.(task.node_id, nextStatus);
+          void fetch(`/api/nodes/${task.node_id}/status`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: nextStatus }),
+          });
+        }
       }
     },
-    [graphData, onLinkedNodeStatusChange, persistTasks, planTaskSelectClause, supabase, tasks, workspaceId],
+    [graphData, onLinkedNodeStatusChange, onNodeStatusChange, persistTasks, planTaskSelectClause, supabase, tasks, workspaceId],
   );
 
   const deleteTask = useCallback(
@@ -2430,15 +2441,6 @@ export function AssistantMode({
 
           {!plannerState.session && !plannerState.loading ? (
             <>
-              <input
-                aria-label="Anything to fit in"
-                className="planner-include-input"
-                maxLength={200}
-                onChange={(e) => setPlanInclude(e.target.value)}
-                placeholder="Anything to fit in? e.g. 3h of Italian"
-                type="text"
-                value={planInclude}
-              />
               {workspaceId ? (
                 <StaleCheckCard
                   className="stale-check--planner"
