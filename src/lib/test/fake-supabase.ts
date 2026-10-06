@@ -1,6 +1,6 @@
 // In-memory stand-in for the slice of supabase-js the server libs use:
 // from(table).select/insert/update/upsert/delete with eq/neq/in/is/gt/gte/lt/
-// lte/or/ilike filters, order, limit, single/maybeSingle, and chained .select()
+// lte/or/ilike filters (eq also on a JSON field, "metadata->>date"), order, limit, single/maybeSingle, and chained .select()
 // returning. Filters follow SQL NULL semantics (NULL never matches eq/neq/in),
 // which is what PostgREST does — `.neq("status", "archived")` drops NULL rows.
 //
@@ -36,6 +36,14 @@ export type FakeSupabase = {
 };
 
 const isNull = (v: unknown) => v === null || v === undefined;
+
+// "metadata->>date": a JSON field as text, as PostgREST reads it.
+function cell(row: Row, column: string): unknown {
+  const [base, key] = column.split("->>");
+  if (key === undefined) return row[column];
+  const value = (row[base] as Record<string, unknown> | null | undefined)?.[key];
+  return isNull(value) ? null : String(value);
+}
 
 function parseOr(expr: string): Filter {
   // "source_node_id.eq.X,target_node_id.eq.X", and "ends_on.is.null,ends_on.gte.D"
@@ -194,7 +202,7 @@ export function createFakeSupabase(
         state.op = "delete";
         return chain;
       },
-      eq: (c: string, v: unknown) => addFilter((r) => !isNull(r[c]) && r[c] === v),
+      eq: (c: string, v: unknown) => addFilter((r) => !isNull(cell(r, c)) && cell(r, c) === v),
       neq: (c: string, v: unknown) => addFilter((r) => !isNull(r[c]) && r[c] !== v),
       in: (c: string, vs: unknown[]) => addFilter((r) => !isNull(r[c]) && vs.includes(r[c])),
       is: (c: string, v: unknown) => addFilter((r) => (v === null ? isNull(r[c]) : r[c] === v)),

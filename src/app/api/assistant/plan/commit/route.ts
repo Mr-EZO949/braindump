@@ -1,7 +1,8 @@
 // POST /api/assistant/plan/commit — the Planner's Accept writes a plan's tasks
 // onto a day here (docs/replan.md). One plan per day: the old plan's
-// unfinished tasks there leave the day and the response carries the Undo
-// handle ("back to the earlier plan"). Ticked tasks and hand-typed ones stay.
+// unfinished tasks there — node-less blocks too — leave the day and the
+// response carries the Undo handle ("back to the earlier plan"). Ticked tasks
+// and hand-typed ones stay.
 //
 // Body: { workspace_id, date, tasks: [{ title, node_id, start_time, duration_minutes }],
 //         session_id?, plan_end? ("HH:MM", where the new plan ends; omitted = end of day),
@@ -9,7 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { commitDayPlan, loadDayTasks, type NewPlanTask } from "@/lib/planner/plan-replace";
+import { commitDayPlan, loadDayTasks, loadPlanMadeIds, type NewPlanTask } from "@/lib/planner/plan-replace";
 import { planRequest } from "@/lib/planner/plan-route-scope";
 import { clockToMinutes, minutesToClock, pastUnfinished, supersededTasks } from "@/lib/planner/replan";
 import { isISODate } from "@/lib/time/local-date";
@@ -73,8 +74,8 @@ export async function POST(req: NextRequest) {
   }
 
   const planEnd = clockToMinutes(typeof body.plan_end === "string" ? body.plan_end : null);
-  const dayTasks = await loadDayTasks(scope, date);
-  const superseded = tasks.length > 0 ? supersededTasks(dayTasks, date, planEnd) : [];
+  const [dayTasks, planMade] = await Promise.all([loadDayTasks(scope, date), loadPlanMadeIds(scope, date)]);
+  const superseded = tasks.length > 0 ? supersededTasks(dayTasks, date, planEnd, planMade) : [];
   const skipped = pastUnfinished(superseded, date, today, nowMinute).map((t) => ({
     node_id: t.node_id as string,
     title: t.title,

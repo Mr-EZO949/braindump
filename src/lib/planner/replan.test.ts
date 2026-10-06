@@ -168,13 +168,13 @@ describe("replacement records", () => {
 });
 
 describe("describeDayPlan — today's plan in the chat snapshot", () => {
-  it("one line per plan task with its time and tick; hand-typed tasks left out", () => {
+  it("one line per task on the day with its time and tick; a node-less one has no id", () => {
     const text = describeDayPlan(
       [task("essay", "10:00", 90), task("gym", "08:00", 60, { done: true }), task("call", "12:00", 15, { node_id: null })],
       DAY,
     );
     expect(text).toBe(
-      `Today's plan (Planner; "done ✓" = ticked):\n- 08:00–09:00 gym — done ✓ — id: n-gym\n- 10:00–11:30 essay — not done — id: n-essay`,
+      `Today's plan (Planner; "done ✓" = ticked):\n- 08:00–09:00 gym — done ✓ — id: n-gym\n- 10:00–11:30 essay — not done — id: n-essay\n- 12:00–12:15 call — not done`,
     );
     expect(describeDayPlan([], DAY)).toBeNull();
   });

@@ -1,8 +1,12 @@
 // One plan per day, and "I went off schedule" (#27, docs/replan.md).
 //
 // A day's plan is its plan_tasks: what the Planner's Accept writes, what the
-// user ticks. A task made from a plan carries the node it is about (node_id);
-// a task typed by hand has none and is never part of "the plan".
+// user ticks. A task made from a plan carries the node it is about (node_id),
+// or — a block with no node ("Update CV", "Mealprep") — its id is in a plan
+// record's `created` list (plan-replace.ts loadPlanMadeIds). A task typed by
+// hand is neither and is never part of "the plan". Until 2026-10-06 only the
+// node mattered, so a node-less block stayed on the day under every new plan
+// and a rebuilt plan doubled it.
 //
 // - A new plan for a day takes over the old plan's UNFINISHED tasks that start
 //   before it ends (all of them for a day plan). Ticked tasks stay — they
@@ -46,9 +50,12 @@ export function minutesToClock(value: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
-/** Made by a plan (it names the node it is about), not typed by hand. */
-export function isPlanTask(task: Pick<DayPlanTask, "node_id">): boolean {
-  return typeof task.node_id === "string" && task.node_id.length > 0;
+/**
+ * Made by a plan (it names the node it is about, or a plan recorded making
+ * it — `planMade`), not typed by hand.
+ */
+export function isPlanTask(task: Pick<DayPlanTask, "id" | "node_id">, planMade?: ReadonlySet<string>): boolean {
+  return (typeof task.node_id === "string" && task.node_id.length > 0) || Boolean(planMade?.has(task.id));
 }
 
 function taskMinutes(task: Pick<DayPlanTask, "duration_minutes">): number {
@@ -64,9 +71,14 @@ function sameDay(task: Pick<DayPlanTask, "scheduled_date">, date: string): boole
  * before the new plan ends (null = it runs to the end of the day). A task with
  * no time is replaced too. Ticked tasks and hand-typed ones stay.
  */
-export function supersededTasks(tasks: DayPlanTask[], date: string, planEndMinute: number | null): DayPlanTask[] {
+export function supersededTasks(
+  tasks: DayPlanTask[],
+  date: string,
+  planEndMinute: number | null,
+  planMade?: ReadonlySet<string>,
+): DayPlanTask[] {
   return tasks.filter((task) => {
-    if (!sameDay(task, date) || task.done || !isPlanTask(task)) return false;
+    if (!sameDay(task, date) || task.done || !isPlanTask(task, planMade)) return false;
     const start = clockToMinutes(task.start_time);
     return planEndMinute === null || start === null || start < planEndMinute;
   });
@@ -116,11 +128,12 @@ export function replanRestOfDay(params: {
   busy: Array<{ start: number; end: number }>;
   missedNodeIds?: ReadonlySet<string>;
   datedNodeIds?: ReadonlySet<string>;
+  planMade?: ReadonlySet<string>;
 }): ReplanResult {
   const missedIds = params.missedNodeIds ?? new Set<string>();
   const dated = params.datedNodeIds ?? new Set<string>();
   const open = params.tasks
-    .filter((task) => sameDay(task, params.date) && !task.done && isPlanTask(task))
+    .filter((task) => sameDay(task, params.date) && !task.done && isPlanTask(task, params.planMade))
     .sort((a, b) => {
       const sa = clockToMinutes(a.start_time) ?? Number.MAX_SAFE_INTEGER;
       const sb = clockToMinutes(b.start_time) ?? Number.MAX_SAFE_INTEGER;
@@ -176,16 +189,20 @@ export function replanStartMinute(nowMinute: number): number {
   return Math.min(23 * 60 + 45, Math.ceil(Math.max(0, nowMinute) / 15) * 15);
 }
 
-/** Today's plan for the chat snapshot: one line per plan task, in time order. */
+/**
+ * Today's plan for the chat snapshot: one line per task on the day, in time
+ * order — node-less ones too, so chat sees the whole day it is asked about
+ * (it once told the owner a doubled "Update CV" was there once).
+ */
 export function describeDayPlan(tasks: DayPlanTask[], date: string): string | null {
   const rows = tasks
-    .filter((task) => sameDay(task, date) && isPlanTask(task))
+    .filter((task) => sameDay(task, date))
     .sort((a, b) => (clockToMinutes(a.start_time) ?? 9999) - (clockToMinutes(b.start_time) ?? 9999));
   if (rows.length === 0) return null;
   const lines = rows.slice(0, 12).map((task) => {
     const start = clockToMinutes(task.start_time);
     const when = start === null ? "any time" : `${minutesToClock(start)}–${minutesToClock(start + taskMinutes(task))}`;
-    return `- ${when} ${task.title} — ${task.done ? "done ✓" : "not done"} — id: ${task.node_id}`;
+    return `- ${when} ${task.title} — ${task.done ? "done ✓" : "not done"}${task.node_id ? ` — id: ${task.node_id}` : ""}`;
   });
   return `Today's plan (Planner; "done ✓" = ticked):\n${lines.join("\n")}`;
 }

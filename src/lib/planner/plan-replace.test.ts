@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createFakeSupabase } from "@/lib/test/fake-supabase";
-import { commitDayPlan, loadDayTasks, replanCardRows, replanToday, undoPlanReplacement } from "./plan-replace";
+import { commitDayPlan, loadDayTasks, loadPlanMadeIds, replanCardRows, replanToday, undoPlanReplacement } from "./plan-replace";
 import { PLAN_REPLACE_ENTITY, replacementMarks, supersededTasks } from "./replan";
 
 const DAY = "2026-10-05"; // a Monday
@@ -102,7 +102,7 @@ describe("one plan per day", () => {
     expect(await undoPlanReplacement(scope, result.replacementId!)).toEqual({ ok: true, date: DAY, already: true });
   });
 
-  it("the first plan of a day records nothing to undo", async () => {
+  it("the first plan of a day has nothing to undo, but its tasks are recorded as the plan's", async () => {
     const fake = createFakeSupabase({ plan_tasks: [], feedback_events: [] });
     const scope = { supabase: fake.client, userId: U, workspaceId: W };
     const result = await commitDayPlan(scope, {
@@ -112,7 +112,45 @@ describe("one plan per day", () => {
       tasks: [{ title: "Essay", node_id: "n-essay", start_time: "09:00", duration_minutes: 60 }],
     });
     expect(result).toMatchObject({ ok: true, replacementId: null, replaced: 0 });
-    expect(fake.tables.feedback_events).toEqual([]);
+    expect(fake.tables.feedback_events).toHaveLength(1);
+    expect(fake.tables.feedback_events[0].metadata).toMatchObject({ record_only: true, date: DAY });
+  });
+
+  it("owner 10-06: a rebuilt plan replaces the old plan's node-less blocks too — no doubled 'Update CV'", async () => {
+    const fake = createFakeSupabase({
+      plan_tasks: [row("mom", "Call mom", "18:00", 30, { node_id: null })],
+      feedback_events: [],
+    });
+    const scope = { supabase: fake.client, userId: U, workspaceId: W };
+    const first = await commitDayPlan(scope, {
+      date: DAY,
+      kind: "plan",
+      superseded: supersededTasks(await loadDayTasks(scope, DAY), DAY, null, await loadPlanMadeIds(scope, DAY)),
+      tasks: [
+        { title: "Update CV", node_id: null, start_time: "13:30", duration_minutes: 15 },
+        { title: "Build engine MVP", node_id: "n-engine", start_time: "14:00", duration_minutes: 75 },
+      ],
+    });
+    expect(first.ok).toBe(true);
+    fake.tables.feedback_events[0].created_at = "2026-10-05T10:00:00Z";
+
+    const superseded = supersededTasks(await loadDayTasks(scope, DAY), DAY, null, await loadPlanMadeIds(scope, DAY));
+    expect(superseded.map((t) => t.title).sort()).toEqual(["Build engine MVP", "Update CV"]);
+    const second = await commitDayPlan(scope, {
+      date: DAY,
+      kind: "plan",
+      superseded,
+      tasks: [{ title: "update CV", node_id: null, start_time: "22:10", duration_minutes: 30 }],
+    });
+    expect(second).toMatchObject({ ok: true, replaced: 2 });
+    // The hand-typed task stays; the CV is on the day once.
+    expect(fake.tables.plan_tasks.map((t) => t.title).sort()).toEqual(["Call mom", "update CV"]);
+
+    // Undo of the second plan isn't blocked by the first plan's record.
+    if (!second.ok) return;
+    fake.tables.feedback_events[1].created_at = "2026-10-05T11:00:00Z";
+    expect(await undoPlanReplacement(scope, second.replacementId!)).toMatchObject({ ok: true });
+    expect(fake.tables.plan_tasks.map((t) => t.title).sort()).toEqual(["Build engine MVP", "Call mom", "Update CV"]);
   });
 
   it("undoing an older plan while a newer one replaced it is refused", async () => {

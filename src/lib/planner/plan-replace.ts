@@ -72,6 +72,26 @@ export async function loadDayTasks(scope: PlanScope, date: string): Promise<DayP
   return ((data ?? []) as DayPlanTask[]).map((row) => ({ ...row, done: Boolean(row.done) }));
 }
 
+/**
+ * Ids of the tasks a plan wrote onto `date` — every commit records them
+ * (`created`), so a block with no node is still known as the plan's.
+ */
+export async function loadPlanMadeIds(scope: PlanScope, date: string): Promise<Set<string>> {
+  const { data } = await scope.supabase
+    .from("feedback_events")
+    .select("metadata")
+    .eq("user_id", scope.userId)
+    .eq("workspace_id", scope.workspaceId)
+    .eq("entity_type", PLAN_REPLACE_ENTITY)
+    .eq("metadata->>date", date);
+  const ids = new Set<string>();
+  for (const row of (data ?? []) as { metadata: Record<string, unknown> | null }[]) {
+    const created = row.metadata?.created;
+    if (Array.isArray(created)) for (const id of created) if (typeof id === "string") ids.add(id);
+  }
+  return ids;
+}
+
 function uniqueRefs(refs: NodeRef[]): NodeRef[] {
   const seen = new Set<string>();
   return refs.filter((ref) => (seen.has(ref.node_id) ? false : (seen.add(ref.node_id), true)));
@@ -124,8 +144,12 @@ export async function commitDayPlan(
   };
 
   const missed = uniqueRefs(params.missed ?? []);
+  // Every commit is recorded — its `created` ids mark the plan's tasks for the
+  // next plan to replace. Only one that changed something is an Undo handle;
+  // the rest are `record_only`.
+  const replaces = params.superseded.length > 0 || missed.length > 0 || params.kind === "replan";
   let replacementId: string | null = null;
-  if (params.superseded.length > 0 || missed.length > 0 || params.kind === "replan") {
+  if (replaces || inserted.length > 0) {
     const { data, error } = await supabase
       .from("feedback_events")
       .insert({
@@ -143,6 +167,7 @@ export async function commitDayPlan(
           skipped: uniqueRefs(params.skipped ?? []),
           missed,
           session_id: params.sessionId ?? null,
+          ...(replaces ? {} : { record_only: true }),
         },
       })
       .select("id")
@@ -151,7 +176,7 @@ export async function commitDayPlan(
       await rollback();
       return { ok: false, error: error?.message ?? "plan change not recorded" };
     }
-    replacementId = (data as { id: string }).id;
+    if (replaces) replacementId = (data as { id: string }).id;
   }
 
   if (params.superseded.length > 0) {
@@ -232,7 +257,9 @@ export async function undoPlanReplacement(scope: PlanScope, replacementId: strin
     .gte("created_at", record.created_at);
   const later = (laterRows ?? []) as ReplacementRow[];
   if (later.some((r) => r.metadata?.undoes === replacementId)) return { ok: true, date, already: true };
-  const newer = liveReplacements(later).filter((r) => r.id !== replacementId && r.metadata?.date === date);
+  const newer = liveReplacements(later).filter(
+    (r) => r.id !== replacementId && r.metadata?.date === date && r.metadata?.record_only !== true,
+  );
   if (newer.length > 0) {
     return { ok: false, error: "A newer plan replaced this one — undo that first.", status: 409 };
   }
@@ -296,8 +323,8 @@ export async function replanToday(
   params: { today: string; nowMinute: number; startMinute?: number | null; missed?: string[] },
 ): Promise<ReplanOutcome | { ok: false; reason: "no_plan" | "error"; error: string }> {
   const { supabase, userId, workspaceId } = scope;
-  const tasks = await loadDayTasks(scope, params.today);
-  const open = tasks.filter((t) => !t.done && isPlanTask(t));
+  const [tasks, planMade] = await Promise.all([loadDayTasks(scope, params.today), loadPlanMadeIds(scope, params.today)]);
+  const open = tasks.filter((t) => !t.done && isPlanTask(t, planMade));
 
   // Nodes involved: today's plan + whatever the user said they missed.
   const refs = (params.missed ?? []).map((r) => String(r).trim()).filter(Boolean).slice(0, 8);
@@ -306,11 +333,11 @@ export async function replanToday(
   const titleRefs: string[] = [];
   for (const ref of refs) {
     const onPlan = open.find((t) => t.node_id === ref) ?? byTitle(ref);
-    if (onPlan) idRefs.add(onPlan.node_id as string);
+    if (onPlan?.node_id) idRefs.add(onPlan.node_id);
     else if (UUID_RE.test(ref)) idRefs.add(ref);
     else titleRefs.push(ref);
   }
-  const ids = [...new Set([...open.map((t) => t.node_id as string), ...idRefs])];
+  const ids = [...new Set([...open.flatMap((t) => (t.node_id ? [t.node_id] : [])), ...idRefs])];
   type NodeRow = { id: string; title: string; node_type: string; target_date: string | null };
   const nodes = new Map<string, NodeRow>();
   if (ids.length > 0) {
@@ -350,7 +377,7 @@ export async function replanToday(
   // Busy: fixed commitments, and the user's own timed tasks still to do.
   const ownTasks = tasks.flatMap((t) => {
     const start = clockToMinutes(t.start_time);
-    return !isPlanTask(t) && !t.done && start !== null
+    return !isPlanTask(t, planMade) && !t.done && start !== null
       ? [{ start, end: start + (t.duration_minutes && t.duration_minutes > 0 ? t.duration_minutes : 30) }]
       : [];
   });
@@ -365,6 +392,7 @@ export async function replanToday(
     busy: [...busyOn(commitments, params.today), ...ownTasks],
     missedNodeIds: missedIds,
     datedNodeIds: new Set([...nodes.values()].filter((n) => n.target_date).map((n) => n.id)),
+    planMade,
   });
 
   const habitIds = new Set([...nodes.values()].filter((n) => n.node_type === "habit").map((n) => n.id));
@@ -378,7 +406,7 @@ export async function replanToday(
     ...result.missed,
     ...result.didntFit,
   ]
-    .filter((t) => !habitIds.has(t.node_id as string))
+    .filter((t) => t.node_id && !habitIds.has(t.node_id))
     .map(ref);
   const missedHabits = [
     ...result.missed.filter((t) => habitIds.has(t.node_id as string)).map(ref),
@@ -425,7 +453,7 @@ export function replanCardRows(outcome: ReplanOutcome) {
   for (const { task, start, minutes } of outcome.result.placed) {
     const was = clockToMinutes(task.start_time);
     const span = `${minutesToClock(start)}–${minutesToClock(start + minutes)}`;
-    row(task.node_id as string, task.title, was === start ? "kept" : "moved", was === null || was === start ? span : `${span} (was ${minutesToClock(was)})`);
+    row(task.node_id ?? "", task.title, was === start ? "kept" : "moved", was === null || was === start ? span : `${span} (was ${minutesToClock(was)})`);
   }
   for (const task of outcome.result.missed) {
     const habit = outcome.habitIds.has(task.node_id as string);
@@ -435,7 +463,7 @@ export function replanCardRows(outcome: ReplanOutcome) {
     if (outcome.habitIds.has(ref.node_id)) row(ref.node_id, ref.title, "missed", "Missed today — not marked done");
   }
   for (const task of outcome.result.didntFit) {
-    row(task.node_id as string, task.title, "unplanned", `Didn't fit before ${minutesToClock(outcome.endMinute)}`);
+    row(task.node_id ?? "", task.title, "unplanned", `Didn't fit before ${minutesToClock(outcome.endMinute)}`);
   }
   return rows;
 }
