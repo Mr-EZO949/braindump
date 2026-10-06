@@ -159,7 +159,12 @@ Run the eval before and after a change: `npx tsx --env-file=.env.local scripts/e
 > source of truth, now mirrored by the derived `PROMPT_VERSIONS` map). The
 > intermediate v5–v9 changes predate this entry and weren't logged here.
 
-### assistant-v32 (current) — a plan request plans right away; one message, every intent (#22, 2026-10-05)
+### assistant-v33 (current) — plan_day gets the times, the end and the note; a correction re-plans (2026-10-06)
+- One sentence after the plan rule: anything at a clock time goes in `busy`, an end in `end_time` ("until 11pm" → "23:00"), another day in `day`, how they feel in `note`; a correction to a plan just drafted ("no, mealprep is 12:30–14:00", "also add X", "lighter please") → `plan_day` again with the whole request, every time kept — not `replan_today`.
+- Why (owner's ezo workspace, 10-06): "fill until 11pm" from 12:30 came as `custom_minutes` 570 (22:00); "today is not much deep work cuz im sick" had nowhere to go; "no, mealprep is from 12:30 for 1.5 hours" ran `replan_today`, which took the plan's work off as missed instead of rebuilding.
+- Checked end to end (throwaway user, the owner's Tuesday message, UI chat → card → Planner Accept): `plan_day` came with `end_time` 23:00 and the note on 4 of 4 runs; the time for mealprep sometimes went to `busy`, sometimes stayed only in the message — `pinFromMessage` covers the second. A correction that also adds something ("…and also add 30 min of reading") is still read as a dump (open, see testing-journal).
+
+### assistant-v32 — a plan request plans right away; one message, every intent (#22, 2026-10-05)
 - PM: on a seeded graph "plan the rest of my day" (default explain mode) answered with questions ("What times are you occupied, and what work matters most?") instead of calling `plan_day`, on v29 and v30. The plan rule in "Which call" now names "the rest of my day" and says: plan_day right away, in every mode, never ask first — saved commitments are planned around, the ranking knows what matters; busy time not saved → plan anyway, at most one line after the card. `chat-router.ts` `buildHint` adds a plan hint next to the message when a stated clause asks for a plan.
 - Code next to it (#22): `tools/intent-coverage.ts` checks the first acting response's calls against what the user STATED and asks once for only the missing calls (held calls, merged into one turn); a stated change keeps a question off Gemini; ops / priority actions / `mark_task_done` on a node's id called as tools become the right op with the source read from the message; change calls after a pending card are still planned.
 - Size (messages.countTokens, free): +68 tokens over v30 (8,706 → 8,774, measured before the merge with v31).
@@ -298,7 +303,14 @@ Run the eval before and after a change: `npx tsx --env-file=.env.local scripts/e
 
 ## Planner (`plan.ts`)
 
-### plan-v8 (current) — time blocks for bigger things; what the user asks for (2026-10-04)
+### plan-v9 (current) — every request in, the user's note, meals by the clock (2026-10-06)
+- USER REQUESTS: they are what the plan is for; a line with related open tasks fills its time with them ("2h of leetcode" → each LeetCode task); an unmatched line is titled with the user's words and never dropped or swapped (mealprep, cleaning). Request lines carry `related open tasks` and `title: "…"`.
+- THE USER ABOUT TODAY: "sick / tired / light day" in the context → at most two deep-work blocks of ≤60 min, light items first, end with Free time.
+- Meals: lunch starts 12:00–14:00, dinner 18:30–20:30 by the clock; count the clock through the free stretches (Wednesday's plan put "Lunch" at 20:00).
+- Code around it (`validatePlanOutput`, `plan-requests.ts`): requests are guaranteed after the model (left out → added, short → topped up, unmatched with no length ≥30 min), Free time and unasked work make room; repeats of one item fold into one block unless together >2 h; bracketed lists don't split ("6h academics (Calculus, Probability, ML)"); clock-timed items are fixed time, not requests.
+- Live round (synthetic, 3 calls, $0.031): Tuesday-like sick day — all 4 requests in, two of them not in the graph, no deep work over 60 min, dinner 20:15; Wednesday-like — academics exactly 6h over the three classes, lunch 13:40; "2h of leetcode" (Haiku) — both LeetCode tasks, 60 + 60.
+
+### plan-v8 — time blocks for bigger things; what the user asks for (2026-10-04)
 - The Session block gains two sections, empty (and absent) when there is nothing to list: **Time blocks** — a class, or a goal / project / big task with open steps, with its next 1–2 open steps ("start with …", picked in code by the user's order) — and **The user asked for** — "3h of Italian, 2h of math" from the Planner's new "Anything to fit in?" box or chat's `plan_day` `include`, matched to a node by its words in code (`lib/planner/plan-requests.ts`), unmatched lines passed as words.
 - New rules: a time block is ONE block on the item itself (node_id = the item), 45–180 min, and covers its steps (no separate block for them); it never pushes out a work item with a deadline signal; every request MUST be in the plan, and a request over 2 h may be two blocks with a break between. "Carry-over" now means dated work left undone (undated leftovers are asked about instead, `lib/planner/skips.ts`).
 - Code around it (`validatePlanOutput`): a step whose time block is in the same plan is dropped; a matched request the model left out is put first at its length; a time block's reason starts with "Start with “…”, then “…”" (first block only).
