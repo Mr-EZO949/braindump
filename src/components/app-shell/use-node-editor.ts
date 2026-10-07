@@ -3,7 +3,7 @@
 // Selecting and editing nodes by hand: selection (click, search), edit mode,
 // the create and edit sheets, deleting a node with its subtree, the edit
 // sheet's connections, and dragged positions. Mode-based editing and floating
-// sheets are settled UX (AGENTS.md "Important UX Decisions").
+// sheets are settled UX.
 
 import { useEffect, useState } from "react";
 

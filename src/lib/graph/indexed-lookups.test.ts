@@ -1,4 +1,4 @@
-// Codex (2026-09-25) replaced full-graph scans on node selection with lookup
+// A 2026-09-25 refactor replaced full-graph scans on node selection with lookup
 // indexes: the delete preview (getStructuralSubtree*) and the details panel
 // (buildChatNodeContext). These tests pin the new code to the ORIGINAL
 // algorithms on random graphs, so the speed-up can't change what gets deleted
@@ -60,7 +60,7 @@ function randomGraph(seed: number): GraphData {
   return { nodes, edges };
 }
 
-// The pre-Codex delete preview, verbatim in behavior: walk the structural
+// The pre-refactor delete preview, verbatim in behavior: walk the structural
 // tree, then take every edge touching the subtree by scanning all edges.
 function originalSubtree(graph: GraphData, rootId: string) {
   const { childrenByParent } = buildPrimaryStructuralTree(graph);

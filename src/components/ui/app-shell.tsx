@@ -1,6 +1,6 @@
 "use client";
 
-// The app's orchestration layer (AGENTS.md "Shell / State Orchestration"):
+// The app's orchestration layer:
 // state that spans the graph, the rail, the sheets and the dialogs is wired
 // together here. Each concern lives in its own hook or component under
 // src/components/app-shell/; this file composes them.

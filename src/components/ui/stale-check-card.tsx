@@ -3,7 +3,7 @@
 // "Does this still matter?" — work the user planned and skipped on 2+ days with
 // no deadline (lib/planner/skips.ts). It's out of Focus's picks and new plans
 // until answered here. Shown at the top of Focus and on the Planner screen
-// before generating. Deterministic — no model call (cost rule, CLAUDE.md).
+// before generating. Deterministic — no model call.
 
 import { useState } from "react";
 

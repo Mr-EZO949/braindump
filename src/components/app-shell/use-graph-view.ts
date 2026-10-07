@@ -2,7 +2,7 @@
 
 // How the graph is being looked at: the selected node, search, type filter,
 // "Hide done", the camera — and restoring the selection and camera a reload
-// left behind (local persistence is part of the UX, see AGENTS.md).
+// left behind (local persistence is part of the UX).
 
 import { useEffect, useMemo, useState } from "react";
 

@@ -2,7 +2,7 @@
 
 Status: **built** — code in `src/lib/graph/node-types.ts` (the one place type rules
 live), migration `supabase/migrations/20260929000000_node_types_v2.sql`, prompts
-extract-v22 / extract-light-v2 / assistant-v18. The owner approved all four
+extract-v22 / extract-light-v2 / assistant-v18. All four were approved
 recommendations below (keep class, outline → big task, backfill structure only,
 "Note"). Old graphs don't convert one-to-one, so Round 2 tests the types with new
 dumps; the migration only backfills what the structure proves.
@@ -22,7 +22,7 @@ don't mean one thing each:
 - **The same thing gets different types.** "Pass Calculus 1 & 2" is a task in one workspace
   and a goal in another; "Pass ML Exam", "Write Thesis", "Crash-Course Italian Fast" are
   tasks (10 tasks have children). There is no type for "one thing, one finish line, several
-  sittings" — the owner's "big task" (journal #3, #16).
+  sittings" — a "big task".
 - Two palettes: the canvas uses `node-colors.ts`, the create sheet has its own accents.
 
 ## The system: 9 types in 4 families
@@ -45,7 +45,7 @@ Tie-breakers the prompts and UI use:
 
 - task vs big_task: **one sitting?** If you'd break it into steps before starting, it's a
   big task. A task that gets children is promoted to big_task automatically.
-- goal vs big_task (owner's call, 2026-09-29): **a result or a piece of work?** "Pass the ML
+- goal vs big_task (decided 2026-09-29): **a result or a piece of work?** "Pass the ML
   exam" / "Pass Machine Learning" is a result → goal; "Write the ML project report" is work
   → big task.
 - big_task vs project: **one piece of work?** "Write my thesis" → big task; "Launch the
@@ -74,7 +74,7 @@ save (task gets a child step or phase → big_task). Nothing blocks the user fro
 
 ## Link kinds (2026-10-05)
 
-Four, each clearly different (owner: the old nine overlapped in meaning). Every
+Four, each clearly different (the old nine overlapped in meaning). Every
 writer emits only these; `lib/graph/edge-types.ts` `normalizeEdge` reads older
 rows as their kind everywhere (layout, delete subtree, ranking, Focus, planner,
 chat snapshot, edit sheet). No migration — old rows keep their stored type.
@@ -105,7 +105,7 @@ chat snapshot, edit sheet). No migration — old rows keep their stored type.
   `#ef6b7a`, class `#a07fd8`, habit `#7fc987`, idea `#eacf5a`); `note` takes concept's teal
   `#5cc7b8`; `area` uses the text-tertiary neutral (`#928b85` dark / `#76726d` light).
   The create sheet's separate accent map is removed.
-- **The gradient-red outline moves to `big_task`** — what the owner originally asked for in
+- **The gradient-red outline moves to `big_task`** — what was originally asked for in
   journal #3 ("make the outline of the big task gradient red"). Goals and projects keep the
   Round-1 "size & weight" treatment (+0.2 size, weight 680) without the red outline, so the
   outline means one thing: *this needs breaking down*.
@@ -142,7 +142,7 @@ chat snapshot, edit sheet). No migration — old rows keep their stored type.
 - **Markers:** goal target badge, class term tag ("FALL ’26"), habit cadence dots (one per
   weekly target, filled by this week's check-ins) — verified in the browser with
   `.claude/skills/verifier-webapp/verify-node-types.mjs`.
-- **Follow-up (owner feedback, same day):** passing an exam/course is a goal, a big task is
+- **Follow-up (same day):** passing an exam/course is a goal, a big task is
   a piece of work; big tasks hold phases and get deep AI roadmaps (phases → steps); areas
   may nest; a task holding a project phase is promoted too; step progress counts hidden
   completed steps; prompts extract-v23 / extract-light-v3 / assistant-v19. The eval below

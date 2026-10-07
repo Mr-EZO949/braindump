@@ -60,3 +60,13 @@ corporate/
 # Private reference notes (not for GitHub)
 GRAPH_PORTING_NOTES.md
 .env*.local
+
+# Private working notes and local tooling (kept off GitHub)
+STATUS.md
+testing-journal.md
+testing-fixes-plan.md
+scripts/TESTING_TODO.md
+.claude/
+docs/fix-briefs-*.md
+docs/unified-turn-handoff.md
+docs/what-changed-*.md

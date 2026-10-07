@@ -1,6 +1,6 @@
 # One plan per day, and "I went off schedule" (#27, 2026-10-05)
 
-Owner: *"if say i went off schedule and im telling that to ai … will ai rebuild the schedule
+User request: *"if say i went off schedule and im telling that to ai … will ai rebuild the schedule
 based off context?"* and *"a second plan absolutely has to replace the old plan with an undo"*.
 
 ## What "a day's plan" is

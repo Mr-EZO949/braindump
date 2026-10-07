@@ -1,7 +1,7 @@
 # One turn — chat and building as a single pipeline
 
 **Status: approved 2026-09-30, order 1 → 2 → 3. Phases 1–3 are built (section 5; phase 3
-minus two clean-up items); phases 4–5 are not.** Written after the owner's note that the separation between "just answering" and
+minus two clean-up items); phases 4–5 are not.** Written after noticing that the separation between "just answering" and
 "planning / building the graph / extracting / connections" is the thing that feels wrong.
 Sections 1–2 describe the app as it was on 2026-09-30, before phase 1.
 
@@ -242,7 +242,7 @@ Not chosen — **one Sonnet agent for every turn**: at the measured $0.038 per S
 
 ## 5 · Order of work
 
-Each phase ships on its own and is testable from `testing-journal.md`.
+Each phase ships on its own and is testable on its own.
 
 1. **One apply engine** — ✅ built 2026-09-30 (server only, no migration, no prompt change).
    - `lib/graph/change-set.ts` `applyChangeSet`: the one writer of AI graph changes. The
@@ -361,7 +361,7 @@ Each phase ships on its own and is testable from `testing-journal.md`.
      from the same ledger: chat creates write a `raw_entries` row with source `assistant_save`
      and `proposed_nodes` rows); `"suggestion"` → everything waits, marked "Suggested". A
      missing source counts as a suggestion. `build_graph` runs the same policy.
-   - **Advice stays advice** (owner): `update_priorities` / `set_commitments` called with
+   - **Advice stays advice**: `update_priorities` / `set_commitments` called with
      source `"suggestion"` wait on a card (`isSuggestedDirectCall`, `tools/index.ts`); OK'd,
      they apply with their own applied card and Undo (resume route).
    - **Undo for everything applied** (`lib/graph/change-undo.ts`, `POST /api/changes/undo`):
@@ -404,11 +404,11 @@ Each phase ships on its own and is testable from `testing-journal.md`.
 
 Phases 1–3 are the felt change; phase 4's policy and phase 5's stages are built.
 
-## 6 · Decisions (owner, 2026-09-30)
+## 6 · Decisions (2026-09-30)
 
 1. **Trust — yes.** A chat-created node may apply at once with Undo when this user's history
-   for that risk class is ≥90%, the rule dumps already follow (phase 4; changes UX decision 6
-   in `AGENTS.md` when it lands). Separately, and in every phase: items on a card are
+   for that risk class is ≥90%, the rule dumps already follow (phase 4).
+   Separately, and in every phase: items on a card are
    accepted or rejected **one by one**, never only as a batch.
 2. **Brain Dump box** keeps opening a fresh thread (journal #18).
 3. **Review modal** only for large sets (more than ~6 items needing a look); smaller ones are
