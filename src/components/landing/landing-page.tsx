@@ -1,101 +1,82 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { motion, useInView, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
 import styles from "./landing.module.css";
 
-// ── Pricing cards ─────────────────────────────────────────
+// ── Waitlist form ─────────────────────────────────────────
 
-type PricingTier = {
-  name: string;
-  price: string;
-  cadence?: string;
-  tagline: string;
-  features: string[];
-  cta: string;
-  href: string;
-  featured?: boolean;
-};
-
-const PRICING_TIERS: PricingTier[] = [
-  {
-    name: "Free",
-    price: "$0",
-    tagline: "Get unstuck without commitment.",
-    features: [
-      "Unlimited brain dumps",
-      "Graph of up to 50 nodes",
-      "Daily “what’s next” pick",
-    ],
-    cta: "Get started",
-    href: "#pricing",
-  },
-  {
-    name: "Pro",
-    price: "$9",
-    cadence: "/mo",
-    tagline: "For when paralysis is a daily fight.",
-    features: [
-      "Everything in Free",
-      "Unlimited nodes & history",
-      "AI planner + weekly review",
-      "Habits & roadmap",
-    ],
-    cta: "Start free trial",
-    href: "#pricing",
-    featured: true,
-  },
-  {
-    name: "Team",
-    price: "$19",
-    cadence: "/user/mo",
-    tagline: "Shared brains for small teams.",
-    features: [
-      "Everything in Pro",
-      "Shared workspaces",
-      "Priority support",
-    ],
-    cta: "Contact us",
-    href: "#pricing",
-  },
-];
-
-type PricingCardsProps = {
+type WaitlistFormProps = {
+  source: string;
   variant?: "hero" | "cta";
 };
 
-function PricingCards({ variant = "hero" }: PricingCardsProps) {
+function WaitlistForm({ source, variant = "hero" }: WaitlistFormProps) {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (status === "submitting") return;
+    setStatus("submitting");
+    setError(null);
+    try {
+      const res = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, source }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? "Something went wrong. Try again.");
+        setStatus("error");
+        return;
+      }
+      setStatus("success");
+    } catch {
+      setError("Network error. Try again.");
+      setStatus("error");
+    }
+  };
+
+  const formClass = variant === "cta" ? styles.waitlistFormCta : styles.waitlistForm;
+
+  if (status === "success") {
+    return (
+      <div className={`${formClass} ${styles.waitlistSuccess}`}>
+        <span className={styles.waitlistSuccessDot} />
+        You&apos;re on the list. We&apos;ll be in touch.
+      </div>
+    );
+  }
+
   return (
-    <div className={`${styles.pricingGrid} ${variant === "cta" ? styles.pricingGridCta : ""}`}>
-      {PRICING_TIERS.map((tier) => (
-        <div
-          key={tier.name}
-          className={`${styles.pricingCard} ${tier.featured ? styles.pricingCardFeatured : ""}`}
-        >
-          {tier.featured ? <span className={styles.pricingBadge}>Most popular</span> : null}
-          <span className={styles.pricingName}>{tier.name}</span>
-          <div className={styles.pricingPrice}>
-            <span className={styles.pricingPriceAmount}>{tier.price}</span>
-            {tier.cadence ? <span className={styles.pricingPriceCadence}>{tier.cadence}</span> : null}
-          </div>
-          <p className={styles.pricingTagline}>{tier.tagline}</p>
-          <ul className={styles.pricingFeatures}>
-            {tier.features.map((feature) => (
-              <li key={feature} className={styles.pricingFeature}>{feature}</li>
-            ))}
-          </ul>
-          <a
-            href={tier.href}
-            className={tier.featured ? styles.waitlistButton : styles.btnGhost}
-          >
-            {tier.cta}
-            <span className={styles.btnArrow}>→</span>
-          </a>
-        </div>
-      ))}
-    </div>
+    <form className={formClass} onSubmit={onSubmit} noValidate>
+      <input
+        className={styles.waitlistInput}
+        type="email"
+        inputMode="email"
+        autoComplete="email"
+        required
+        placeholder="you@example.com"
+        aria-label="Email address"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        disabled={status === "submitting"}
+      />
+      <button
+        className={styles.waitlistButton}
+        type="submit"
+        disabled={status === "submitting" || email.trim().length === 0}
+      >
+        {status === "submitting" ? "Joining…" : "Join waitlist"}
+        <span className={styles.btnArrow}>→</span>
+      </button>
+      {error ? <p className={styles.waitlistError}>{error}</p> : null}
+    </form>
   );
 }
 
@@ -1128,9 +1109,8 @@ export default function LandingPage() {
           </Link>
           <nav className={styles.navRight}>
             <a href="#lenses" className={styles.navLink}>Inside</a>
-            <a href="#pricing" className={styles.navLink}>Pricing</a>
-            <a href="#pricing" className={styles.navStart}>
-              Start free <span className={styles.navStartArrow} aria-hidden="true">→</span>
+            <a href="#waitlist" className={styles.navStart}>
+              Join waitlist <span className={styles.navStartArrow} aria-hidden="true">→</span>
             </a>
           </nav>
         </header>
@@ -1155,8 +1135,8 @@ export default function LandingPage() {
                 sorts it and hands back <em>the one thing to start now.</em>
               </p>
               <div className={styles.heroActions}>
-                <a href="#pricing" className={styles.heroCta}>
-                  Start free <span className={styles.heroCtaArrow} aria-hidden="true">→</span>
+                <a href="#waitlist" className={styles.heroCta}>
+                  Join the waitlist <span className={styles.heroCtaArrow} aria-hidden="true">→</span>
                 </a>
                 <a href="#lenses" className={styles.heroCtaGhost}>See what&apos;s inside</a>
               </div>
@@ -1368,16 +1348,16 @@ export default function LandingPage() {
         </section>
 
         {/* ── CTA ── */}
-        <section className={styles.cta} id="pricing">
+        <section className={styles.cta} id="waitlist">
           <div className={styles.ctaGlow} aria-hidden="true" />
           <FadeUp className={styles.ctaInner}>
             <h2 className={styles.ctaH2}>
               The last productivity app{"\n"}
               <span className={styles.gradient}>you&apos;ll ever need.</span>
             </h2>
-            <p className={styles.ctaSub}>Pick a plan. Cancel anytime.</p>
+            <p className={styles.ctaSub}>Early access opens in small batches. Leave your email and we&apos;ll let you in.</p>
             <div className={styles.ctaActions}>
-              <PricingCards variant="cta" />
+              <WaitlistForm source="cta" variant="cta" />
             </div>
           </FadeUp>
         </section>
