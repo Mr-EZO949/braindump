@@ -5,7 +5,7 @@ import { isAllowlistEnabled, isEmailAllowed } from "@/lib/auth/allowlist";
 
 // Invite-only gate. When ALLOWED_EMAILS is set, only those accounts may reach
 // the app UI (/app/*) or its data/AI APIs (/api/*). Everything else — the
-// landing page, /login, the OAuth callback, /privacy, /terms — stays public so
+// landing page and its waitlist signup, /login, the OAuth callback, /privacy, /terms — stays public so
 // people can still sign in and get bounced if they're not on the list.
 export async function middleware(request: NextRequest) {
   // No allowlist configured → gate off entirely (local dev, or before it's set).
@@ -18,6 +18,11 @@ export async function middleware(request: NextRequest) {
   // Vercel cron calls these machine-to-machine (authed by CRON_SECRET, no user
   // cookie). Gating them would break the nudge / cleanup jobs.
   if (path.startsWith("/api/cron")) {
+    return NextResponse.next();
+  }
+
+  // The landing page's waitlist form posts here signed out — that's its job.
+  if (path === "/api/waitlist") {
     return NextResponse.next();
   }
 
