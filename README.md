@@ -78,5 +78,5 @@ Checks: `npx tsc --noEmit -p .` · `npx vitest run` · `npm run lint` · `npm ru
 
 ## License
 
-Copyright (c) 2026 ezo. All rights reserved. The source is published for viewing
+Copyright (c) 2026 Zhangir Ospan. All rights reserved. The source is published for viewing
 only; see [LICENSE](LICENSE).
